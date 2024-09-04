@@ -24,9 +24,9 @@ Once done, Add your name below and refer to the contribution guide below to push
 Done:
 Zi Yang
 
-Contribution Guide:
-Create a branch and name it yourname/yourfeature.
-Push commits to your new branch
+Contribution Guide: refer to https://rogerdudler.github.io/git-guide/ for basic git usage
+Create a branch and name it yourname/branchname.
+Push changes to your to your new branch (make sure your on your new branch)
 Once done, create a merge request to main.
 
 
