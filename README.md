@@ -1,3 +1,35 @@
+
+Steps to run the repo locally
+- Git Clone the repo to your machine
+- Download Node(18.20.4) and npm/bun 
+    - Recommend Using nvm https://github.com/nvm-sh/nvm but not neccessary
+- Copy .env.example and name it .env
+- Download Postgresql and start a server on your machine
+    - https://www.postgresqltutorial.com/postgresql-getting-started/install-postgresql
+    - https://www.postgresqltutorial.com/postgresql-getting-started/connect-to-postgresql-database/
+- Add posgresql connection string from the server you just created to .env and replace the DATABASE_URL
+- run bunx/npx prisma db push
+- run npm install/bun install
+- run npm run dev/bun run dev
+    - Should see the purple create t3 App screen
+- run bunx/npx prisma studio
+    - Should see the Prisma studio screen
+
+Other stuff to set up if you have time can look for guides online or ask in the chat.
+- Eslint
+- Prettier
+
+Once done, Add your name below and refer to the contribution guide below to push it(this will be the rough workflow we will go through for all our work).
+
+Done:
+Zi Yang
+
+Contribution Guide:
+Create a branch and name it yourname/yourfeature.
+Push commits to your new branch
+Once done, create a merge request to main.
+
+
 # Create T3 App
 
 This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.
