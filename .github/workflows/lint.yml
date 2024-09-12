@@ -1,0 +1,31 @@
+name: Lint and Format Check
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "18.20.4"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run ESLint
+        run: npx eslint 'src/**/*.{js,jsx,ts,tsx}'
+
+      - name: Run Prettier
+        run: npx prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,md}'

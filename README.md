@@ -23,9 +23,12 @@ Other stuff to set up if you have time can look for guides online or ask in the 
 Once done, Add your name below and refer to the contribution guide below to push it(this will be the rough workflow we will go through for all our work).
 
 Done:
+
 - Zi Yang
 - Ernest
 - Chuan Xin
+- Keith
+
 
 Contribution Guide: refer to https://rogerdudler.github.io/git-guide/ for basic git usage
 Create a branch and name it yourname/branchname.
