@@ -13,8 +13,9 @@ import {
 import {
   HamburgerMenuIcon,
   ChevronDownIcon,
-  PieChartIcon,
-  CursorArrowIcon,
+  CalendarIcon,
+  BoxIcon,
+  HomeIcon,
 } from "@radix-ui/react-icons";
 
 const navLinks = [
@@ -22,20 +23,20 @@ const navLinks = [
     name: "Introduction",
     description: "Raffles Hall is a student-run hall in NUS.",
     href: "/",
-    icon: PieChartIcon,
+    icon: HomeIcon,
   },
   {
     name: "Facilities",
     description: "See the facilities available in Raffles Hall.",
     href: "/facilities",
-    icon: CursorArrowIcon,
+    icon: BoxIcon,
     hideOnDesktop: true,
   },
   {
     name: "Your bookings",
     description: "See your bookings in Raffles Hall.",
     href: "/bookings",
-    icon: CursorArrowIcon,
+    icon: CalendarIcon,
   },
 ];
 
@@ -71,11 +72,22 @@ const MobileMenuButton = ({ onClick }: { onClick: () => void }) => (
 
 const DesktopNav = () => (
   <div className="hidden lg:flex lg:gap-x-12">
+    {navLinks
+      .filter((item) => !item.hideOnDesktop)
+      .map((item) => (
+        <a
+          key={item.name}
+          href={item.href}
+          className="text-lg font-semibold leading-6 text-white hover:text-indigo-300"
+        >
+          {item.name}
+        </a>
+      ))}
     <Popover>
       <PopoverTrigger className="flex items-center gap-x-1 text-lg font-semibold leading-6 text-white hover:text-indigo-300">
         Facilities
         <ChevronDownIcon
-          className="h-5 w-5 flex-none text-gray-400"
+          className="text-bold h-6 w-6 flex-none text-white"
           aria-hidden="true"
         />
       </PopoverTrigger>
@@ -91,18 +103,6 @@ const DesktopNav = () => (
         ))}
       </PopoverContent>
     </Popover>
-
-    {navLinks
-      .filter((item) => !item.hideOnDesktop)
-      .map((item) => (
-        <a
-          key={item.name}
-          href={item.href}
-          className="text-lg font-semibold leading-6 text-white hover:text-indigo-300"
-        >
-          {item.name}
-        </a>
-      ))}
   </div>
 );
 
