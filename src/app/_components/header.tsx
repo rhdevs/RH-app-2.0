@@ -2,12 +2,9 @@
 
 import * as React from "react";
 import { useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogClose,
-  DialogOverlay,
-} from "~/components/ui/dialog";
+import Image from "next/image";
+import rafflesHallLogo from "/public/raffles-hall-logo.svg";
+import { Dialog, DialogContent, DialogClose } from "~/components/ui/dialog";
 import {
   Popover,
   PopoverTrigger,
@@ -18,14 +15,13 @@ import {
   ChevronDownIcon,
   PieChartIcon,
   CursorArrowIcon,
-  QuestionMarkCircledIcon,
 } from "@radix-ui/react-icons";
 
 const navLinks = [
   {
     name: "Introduction",
     description: "Raffles Hall is a student-run hall in NUS.",
-    href: "#",
+    href: "/",
     icon: PieChartIcon,
   },
   {
@@ -50,11 +46,13 @@ const facilityLinks = [
 
 const Logo = () => (
   <a href="#" className="-m-1.5 p-1.5">
-    <span className="sr-only">Your Company</span>
-    <img
-      className="h-8 w-auto"
-      src="https://tailwindui.com/img/logos/mark.svg?color=indigo&shade=600"
-      alt="Company Logo"
+    <span className="sr-only">Raffles Hall</span>
+    <Image
+      src={rafflesHallLogo}
+      alt="Raffles Hall Logo"
+      width={100}
+      height={100}
+      className="object-contain"
     />
   </a>
 );
@@ -62,7 +60,7 @@ const Logo = () => (
 const MobileMenuButton = ({ onClick }: { onClick: () => void }) => (
   <button
     type="button"
-    className="-m-2.5 inline-flex items-center justify-center rounded-md p-2.5 text-gray-700"
+    className="-m-2.5 inline-flex items-center justify-center rounded-md p-2.5 text-gray-700 hover:bg-gray-200"
     onClick={onClick}
   >
     <span className="sr-only">Open main menu</span>
@@ -73,7 +71,7 @@ const MobileMenuButton = ({ onClick }: { onClick: () => void }) => (
 const DesktopNav = () => (
   <div className="hidden lg:flex lg:gap-x-12">
     <Popover>
-      <PopoverTrigger className="flex items-center gap-x-1 text-sm font-semibold leading-6 text-gray-900">
+      <PopoverTrigger className="flex items-center gap-x-1 text-sm font-semibold leading-6 text-gray-900 hover:text-indigo-600">
         Facilities
         <ChevronDownIcon
           className="h-5 w-5 flex-none text-gray-400"
@@ -97,7 +95,7 @@ const DesktopNav = () => (
       <a
         key={item.name}
         href={item.href}
-        className="text-sm font-semibold leading-6 text-gray-900"
+        className="text-sm font-semibold leading-6 text-gray-900 hover:text-indigo-600"
       >
         {item.name}
       </a>
@@ -113,10 +111,10 @@ const MobileMenu = ({
   setMobileMenuOpen: (open: boolean) => void;
 }) => (
   <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-    <DialogContent className="sm:max-w-[425px]">
+    <DialogContent className="bg-white sm:max-w-[425px]">
       <div className="flex items-center justify-between">
         <Logo />
-        <DialogClose className="-m-2.5 rounded-md p-2.5 text-gray-700">
+        <DialogClose className="-m-2.5 rounded-md p-2.5 text-gray-700 hover:bg-gray-200">
           <span className="sr-only">Close menu</span>
         </DialogClose>
       </div>
@@ -129,9 +127,9 @@ const MobileMenu = ({
                 href={item.href}
                 className="group flex items-center gap-x-4 rounded-lg p-3 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
               >
-                <div className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-gray-50 group-hover:bg-white">
+                <div className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-gray-50 group-hover:bg-indigo-600">
                   <item.icon
-                    className="h-6 w-6 text-gray-600 group-hover:text-indigo-600"
+                    className="h-6 w-6 text-gray-600 group-hover:text-white"
                     aria-hidden="true"
                   />
                 </div>
@@ -141,7 +139,7 @@ const MobileMenu = ({
           </div>
           <div className="py-6">
             <a
-              href="#"
+              href="/login"
               className="block rounded-lg px-3 py-2.5 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
             >
               Log in
@@ -157,7 +155,7 @@ export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <header className="bg-white">
+    <header className="bg-green-500 shadow-md">
       <nav
         className="mx-auto flex max-w-7xl items-center justify-between p-6 lg:px-8"
         aria-label="Global"
@@ -170,7 +168,10 @@ export default function Header() {
         </div>
         <DesktopNav />
         <div className="hidden lg:flex lg:flex-1 lg:justify-end">
-          <a href="#" className="text-sm font-semibold leading-6 text-gray-900">
+          <a
+            href="#"
+            className="text-sm font-semibold leading-6 text-gray-900 hover:text-indigo-600"
+          >
             Log in <span aria-hidden="true">&rarr;</span>
           </a>
         </div>
