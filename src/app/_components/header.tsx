@@ -21,29 +21,31 @@ import {
   QuestionMarkCircledIcon,
 } from "@radix-ui/react-icons";
 
-const products = [
+const navLinks = [
   {
-    name: "Analytics",
-    description: "Get a better understanding of your traffic",
+    name: "Introduction",
+    description: "Raffles Hall is a student-run hall in NUS.",
     href: "#",
     icon: PieChartIcon,
   },
   {
-    name: "Engagement",
-    description: "Speak directly to your customers",
-    href: "#",
+    name: "Facilities",
+    description: "See the facilities available in Raffles Hall.",
+    href: "/facilities",
     icon: CursorArrowIcon,
   },
-  // Add other products as necessary...
+  {
+    name: "Your bookings",
+    description: "See your bookings in Raffles Hall.",
+    href: "/bookings",
+    icon: CursorArrowIcon,
+  },
 ];
 
-const company = [
-  {
-    name: "About us",
-    href: "#",
-    description: "Learn more about our company values and mission.",
-  },
-  // Add other company items as necessary...
+const facilityLinks = [
+  { name: "Gym", href: "/facilities/gym" },
+  { name: "Study Area", href: "/facilities/study-area" },
+  { name: "Common Room", href: "/facilities/common-room" },
 ];
 
 const Logo = () => (
@@ -72,78 +74,34 @@ const DesktopNav = () => (
   <div className="hidden lg:flex lg:gap-x-12">
     <Popover>
       <PopoverTrigger className="flex items-center gap-x-1 text-sm font-semibold leading-6 text-gray-900">
-        Product
+        Facilities
         <ChevronDownIcon
           className="h-5 w-5 flex-none text-gray-400"
           aria-hidden="true"
         />
       </PopoverTrigger>
-
-      <PopoverContent className="absolute -left-8 top-full z-10 mt-3 w-screen max-w-md overflow-hidden rounded-3xl bg-white shadow-lg ring-1 ring-gray-900/5">
-        <div className="p-4">
-          {products.map((item) => (
-            <div
-              key={item.name}
-              className="group relative flex gap-x-6 rounded-lg p-4 text-sm leading-6 hover:bg-gray-50"
-            >
-              <div className="mt-1 flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-gray-50 group-hover:bg-white">
-                <item.icon
-                  className="h-6 w-6 text-gray-600 group-hover:text-indigo-600"
-                  aria-hidden="true"
-                />
-              </div>
-              <div className="flex-auto">
-                <a
-                  href={item.href}
-                  className="block font-semibold text-gray-900"
-                >
-                  {item.name}
-                  <span className="absolute inset-0" />
-                </a>
-                <p className="mt-1 text-gray-600">{item.description}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
-
-    <a href="#" className="text-sm font-semibold leading-6 text-gray-900">
-      Features
-    </a>
-    <a href="#" className="text-sm font-semibold leading-6 text-gray-900">
-      Marketplace
-    </a>
-
-    <Popover>
-      <PopoverTrigger className="flex items-center gap-x-1 text-sm font-semibold leading-6 text-gray-900">
-        Company
-        <ChevronDownIcon
-          className="h-5 w-5 flex-none text-gray-400"
-          aria-hidden="true"
-        />
-      </PopoverTrigger>
-
-      <PopoverContent className="absolute -left-8 top-full z-10 mt-3 w-96 rounded-3xl bg-white p-4 shadow-lg ring-1 ring-gray-900/5">
-        {company.map((item) => (
-          <div
+      <PopoverContent className="absolute -left-8 top-full z-10 mt-3 w-40 rounded-3xl bg-white p-4 shadow-lg ring-1 ring-gray-900/5">
+        {facilityLinks.map((item) => (
+          <a
             key={item.name}
-            className="relative rounded-lg p-4 hover:bg-gray-50"
+            href={item.href}
+            className="block text-sm font-semibold leading-6 text-gray-900 hover:bg-gray-50"
           >
-            <a
-              href={item.href}
-              className="block text-sm font-semibold leading-6 text-gray-900"
-            >
-              {item.name}
-              <span className="absolute inset-0" />
-            </a>
-            <p className="mt-1 text-sm leading-6 text-gray-600">
-              {item.description}
-            </p>
-          </div>
+            {item.name}
+          </a>
         ))}
       </PopoverContent>
     </Popover>
+
+    {navLinks.map((item) => (
+      <a
+        key={item.name}
+        href={item.href}
+        className="text-sm font-semibold leading-6 text-gray-900"
+      >
+        {item.name}
+      </a>
+    ))}
   </div>
 );
 
@@ -155,43 +113,39 @@ const MobileMenu = ({
   setMobileMenuOpen: (open: boolean) => void;
 }) => (
   <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-    <DialogOverlay className="fixed inset-0 bg-black/30" />
-    <DialogContent className="fixed right-0 top-0 z-50 flex h-full w-1/3 flex-col justify-between bg-white lg:hidden">
-      <div className="p-6">
-        <div className="flex items-center justify-between">
-          <Logo />
-          <DialogClose className="-m-2.5 rounded-md p-2.5 text-gray-700">
-            <span className="sr-only">Close menu</span>
-            <QuestionMarkCircledIcon className="h-6 w-6" aria-hidden="true" />
-          </DialogClose>
-        </div>
-        <div className="mt-6 flow-root">
-          <div className="-my-6 divide-y divide-gray-500/10">
-            <div className="space-y-2 py-6">
-              {products.map((item) => (
-                <a
-                  key={item.name}
-                  href={item.href}
-                  className="group -mx-3 flex items-center gap-x-6 rounded-lg p-3 text-base font-semibold leading-7 text-gray-900 hover:bg-gray-50"
-                >
-                  <div className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-gray-50 group-hover:bg-white">
-                    <item.icon
-                      className="h-6 w-6 text-gray-600 group-hover:text-indigo-600"
-                      aria-hidden="true"
-                    />
-                  </div>
-                  {item.name}
-                </a>
-              ))}
-            </div>
-            <div className="py-6">
+    <DialogContent className="sm:max-w-[425px]">
+      <div className="flex items-center justify-between">
+        <Logo />
+        <DialogClose className="-m-2.5 rounded-md p-2.5 text-gray-700">
+          <span className="sr-only">Close menu</span>
+        </DialogClose>
+      </div>
+      <div className="mt-4 flow-root">
+        <div className="-my-6 divide-y divide-gray-500/10">
+          <div className="space-y-2 py-6">
+            {navLinks.map((item) => (
               <a
-                href="#"
-                className="-mx-3 block rounded-lg px-3 py-2.5 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
+                key={item.name}
+                href={item.href}
+                className="group flex items-center gap-x-4 rounded-lg p-3 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
               >
-                Log in
+                <div className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-gray-50 group-hover:bg-white">
+                  <item.icon
+                    className="h-6 w-6 text-gray-600 group-hover:text-indigo-600"
+                    aria-hidden="true"
+                  />
+                </div>
+                {item.name}
               </a>
-            </div>
+            ))}
+          </div>
+          <div className="py-6">
+            <a
+              href="#"
+              className="block rounded-lg px-3 py-2.5 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
+            >
+              Log in
+            </a>
           </div>
         </div>
       </div>
