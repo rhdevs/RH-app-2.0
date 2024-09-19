@@ -60,7 +60,7 @@ const Logo = () => (
 const MobileMenuButton = ({ onClick }: { onClick: () => void }) => (
   <button
     type="button"
-    className="-m-2.5 inline-flex items-center justify-center rounded-md p-2.5 text-gray-700 hover:bg-gray-200"
+    className="-m-2.5 inline-flex items-center justify-center rounded-md p-2.5 text-white hover:bg-gray-200"
     onClick={onClick}
   >
     <span className="sr-only">Open main menu</span>
@@ -71,19 +71,19 @@ const MobileMenuButton = ({ onClick }: { onClick: () => void }) => (
 const DesktopNav = () => (
   <div className="hidden lg:flex lg:gap-x-12">
     <Popover>
-      <PopoverTrigger className="flex items-center gap-x-1 text-sm font-semibold leading-6 text-gray-900 hover:text-indigo-600">
+      <PopoverTrigger className="flex items-center gap-x-1 text-lg font-semibold leading-6 text-white hover:text-indigo-300">
         Facilities
         <ChevronDownIcon
           className="h-5 w-5 flex-none text-gray-400"
           aria-hidden="true"
         />
       </PopoverTrigger>
-      <PopoverContent className="absolute -left-8 top-full z-10 mt-3 w-40 rounded-3xl bg-white p-4 shadow-lg ring-1 ring-gray-900/5">
+      <PopoverContent className="absolute left-1/2 top-full z-10 mt-3 w-48 -translate-x-1/2 transform rounded-lg bg-white p-4 shadow-md ring-1 ring-gray-300">
         {facilityLinks.map((item) => (
           <a
             key={item.name}
             href={item.href}
-            className="block text-sm font-semibold leading-6 text-gray-900 hover:bg-gray-50"
+            className="block rounded-lg px-2 py-1 text-sm font-semibold leading-6 text-gray-900 transition-colors duration-150 hover:bg-green-200"
           >
             {item.name}
           </a>
@@ -95,7 +95,7 @@ const DesktopNav = () => (
       <a
         key={item.name}
         href={item.href}
-        className="text-sm font-semibold leading-6 text-gray-900 hover:text-indigo-600"
+        className="text-lg font-semibold leading-6 text-white hover:text-indigo-300"
       >
         {item.name}
       </a>
@@ -155,7 +155,7 @@ export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <header className="bg-green-500 shadow-md">
+    <header className="bg-green-600 shadow-md">
       <nav
         className="mx-auto flex max-w-7xl items-center justify-between p-6 lg:px-8"
         aria-label="Global"
@@ -169,8 +169,8 @@ export default function Header() {
         <DesktopNav />
         <div className="hidden lg:flex lg:flex-1 lg:justify-end">
           <a
-            href="#"
-            className="text-sm font-semibold leading-6 text-gray-900 hover:text-indigo-600"
+            href="/login"
+            className="inline-block rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold leading-6 text-white shadow-lg transition-all duration-150 ease-in-out hover:bg-indigo-700 hover:shadow-xl"
           >
             Log in <span aria-hidden="true">&rarr;</span>
           </a>
