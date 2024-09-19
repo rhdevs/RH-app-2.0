@@ -4,12 +4,12 @@ import * as React from "react";
 import { useState } from "react";
 import Image from "next/image";
 import rafflesHallLogo from "/public/raffles-hall-logo.svg";
-import { Dialog, DialogContent, DialogClose } from "~/components/ui/dialog";
+import { Dialog, DialogContent, DialogClose } from "@/components/ui/dialog";
 import {
   Popover,
   PopoverTrigger,
   PopoverContent,
-} from "~/components/ui/popover";
+} from "@/components/ui/popover";
 import {
   HamburgerMenuIcon,
   ChevronDownIcon,
@@ -29,6 +29,7 @@ const navLinks = [
     description: "See the facilities available in Raffles Hall.",
     href: "/facilities",
     icon: CursorArrowIcon,
+    hideOnDesktop: true,
   },
   {
     name: "Your bookings",
@@ -91,15 +92,17 @@ const DesktopNav = () => (
       </PopoverContent>
     </Popover>
 
-    {navLinks.map((item) => (
-      <a
-        key={item.name}
-        href={item.href}
-        className="text-lg font-semibold leading-6 text-white hover:text-indigo-300"
-      >
-        {item.name}
-      </a>
-    ))}
+    {navLinks
+      .filter((item) => !item.hideOnDesktop)
+      .map((item) => (
+        <a
+          key={item.name}
+          href={item.href}
+          className="text-lg font-semibold leading-6 text-white hover:text-indigo-300"
+        >
+          {item.name}
+        </a>
+      ))}
   </div>
 );
 
