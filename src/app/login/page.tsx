@@ -38,7 +38,7 @@ export function LoginForm() {
           <Input
             id="email"
             type="email"
-            placeholder="m@example.com"
+            placeholder="IamKeith@example.com"
             required
             className="w-full rounded-md border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             value={username}
