@@ -31,9 +31,9 @@ export function LoginForm() {
   };
 
   return (
-    <form className="space-y-6" onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit}>
       <div className="space-y-4">
-        <div className="space-y-2">
+        <div>
           <Label htmlFor="email">Email</Label>
           <Input
             id="email"
@@ -45,7 +45,7 @@ export function LoginForm() {
             onChange={handleUsernameChange}
           />
         </div>
-        <div className="space-y-2">
+        <div>
           <Label htmlFor="password">Password</Label>
           <Input
             id="password"
