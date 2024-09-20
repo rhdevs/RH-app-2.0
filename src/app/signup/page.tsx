@@ -44,8 +44,8 @@ export function SignUpForm() {
 
   return (
     <form onSubmit={handleSubmit}>
-      <div>
-        <div className="space-y-2">
+      <div className="space-y-4">
+        <div>
           <Label htmlFor="username">Username</Label>
           <Input
             id="username"
@@ -57,7 +57,7 @@ export function SignUpForm() {
             onChange={handleUsernameChange}
           />
         </div>
-        <div className="space-y-2">
+        <div>
           <Label htmlFor="email">Email</Label>
           <Input
             id="email"
@@ -69,7 +69,7 @@ export function SignUpForm() {
             onChange={handleEmailChange}
           />
         </div>
-        <div className="space-y-2">
+        <div>
           <Label htmlFor="password">Password</Label>
           <Input
             id="password"
@@ -80,7 +80,7 @@ export function SignUpForm() {
             onChange={handlePasswordChange}
           />
         </div>
-        <div className="space-y-2">
+        <div>
           <Label htmlFor="confirm-password">Confirm Password</Label>
           <Input
             id="confirm-password"
