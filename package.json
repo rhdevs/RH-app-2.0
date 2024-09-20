@@ -9,6 +9,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
+    "db:migrate-and-seed": "prisma migrate dev && prisma db seed",
     "dev": "next dev",
     "postinstall": "prisma generate",
     "lint": "next lint",
@@ -73,6 +74,7 @@
     "superjson": "^2.2.1",
     "tailwind-merge": "^2.5.2",
     "tailwindcss-animate": "^1.0.7",
+    "ts-node": "^10.9.2",
     "vaul": "^0.9.2",
     "zod": "^3.23.8"
   },
@@ -102,5 +104,8 @@
   "ct3aMetadata": {
     "initVersion": "7.37.0"
   },
-  "packageManager": "npm@9.4.2"
+  "packageManager": "npm@9.4.2",
+  "prisma": {
+    "seed": "node --loader ts-node/esm prisma/seed.ts"
+  }
 }
