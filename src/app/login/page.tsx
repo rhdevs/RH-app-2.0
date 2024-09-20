@@ -4,13 +4,12 @@ import React, { useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import usePasswordValidation from "@/hooks/usePasswordValidation";
+import { useRouter } from "next/navigation";
 
 export function LoginForm() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const { validationResult, validatePassword } =
-    usePasswordValidation(password);
+  const router = useRouter();
 
   const handleUsernameChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setUsername(event.target.value);
@@ -22,12 +21,15 @@ export function LoginForm() {
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    validatePassword();
-    if (validationResult.isValid) {
-      console.log("Login successful");
-    } else {
-      console.log("Validation failed:", validationResult.errors);
-    }
+    console.log("Login successful");
+  };
+
+  const handleForgotPassword = () => {
+    router.push("/forgot-password");
+  };
+
+  const handleSignUp = () => {
+    router.push("/signup");
   };
 
   return (
@@ -55,13 +57,6 @@ export function LoginForm() {
             value={password}
             onChange={handlePasswordChange}
           />
-          {validationResult.errors.length > 0 && (
-            <ul className="mt-2 text-sm text-red-500">
-              {validationResult.errors.map((error, index) => (
-                <li key={index}>{error}</li>
-              ))}
-            </ul>
-          )}
         </div>
         <Button
           type="submit"
@@ -69,6 +64,22 @@ export function LoginForm() {
         >
           Login
         </Button>
+        <div className="mt-4 flex items-center justify-between text-sm">
+          <button
+            type="button"
+            onClick={handleForgotPassword}
+            className="text-indigo-600 hover:underline"
+          >
+            Forgot password?
+          </button>
+          <button
+            type="button"
+            onClick={handleSignUp}
+            className="text-indigo-600 hover:underline"
+          >
+            Sign up
+          </button>
+        </div>
       </div>
     </form>
   );
