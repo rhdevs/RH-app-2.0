@@ -1,5 +1,4 @@
 "use client";
-
 import * as React from "react";
 import { useState } from "react";
 import Image from "next/image";
@@ -17,6 +16,7 @@ import {
   BoxIcon,
   HomeIcon,
 } from "@radix-ui/react-icons";
+import { useSession, signIn } from "next-auth/react";
 
 const navLinks = [
   {
@@ -156,6 +156,10 @@ const MobileMenu = ({
 
 export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { data: session } = useSession() as {
+    data: { user: { name: string } };
+  };
+  console.log(session);
 
   return (
     <header className="bg-green-600 shadow-md">
@@ -171,12 +175,21 @@ export default function Header() {
         </div>
         <DesktopNav />
         <div className="hidden lg:flex lg:flex-1 lg:justify-end">
-          <a
-            href="/login"
-            className="inline-block rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold leading-6 text-white shadow-lg transition-all duration-150 ease-in-out hover:bg-indigo-700 hover:shadow-xl"
-          >
-            Log in <span aria-hidden="true">&rarr;</span>
-          </a>
+          {session ? (
+            <div className="flex">
+              <a
+                className="self-center font-semibold text-indigo-600 hover:text-white"
+                href="/profile"
+              >{`Hello ${session?.user.name}!`}</a>
+            </div>
+          ) : (
+            <button
+              onClick={() => signIn()}
+              className="inline-block rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold leading-6 text-white shadow-lg transition-all duration-150 ease-in-out hover:bg-indigo-700 hover:shadow-xl"
+            >
+              Log in <span aria-hidden="true">&rarr;</span>
+            </button>
+          )}
         </div>
       </nav>
       <MobileMenu
