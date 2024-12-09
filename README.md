@@ -28,6 +28,7 @@ Done:
 - Ernest
 - Chuan Xin
 - Keith
+- Jansen Ken
 
 
 Contribution Guide: refer to https://rogerdudler.github.io/git-guide/ for basic git usage
