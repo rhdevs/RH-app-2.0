@@ -64,7 +64,7 @@ The RHApp architecture consists of the following main components:
 | -------- | ------------- | ------------------------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------- |
 | `* * *`  | Hall Resident | Book available facilities such as gyms and study rooms | Plan my activities and reserve resources conveniently | Include real-time availability checking for accuracy |
 | `* * *`  | Hall Resident | View my bookings on a calendar                         | See all my reservations at a glance                   | Weekly and monthly views for better usability        |
-| `* * *`  | Admin         | Block facilities for maintenance                       | Prevent users from booking unavailable facilities     | Add error messages for conflicts                     |
+| `* * *`  | Admin         | Block facilities for events                            | Prevent users from booking unavailable facilities     | Add error messages for conflicts                     |
 | `* * *`  | CCA Leader    | Track attendance for CCA members                       | Allocate points for participation fairly              | Include options for adding/removing members          |
 | `* * *`  | Hall Resident | Join a CCA                                             | Participate in extracurricular activities             | Make CCAs more accessible for residents              |
 | `* *`    | CCA Leader    | Generate reports of CCA attendance and points          | Share records with hall management or stakeholders    | Include export options for CSV or PDF formats        |
@@ -105,12 +105,12 @@ The RHApp architecture consists of the following main components:
 
 ---
 
-### **UC02 - Block Facility for Maintenance**
+### **UC02 - Block Facility for Events**
 
 **System**: RHApp  
 **Actor**: Admin
 
-**Description**: This use case allows admins to block facilities for maintenance or other purposes.
+**Description**: This use case allows admins to block facilities for events or other purposes.
 
 **Preconditions**:
 
