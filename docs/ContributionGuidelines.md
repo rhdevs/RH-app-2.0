@@ -17,11 +17,11 @@ Thank you for considering contributing to RHApp! This document outlines the proc
 
 3. **Run Tests**:
 
+   - To be set up
    - Verify that your changes do not break any functionality:
      ```bash
      npm run test
      ```
-   - To be set up
 
 4. **Commit Your Changes**:
 
