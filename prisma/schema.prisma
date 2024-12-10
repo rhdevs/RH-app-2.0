@@ -55,14 +55,15 @@ model Session {
 }
 
 model User {
-    id            String    @id @default(cuid())
+    id            String       @id @default(cuid())
     name          String?
-    email         String?   @unique
+    email         String?      @unique
     emailVerified DateTime?
     image         String?
     accounts      Account[]
     sessions      Session[]
     posts         Post[]
+    bookings      Booking[]
 }
 
 model VerificationToken {
@@ -71,4 +72,39 @@ model VerificationToken {
     expires    DateTime
 
     @@unique([identifier, token])
+}
+
+model Facility {
+    id          String     @id @default(cuid())
+    name        String     @unique
+    description String
+    maxPeople   Int
+    location    String     // Optional: Add location details
+    createdAt   DateTime   @default(now())
+    updatedAt   DateTime   @updatedAt
+
+    bookings    Booking[]
+
+    @@index([name, location])
+}
+
+model Booking {
+    id          String    @id @default(cuid())
+    user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    userId      String
+    facility    Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+    facilityId  String
+    startTime   DateTime
+    endTime     DateTime
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    status      BookingStatus @default(PENDING)
+
+    @@index([facilityId, startTime, endTime])
+}
+
+enum BookingStatus {
+    PENDING
+    CONFIRMED
+    CANCELLED
 }
