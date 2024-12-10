@@ -8,7 +8,6 @@ pageNav: 3
 # RHApp Developer Guide
 
 <!-- * Table of Contents -->
-<page-nav-print />
 
 ---
 
@@ -61,18 +60,18 @@ The RHApp architecture consists of the following main components:
 ## User Stories
 
 | Priority | As a …        | I want to …                                            | So that I can …                                       | Remarks/Notes                                        |
-| -------- | ------------- | ------------------------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------- |
-| `* * *`  | Hall Resident | Book available facilities such as gyms and study rooms | Plan my activities and reserve resources conveniently | Include real-time availability checking for accuracy |
-| `* * *`  | Hall Resident | View my bookings on a calendar                         | See all my reservations at a glance                   | Weekly and monthly views for better usability        |
-| `* * *`  | Admin         | Block facilities for events                            | Prevent users from booking unavailable facilities     | Add error messages for conflicts                     |
-| `* * *`  | CCA Leader    | Track attendance for CCA members                       | Allocate points for participation fairly              | Include options for adding/removing members          |
-| `* * *`  | Hall Resident | Join a CCA                                             | Participate in extracurricular activities             | Make CCAs more accessible for residents              |
-| `* *`    | CCA Leader    | Generate reports of CCA attendance and points          | Share records with hall management or stakeholders    | Include export options for CSV or PDF formats        |
-| `* *`    | Hall Resident | Receive reminders for upcoming bookings                | Stay updated about my reservations                    | Notifications via email or app push notifications    |
-| `* *`    | Admin         | View analytics for facility usage                      | Monitor trends and optimize facility management       | Include charts and graphs for data visualization     |
-| `*`      | Hall Resident | Cancel a facility booking                              | Free up slots if my plans change                      | Provide easy cancellation options                    |
-| `*`      | Admin         | Assign roles to users                                  | Limit access to certain administrative features       | Role-based access control for security               |
-| `*`      | Hall Resident | Search for specific CCAs based on interests            | Quickly find activities I’m passionate about          | Add a filter or search bar                           |
+|--------| ------------- |--------------------------------------------------------| ----------------------------------------------------- | ---------------------------------------------------- |
+| `* * *` | Hall Resident | Book available facilities such as gyms and study rooms | Plan my activities and reserve resources conveniently | Include real-time availability checking for accuracy |
+| `* * *` | Hall Resident | View my bookings on a calendar                         | See all my reservations at a glance                   | Weekly and monthly views for better usability        |
+| `* * *` | Admin         | Block facilities for events                            | Prevent users from booking unavailable facilities     | Add error messages for conflicts                     |
+| `* * *` | CCA Leader    | Track attendance for CCA members                       | Allocate points for participation fairly              | Include options for adding/removing members          |
+| `* * *` | Hall Resident | Join a CCA                                             | Participate in extracurricular activities             | Make CCAs more accessible for residents              |
+| `* *`  | CCA Leader    | Accept/Reject CCA applications                         | Share records with hall management or stakeholders    | Include export options for CSV or PDF formats        |
+| `* *`  | Hall Resident | Receive reminders for upcoming bookings                | Stay updated about my reservations                    | Notifications via email or app push notifications    |
+| `* *`  | Admin         | View analytics for facility usage                      | Monitor trends and optimize facility management       | Include charts and graphs for data visualization     |
+| `*`    | Hall Resident | Cancel a facility booking                              | Free up slots if my plans change                      | Provide easy cancellation options                    |
+| `*`    | Admin         | Assign roles to users                                  | Limit access to certain administrative features       | Role-based access control for security               |
+| `*`    | Hall Resident | Search for specific CCAs based on interests            | Quickly find activities I’m passionate about          | Add a filter or search bar                           |
 
 ---
 
@@ -96,6 +95,8 @@ The RHApp architecture consists of the following main components:
 2. Resident chooses a date and time slot.
 3. System checks for availability and conflicts.
 4. System confirms the booking and displays the reservation details.
+
+Note: Only Dance Studio can be booked by the Dance CCA Head
 
 **Extensions**:
 
