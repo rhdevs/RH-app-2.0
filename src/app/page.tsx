@@ -1,9 +1,8 @@
 import Link from "next/link";
-
+import type { ReactNode } from "react";
 import { LatestPost } from "~/app/_components/post";
 import { getServerAuthSession } from "~/server/auth";
 import { api, HydrateClient } from "~/trpc/server";
-
 import { CalendarProvider } from "~/components/roadmap-ui/calendar";
 import {
   CalendarHeader,
@@ -33,6 +32,25 @@ export default async function Home() {
   const hello = await api.post.hello({ text: "from tRPC" });
   const session = await getServerAuthSession();
 
+  const renderedFeatures = mockFeatures.reduce<Record<number, ReactNode>>(
+    (acc, feature) => {
+      const day = new Date(feature.endAt).getDate();
+      if (!acc[day]) acc[day] = [];
+      acc[day] = (
+        <>
+          {acc[day]}
+          <CalendarItem
+            key={feature.id}
+            feature={feature}
+            className="bg-[hsl(280,100%,70%)] text-white"
+          />
+        </>
+      );
+      return acc;
+    },
+    {},
+  );
+
   return (
     <HydrateClient>
       <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">
@@ -47,12 +65,7 @@ export default async function Home() {
               <CalendarHeader className="mb-4" />
               <CalendarBody
                 features={mockFeatures}
-                children={({ feature }) => (
-                  <CalendarItem
-                    feature={feature}
-                    className="bg-[hsl(280,100%,70%)] text-white"
-                  />
-                )}
+                renderedFeatures={renderedFeatures}
               />
             </div>
           </CalendarProvider>

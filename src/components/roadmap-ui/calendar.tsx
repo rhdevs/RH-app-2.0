@@ -81,8 +81,8 @@ export const monthsForLocale = (
   localeName: Intl.LocalesArgument,
   monthFormat: Intl.DateTimeFormatOptions["month"] = "long",
 ) => {
-  const format = new Intl.DateTimeFormat(localeName, { month: monthFormat })
-    .format;
+  const format = (date: Date) =>
+    new Intl.DateTimeFormat(localeName, { month: monthFormat }).format(date);
 
   return [...new Array(12).keys()].map((m) =>
     format(new Date(Date.UTC(2021, m % 12))),
@@ -180,10 +180,13 @@ const OutOfBoundsDay = ({ day }: OutOfBoundsDayProps) => (
 
 export type CalendarBodyProps = {
   features: Feature[];
-  children: (props: { feature: Feature }) => ReactNode;
+  renderedFeatures: Record<number, ReactNode>;
 };
 
-export const CalendarBody = ({ features, children }: CalendarBodyProps) => {
+export const CalendarBody = ({
+  features,
+  renderedFeatures,
+}: CalendarBodyProps) => {
   const { month, year } = useCalendar();
   const { startDay } = useContext(CalendarContext);
   const daysInMonth = getDaysInMonth(new Date(year, month, 1));
@@ -217,9 +220,7 @@ export const CalendarBody = ({ features, children }: CalendarBodyProps) => {
         className="relative flex h-full w-full flex-col gap-1 p-1 text-xs text-muted-foreground"
       >
         {day}
-        <div>
-          {featuresForDay.slice(0, 3).map((feature) => children({ feature }))}
-        </div>
+        <div>{renderedFeatures[day]}</div>
         {featuresForDay.length > 3 && (
           <span className="block text-xs text-muted-foreground">
             +{featuresForDay.length - 3} more
