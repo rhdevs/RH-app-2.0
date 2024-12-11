@@ -3,7 +3,13 @@ import type { ReactNode } from "react";
 import { LatestPost } from "~/app/_components/post";
 import { getServerAuthSession } from "~/server/auth";
 import { api, HydrateClient } from "~/trpc/server";
-import { CalendarProvider } from "~/components/roadmap-ui/calendar";
+import {
+  CalendarDate,
+  CalendarDatePicker,
+  CalendarMonthPicker,
+  CalendarProvider,
+  CalendarYearPicker,
+} from "~/components/roadmap-ui/calendar";
 import {
   CalendarHeader,
   CalendarBody,
@@ -61,8 +67,14 @@ export default async function Home() {
 
           <CalendarProvider locale="en-US" startDay={0}>
             <div className="w-full max-w-lg rounded-lg bg-white/10 p-4">
-              <CalendarDatePagination className="mb-4" />
-              <CalendarHeader className="mb-4" />
+              <CalendarDate>
+                <CalendarDatePicker>
+                  <CalendarMonthPicker />
+                  <CalendarYearPicker start={2000} end={2050} />
+                </CalendarDatePicker>
+                <CalendarDatePagination />
+              </CalendarDate>
+              <CalendarHeader />
               <CalendarBody
                 features={mockFeatures}
                 renderedFeatures={renderedFeatures}
