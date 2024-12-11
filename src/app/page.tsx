@@ -4,11 +4,34 @@ import { LatestPost } from "~/app/_components/post";
 import { getServerAuthSession } from "~/server/auth";
 import { api, HydrateClient } from "~/trpc/server";
 
+import { CalendarProvider } from "~/components/roadmap-ui/calendar";
+import {
+  CalendarHeader,
+  CalendarBody,
+  CalendarDatePagination,
+  CalendarItem,
+} from "~/components/roadmap-ui/calendar";
+
+const mockFeatures = [
+  {
+    id: "1",
+    name: "Feature A",
+    startAt: new Date(2024, 0, 1),
+    endAt: new Date(2024, 0, 2),
+    status: { id: "1", name: "Active", color: "green" },
+  },
+  {
+    id: "2",
+    name: "Feature B",
+    startAt: new Date(2024, 0, 3),
+    endAt: new Date(2024, 0, 3),
+    status: { id: "2", name: "Inactive", color: "red" },
+  },
+];
+
 export default async function Home() {
   const hello = await api.post.hello({ text: "from tRPC" });
   const session = await getServerAuthSession();
-
-  //void api.post.getLatest.prefetch();
 
   return (
     <HydrateClient>
@@ -17,6 +40,23 @@ export default async function Home() {
           <h1 className="text-5xl font-extrabold tracking-tight sm:text-[5rem]">
             Create <span className="text-[hsl(280,100%,70%)]">T3</span> App
           </h1>
+
+          <CalendarProvider locale="en-US" startDay={0}>
+            <div className="w-full max-w-lg rounded-lg bg-white/10 p-4">
+              <CalendarDatePagination className="mb-4" />
+              <CalendarHeader className="mb-4" />
+              <CalendarBody
+                features={mockFeatures}
+                children={({ feature }) => (
+                  <CalendarItem
+                    feature={feature}
+                    className="bg-[hsl(280,100%,70%)] text-white"
+                  />
+                )}
+              />
+            </div>
+          </CalendarProvider>
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-8">
             <Link
               className="flex max-w-xs flex-col gap-4 rounded-xl bg-white/10 p-4 hover:bg-white/20"
@@ -41,6 +81,7 @@ export default async function Home() {
               </div>
             </Link>
           </div>
+
           <div className="flex flex-col items-center gap-2">
             <p className="text-2xl text-white">
               {hello ? hello.greeting : "Loading tRPC query..."}
