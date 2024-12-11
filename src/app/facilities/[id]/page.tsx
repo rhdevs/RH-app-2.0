@@ -23,11 +23,9 @@ const FacilityDetailsPage: React.FC = () => {
   const [facility, setFacility] = useState<Facility | null>(null);
 
   useEffect(() => {
-    console.log("fetching facility", id);
     if (id) {
       void fetchFacility(id).then((data) => {
         setFacility(data);
-        console.log(data);
       });
     }
   }, [id]);
