@@ -20,15 +20,15 @@ const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col align-center justify-center text-center p-10">
-      <h2 className="font-bold text-black text-lg">Login</h2>
+    <div className="align-center flex flex-col justify-center p-10 text-center">
+      <h2 className="text-lg font-bold text-black">Login</h2>
       <form onSubmit={handleSubmit}>
         <div>
           <label htmlFor="username">Username:</label>
           <input
             type="text"
             id="username"
-            className="border-2 rounded"
+            className="rounded border-2"
             value={username}
             onChange={handleUsernameChange}
           />
@@ -38,12 +38,12 @@ const LoginPage: React.FC = () => {
           <input
             type="password"
             id="password"
-            className="border-2 rounded"
+            className="rounded border-2"
             value={password}
             onChange={handlePasswordChange}
           />
         </div>
-        <button className="inline-block justify-center align-center text-center text-black bg-customBlue border border-black rounded-3xl px-5 min-h-10 hover:bg-customWhite hover:text-customBlue hover:scale-110">
+        <button className="align-center bg-customBlue hover:bg-customWhite hover:text-customBlue inline-block min-h-10 justify-center rounded-3xl border border-black px-5 text-center text-black hover:scale-110">
           Login
         </button>
       </form>

@@ -40,7 +40,7 @@ const facilityLinks = [
   { name: "Communal Hall", href: "/facilities/communal-hall" },
   { name: "Lower Lounge", href: "/facilities/lower-lounge" },
   { name: "Kuok Foundation House", href: "/facilities/kuok-foundation-house" },
-  { name: "Others", href: "/facilities/others" }
+  { name: "Others", href: "/facilities/others" },
 ];
 
 const Logo = () => (

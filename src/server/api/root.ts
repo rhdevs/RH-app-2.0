@@ -9,7 +9,7 @@ import { facilityRouter } from "./routers/facility";
  */
 export const appRouter = createTRPCRouter({
   post: postRouter,
-  facility: facilityRouter
+  facility: facilityRouter,
 });
 
 // export type definition of API
