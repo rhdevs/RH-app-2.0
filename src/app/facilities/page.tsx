@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import SuperJSON from "superjson";
-import { AppRouter } from "~/server/api/root";
+import { type AppRouter } from "~/server/api/root";
 
 interface Facility {
   name: string;
@@ -29,17 +29,19 @@ function formatDashedString(input: string): string {
 const FacilitiesPage: React.FC = () => {
   const [facilities, setFacilities] = useState<Array<Facility> | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+
   useEffect(() => {
-    async function fetchFacility() {
-      try {
-        const response = await client.facility.getFacility.query();
+    client.facility.getFacility
+      .query()
+      .then((response) => {
         setFacilities(response);
-      } catch (error) {
+      })
+      .catch((error) => {
         console.log("Failed to fetch facility: ", error);
-      }
-    }
-    fetchFacility();
-    setLoading(false);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
 
   if (loading) {
@@ -53,9 +55,12 @@ const FacilitiesPage: React.FC = () => {
   return (
     <div className="align-center flex flex-col justify-center p-5 text-center">
       <h1 className="mb-3 text-xl font-bold">Facilities Page</h1>
-      {(facilities || []).map((facility: Facility) => {
+      {(facilities ?? []).map((facility: Facility) => {
         return (
-          <div key={facility.name} className="m-1 flex flex-col rounded-xl border border-black bg-green-100 p-1">
+          <div
+            key={facility.name}
+            className="m-1 flex flex-col rounded-xl border border-black bg-green-100 p-1"
+          >
             <h1 className="text-lg">{facility.name}</h1>
             <h1 className="text-sm">{formatDashedString(facility.category)}</h1>
           </div>
