@@ -41,9 +41,12 @@ const navLinks = [
 ];
 
 const facilityLinks = [
-  { name: "Gym", href: "/facilities/gym" },
-  { name: "Study Area", href: "/facilities/study-area" },
-  { name: "Common Room", href: "/facilities/common-room" },
+  { name: "All", href: "/facilities" },
+  { name: "Upper Lounge", href: "/facilities/upper-lounge" },
+  { name: "Communal Hall", href: "/facilities/communal-hall" },
+  { name: "Lower Lounge", href: "/facilities/lower-lounge" },
+  { name: "Kuok Foundation House", href: "/facilities/kuok-foundation-house" },
+  { name: "Others", href: "/facilities/others" }
 ];
 
 const Logo = () => (

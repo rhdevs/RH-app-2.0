@@ -2,42 +2,68 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { createTRPCClient, httpBatchLink } from "@trpc/client";
+import SuperJSON from "superjson";
+import { AppRouter } from "~/server/api/root";
 
 interface Facility {
   name: string;
-  description: string;
+  category: string;
 }
 
-async function fetchFacility(id: string): Promise<Facility | null> {
-  // Replace with actual API call or database fetch logic
-  const facilities: Record<string, Facility> = {
-    "1": { name: "Gym", description: "A modern gym with equipment." },
-    "2": { name: "Study Room", description: "A quiet place to study." },
-  };
+const client = createTRPCClient<AppRouter>({
+  links: [
+    httpBatchLink({
+      url: "http://localhost:3000/api/trpc",
+      transformer: SuperJSON,
+    }),
+  ],
+});
 
-  return facilities[id] ?? null;
+function formatDashedString(input: string): string {
+  return input
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
 }
 
 const FacilityDetailsPage: React.FC = () => {
   const { id } = useParams() as { id: string };
-  const [facility, setFacility] = useState<Facility | null>(null);
+  const [facilities, setFacilities] = useState<Array<Facility> | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    if (id) {
-      void fetchFacility(id).then((data) => {
-        setFacility(data);
-      });
+    async function fetchFacility() {
+      try {
+        const response = await client.facility.getFacility.query();
+        setFacilities(response);
+      } catch (error) {
+        console.log("Failed to fetch facility: ", error);
+      }
     }
-  }, [id]);
+    fetchFacility();
+    setLoading(false);
+  }, []);
 
-  if (!facility) {
-    return <div>Facility not found</div>;
-  }
+  console.log("id: ", id);
+  console.log(facilities);
 
   return (
-    <div>
-      <h1>{facility.name}</h1>
-      <p>{facility.description}</p>
+    <div className="align-center flex flex-col justify-center p-5 text-center">
+      <h1 className="mb-3 text-xl font-bold">Facilities Page</h1>
+      {(facilities || []).map((facility: Facility) => {
+        return facility.category === id ? (
+          <div
+            key={facility.name}
+            className="m-1 flex flex-col rounded-xl border border-black bg-green-100 p-1"
+          >
+            <h1 className="text-lg">{facility.name}</h1>
+            <h1 className="text-sm">{formatDashedString(facility.category)}</h1>
+          </div>
+        ) : (
+          <div></div>
+        );
+      })}
     </div>
   );
 };
