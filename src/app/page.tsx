@@ -9,8 +9,6 @@ import {
   CalendarMonthPicker,
   CalendarProvider,
   CalendarYearPicker,
-} from "~/components/roadmap-ui/calendar";
-import {
   CalendarHeader,
   CalendarBody,
   CalendarDatePagination,
@@ -32,30 +30,18 @@ const mockFeatures = [
     endAt: new Date(2024, 0, 3),
     status: { id: "2", name: "Inactive", color: "red" },
   },
+  {
+    id: "3",
+    name: "Feature C",
+    startAt: new Date(2024, 0, 3),
+    endAt: new Date(2024, 0, 6),
+    status: { id: "1", name: "Active", color: "green" },
+  },
 ];
 
 export default async function Home() {
   const hello = await api.post.hello({ text: "from tRPC" });
   const session = await getServerAuthSession();
-
-  const renderedFeatures = mockFeatures.reduce<Record<number, ReactNode>>(
-    (acc, feature) => {
-      const day = new Date(feature.endAt).getDate();
-      if (!acc[day]) acc[day] = [];
-      acc[day] = (
-        <>
-          {acc[day]}
-          <CalendarItem
-            key={feature.id}
-            feature={feature}
-            className="bg-[hsl(280,100%,70%)] text-white"
-          />
-        </>
-      );
-      return acc;
-    },
-    {},
-  );
 
   return (
     <HydrateClient>
@@ -66,19 +52,20 @@ export default async function Home() {
           </h1>
 
           <CalendarProvider locale="en-US" startDay={0}>
-            <div className="w-full max-w-lg rounded-lg bg-white/10 p-4">
+            <div className="w-full max-w-lg rounded-lg bg-white/10 p-6 shadow-md">
               <CalendarDate>
-                <CalendarDatePicker>
-                  <CalendarMonthPicker />
-                  <CalendarYearPicker start={2000} end={2050} />
+                <CalendarDatePicker className="flex gap-4">
+                  <CalendarMonthPicker className="rounded-lg bg-white/10 p-2 hover:bg-white/20" />
+                  <CalendarYearPicker
+                    start={2000}
+                    end={2050}
+                    className="rounded-lg bg-white/10 p-2 hover:bg-white/20"
+                  />
                 </CalendarDatePicker>
-                <CalendarDatePagination />
+                <CalendarDatePagination className="flex gap-2 text-sm text-gray-300" />
               </CalendarDate>
-              <CalendarHeader />
-              <CalendarBody
-                features={mockFeatures}
-                renderedFeatures={renderedFeatures}
-              />
+              <CalendarHeader className="mb-2 grid grid-cols-7 gap-2 text-sm text-gray-400" />
+              <CalendarBody features={mockFeatures} />
             </div>
           </CalendarProvider>
 

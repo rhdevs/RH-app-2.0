@@ -180,13 +180,9 @@ const OutOfBoundsDay = ({ day }: OutOfBoundsDayProps) => (
 
 export type CalendarBodyProps = {
   features: Feature[];
-  renderedFeatures: Record<number, ReactNode>;
 };
 
-export const CalendarBody = ({
-  features,
-  renderedFeatures,
-}: CalendarBodyProps) => {
+export const CalendarBody = ({ features }: CalendarBodyProps) => {
   const { month, year } = useCalendar();
   const { startDay } = useContext(CalendarContext);
   const daysInMonth = getDaysInMonth(new Date(year, month, 1));
@@ -220,7 +216,15 @@ export const CalendarBody = ({
         className="relative flex h-full w-full flex-col gap-1 p-1 text-xs text-muted-foreground"
       >
         {day}
-        <div>{renderedFeatures[day]}</div>
+        <div>
+          {featuresForDay.slice(0, 3).map((feature) => (
+            <CalendarItem
+              key={feature.id}
+              feature={feature}
+              className="bg-[hsl(280,100%,70%)] text-white"
+            />
+          ))}
+        </div>
         {featuresForDay.length > 3 && (
           <span className="block text-xs text-muted-foreground">
             +{featuresForDay.length - 3} more
