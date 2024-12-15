@@ -29,14 +29,15 @@
    cp .env.example .env
    ```
 
-4. **Install PostgreSQL and start a server**
+4. **Install MongoDB and start running it**
 
-   - Follow the instructions [here](https://www.postgresqltutorial.com/postgresql-getting-started/install-postgresql) to install PostgreSQL.
-   - Connect to your PostgreSQL database using [these steps](https://www.postgresqltutorial.com/postgresql-getting-started/connect-to-postgresql-database/).
+   - Follow the instructions(MacOS) [here](https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-os-x/)
+   - Follow the instructions(Windows) [here](https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-windows/)
 
 5. **Configure the database connection**
 
-   - Add your PostgreSQL connection string to the `.env` file by replacing the `DATABASE_URL` placeholder.
+   - Add your MongoDB connection string to the `.env` file by replacing the `DATABASE_URL` placeholder.
+   - Syntax would be "mongodb://localhost:27017/RHDevs" where 27017 is the default port and RHDevs is the database name that you wish to use
 
 6. **Push the Prisma schema to the database**
 
