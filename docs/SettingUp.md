@@ -29,15 +29,24 @@
    cp .env.example .env
    ```
 
-4. **Install MongoDB and start running it**
+4. **To set up MongoDB for development**
 
    - Follow the instructions(MacOS) [here](https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-os-x/)
    - Follow the instructions(Windows) [here](https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-windows/)
+   - Additionally, deploy it as a replica [set](https://www.mongodb.com/docs/manual/tutorial/deploy-replica-set/)
+
+   ```shell
+   mongod --replSet "rs0" --bind_ip localhost
+   ```
+   
+   - Then initiate the replica set. From `mongosh`, run `rs.initiate()` on replica set member 0.
+   
+  - If you are unable to deploy it as a replica set, you can create an account on [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) and create a free cluster.
 
 5. **Configure the database connection**
 
    - Add your MongoDB connection string to the `.env` file by replacing the `DATABASE_URL` placeholder.
-   - Syntax would be "mongodb://localhost:27017/RHDevs" where 27017 is the default port and RHDevs is the database name that you wish to use
+   - Syntax would be "mongodb://localhost:27017/rhapp" where 27017 is the default port and RHDevs is the database name that you wish to use
 
 6. **Push the Prisma schema to the database**
 
@@ -45,6 +54,12 @@
    bunx prisma db push
    # or
    npx prisma db push
+   ```
+   
+   - Seed the database with initial data
+
+   ```sh
+   prisma db seed
    ```
 
 7. **Install dependencies**
