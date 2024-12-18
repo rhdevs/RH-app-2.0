@@ -1,5 +1,4 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
 import { LatestPost } from "~/app/_components/post";
 import { getServerAuthSession } from "~/server/auth";
 import { api, HydrateClient } from "~/trpc/server";
@@ -12,7 +11,6 @@ import {
   CalendarHeader,
   CalendarBody,
   CalendarDatePagination,
-  CalendarItem,
 } from "~/components/roadmap-ui/calendar";
 
 const mockFeatures = [
