@@ -15,7 +15,7 @@ import {
   PopoverTrigger,
 } from "~/components/ui/popover";
 import { cn } from "~/lib/utils";
-import { getDay, getDaysInMonth, isSameDay } from "date-fns";
+import { getDay, getDaysInMonth, isWithinInterval } from "date-fns";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { type ReactNode, createContext, useContext, useState } from "react";
@@ -206,8 +206,12 @@ export const CalendarBody = ({ features }: CalendarBodyProps) => {
   }
 
   for (let day = 1; day <= daysInMonth; day++) {
+    const currentDate = new Date(year, month, day);
     const featuresForDay = features.filter((feature) => {
-      return isSameDay(new Date(feature.endAt), new Date(year, month, day));
+      return isWithinInterval(currentDate, {
+        start: new Date(feature.startAt),
+        end: new Date(feature.endAt),
+      });
     });
 
     days.push(
