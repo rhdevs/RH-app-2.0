@@ -258,15 +258,9 @@ export const CalendarBody = ({ features }: CalendarBodyProps) => {
   }
 
   return (
-    <div className="grid flex-grow grid-cols-7">
+    <div className="grid grid-cols-7 grid-rows-1 sm:grid-rows-3">
       {days.map((day, index) => (
-        <div
-          key={index}
-          className={cn(
-            "relative aspect-square overflow-hidden border-r border-t",
-            index % 7 === 6 && "border-r-0",
-          )}
-        >
+        <div key={index} className="col-span-1 row-span-3 sm:row-span-1">
           {day}
         </div>
       ))}
@@ -418,14 +412,12 @@ export type CalendarItemProps = {
 };
 
 export const CalendarItem = ({ feature, className }: CalendarItemProps) => (
-  <div className={cn("flex items-center gap-2", className)} key={feature.id}>
-    <div
-      className="h-2 w-2 shrink-0 rounded-full"
-      style={{
-        backgroundColor: feature.status.color,
-      }}
-    />
-    <span className="truncate">{feature.name}</span>
+  <div
+    className={`flex min-h-8 items-center justify-between rounded-lg px-2 py-1 text-white ${className}`}
+    style={{ backgroundColor: feature.status.color }}
+    key={feature.id}
+  >
+    <span className="truncate text-xs">{feature.name}</span>
   </div>
 );
 

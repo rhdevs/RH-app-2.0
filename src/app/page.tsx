@@ -94,7 +94,7 @@ export default async function Home() {
               </CalendarDatePicker>
               <CalendarDatePagination className="hidden gap-2 text-sm text-gray-300 md:flex" />
             </CalendarDate>
-            <CalendarHeader className="mb-2 grid grid-cols-7 gap-2 text-sm text-gray-400" />
+            <CalendarHeader className="mb-2 grid grid-cols-7 gap-1 text-xs sm:text-sm" />
             <CalendarBody features={mockFeatures} />
           </CalendarProvider>
 
