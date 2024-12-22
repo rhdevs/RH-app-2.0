@@ -51,9 +51,9 @@
 6. **Push the Prisma schema to the database**
 
    ```sh
-   bunx prisma db push
+   bunx prisma db push --force-reset
    # or
-   npx prisma db push
+   npx prisma db push --force-reset
    ```
    
    - Seed the database with initial data
