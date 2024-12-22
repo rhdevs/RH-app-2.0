@@ -13,6 +13,7 @@ import {
 import {
   HamburgerMenuIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
   CalendarIcon,
   BoxIcon,
   HomeIcon,
@@ -24,13 +25,6 @@ const navLinks = [
     description: "Raffles Hall is a student-run hall in NUS.",
     href: "/",
     icon: HomeIcon,
-  },
-  {
-    name: "Facilities",
-    description: "See the facilities available in Raffles Hall.",
-    href: "/facilities",
-    icon: BoxIcon,
-    hideOnDesktop: true,
   },
   {
     name: "Your bookings",
@@ -72,35 +66,33 @@ const MobileMenuButton = ({ onClick }: { onClick: () => void }) => (
 
 const DesktopNav = () => (
   <div className="hidden lg:flex lg:gap-x-12">
-    {navLinks
-      .filter((item) => !item.hideOnDesktop)
-      .map((item) => (
-        <a
-          key={item.name}
-          href={item.href}
-          className="text-lg font-semibold leading-6 text-white hover:text-indigo-300"
-        >
-          {item.name}
-        </a>
-      ))}
+    {navLinks.map((item) => (
+      <a
+        key={item.name}
+        href={item.href}
+        className="text-lg font-semibold leading-6 text-white hover:text-indigo-300"
+      >
+        {item.name}
+      </a>
+    ))}
     <Popover>
       <PopoverTrigger className="flex items-center gap-x-1 text-lg font-semibold leading-6 text-white hover:text-indigo-300">
         Facilities
-        <ChevronDownIcon
-          className="text-bold h-6 w-6 flex-none text-white"
-          aria-hidden="true"
-        />
+        <ChevronDownIcon className="h-6 w-6 text-white" aria-hidden="true" />
       </PopoverTrigger>
-      <PopoverContent className="absolute left-1/2 top-full z-10 mt-3 w-48 -translate-x-1/2 transform rounded-lg bg-white p-4 shadow-md ring-1 ring-gray-300">
-        {facilityLinks.map((item) => (
-          <a
-            key={item.name}
-            href={item.href}
-            className="block rounded-lg px-2 py-1 text-sm font-semibold leading-6 text-gray-900 transition-colors duration-150 hover:bg-green-200"
-          >
-            {item.name}
-          </a>
-        ))}
+      <PopoverContent className="absolute z-10 mt-2 w-56 transform rounded-lg bg-white p-4 shadow-lg ring-1 ring-gray-300">
+        <ul className="space-y-2">
+          {facilityLinks.map((item) => (
+            <li key={item.name}>
+              <a
+                href={item.href}
+                className="block rounded-md px-4 py-2 text-sm font-medium text-gray-700 transition-colors duration-150 hover:bg-indigo-100 hover:text-indigo-700"
+              >
+                {item.name}
+              </a>
+            </li>
+          ))}
+        </ul>
       </PopoverContent>
     </Popover>
   </div>
@@ -112,47 +104,91 @@ const MobileMenu = ({
 }: {
   mobileMenuOpen: boolean;
   setMobileMenuOpen: (open: boolean) => void;
-}) => (
-  <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-    <DialogContent className="bg-white sm:max-w-[425px]">
-      <div className="flex items-center justify-between">
-        <Logo />
-        <DialogClose className="-m-2.5 rounded-md p-2.5 text-gray-700 hover:bg-gray-200">
-          <span className="sr-only">Close menu</span>
-        </DialogClose>
-      </div>
-      <div className="mt-4 flow-root">
-        <div className="-my-6 divide-y divide-gray-500/10">
-          <div className="space-y-2 py-6">
-            {navLinks.map((item) => (
-              <a
-                key={item.name}
-                href={item.href}
-                className="group flex items-center gap-x-4 rounded-lg p-3 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
+}) => {
+  const [isFacilitiesDropdownOpen, setFacilitiesDropdownOpen] = useState(false);
+
+  const toggleFacilitiesDropdown = () => {
+    setFacilitiesDropdownOpen(!isFacilitiesDropdownOpen);
+  };
+
+  return (
+    <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+      <DialogContent className="bg-white sm:max-w-[425px]">
+        <div className="flex items-center justify-between">
+          <Logo />
+          <DialogClose className="-m-2.5 rounded-md p-2.5 text-gray-700 hover:bg-gray-200">
+            <span className="sr-only">Close menu</span>
+          </DialogClose>
+        </div>
+        <div className="mt-4 flow-root">
+          <div className="-my-6 divide-y divide-gray-500/10">
+            <div className="space-y-2 py-6">
+              {navLinks.map((item) => (
+                <a
+                  key={item.name}
+                  href={item.href}
+                  className="group flex items-center gap-x-4 rounded-lg p-3 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
+                >
+                  <div className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-gray-50 group-hover:bg-indigo-600">
+                    <item.icon
+                      className="h-6 w-6 text-gray-600 group-hover:text-white"
+                      aria-hidden="true"
+                    />
+                  </div>
+                  {item.name}
+                </a>
+              ))}
+
+              {/* Facilities Toggle */}
+              <button
+                onClick={toggleFacilitiesDropdown}
+                className="group flex w-full items-center gap-x-4 rounded-lg p-3 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
               >
                 <div className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-gray-50 group-hover:bg-indigo-600">
-                  <item.icon
+                  <BoxIcon
                     className="h-6 w-6 text-gray-600 group-hover:text-white"
                     aria-hidden="true"
                   />
                 </div>
-                {item.name}
+                Facilities
+                {isFacilitiesDropdownOpen ? (
+                  <ChevronUpIcon className="ml-auto h-5 w-5 text-gray-500" />
+                ) : (
+                  <ChevronDownIcon className="ml-auto h-5 w-5 text-gray-500" />
+                )}
+              </button>
+
+              {/* Conditional Rendering for Facilities Links */}
+              {isFacilitiesDropdownOpen && (
+                <div className="ml-8 space-y-2">
+                  {facilityLinks.map((facility) => (
+                    <a
+                      key={facility.name}
+                      href={facility.href}
+                      className="block rounded-lg px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                    >
+                      {facility.name}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Login Link */}
+            <div className="py-6">
+              <a
+                href="/login"
+                className="block rounded-lg px-3 py-2.5 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
+              >
+                Log in
               </a>
-            ))}
-          </div>
-          <div className="py-6">
-            <a
-              href="/login"
-              className="block rounded-lg px-3 py-2.5 text-base font-semibold leading-6 text-gray-900 hover:bg-gray-50"
-            >
-              Log in
-            </a>
+            </div>
           </div>
         </div>
-      </div>
-    </DialogContent>
-  </Dialog>
-);
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
