@@ -18,50 +18,50 @@ const mockFeatures = [
   {
     id: "1",
     name: "Feature A",
-    startAt: new Date(2024, 11, 1),
-    endAt: new Date(2024, 11, 2),
+    startAt: new Date(2024, 11, 1, 9, 30), // December 1, 2024, 9:30 AM
+    endAt: new Date(2024, 11, 1, 17, 0), // December 1, 2024, 5:00 PM
     status: { id: "1", name: "Active", color: "green" },
   },
   {
     id: "2",
     name: "Feature B",
-    startAt: new Date(2024, 11, 3),
-    endAt: new Date(2024, 11, 3),
+    startAt: new Date(2024, 11, 3, 8, 0), // December 3, 2024, 8:00 AM
+    endAt: new Date(2024, 11, 3, 12, 0), // December 3, 2024, 12:00 PM
     status: { id: "2", name: "Inactive", color: "red" },
   },
   {
     id: "3",
     name: "Feature C",
-    startAt: new Date(2024, 11, 3),
-    endAt: new Date(2024, 11, 6),
+    startAt: new Date(2024, 11, 3, 14, 0), // December 3, 2024, 2:00 PM
+    endAt: new Date(2024, 11, 6, 15, 30), // December 6, 2024, 3:30 PM
     status: { id: "1", name: "Active", color: "green" },
   },
   {
     id: "4",
     name: "Feature D",
-    startAt: new Date(2024, 11, 3),
-    endAt: new Date(2024, 11, 3),
+    startAt: new Date(2024, 11, 3, 10, 0), // December 3, 2024, 10:00 AM
+    endAt: new Date(2024, 11, 3, 16, 0), // December 3, 2024, 4:00 PM
     status: { id: "3", name: "Pending", color: "yellow" },
   },
   {
     id: "5",
     name: "Feature E",
-    startAt: new Date(2024, 11, 3),
-    endAt: new Date(2024, 11, 3),
+    startAt: new Date(2024, 11, 3, 11, 0), // December 3, 2024, 11:00 AM
+    endAt: new Date(2024, 11, 3, 11, 30), // December 3, 2024, 11:30 AM
     status: { id: "4", name: "Completed", color: "blue" },
   },
   {
     id: "6",
     name: "Long Event",
-    startAt: new Date(2024, 11, 4),
-    endAt: new Date(2024, 11, 10),
+    startAt: new Date(2024, 11, 4, 9, 0), // December 4, 2024, 9:00 AM
+    endAt: new Date(2024, 11, 10, 22, 0), // December 10, 2024, 10:00 PM
     status: { id: "1", name: "Active", color: "purple" },
   },
   {
     id: "7",
     name: "Overlap Event",
-    startAt: new Date(2024, 11, 5),
-    endAt: new Date(2024, 11, 7),
+    startAt: new Date(2024, 11, 5, 12, 0), // December 5, 2024, 12:00 PM
+    endAt: new Date(2024, 11, 7, 18, 0), // December 7, 2024, 6:00 PM
     status: { id: "5", name: "Urgent", color: "orange" },
   },
 ];
