@@ -280,12 +280,14 @@ export const CalendarBody = ({ features }: CalendarBodyProps) => {
   }
 
   return (
-    <div className="grid grid-cols-7 grid-rows-1 sm:grid-rows-3">
-      {days.map((day, index) => (
-        <div key={index} className="col-span-1 row-span-3 sm:row-span-1">
-          {day}
-        </div>
-      ))}
+    <div className="flex flex-col">
+      <div className="grid grid-cols-7 grid-rows-1 sm:grid-rows-3">
+        {days.map((day, index) => (
+          <div key={index} className="col-span-1 row-span-3 sm:row-span-1">
+            {day}
+          </div>
+        ))}
+      </div>
       <SelectedDayDetails
         selectedDate={selectedDay}
         features={selectedFeatures}
@@ -481,7 +483,7 @@ export const SelectedDayDetails = ({
   }
 
   return (
-    <div className="rounded-lg bg-background p-4 shadow-md">
+    <div className="mt-2 rounded-lg bg-background p-4 shadow-md">
       <h2 className="text-lg font-semibold text-foreground">
         Events on {selectedDate.toLocaleDateString()}
       </h2>
