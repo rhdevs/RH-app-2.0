@@ -482,21 +482,43 @@ export const SelectedDayDetails = ({
     );
   }
 
+  // Function to format date and time
+  const formatDateTime = (date: Date) => {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(date);
+  };
+
+  // Sort features by start time
+  const sortedFeatures = features.sort(
+    (a, b) => a.startAt.getTime() - b.startAt.getTime(),
+  );
+
   return (
     <div className="mt-2 rounded-lg bg-background p-4 shadow-md">
       <h2 className="text-lg font-semibold text-foreground">
-        Events on {selectedDate.toLocaleDateString()}
+        Events on{" "}
+        {new Intl.DateTimeFormat("en-US", {
+          month: "long",
+          day: "2-digit",
+        }).format(selectedDate)}
       </h2>
       <ul className="mt-2 space-y-2">
-        {features.map((feature) => (
-          <li key={feature.id} className="mt-1">
-            <span className="block rounded bg-secondary p-2 text-foreground">
-              {feature.name} - {feature.status.name}
-              <span
-                className="ml-2 inline-block h-2 w-2 rounded-full"
-                style={{ backgroundColor: feature.status.color }}
-              />
-            </span>
+        {sortedFeatures.map((feature) => (
+          <li
+            key={feature.id}
+            className="mt-1 rounded p-2"
+            style={{ backgroundColor: feature.status.color }}
+          >
+            <div className="font-semibold text-white">{feature.name}</div>
+            <div className="text-sm text-white opacity-75">
+              {formatDateTime(feature.startAt)} to{" "}
+              {formatDateTime(feature.endAt)}
+            </div>
           </li>
         ))}
       </ul>
