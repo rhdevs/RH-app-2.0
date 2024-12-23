@@ -1,110 +1,315 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
-    // NOTE: When using mysql or sqlserver, uncomment the @db.Text annotations in model Account below
-    // Further reading:
-    // https://next-auth.js.org/adapters/prisma#create-the-prisma-schema
-    // https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
-    url      = env("DATABASE_URL")
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
 }
 
-model Post {
-    id        Int      @id @default(autoincrement())
-    name      String
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    createdBy   User   @relation(fields: [createdById], references: [id])
-    createdById String
-
-    @@index([name])
+type FoodMenuCustom {
+  max     Int
+  min     Int
+  options FoodMenuCustomOptions[]
+  title   String
 }
 
-// Necessary for Next auth
-model Account {
-    id                       String  @id @default(cuid())
-    userId                   String
-    type                     String
-    provider                 String
-    providerAccountId        String
-    refresh_token            String? // @db.Text
-    access_token             String? // @db.Text
-    expires_at               Int?
-    token_type               String?
-    scope                    String?
-    id_token                 String? // @db.Text
-    session_state            String?
-    user                     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-    refresh_token_expires_in Int?
+type FoodMenuCustomOptions {
+  name  String
+  /// Multiple data types found: Float: 44%, Int: 56% out of 1578 sampled entries
+  price Json
+}
 
-    @@unique([provider, providerAccountId])
+type FoodOrderCustom {
+  max     Int
+  min     Int
+  options FoodOrderCustomOptions[]
+  title   String
+}
+
+type FoodOrderCustomOptions {
+  isSelected Boolean
+  name       String
+  /// Multiple data types found: Float: 34.2%, Int: 65.8% out of 468 sampled entries
+  price      Json
+}
+
+type FoodOrderData {
+  cancelAction String
+  custom       FoodOrderDataCustom[]
+  foodMenuId   String
+  foodName     String
+  foodPrice    Float
+  price        Float
+  quantity     Int
+}
+
+type FoodOrderDataCustom {
+  max     Int
+  min     Int
+  options FoodOrderDataCustomOptions[]
+  title   String
+}
+
+type FoodOrderDataCustomOptions {
+  isSelected Boolean
+  name       String
+  /// Multiple data types found: Float: 45.2%, Int: 54.8% out of 42 sampled entries
+  price      Json
+}
+
+type FoodOrderUpdates {
+  reason       String
+  updateAction String
+  updatedPrice Int
+}
+
+type GymKeyHolder {
+  displayName    String
+  telegramHandle String
+}
+
+type SupperGroupPaymentInfo {
+  link          String?
+  paymentMethod String
+}
+
+model BookingLogs {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  action       String
+  /// Multiple data types found: Int: 98.2%, BigInt: 1.8% out of 114 sampled entries
+  bookUntil    Json?
+  /// Multiple data types found: String: 23.6%, Int: 76.4% out of 971 sampled entries
+  bookingID    Json?
+  ccaID        Int?
+  description  String?
+  endDate      Int?
+  endTime      Int?
+  eventName    String?
+  facilities   Int[]
+  facilityID   Int?
+  /// Multiple data types found: Boolean: 86.2%, Int: 13.8% out of 145 sampled entries
+  forceBook    Json?
+  forceBooking Boolean?
+  repeat       Int?
+  startTime    Int?
+  timeStamp    String?
+  userID       String?
+}
+
+model Bookings {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  bookUntil   Int?
+  bookingID   Int      @unique(map: "bookingID")
+  ccaID       Int
+  description String?
+  endTime     Int
+  eventName   String?
+  facilityID  Int
+  forceBook   Boolean?
+  repeat      Int?
+  startTime   Int
+  userID      String
+
+  @@index([facilityID, startTime, endTime], map: "facility + time")
+  @@index([userID], map: "userID")
+}
+
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model CCA {
+  id       String @id @default(auto()) @map("_id") @db.ObjectId
+  category String
+  ccaID    Int    @unique(map: "ccaID")
+  ccaName  String
+}
+
+model Crowd {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  facilityID Int
+  key        String
+  level      Int
+  time       Int
+}
+
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model Facilities {
+  id               String @id @default(auto()) @map("_id") @db.ObjectId
+  facilityID       Int    @unique(map: "facilityID")
+  facilityLocation String
+  facilityName     String
+}
+
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model FoodMenu {
+  id           String           @id @default(auto()) @map("_id") @db.ObjectId
+  custom       FoodMenuCustom[]
+  foodMenuName String
+  /// Multiple data types found: Float: 53.2%, Int: 46.8% out of 355 sampled entries
+  price        Json
+  restaurantId String           @db.ObjectId
+  section      String
+}
+
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model FoodOrder {
+  id           String            @id @default(auto()) @map("_id") @db.ObjectId
+  cancelAction String
+  comments     String?
+  custom       FoodOrderCustom[]
+  data         FoodOrderData?
+  foodMenuId   String            @db.ObjectId
+  foodName     String
+  /// Multiple data types found: Float: 48.8%, Int: 51.2% out of 43 sampled entries
+  foodPrice    Json
+  /// Multiple data types found: Float: 53.5%, Int: 46.5% out of 43 sampled entries
+  price        Json
+  quantity     Int
+  restaurantId String            @db.ObjectId
+  status       String?
+  updates      FoodOrderUpdates?
+}
+
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model Gym {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  gymIsOpen      Boolean
+  keyHolder      GymKeyHolder
+  keyIsReturned  Boolean
+  requestTime    Int
+  statusChange   String
+  telegramHandle String?
+  userID         String
+
+  @@index([requestTime], map: "requesttime")
+}
+
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model Order {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  createdAt     Int
+  foodIds       String[]
+  hasPaid       Boolean
+  hasReceived   Boolean
+  notification  String?
+  paymentMethod String
+  supperGroupId Int
+  /// Multiple data types found: Float: 45.9%, Int: 54.1% out of 37 sampled entries
+  totalCost     Json
+  userContact   Int
+  userID        String
+
+  @@index([supperGroupId], map: "supperGroupId")
+  @@index([foodIds], map: "foodID")
+  @@index([userID], map: "userID")
+}
+
+model PasswordResetSession {
+  id                  String @id @default(auto()) @map("_id") @db.ObjectId
+  email               String
+  /// Field referred in an index, but found no data to define the type.
+  resetTokenCreatedAt Json?
+  userID              String
+
+  @@index([resetTokenCreatedAt], map: "resetTokenCreatedAt_1")
+}
+
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model Posts {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  ccaID       Int
+  createdAt   Int
+  description String
+  isOfficial  Boolean
+  postPics    String[]
+  /// Could not determine type: the field only had null or empty values in the sample set.
+  tags        Json?
+  title       String
+  userID      String
+
+  @@index([createdAt], map: "createdAT")
+  @@index([isOfficial, createdAt(sort: Desc)], map: "isOfficial, createdAt")
+  @@index([userID, createdAt(sort: Desc)], map: "userID, createdAt")
+}
+
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model Restaurants {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  allSection     String[]
+  name           String
+  restaurantLogo String
 }
 
 model Session {
-    id           String   @id @default(cuid())
-    sessionToken String   @unique
-    userId       String
-    expires      DateTime
-    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  /// Field referred in an index, but found no data to define the type.
+  createdAt    Json?
+  /// Field referred in an index, but found no data to define the type.
+  passwordHash Json?
+  /// Field referred in an index, but found no data to define the type.
+  userID       Json?
+
+  @@index([createdAt], map: "createdAt_1")
+  @@index([userID, passwordHash], map: "userID_1_passwordHash_1")
 }
 
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model SupperGroup {
+  id                  String                   @id @default(auto()) @map("_id") @db.ObjectId
+  additionalCost      Int
+  closingTime         Int
+  comments            String?
+  costLimit           Int?
+  createdAt           Int
+  /// Multiple data types found: Float: 39.1%, Int: 60.9% out of 23 sampled entries
+  currentFoodCost     Json
+  estArrivalTime      Int?
+  isPrivate           Boolean?
+  location            String
+  numOrders           Int
+  ownerId             String
+  ownerName           String
+  ownerTele           String
+  paymentInfo         SupperGroupPaymentInfo[]
+  phoneNumber         Int
+  restaurantId        String
+  restaurantName      String
+  splitAdditionalCost String
+  status              String
+  supperGroupId       Int                      @unique(map: "supperGroupId", sort: Desc)
+  supperGroupName     String
+  /// Multiple data types found: Float: 39.1%, Int: 60.9% out of 23 sampled entries
+  totalPrice          Json
+  userIdList          String[]
+  wasDeliveryUpdated  Boolean?
+}
+
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
 model User {
-    id            String       @id @default(cuid())
-    name          String?
-    email         String?      @unique
-    emailVerified DateTime?
-    image         String?
-    accounts      Account[]
-    sessions      Session[]
-    posts         Post[]
-    bookings      Booking[]
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  bio                 String?
+  block               Int?
+  displayName         String?
+  email               String
+  imageKey            String?
+  merged              Boolean?
+  modules             String[]
+  passwordHash        String
+  profilePicSignedUrl String?
+  profilePicURI       String?
+  profilePictureURI   String?
+  profilePictureUrl   String?
+  telegramHandle      String?
+  token               String?
+  /// Multiple data types found: Json: 1.4%, Array(String): 1.4%, Array(Int): 97.2% out of 350 sampled entries
+  userCCA             Json?
+  userID              String   @unique
+
+  @@unique([userID, passwordHash], map: "userID, passwordHash")
 }
 
-model VerificationToken {
-    identifier String
-    token      String   @unique
-    expires    DateTime
-
-    @@unique([identifier, token])
-}
-
-model Facility {
-    id          String     @id @default(cuid())
-    name        String     @unique
-    description String
-    maxPeople   Int
-    location    String     // Optional: Add location details
-    createdAt   DateTime   @default(now())
-    updatedAt   DateTime   @updatedAt
-
-    bookings    Booking[]
-
-    @@index([name, location])
-}
-
-model Booking {
-    id          String    @id @default(cuid())
-    user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-    userId      String
-    facility    Facility  @relation(fields: [facilityId], references: [id], onDelete: Cascade)
-    facilityId  String
-    startTime   DateTime
-    endTime     DateTime
-    createdAt   DateTime  @default(now())
-    updatedAt   DateTime  @updatedAt
-    status      BookingStatus @default(PENDING)
-
-    @@index([facilityId, startTime, endTime])
-}
-
-enum BookingStatus {
-    PENDING
-    CONFIRMED
-    CANCELLED
+/// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+model UserCCA {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  ccaID  Int
+  userID String
 }

@@ -15,8 +15,12 @@
     "lint": "next lint",
     "start": "next start"
   },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
     "@auth/prisma-adapter": "^1.6.0",
+    "@faker-js/faker": "^9.3.0",
     "@hookform/resolvers": "^3.9.0",
     "@prisma/client": "^6.0.1",
     "@radix-ui/react-accordion": "^1.2.0",
@@ -82,7 +86,7 @@
     "@eslint/js": "^9.10.0",
     "@types/eslint": "^8.56.10",
     "@types/eslint__js": "^8.42.3",
-    "@types/node": "^20.14.10",
+    "@types/node": "^20.17.10",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@typescript-eslint/eslint-plugin": "^8.5.0",
@@ -98,7 +102,9 @@
     "prettier-plugin-tailwindcss": "^0.6.5",
     "prisma": "^6.0.1",
     "tailwindcss": "^3.4.3",
-    "typescript": "^5.5.3",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
     "typescript-eslint": "^8.5.0"
   },
   "ct3aMetadata": {
