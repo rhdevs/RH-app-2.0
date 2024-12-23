@@ -219,14 +219,22 @@ export const CalendarBody = ({ features }: CalendarBodyProps) => {
         key={day}
         className="relative flex h-full w-full flex-col gap-1 p-1 text-xs text-muted-foreground"
       >
-        {day}
-        <div>
+        <span>{day}</span>
+        <div className="flex flex-wrap gap-1">
           {featuresForDay.slice(0, 3).map((feature) => (
-            <CalendarItem
-              key={feature.id}
-              feature={feature}
-              className="bg-[hsl(280,100%,70%)] text-white"
-            />
+            <>
+              {/* Dot for small screens */}
+              <div
+                className={`block h-2 w-2 rounded-full md:hidden`}
+                style={{ backgroundColor: feature.status.color }}
+              />
+
+              {/* Full item for larger screens */}
+              <CalendarItem
+                feature={feature}
+                className="hidden bg-[hsl(280,100%,70%)] text-white md:flex"
+              />
+            </>
           ))}
         </div>
         {featuresForDay.length > 3 && (
