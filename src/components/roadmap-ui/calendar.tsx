@@ -197,6 +197,19 @@ export const CalendarBody = ({ features }: CalendarBodyProps) => {
     (_, i) => i + 1,
   );
 
+  const [selectedDay, setSelectedDay] = useState(new Date());
+  const [selectedFeatures, setSelectedFeatures] = useState<Feature[]>([]);
+  const handleDayClick = (day: Date) => {
+    const featuresForDay = features.filter((feature) =>
+      isWithinInterval(day, {
+        start: new Date(feature.startAt),
+        end: new Date(feature.endAt),
+      }),
+    );
+    setSelectedDay(day);
+    setSelectedFeatures(featuresForDay);
+  };
+
   for (let i = 0; i < firstDay; i++) {
     const day = prevMonthDaysArray[prevMonthDays - firstDay + i];
 
@@ -218,6 +231,7 @@ export const CalendarBody = ({ features }: CalendarBodyProps) => {
       <div
         key={day}
         className="relative flex h-full w-full flex-col gap-1 p-1 text-xs text-muted-foreground"
+        onClick={() => handleDayClick(currentDate)}
       >
         <span>{day}</span>
         <div className="flex flex-wrap gap-1">
@@ -272,6 +286,10 @@ export const CalendarBody = ({ features }: CalendarBodyProps) => {
           {day}
         </div>
       ))}
+      <SelectedDayDetails
+        selectedDate={selectedDay}
+        features={selectedFeatures}
+      />
     </div>
   );
 };
@@ -446,3 +464,40 @@ export const CalendarProvider = ({
     <div className={cn("relative flex flex-col", className)}>{children}</div>
   </CalendarContext.Provider>
 );
+
+export type SelectedDayDetailsProps = {
+  selectedDate: Date | null;
+  features: Feature[];
+};
+
+export const SelectedDayDetails = ({
+  selectedDate,
+  features,
+}: SelectedDayDetailsProps) => {
+  if (!selectedDate || features.length === 0) {
+    return (
+      <div className="p-4 text-muted-foreground">No events for this day.</div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg bg-background p-4 shadow-md">
+      <h2 className="text-lg font-semibold text-foreground">
+        Events on {selectedDate.toLocaleDateString()}
+      </h2>
+      <ul className="mt-2 space-y-2">
+        {features.map((feature) => (
+          <li key={feature.id} className="mt-1">
+            <span className="block rounded bg-secondary p-2 text-foreground">
+              {feature.name} - {feature.status.name}
+              <span
+                className="ml-2 inline-block h-2 w-2 rounded-full"
+                style={{ backgroundColor: feature.status.color }}
+              />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
