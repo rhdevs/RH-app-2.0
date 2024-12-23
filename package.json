@@ -16,7 +16,7 @@
     "start": "next start"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "node --loader ts-node/esm prisma/seed.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^1.6.0",
@@ -111,8 +111,5 @@
   "ct3aMetadata": {
     "initVersion": "7.37.0"
   },
-  "packageManager": "npm@9.4.2",
-  "prisma": {
-    "seed": "node --loader ts-node/esm prisma/seed.ts"
-  }
+  "packageManager": "npm@9.4.2"
 }
