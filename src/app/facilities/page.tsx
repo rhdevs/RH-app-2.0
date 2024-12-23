@@ -1,23 +1,6 @@
-"use client";
+import React from "react";
+import { api } from "~/trpc/server";
 
-import React, { useState, useEffect } from "react";
-import { createTRPCClient, httpBatchLink } from "@trpc/client";
-import SuperJSON from "superjson";
-import { type AppRouter } from "~/server/api/root";
-
-interface Facility {
-  name: string;
-  category: string;
-}
-
-const client = createTRPCClient<AppRouter>({
-  links: [
-    httpBatchLink({
-      url: "http://localhost:3000/api/trpc",
-      transformer: SuperJSON,
-    }),
-  ],
-});
 
 function formatDashedString(input: string): string {
   return input
@@ -26,46 +9,28 @@ function formatDashedString(input: string): string {
     .join(" ");
 }
 
-const FacilitiesPage: React.FC = () => {
-  const [facilities, setFacilities] = useState<Array<Facility> | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  useEffect(() => {
-    client.facility.getFacility
-      .query()
-      .then((response) => {
-        setFacilities(response);
-      })
-      .catch((error) => {
-        console.log("Failed to fetch facility: ", error);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, []);
-
-  if (loading) {
-    return (
-      <div>
-        <h1>Loading...</h1>
-      </div>
-    );
-  }
+const FacilitiesPage: React.FC = async () => {
+  const facilities = await api.facility.getFacilities();
+  
+  console.log(facilities);
 
   return (
     <div className="align-center flex flex-col justify-center p-5 text-center">
       <h1 className="mb-3 text-xl font-bold">Facilities Page</h1>
-      {(facilities ?? []).map((facility: Facility) => {
-        return (
-          <div
-            key={facility.name}
-            className="m-1 flex flex-col rounded-xl border border-black bg-green-100 p-1"
-          >
-            <h1 className="text-lg">{facility.name}</h1>
-            <h1 className="text-sm">{formatDashedString(facility.category)}</h1>
-          </div>
-        );
-      })}
+      {(facilities ?? []).map( facility => {
+          return (
+            <div
+              key={facility.facilityID}
+              className="m-1 flex flex-col rounded-xl border border-black bg-green-100 p-1"
+            >
+              <h1 className="text-lg">{facility.facilityName}</h1>
+              <h1 className="text-sm">
+                {formatDashedString(facility.facilityLocation)}
+              </h1>
+            </div>
+          );
+        },
+      )}
     </div>
   );
 };
