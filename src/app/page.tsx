@@ -10,9 +10,9 @@ import {
   CalendarYearPicker,
   CalendarHeader,
   CalendarBody,
-  CalendarDatePagination
+  CalendarDatePagination,
 } from "~/components/roadmap-ui/calendar";
-import {startOfMonth, endOfMonth, getUnixTime, fromUnixTime} from "date-fns";
+import { startOfMonth, endOfMonth, getUnixTime, fromUnixTime } from "date-fns";
 
 const mockFeatures = [
   {
@@ -70,20 +70,22 @@ export default async function Home() {
   const hello = await api.post.hello({ text: "from tRPC" });
   const session = await getServerAuthSession();
 
-  const bookingsInMonth = await api.bookings.getBookings({
-    startTime: getUnixTime(startOfMonth(new Date())),
-    endTime: getUnixTime(endOfMonth(new Date())),
-  }).then((res) => {
-    return res.map((booking) =>  {
-      return {
-        id: booking.id,
-        name: booking.description ?? "Booking",
-        startAt: fromUnixTime(booking.startTime),
-        endAt: fromUnixTime(booking.endTime),
-        status: { id: booking.id, name: "Active", color: "green" }
-      }
+  const bookingsInMonth = await api.bookings
+    .getBookings({
+      startTime: getUnixTime(startOfMonth(new Date())),
+      endTime: getUnixTime(endOfMonth(new Date())),
     })
-  });
+    .then((res) => {
+      return res.map((booking) => {
+        return {
+          id: booking.id,
+          name: booking.description ?? "Booking",
+          startAt: fromUnixTime(booking.startTime),
+          endAt: fromUnixTime(booking.endTime),
+          status: { id: booking.id, name: "Active", color: "green" },
+        };
+      });
+    });
 
   // ToDo: display bookingsInMonth once implemented display of time
 
@@ -113,8 +115,7 @@ export default async function Home() {
               <CalendarDatePagination className="hidden gap-2 text-sm text-gray-300 md:flex" />
             </CalendarDate>
             <CalendarHeader className="mb-2 grid grid-cols-7 gap-1 text-xs sm:text-sm" />
-            <CalendarBody features={mockFeatures}>
-            </CalendarBody>
+            <CalendarBody features={mockFeatures}></CalendarBody>
           </CalendarProvider>
 
           <div className="flex flex-col items-center gap-2">
