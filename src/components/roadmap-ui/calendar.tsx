@@ -478,11 +478,14 @@ export const SelectedDayDetails = ({
 }: SelectedDayDetailsProps) => {
   if (!selectedDate || features.length === 0) {
     return (
-      <div className="p-4 text-muted-foreground">No events for this day.</div>
+      <div className="mt-2 rounded-lg bg-background p-4 shadow-md">
+        <h2 className="text-lg font-semibold text-foreground">
+          No events on this day
+        </h2>
+      </div>
     );
   }
 
-  // Function to format date and time
   const formatDateTime = (date: Date) => {
     return new Intl.DateTimeFormat("en-US", {
       month: "short",
@@ -493,7 +496,7 @@ export const SelectedDayDetails = ({
     }).format(date);
   };
 
-  // Sort features by start time
+  // Remove if db is sorted
   const sortedFeatures = features.sort(
     (a, b) => a.startAt.getTime() - b.startAt.getTime(),
   );
