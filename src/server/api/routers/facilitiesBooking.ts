@@ -92,13 +92,20 @@ export const facilityBookingRouter = createTRPCRouter({
     )
     .query(async ({ ctx, input }) => {
       const { startTime, endTime, ccaID } = input;
-      return await ctx.db.bookings.findMany({
+      const bookings = await ctx.db.bookings.findMany({
         where: {
           startTime: { lte: endTime },
           endTime: { gte: startTime },
           ...(ccaID ? { ccaID } : {}),
         },
       });
+      return bookings.map((booking) => {
+        return {
+          ...bookings,
+          start: new Date(booking.startTime * 1000),
+          end: new Date(booking.endTime * 1000),
+        }
+      })
     }),
 
   // Get bookings of a user
