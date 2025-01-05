@@ -110,7 +110,19 @@ async function main() {
   );
 }
 
-main()
+async function reset () {
+  await prisma.bookingLogs.deleteMany({});
+  await prisma.bookings.deleteMany({});
+  await prisma.facilities.deleteMany({});
+  await prisma.cCA.deleteMany({});
+  await prisma.user.deleteMany({});
+}
+
+reset()
+  .then(() => {
+    console.log("Reset complete");
+    return main();
+  })
   .then(async () => {
     console.log("Seeding complete");
     await prisma.$disconnect();
