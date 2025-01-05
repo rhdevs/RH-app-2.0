@@ -104,8 +104,8 @@ export const facilityBookingRouter = createTRPCRouter({
           ...bookings,
           start: new Date(booking.startTime * 1000),
           end: new Date(booking.endTime * 1000),
-        }
-      })
+        };
+      });
     }),
 
   // Get bookings of a user
