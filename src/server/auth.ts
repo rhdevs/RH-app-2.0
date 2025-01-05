@@ -4,10 +4,7 @@ import type {
   NextApiResponse,
 } from "next";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import {
-  type DefaultSession,
-  type NextAuthOptions,
-} from "next-auth";
+import { type DefaultSession, type NextAuthOptions } from "next-auth";
 import { getServerSession } from "next-auth/next";
 import { type Adapter } from "next-auth/adapters";
 import DiscordProvider from "next-auth/providers/discord";
@@ -94,14 +91,17 @@ export const authOptions = {
           });
           if (!user?.passwordHash) return null;
 
-          const passwordsMatch = await bcrypt.compare(password, user.passwordHash);
+          const passwordsMatch = await bcrypt.compare(
+            password,
+            user.passwordHash,
+          );
           if (passwordsMatch) return user;
         }
 
         console.log("Invalid credentials");
         return null;
       },
-    })
+    }),
   ],
   pages: {
     signIn: "/login",
@@ -110,8 +110,8 @@ export const authOptions = {
   session: {
     strategy: "jwt",
     maxAge: 30 * 24 * 60 * 60,
-    updateAge: 24 * 60 * 60
-  }
+    updateAge: 24 * 60 * 60,
+  },
 } satisfies NextAuthOptions;
 
 /**

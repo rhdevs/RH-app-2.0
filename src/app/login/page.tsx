@@ -31,11 +31,14 @@ const LoginPage = () => {
   // };
 
   const { register, handleSubmit } = useForm<LoginInput>();
-  const onSubmit: SubmitHandler<LoginInput> = (data) => signIn("credentials", { ...data });
+  const onSubmit: SubmitHandler<LoginInput> = (data) =>
+    signIn("credentials", { ...data });
 
   return (
     <div className="flex flex-col items-center justify-center gap-8 p-12">
-      <h2 className="font-bold">Welcome to Raffles Hall! Please sign in to continue</h2>
+      <h2 className="font-bold">
+        Welcome to Raffles Hall! Please sign in to continue
+      </h2>
 
       <form className="flex flex-col items-center gap-6">
         <input
