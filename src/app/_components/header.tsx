@@ -195,7 +195,6 @@ export default function Header() {
   const { data: session } = useSession() as {
     data: { user: { name: string } };
   };
-  console.log(session);
 
   return (
     <header className="bg-green-600 shadow-md">
