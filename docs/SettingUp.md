@@ -38,10 +38,10 @@
    ```shell
    mongod --replSet "rs0" --bind_ip localhost
    ```
-   
+
    - Then initiate the replica set. From `mongosh`, run `rs.initiate()` on replica set member 0.
-   
-  - If you are unable to deploy it as a replica set, you can create an account on [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) and create a free cluster.
+
+- If you are unable to deploy it as a replica set, you can create an account on [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) and create a free cluster.
 
 5. **Configure the database connection**
 
@@ -55,7 +55,7 @@
    # or
    npx prisma db push --force-reset
    ```
-   
+
    - Seed the database with initial data
 
    ```sh

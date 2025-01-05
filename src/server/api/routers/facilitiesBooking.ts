@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure } from "../trpc";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
 
 export const facilityBookingRouter = createTRPCRouter({
   // Get all facilities in ascending order
@@ -78,6 +78,34 @@ export const facilityBookingRouter = createTRPCRouter({
         facility,
         cca,
       };
+    }),
+
+  // Get all bookings within specific time period, optionally filtered by ccaID
+  getBookings: publicProcedure
+    // ToDo: convert to protectedProcedure
+    .input(
+      z.object({
+        startTime: z.number(),
+        endTime: z.number(),
+        ccaID: z.number().optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const { startTime, endTime, ccaID } = input;
+      const bookings = await ctx.db.bookings.findMany({
+        where: {
+          startTime: { lte: endTime },
+          endTime: { gte: startTime },
+          ...(ccaID ? { ccaID } : {}),
+        },
+      });
+      return bookings.map((booking) => {
+        return {
+          ...bookings,
+          start: new Date(booking.startTime * 1000),
+          end: new Date(booking.endTime * 1000),
+        };
+      });
     }),
 
   // Get bookings of a user

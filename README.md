@@ -29,7 +29,6 @@ Done:
 - Chuan Xin
 - Keith
 
-
 Contribution Guide: refer to https://rogerdudler.github.io/git-guide/ for basic git usage
 Create a branch and name it yourname/branchname.
 Push changes to your to your new branch (make sure your on your new branch)

@@ -240,16 +240,21 @@ model Restaurants {
 }
 
 model Session {
-  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  expires      DateTime
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // outdated fields
   /// Field referred in an index, but found no data to define the type.
   createdAt    Json?
   /// Field referred in an index, but found no data to define the type.
   passwordHash Json?
   /// Field referred in an index, but found no data to define the type.
-  userID       Json?
 
   @@index([createdAt], map: "createdAt_1")
-  @@index([userID, passwordHash], map: "userID_1_passwordHash_1")
+  @@index([userId, passwordHash], map: "userID_1_passwordHash_1")
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
@@ -285,15 +290,23 @@ model SupperGroup {
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
 model User {
-  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  id            String          @id @default(auto()) @map("_id") @db.ObjectId
+  name          String?
+  email         String?         @unique
+  emailVerified DateTime?
+  accounts      Account[]
+  sessions      Session[]
+  Authenticator Authenticator[]
+
+  // outdated fields
   bio                 String?
   block               Int?
   displayName         String?
-  email               String
+  image               String?
   imageKey            String?
   merged              Boolean?
   modules             String[]
-  passwordHash        String
+  passwordHash        String?
   profilePicSignedUrl String?
   profilePicURI       String?
   profilePictureURI   String?
@@ -302,7 +315,7 @@ model User {
   token               String?
   /// Multiple data types found: Json: 1.4%, Array(String): 1.4%, Array(Int): 97.2% out of 350 sampled entries
   userCCA             Json?
-  userID              String   @unique
+  userID              String?  @unique
 
   @@unique([userID, passwordHash], map: "userID, passwordHash")
 }
@@ -312,4 +325,45 @@ model UserCCA {
   id     String @id @default(auto()) @map("_id") @db.ObjectId
   ccaID  Int
   userID String
+}
+
+model Account {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String  @db.ObjectId
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.String
+  access_token      String? @db.String
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.String
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model VerificationToken {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Authenticator {
+  id                   String  @id @default(auto()) @map("_id") @db.ObjectId
+  credentialID         String  @unique
+  userId               String  @db.ObjectId
+  providerAccountId    String
+  credentialPublicKey  String
+  counter              Int
+  credentialDeviceType String
+  credentialBackedUp   Boolean
+  transports           String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

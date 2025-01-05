@@ -11,8 +11,8 @@ interface Facility {
 async function fetchFacility(id: string): Promise<Facility | null> {
   // Replace with actual API call or database fetch logic
   const facilities: Record<string, Facility> = {
-    "1": { name: "Gym", description: "A modern gym with equipment." },
-    "2": { name: "Study Room", description: "A quiet place to study." },
+    gym: { name: "gym", description: "A modern gym with equipment." },
+    study: { name: "Study Room", description: "A quiet place to study." },
   };
 
   return facilities[id] ?? null;

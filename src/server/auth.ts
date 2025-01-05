@@ -1,14 +1,20 @@
+import type {
+  GetServerSidePropsContext,
+  NextApiRequest,
+  NextApiResponse,
+} from "next";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import {
-  getServerSession,
-  type DefaultSession,
-  type NextAuthOptions,
-} from "next-auth";
+import { type DefaultSession, type NextAuthOptions } from "next-auth";
+import { getServerSession } from "next-auth/next";
 import { type Adapter } from "next-auth/adapters";
 import DiscordProvider from "next-auth/providers/discord";
+import GoogleProvider from "next-auth/providers/google";
+import CredentialsProvider from "next-auth/providers/credentials";
+import { z } from "zod";
 
 import { env } from "~/env";
 import { db } from "~/server/db";
+import * as bcrypt from "bcrypt";
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -36,15 +42,12 @@ declare module "next-auth" {
  *
  * @see https://next-auth.js.org/configuration/options
  */
-export const authOptions: NextAuthOptions = {
+export const authOptions = {
   callbacks: {
-    session: ({ session, user }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: user.id,
-      },
-    }),
+    async redirect({ baseUrl }) {
+      // Redirect users to the /profile route after login
+      return `${baseUrl}/`;
+    },
   },
   adapter: PrismaAdapter(db) as Adapter,
   providers: [
@@ -61,12 +64,66 @@ export const authOptions: NextAuthOptions = {
      *
      * @see https://next-auth.js.org/providers/github
      */
+    GoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+    CredentialsProvider({
+      name: "credentials",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        const parsedCredentials = z
+          .object({
+            email: z.string().email(),
+            password: z.string(),
+          })
+          .safeParse(credentials);
+
+        if (parsedCredentials.success) {
+          const { email, password } = parsedCredentials.data;
+          const user = await db.user.findFirst({
+            where: {
+              email: email,
+            },
+          });
+          if (!user?.passwordHash) return null;
+
+          const passwordsMatch = await bcrypt.compare(
+            password,
+            user.passwordHash,
+          );
+          if (passwordsMatch) return user;
+        }
+
+        console.log("Invalid credentials");
+        return null;
+      },
+    }),
   ],
-};
+  pages: {
+    signIn: "/login",
+  },
+  secret: env.NEXTAUTH_SECRET,
+  session: {
+    strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60,
+    updateAge: 24 * 60 * 60,
+  },
+} satisfies NextAuthOptions;
 
 /**
  * Wrapper for `getServerSession` so that you don't need to import the `authOptions` in every file.
  *
  * @see https://next-auth.js.org/configuration/nextjs
  */
-export const getServerAuthSession = () => getServerSession(authOptions);
+export function auth(
+  ...args:
+    | [GetServerSidePropsContext["req"], GetServerSidePropsContext["res"]]
+    | [NextApiRequest, NextApiResponse]
+    | []
+) {
+  return getServerSession(...args, authOptions);
+}
