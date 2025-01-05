@@ -1,3 +1,8 @@
+import type {
+  GetServerSidePropsContext,
+  NextApiRequest,
+  NextApiResponse,
+} from "next";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import {
   getServerSession,
@@ -9,6 +14,7 @@ import DiscordProvider from "next-auth/providers/discord";
 
 import { env } from "~/env";
 import { db } from "~/server/db";
+import GoogleProvider from "next-auth/providers/google";
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -36,15 +42,21 @@ declare module "next-auth" {
  *
  * @see https://next-auth.js.org/configuration/options
  */
-export const authOptions: NextAuthOptions = {
+export const authOptions = {
   callbacks: {
-    session: ({ session, user }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: user.id,
-      },
-    }),
+    session: ({ session, user }) => {
+      return {
+        ...session,
+        user: {
+          ...session.user,
+          id: user.id,
+        },
+      };
+    },
+    async redirect({ baseUrl }) {
+      // Redirect users to the /profile route after login
+      return `${baseUrl}/`;
+    },
   },
   adapter: PrismaAdapter(db) as Adapter,
   providers: [
@@ -61,8 +73,24 @@ export const authOptions: NextAuthOptions = {
      *
      * @see https://next-auth.js.org/providers/github
      */
+    GoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
   ],
-};
+  pages: {
+    signIn: "/login",
+  },
+} satisfies NextAuthOptions;
+
+export function auth(
+  ...args:
+    | [GetServerSidePropsContext["req"], GetServerSidePropsContext["res"]]
+    | [NextApiRequest, NextApiResponse]
+    | []
+) {
+  return getServerSession(...args, authOptions);
+}
 
 /**
  * Wrapper for `getServerSession` so that you don't need to import the `authOptions` in every file.
