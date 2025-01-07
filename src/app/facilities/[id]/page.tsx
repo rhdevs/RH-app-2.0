@@ -1,24 +1,6 @@
-"use client";
-
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { createTRPCClient, httpBatchLink } from "@trpc/client";
-import SuperJSON from "superjson";
-import { type AppRouter } from "~/server/api/root";
-
-interface Facility {
-  name: string;
-  category: string;
-}
-
-const client = createTRPCClient<AppRouter>({
-  links: [
-    httpBatchLink({
-      url: "http://localhost:3000/api/trpc",
-      transformer: SuperJSON,
-    }),
-  ],
-});
+import { api } from "~/trpc/server";
+import { GetServerSideProps } from "next";
+import { FC } from "react";
 
 function formatDashedString(input: string): string {
   return input
@@ -27,47 +9,38 @@ function formatDashedString(input: string): string {
     .join(" ");
 }
 
-const FacilityDetailsPage: React.FC = () => {
-  const { id } = useParams() as { id: string };
-  const [facilities, setFacilities] = useState<Array<Facility> | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+interface FacilityPageProps {
+  id: string;
+}
 
-  useEffect(() => {
-    client.facility.getFacility
-      .query()
-      .then((response) => {
-        setFacilities(response);
-      })
-      .catch((error) => {
-        console.log("Failed to fetch facility: ", error);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, []);
+export async function generateMetadata({ params }: { params: { id: string } }) {
+  return {
+    title: `Facility ID: ${params.id}`,
+  };
+}
 
-  console.log("id: ", id);
-  console.log(facilities);
+export default async function FacilityPageWrapper({
+  params,
+}: {
+  params: { id: string };
+}) {
+  return <FacilityDetailsPage id={params.id} />;
+}
 
-  if (loading) {
-    return (
-      <div>
-        <h1>Loading...</h1>
-      </div>
-    );
-  }
+const FacilityDetailsPage: FC<FacilityPageProps> = async ({ id }) => {
+  const facilities = await api.facility.getFacilities();
 
   return (
     <div className="align-center flex flex-col justify-center p-5 text-center">
       <h1 className="mb-3 text-xl font-bold">Facilities Page</h1>
-      {(facilities ?? []).map((facility: Facility) => {
-        return facility.category === id ? (
+      {(facilities ?? []).map(facility => {
+        return facility.facilityLocation === formatDashedString(id) ? (
           <div
-            key={facility.name}
+            key={facility.id}
             className="m-1 flex flex-col rounded-xl border border-black bg-green-100 p-1"
           >
-            <h1 className="text-lg">{facility.name}</h1>
-            <h1 className="text-sm">{formatDashedString(facility.category)}</h1>
+            <h1 className="text-lg">{facility.facilityName}</h1>
+            <h1 className="text-sm">{formatDashedString(facility.facilityLocation)}</h1>
           </div>
         ) : (
           <div></div>
@@ -76,5 +49,3 @@ const FacilityDetailsPage: React.FC = () => {
     </div>
   );
 };
-
-export default FacilityDetailsPage;

@@ -11,9 +11,6 @@ function formatDashedString(input: string): string {
 
 const FacilitiesPage: React.FC = async () => {
   const facilities = await api.facility.getFacilities();
-  
-  console.log(facilities);
-
   return (
     <div className="align-center flex flex-col justify-center p-5 text-center">
       <h1 className="mb-3 text-xl font-bold">Facilities Page</h1>
