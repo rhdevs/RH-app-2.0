@@ -26,7 +26,7 @@
 3. **Set up environment variables**
 
    ```sh
-   cp .env.example .env
+   cp .env.development.local.example .env.development.local
    ```
 
 4. **To set up MongoDB for development**

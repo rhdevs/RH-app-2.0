@@ -99,11 +99,15 @@ export const facilityBookingRouter = createTRPCRouter({
           ...(ccaID ? { ccaID } : {}),
         },
       });
+
+      console.log(bookings);
+      const facilities = await ctx.db.facilities.findMany();
+
       return bookings.map((booking) => {
         return {
-          ...bookings,
           start: new Date(booking.startTime * 1000),
           end: new Date(booking.endTime * 1000),
+          title: facilities.find((fac) => fac.facilityID === booking.facilityID)?.facilityName,
         };
       });
     }),
