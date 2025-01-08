@@ -26,6 +26,12 @@ const Calendar = () => {
           setStart(getUnixTime(startOfMonth(dateInfo.start)));
           setEnd(getUnixTime(endOfMonth(dateInfo.end)));
         }}
+        eventTimeFormat={{
+          hour: "numeric",
+          minute: "2-digit",
+          meridiem: "short",
+          omitZeroMinute: false
+        }}
       />
     </div>
   );
