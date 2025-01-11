@@ -100,7 +100,6 @@ export const facilityBookingRouter = createTRPCRouter({
         },
       });
 
-      console.log(bookings);
       const facilities = await ctx.db.facilities.findMany();
 
       return bookings.map((booking) => {

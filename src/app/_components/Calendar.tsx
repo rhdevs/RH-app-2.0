@@ -1,10 +1,13 @@
 "use client";
 
+import { useRef, useEffect } from "react";
 import FullCalendar from "@fullcalendar/react";
-import dayGridPlugin from "@fullcalendar/daygrid";
+import listPlugin from '@fullcalendar/list';
+import timeGridPlugin from '@fullcalendar/timegrid'
 import { api } from "~/trpc/react";
 import { endOfMonth, getUnixTime, startOfMonth } from "date-fns";
 import { useState } from "react";
+import { useMediaQuery } from "usehooks-ts";
 
 const Calendar = () => {
   const [start, setStart] = useState(getUnixTime(startOfMonth(new Date())));
@@ -15,13 +18,25 @@ const Calendar = () => {
     endTime: end,
   });
 
+  const calendarRef = useRef<FullCalendar>(null);
+
+  const isMobile = useMediaQuery("(max-width: 768px)");
+
+  useEffect(() => {
+    if (isMobile) {
+      calendarRef.current?.getApi().changeView("listMonth");
+    } else {
+      calendarRef.current?.getApi().changeView("timeGridWeek");
+    }
+  }, [isMobile]);
+
   // ToDo: display bookingsInMonth once implemented display of time
   return (
     <div className={"container"}>
       <FullCalendar
-        plugins={[dayGridPlugin]}
-        initialView="dayGridMonth"
+        plugins={[timeGridPlugin, listPlugin]}
         events={bookingsInMonth.data}
+        initialView="timeGridWeek"
         datesSet={(dateInfo) => {
           setStart(getUnixTime(startOfMonth(dateInfo.start)));
           setEnd(getUnixTime(endOfMonth(dateInfo.end)));
@@ -32,6 +47,7 @@ const Calendar = () => {
           meridiem: "short",
           omitZeroMinute: false
         }}
+        ref={calendarRef}
       />
     </div>
   );
