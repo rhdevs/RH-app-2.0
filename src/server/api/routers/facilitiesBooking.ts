@@ -3,7 +3,7 @@ import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
 
 export const facilityBookingRouter = createTRPCRouter({
   // Get all facilities in ascending order
-  getAllFacilities: protectedProcedure.query(async ({ ctx }) => {
+  getAllFacilities: publicProcedure.query(async ({ ctx }) => {
     return ctx.db.facilities.findMany({
       orderBy: { facilityID: "asc" },
     });
@@ -87,16 +87,16 @@ export const facilityBookingRouter = createTRPCRouter({
       z.object({
         startTime: z.number(),
         endTime: z.number(),
-        ccaID: z.number().optional(),
+        facilityID: z.number().optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
-      const { startTime, endTime, ccaID } = input;
+      const { startTime, endTime, facilityID } = input;
       const bookings = await ctx.db.bookings.findMany({
         where: {
           startTime: { lte: endTime },
           endTime: { gte: startTime },
-          ...(ccaID ? { ccaID } : {}),
+          ...(facilityID ? { facilityID } : {}),
         },
       });
 
@@ -106,7 +106,8 @@ export const facilityBookingRouter = createTRPCRouter({
         return {
           start: new Date(booking.startTime * 1000),
           end: new Date(booking.endTime * 1000),
-          title: facilities.find((fac) => fac.facilityID === booking.facilityID)?.facilityName,
+          title: facilities.find((fac) => fac.facilityID === booking.facilityID)
+            ?.facilityName,
         };
       });
     }),
