@@ -1,5 +1,6 @@
-import { bookingRouter } from "./routers/booking";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
+import { bookingRouter } from "./routers/booking";
+import { eventRouter } from "./routers/event";
 
 /**
  * This is the primary router for your server.
@@ -8,6 +9,7 @@ import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
  */
 export const appRouter = createTRPCRouter({
   booking: bookingRouter,
+  event: eventRouter,
 });
 
 // export type definition of API
