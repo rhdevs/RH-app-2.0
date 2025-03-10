@@ -10,11 +10,48 @@ datasource db {
     url      = env("DATABASE_URL")
 }
 
-model Post {
-    id        Int      @id @default(autoincrement())
-    name      String
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
 
-    @@index([name])
+enum Role {
+    MEMBER
+    HALL_LEADER
+    SUPERADMIN
+}
+
+model User {
+  id         Int      @id @default(autoincrement())
+  email      String   @unique
+  name       String?
+  role       Role     @default(MEMBER)
+  roomNumber String?
+  points     Int      @default(0)
+  
+  // Relations
+  events     Event[]  @relation("OrganiserEvents")
+  bookings   Booking[]
+}
+
+model Event {
+  id           Int     @id @default(autoincrement())
+  location     String
+  description  String
+  signUpLink   String
+  organiserId  Int
+  organiser    User    @relation("OrganiserEvents", fields: [organiserId], references: [id])
+}
+
+model Facility {
+  id           Int       @id @default(autoincrement())
+  description  String    @unique
+  openingHours String
+  bookings     Booking[]
+}
+
+model Booking {
+  id         Int       @id @default(autoincrement())
+  slot       DateTime  // Booking timeslot, adjust type as needed
+  userId     Int
+  facilityId Int
+  
+  user       User      @relation(fields: [userId], references: [id])
+  facility   Facility  @relation(fields: [facilityId], references: [id])
 }
