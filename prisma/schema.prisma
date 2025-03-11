@@ -1,42 +1,23 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
-
-enum Role {
-    MEMBER
-    HALL_LEADER
-    SUPERADMIN
-}
-
-model User {
-  id         Int      @id @default(autoincrement())
-  email      String   @unique
-  name       String?
-  role       Role     @default(MEMBER)
-  roomNumber String?
-  points     Int      @default(0)
-  
-  // Relations
-  events     Event[]  @relation("OrganiserEvents")
-  bookings   Booking[]
-}
+// We no longer maintain a local User model.
+// Instead, any user relationship is handled via Clerk,
+// and we store the Clerk user ID (a string) in our records.
 
 model Event {
-  id           Int     @id @default(autoincrement())
+  id           Int    @id @default(autoincrement())
   location     String
   description  String
   signUpLink   String
-  organiserId  Int
-  organiser    User    @relation("OrganiserEvents", fields: [organiserId], references: [id])
+  // Store Clerk user id for the organiser
+  organiserId  String
 }
 
 model Facility {
@@ -48,10 +29,10 @@ model Facility {
 
 model Booking {
   id         Int       @id @default(autoincrement())
-  slot       DateTime  // Booking timeslot, adjust type as needed
-  userId     Int
+  slot       DateTime  // Booking timeslot
+  // Store Clerk user id for the person who booked
+  userId     String
   facilityId Int
   
-  user       User      @relation(fields: [userId], references: [id])
   facility   Facility  @relation(fields: [facilityId], references: [id])
 }
