@@ -1,79 +1,20 @@
 import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
+// Sample Clerk user IDs
+const clerkUserDiana = "user_2uAh5MZWWY8eh52E6WbaNyFjeLD";
+const clerkUserEvan = "user_2uAyDzL3HnB3PUoTgJ7BtwZBSui";
+
+async function clearOldData() {
+  // Delete child records first if there are foreign key constraints
+  await prisma.booking.deleteMany({});
+  await prisma.event.deleteMany({});
+  await prisma.facility.deleteMany({});
+}
+
 async function main() {
-  // --- Create Users ---
-  const alice = await prisma.user.upsert({
-    where: { email: "alice@example.com" },
-    update: {},
-    create: {
-      email: "alice@example.com",
-      name: "Alice",
-      role: "MEMBER",
-      roomNumber: "A101",
-      points: 10,
-    },
-  });
-
-  const bob = await prisma.user.upsert({
-    where: { email: "bob@example.com" },
-    update: {},
-    create: {
-      email: "bob@example.com",
-      name: "Bob",
-      role: "MEMBER",
-      roomNumber: "A102",
-      points: 15,
-    },
-  });
-
-  const charlie = await prisma.user.upsert({
-    where: { email: "charlie@example.com" },
-    update: {},
-    create: {
-      email: "charlie@example.com",
-      name: "Charlie",
-      role: "MEMBER",
-      roomNumber: "A103",
-      points: 5,
-    },
-  });
-
-  const diana = await prisma.user.upsert({
-    where: { email: "diana@example.com" },
-    update: {},
-    create: {
-      email: "diana@example.com",
-      name: "Diana",
-      role: "HALL_LEADER",
-      roomNumber: "B201",
-      points: 20,
-    },
-  });
-
-  const evan = await prisma.user.upsert({
-    where: { email: "evan@example.com" },
-    update: {},
-    create: {
-      email: "evan@example.com",
-      name: "Evan",
-      role: "HALL_LEADER",
-      roomNumber: "B202",
-      points: 25,
-    },
-  });
-
-  const fay = await prisma.user.upsert({
-    where: { email: "fay@example.com" },
-    update: {},
-    create: {
-      email: "fay@example.com",
-      name: "Fay",
-      role: "SUPERADMIN",
-      roomNumber: "C301",
-      points: 100,
-    },
-  });
+  // Clear past data
+  await clearOldData();
 
   // --- Create Facilities ---
   const communityHall = await prisma.facility.upsert({
@@ -110,7 +51,7 @@ async function main() {
       location: "Community Hall",
       description: "Welcome Event for New Residents",
       signUpLink: "http://example.com/event1",
-      organiserId: diana.id,
+      organiserId: clerkUserDiana,
     },
   });
 
@@ -120,7 +61,7 @@ async function main() {
       location: "Gym",
       description: "Fitness Workshop",
       signUpLink: "http://example.com/event2",
-      organiserId: evan.id,
+      organiserId: clerkUserEvan,
     },
   });
 
@@ -130,7 +71,7 @@ async function main() {
       location: "Upper Lounge",
       description: "Social Gathering",
       signUpLink: "http://example.com/event3",
-      organiserId: diana.id,
+      organiserId: clerkUserDiana,
     },
   });
 
@@ -139,7 +80,7 @@ async function main() {
   const booking1 = await prisma.booking.create({
     data: {
       slot: new Date("2025-04-01T10:00:00.000Z"),
-      userId: alice.id,
+      userId: clerkUserDiana,
       facilityId: communityHall.id,
     },
   });
@@ -147,7 +88,7 @@ async function main() {
   const booking2 = await prisma.booking.create({
     data: {
       slot: new Date("2025-04-01T12:00:00.000Z"),
-      userId: bob.id,
+      userId: clerkUserEvan,
       facilityId: communityHall.id,
     },
   });
@@ -156,7 +97,7 @@ async function main() {
   const booking3 = await prisma.booking.create({
     data: {
       slot: new Date("2025-04-02T08:00:00.000Z"),
-      userId: bob.id,
+      userId: clerkUserEvan,
       facilityId: gym.id,
     },
   });
@@ -164,7 +105,7 @@ async function main() {
   const booking4 = await prisma.booking.create({
     data: {
       slot: new Date("2025-04-02T09:00:00.000Z"),
-      userId: charlie.id,
+      userId: clerkUserDiana,
       facilityId: gym.id,
     },
   });
@@ -173,7 +114,7 @@ async function main() {
   const booking5 = await prisma.booking.create({
     data: {
       slot: new Date("2025-04-03T14:00:00.000Z"),
-      userId: alice.id,
+      userId: clerkUserDiana,
       facilityId: upperLounge.id,
     },
   });
@@ -181,13 +122,12 @@ async function main() {
   const booking6 = await prisma.booking.create({
     data: {
       slot: new Date("2025-04-03T15:00:00.000Z"),
-      userId: charlie.id,
+      userId: clerkUserEvan,
       facilityId: upperLounge.id,
     },
   });
 
   console.log({
-    users: [alice, bob, charlie, diana, evan, fay],
     facilities: [communityHall, gym, upperLounge],
     events: [event1, event2, event3],
     bookings: [booking1, booking2, booking3, booking4, booking5, booking6],
