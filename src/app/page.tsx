@@ -7,7 +7,10 @@ export default async function Home() {
 
   // Attempt to check authentication status.
   // Wrap in try/catch so we can handle errors (e.g., user not logged in)
-  const authStatus = await api.auth.hello();
+  const authStatus = await api.auth.getAuthStatus().catch((err) => {
+    console.error("Error fetching auth status:", err);
+    return null;
+  });
 
   return (
     <HydrateClient>
@@ -31,7 +34,7 @@ export default async function Home() {
           <div className="mt-8">
             {authStatus ? (
               <p className="text-xl">
-                Authenticated as user: {authStatus.greeting}
+                Authenticated as user: {authStatus.userId}
               </p>
             ) : (
               <p className="text-xl">Not authenticated</p>
