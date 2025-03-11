@@ -12,6 +12,11 @@ export default async function Home() {
     return null;
   });
 
+  const username = await api.auth.getUsername().catch((err) => {
+    console.error("Error fetching username:", err);
+    return null;
+  });
+
   return (
     <HydrateClient>
       <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">
@@ -35,6 +40,8 @@ export default async function Home() {
             {authStatus ? (
               <p className="text-xl">
                 Authenticated as user: {authStatus.userId}
+                <br />
+                Name: {username?.name}
               </p>
             ) : (
               <p className="text-xl">Not authenticated</p>
