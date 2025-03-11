@@ -30,11 +30,24 @@ You can check out the [create-t3-app GitHub repository](https://github.com/t3-os
 
 Follow our deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel), [Netlify](https://create.t3.gg/en/deployment/netlify) and [Docker](https://create.t3.gg/en/deployment/docker) for more information.
 
+To migrate prisma:
+
+```
+npx prisma migrate dev --name message
+```
+
+To seed prisma:
+
+```
+npx prisma db seed
+```
+
 To copy local postgresql db to the aws endpoint run the following commands:
 
 Generate database dump file
 
 ```
+
 pg_dump -h localhost -U <local_user> -d <local_database> -F c -f mydatabase.dump
 
 ```
@@ -42,5 +55,11 @@ pg_dump -h localhost -U <local_user> -d <local_database> -F c -f mydatabase.dump
 Import dump to AWS
 
 ```
+
 pg_restore -h t3stack.cojs40ic6g0c.us-east-1.rds.amazonaws.com -p 5432 -U postgres -d postgres -c mydatabase.dump
+
+```
+
+```
+
 ```
