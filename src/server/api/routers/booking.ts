@@ -9,7 +9,6 @@ export const bookingRouter = createTRPCRouter({
   create: protectedProcedure
     .input(
       z.object({
-        // Expect a valid date (passed as a JS Date)
         slot: z.date(),
         facilityId: z.number(),
       }),

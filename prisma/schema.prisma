@@ -14,6 +14,7 @@ datasource db {
 model Event {
   id           Int    @id @default(autoincrement())
   location     String
+  slot         DateTime
   description  String
   signUpLink   String
   // Store Clerk user id for the organiser
