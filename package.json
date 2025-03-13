@@ -25,6 +25,9 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^6.12.4",
+    "@fullcalendar/daygrid": "^6.1.15",
+    "@fullcalendar/interaction": "^6.1.15",
+    "@fullcalendar/react": "^6.1.15",
     "@prisma/client": "^5.14.0",
     "@t3-oss/env-nextjs": "^0.10.1",
     "@tanstack/react-query": "^5.50.0",
