@@ -24,7 +24,13 @@ export const authRouter = createTRPCRouter({
     };
   }),
 
-  getUsername: protectedProcedure.query(async ({ ctx }) => {
+  getUserName: publicProcedure.input(z.string()).query(async ({ input }) => {
+    const clerk = await clerkClient();
+    const user = await clerk.users.getUser(input);
+    return { name: user.username };
+  }),
+
+  getCurrentUserName: protectedProcedure.query(async ({ ctx }) => {
     // If you're using protectedProcedure, you should have a valid user session.
     const targetUserId = ctx.auth.userId;
     if (!targetUserId) {
