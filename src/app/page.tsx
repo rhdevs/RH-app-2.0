@@ -12,7 +12,7 @@ export default async function Home() {
     return null;
   });
 
-  const username = await api.auth.getUsername().catch((err) => {
+  const username = await api.auth.getCurrentUserName().catch((err) => {
     console.error("Error fetching username:", err);
     return null;
   });
