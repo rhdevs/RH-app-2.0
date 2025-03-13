@@ -49,6 +49,7 @@ async function main() {
   const event1 = await prisma.event.create({
     data: {
       location: "Community Hall",
+      slot: new Date("2025-04-01T10:00:00.000Z"),
       description: "Welcome Event for New Residents",
       signUpLink: "http://example.com/event1",
       organiserId: clerkUserDiana,
@@ -59,6 +60,7 @@ async function main() {
   const event2 = await prisma.event.create({
     data: {
       location: "Gym",
+      slot: new Date("2025-04-01T12:00:00.000Z"),
       description: "Fitness Workshop",
       signUpLink: "http://example.com/event2",
       organiserId: clerkUserEvan,
@@ -69,6 +71,7 @@ async function main() {
   const event3 = await prisma.event.create({
     data: {
       location: "Upper Lounge",
+      slot: new Date("2025-04-02T09:00:00.000Z"),
       description: "Social Gathering",
       signUpLink: "http://example.com/event3",
       organiserId: clerkUserDiana,
