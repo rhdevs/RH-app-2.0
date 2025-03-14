@@ -1,3 +1,12 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.fc .fc-event-title,
+.fc .fc-event-time {
+  font-size: clamp(0.25rem, 1.5vw, 1rem);
+}
+
+.fc-daygrid-event-dot {
+  display: none !important;
+} /* hide the dots */
