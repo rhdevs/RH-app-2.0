@@ -3,11 +3,10 @@
 @tailwind utilities;
 
 .fc .fc-event-title,
-.fc .fc-event-time,
-.fc .fc-event-dot {
-  font-size: clamp(
-    0.25rem,
-    1.5vw,
-    1rem
-  ); /* Reduce font size of fc event elements, not really working for dot */
+.fc .fc-event-time {
+  font-size: clamp(0.25rem, 1.5vw, 1rem);
 }
+
+.fc-daygrid-event-dot {
+  display: none !important;
+} /* hide the dots */

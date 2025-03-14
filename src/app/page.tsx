@@ -7,16 +7,21 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import { api } from "~/trpc/react";
 
+interface CalendarEvent {
+  id: string;
+  title: string;
+  start: Date;
+  end: Date;
+}
+
 export default function LandingPage() {
   const { data: eventsData, isLoading: eventsLoading } =
     api.event.getAll.useQuery();
-  interface CalendarEvent {
-    id: string;
-    title: string;
-    start: Date;
-    end: Date;
-  }
+
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(
+    null,
+  );
 
   useEffect(() => {
     if (eventsData) {
@@ -31,6 +36,59 @@ export default function LandingPage() {
       setCalendarEvents(mapped);
     }
   }, [eventsData]);
+
+  const handleEventClick = (clickInfo: {
+    event: { id: string; title: string; start: Date | null; end: Date | null };
+  }) => {
+    const event = clickInfo.event;
+    if (event.start && event.end) {
+      setSelectedEvent({
+        id: event.id,
+        title: event.title,
+        start: event.start,
+        end: event.end,
+      });
+    }
+  };
+
+  function Modal({
+    event,
+    onClose,
+  }: {
+    event: CalendarEvent;
+    onClose: () => void;
+  }) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        {/* Overlay */}
+        <div
+          className="absolute inset-0 bg-black opacity-50"
+          onClick={onClose}
+        ></div>
+        {/* Modal content */}
+        <div className="relative w-11/12 rounded bg-white p-4 text-black shadow-lg">
+          <h2 className="mb-2 text-lg font-bold">{event.title}</h2>
+          <p className="text-sm">
+            {event.start.toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            })}{" "}
+            -{" "}
+            {event.end.toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </p>
+          <button
+            className="mt-4 w-full rounded bg-green-600 px-3 py-1 text-white"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-green-600 to-green-400 text-white">
@@ -86,9 +144,15 @@ export default function LandingPage() {
                   plugins={[dayGridPlugin, interactionPlugin]}
                   initialView="dayGridMonth"
                   events={calendarEvents}
+                  eventClick={handleEventClick}
                   height="auto"
                   contentHeight="auto"
                   aspectRatio={1.0}
+                  eventTimeFormat={{
+                    hour: "numeric",
+                    minute: "2-digit",
+                    meridiem: "short",
+                  }}
                   headerToolbar={{
                     left: "",
                     center: "title",
@@ -114,6 +178,11 @@ export default function LandingPage() {
           reserved.
         </p>
       </footer>
+
+      {/* Modal */}
+      {selectedEvent && (
+        <Modal event={selectedEvent} onClose={() => setSelectedEvent(null)} />
+      )}
     </div>
   );
 }
