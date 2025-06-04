@@ -10,7 +10,7 @@
 1. **Clone the repository**
 
    ```sh
-   git clone <repository-url>
+   git clone https://github.com/rhdevs/RH-app-2.0.git
    cd <repository-directory>
    ```
 
@@ -23,46 +23,20 @@
    nvm use 18.20.4
    ```
 
-3. **Set up environment variables**
+3. **Create environment variables file**
 
    ```sh
-   cp .env.development.local.example .env.development.local
+   cp .env.example .env
    ```
 
-4. **To set up MongoDB for development**
+4. **Configure the database connection**
 
-   - Follow the instructions(MacOS) [here](https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-os-x/)
-   - Follow the instructions(Windows) [here](https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-windows/)
-   - Additionally, deploy it as a replica [set](https://www.mongodb.com/docs/manual/tutorial/deploy-replica-set/)
+   For simplicity, we will be using RHAppDev database as our development server, so there is no need to setup a database locally.
 
-   ```shell
-   mongod --replSet "rs0" --bind_ip localhost
-   ```
+   - Add your MongoDB connection string (ask from us) to the `.env` file by replacing the `DATABASE_URL` placeholder.
 
-   - Then initiate the replica set. From `mongosh`, run `rs.initiate()` on replica set member 0.
 
-- If you are unable to deploy it as a replica set, you can create an account on [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) and create a free cluster.
-
-5. **Configure the database connection**
-
-   - Add your MongoDB connection string to the `.env` file by replacing the `DATABASE_URL` placeholder.
-   - Syntax would be "mongodb://localhost:27017/rhapp" where 27017 is the default port and RHDevs is the database name that you wish to use
-
-6. **Push the Prisma schema to the database**
-
-   ```sh
-   bunx prisma db push --force-reset
-   # or
-   npx prisma db push --force-reset
-   ```
-
-   - Seed the database with initial data
-
-   ```sh
-   prisma db seed
-   ```
-
-7. **Install dependencies**
+5. **Install dependencies**
 
    ```sh
    bun install
@@ -70,7 +44,7 @@
    npm install
    ```
 
-8. **Run the development server**
+6. **Run the development server**
 
    ```sh
    bun run dev
