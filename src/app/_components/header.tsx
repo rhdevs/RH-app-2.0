@@ -18,6 +18,8 @@ import {
   HomeIcon,
 } from "@radix-ui/react-icons";
 import { useSession, signIn } from "next-auth/react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 const navLinks = [
   {
@@ -27,7 +29,7 @@ const navLinks = [
     icon: HomeIcon,
   },
   {
-    name: "Your bookings",
+    name: "Your Bookings",
     description: "See your bookings in Raffles Hall.",
     href: "/bookings",
     icon: CalendarIcon,
@@ -41,15 +43,15 @@ const facilityLinks = [
 ];
 
 const Logo = () => (
-  <a href="#" className="-m-1.5 p-1.5">
+  <a href="#" className="flex justify-center items-center bg-white rounded-lg border-2 border-[#5b5754] py-2 text-[#44403c]">
     <span className="sr-only">Raffles Hall</span>
     <Image
       src={rafflesHallLogo}
       alt="Raffles Hall Logo"
       width={100}
-      height={100}
       className="object-contain"
     />
+    <div className="italic text-4xl mr-6">RHApp</div>
   </a>
 );
 
@@ -64,39 +66,117 @@ const MobileMenuButton = ({ onClick }: { onClick: () => void }) => (
   </button>
 );
 
-const DesktopNav = () => (
-  <div className="hidden lg:flex lg:gap-x-12">
-    {navLinks.map((item) => (
-      <a
-        key={item.name}
-        href={item.href}
-        className="text-lg font-semibold leading-6 text-white hover:text-indigo-300"
-      >
-        {item.name}
-      </a>
-    ))}
-    <Popover>
-      <PopoverTrigger className="flex items-center gap-x-1 text-lg font-semibold leading-6 text-white hover:text-indigo-300">
-        Facilities
-        <ChevronDownIcon className="h-6 w-6 text-white" aria-hidden="true" />
-      </PopoverTrigger>
-      <PopoverContent className="absolute z-10 mt-2 w-56 transform rounded-lg bg-white p-4 shadow-lg ring-1 ring-gray-300">
-        <ul className="space-y-2">
-          {facilityLinks.map((item) => (
-            <li key={item.name}>
-              <a
-                href={item.href}
-                className="block rounded-md px-4 py-2 text-sm font-medium text-gray-700 transition-colors duration-150 hover:bg-indigo-100 hover:text-indigo-700"
-              >
-                {item.name}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </PopoverContent>
-    </Popover>
-  </div>
-);
+const DesktopNav = () => {
+  const pathname = usePathname();
+
+  return (
+    <div className="relative inline-block">
+      {/* 2) The rectangular box around all links */}
+      <div className="flex gap-1 bg-white rounded-lg border-2 border-[#5b5754] p-1">
+        {navLinks.map((item) => {
+          const isActive = pathname === item.href;
+
+          return (
+            <Link
+              key={item.name}
+              href={item.href}
+              className={`
+                px-5
+                py-2
+                text-center
+                font-semibold
+                leading-6
+
+                ${isActive
+                  ? "bg-[#e7e5e4] rounded-[4px] text-[#44403c]"
+                  : "text-[#44403c] hover:text-[#98928e]"
+                }
+              `}
+            >
+              {item.name}
+            </Link>
+          );
+        })}
+
+        {/* 3) The “Facilities” popover trigger */}
+        <Popover>
+          {/**
+           * We mark "Facilities" as active whenever the path begins with /facilities.
+           * (So /facilities/gym, /facilities/study-area, etc. all highlight the trigger.)
+           */}
+          <PopoverTrigger
+            className={`
+              px-5
+              py-2
+              text-center
+              font-semibold
+
+              flex
+              items-center
+              justify-center
+
+              leading-6
+
+              ${pathname.startsWith("/facilities")
+                ? "bg-[#e7e5e4] rounded-[4px] text-[#44403c]"
+                : "text-[#44403c] hover:text-[#98928e]"
+              }
+            `}
+          >
+            Facilities
+          </PopoverTrigger>
+
+          <PopoverContent
+            className="
+              absolute
+              z-10
+              mt-2
+              -left-4
+              w-56
+
+              rounded-lg
+              bg-white
+              p-1
+              shadow-lg
+              font-semibold
+
+              border-2
+              border-[#5b5754]
+            "
+          >
+            <ul className="space-y-2">
+              {facilityLinks.map((fac) => {
+                const isFacActive = pathname === fac.href;
+
+                return (
+                  <li key={fac.name}>
+                    <Link
+                      href={fac.href}
+                      className={`
+                        block
+                        px-4
+                        py-2
+                        text-sm
+                        font-semibold
+
+                        ${isFacActive
+                          ? "bg-[#e7e5e4] rounded-[4px] text-[#44403c]"
+                          : "text-[#44403c] hover:bg-[#f5f5f4] hover:text-[#98928e]"
+                        }
+                      `}
+                    >
+                      {fac.name}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  );
+};
 
 const MobileMenu = ({
   mobileMenuOpen,
@@ -197,19 +277,19 @@ export default function Header() {
   };
 
   return (
-    <header className="bg-green-600 shadow-md">
+    <header className="bg-[#064e3b] shadow-md h-35">
       <nav
-        className="mx-auto flex max-w-7xl items-center justify-between p-6 lg:px-8"
+        className="lg:px-8 flex items-end h-full justify-around transform translate-y-[20px]"
         aria-label="Global"
       >
-        <div className="flex lg:flex-1">
+        <div className="flex">
           <Logo />
         </div>
         <div className="flex lg:hidden">
           <MobileMenuButton onClick={() => setMobileMenuOpen(true)} />
         </div>
         <DesktopNav />
-        <div className="hidden lg:flex lg:flex-1 lg:justify-end">
+        <div>
           {session ? (
             <div className="flex">
               <a
@@ -220,13 +300,14 @@ export default function Header() {
           ) : (
             <button
               onClick={() => signIn()}
-              className="inline-block rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold leading-6 text-white shadow-lg transition-all duration-150 ease-in-out hover:bg-indigo-700 hover:shadow-xl"
+              className="bg-white rounded-lg border-2 border-[#5b5754] px-5 py-2 text-[#44403c] font-semibold hover:text-[#98928e]"
             >
               Log in <span aria-hidden="true">&rarr;</span>
             </button>
           )}
         </div>
       </nav>
+
       <MobileMenu
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
