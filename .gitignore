@@ -35,6 +35,7 @@ yarn-error.log*
 # do not commit any .env.development.local files to git, except for the .env.development.local.example file. https://create.t3.gg/en/usage/env-variables#using-environment-variables
 .env.development.local
 .env*.local
+.env
 
 # vercel
 .vercel
