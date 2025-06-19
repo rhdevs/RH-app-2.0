@@ -30,7 +30,7 @@ export const FacilitySelector: React.FC<FacilitySelectorProps> = ({
             onChange={e => onChange(e.target.value)}
             className="w-full max-w-sm rounded-xl border-gray-300 p-2"
         >
-            <option value="">— Select one —</option>
+            <option key="-1" value="-1">Select a Facility</option>
             {facilities.map((f) => (
             <option key={f._id} value={f._id}>
                 {f.name}
