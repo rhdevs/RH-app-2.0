@@ -36,23 +36,37 @@ const FacilitiesPage: React.FC = () => {
 
   return (
     <div 
-      className="w-full h-svh bg-cover bg-center p-8"
+      className="w-full h-svh bg-cover bg-center px-8"
       style={{ backgroundImage: `url('/facilities-images/${(selectedId)? selectedId : "-1"}.jpg')` }}
       >
       <div className="w-fit bg-white p-8">
         {/* Add your facilities content here */}
-        <FacilitySelector 
-          facilities={facilities} 
-          selectedId={selectedId} 
-          onChange={setSelectedId} 
-        />
+        <div className='flex flex-row justify-between items-center'>
+          <FacilitySelector 
+            facilities={facilities} 
+            selectedId={selectedId} 
+            onChange={setSelectedId} 
+          />
+
+          <button className="focus:outline-none text-white bg-purple-700 hover:bg-purple-800 focus:ring-4 focus:ring-purple-300 font-medium rounded-lg text-sm px-5 mb-2 h-10">
+            Book
+          </button>
+        </div>
+        
 
         {!(selectedId && (selectedId != "-1")) && (
-          <p>Welcome to Raffles Hall!</p>
+          <h1 className='text-5xl font-bold'>Welcome to Raffles Hall!</h1>
         )}
 
         {selectedId && (selectedId != "-1") && (
-        <p className="mt-2 text-green-600">You picked: {facilities[selectedId].name}</p>
+          <div>
+            <h1 className="text-5xl font-bold mt-2 text-green-600">{facilities[selectedId].name}</h1>
+            <p  className="text-lg">{facilities[selectedId].directions}</p>
+            <p  className="text-lg">
+              <span className="font-semibold">Operating Hours: </span>
+              {facilities[selectedId].operatingHours}
+              </p>
+          </div>
         )}
       </div>
 
