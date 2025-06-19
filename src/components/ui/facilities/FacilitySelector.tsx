@@ -1,13 +1,23 @@
-import { useState } from 'react';
+export interface Facility {
+  _id: string;
+  name: string;
+  directions: string;
+  operatingHours: string;
+  description?: string;
+  images?: string[];
+}
 
-export default function FacilitySelector({ facilities }) {
-    const [selectedId, setSelectedId] = useState('');
+interface FacilitySelectorProps {
+  facilities: Facility[];
+  selectedId: string;
+  onChange: (id: string) => void;
+}
 
-    const handleChange = (e) => {
-        const id = e.target.value;
-        //console.log('Selected facility ID:', id);
-        setSelectedId(id);
-    };
+export const FacilitySelector: React.FC<FacilitySelectorProps> = ({
+  facilities,
+  selectedId,
+  onChange,
+}) => {
 
     return (
         <div className="my-6">
@@ -17,7 +27,7 @@ export default function FacilitySelector({ facilities }) {
         <select
             id="facility-select"
             value={selectedId}
-            onChange={handleChange}
+            onChange={e => onChange(e.target.value)}
             className="w-full max-w-sm rounded-xl border-gray-300 p-2"
         >
             <option value="">— Select one —</option>
