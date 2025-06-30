@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import rafflesHallLogo from "/public/raffles-hall-logo.svg";
 import { Dialog, DialogContent, DialogClose } from "@/components/ui/dialog";
@@ -18,6 +18,8 @@ import {
   HomeIcon,
 } from "@radix-ui/react-icons";
 import { useSession, signIn } from "next-auth/react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 const navLinks = [
   {
@@ -27,7 +29,7 @@ const navLinks = [
     icon: HomeIcon,
   },
   {
-    name: "Your bookings",
+    name: "Your Bookings",
     description: "See your bookings in Raffles Hall.",
     href: "/bookings",
     icon: CalendarIcon,
@@ -41,15 +43,18 @@ const facilityLinks = [
 ];
 
 const Logo = () => (
-  <a href="#" className="-m-1.5 p-1.5">
+  <a
+    href="#"
+    className="flex items-center justify-center rounded-lg border-2 border-[#5b5754] bg-white py-2 text-[#44403c]"
+  >
     <span className="sr-only">Raffles Hall</span>
     <Image
       src={rafflesHallLogo}
       alt="Raffles Hall Logo"
       width={100}
-      height={100}
       className="object-contain"
     />
+    <div className="mr-6 text-4xl italic">RHApp</div>
   </a>
 );
 
@@ -64,39 +69,74 @@ const MobileMenuButton = ({ onClick }: { onClick: () => void }) => (
   </button>
 );
 
-const DesktopNav = () => (
-  <div className="hidden lg:flex lg:gap-x-12">
-    {navLinks.map((item) => (
-      <a
-        key={item.name}
-        href={item.href}
-        className="text-lg font-semibold leading-6 text-white hover:text-indigo-300"
-      >
-        {item.name}
-      </a>
-    ))}
-    <Popover>
-      <PopoverTrigger className="flex items-center gap-x-1 text-lg font-semibold leading-6 text-white hover:text-indigo-300">
-        Facilities
-        <ChevronDownIcon className="h-6 w-6 text-white" aria-hidden="true" />
-      </PopoverTrigger>
-      <PopoverContent className="absolute z-10 mt-2 w-56 transform rounded-lg bg-white p-4 shadow-lg ring-1 ring-gray-300">
-        <ul className="space-y-2">
-          {facilityLinks.map((item) => (
-            <li key={item.name}>
-              <a
-                href={item.href}
-                className="block rounded-md px-4 py-2 text-sm font-medium text-gray-700 transition-colors duration-150 hover:bg-indigo-100 hover:text-indigo-700"
-              >
-                {item.name}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </PopoverContent>
-    </Popover>
-  </div>
-);
+const DesktopNav = () => {
+  const pathname = usePathname();
+
+  return (
+    <div className="relative inline-block">
+      {/* 2) The rectangular box around all links */}
+      <div className="flex gap-1 rounded-lg border-2 border-[#5b5754] bg-white p-1">
+        {navLinks.map((item) => {
+          const isActive = pathname === item.href;
+
+          return (
+            <Link
+              key={item.name}
+              href={item.href}
+              className={`px-5 py-2 text-center font-semibold leading-6 ${
+                isActive
+                  ? "rounded-[4px] bg-[#e7e5e4] text-[#44403c]"
+                  : "text-[#44403c] hover:text-[#98928e]"
+              } `}
+            >
+              {item.name}
+            </Link>
+          );
+        })}
+
+        {/* 3) The “Facilities” popover trigger */}
+        <Popover>
+          {/**
+           * We mark "Facilities" as active whenever the path begins with /facilities.
+           * (So /facilities/gym, /facilities/study-area, etc. all highlight the trigger.)
+           */}
+          <PopoverTrigger
+            className={`flex items-center justify-center px-5 py-2 text-center font-semibold leading-6 ${
+              pathname.startsWith("/facilities")
+                ? "rounded-[4px] bg-[#e7e5e4] text-[#44403c]"
+                : "text-[#44403c] hover:text-[#98928e]"
+            } `}
+          >
+            Facilities
+          </PopoverTrigger>
+
+          <PopoverContent className="absolute -left-4 z-10 mt-2 w-56 rounded-lg border-2 border-[#5b5754] bg-white p-1 font-semibold shadow-lg">
+            <ul className="space-y-2">
+              {facilityLinks.map((fac) => {
+                const isFacActive = pathname === fac.href;
+
+                return (
+                  <li key={fac.name}>
+                    <Link
+                      href={fac.href}
+                      className={`block px-4 py-2 text-sm font-semibold ${
+                        isFacActive
+                          ? "rounded-[4px] bg-[#e7e5e4] text-[#44403c]"
+                          : "text-[#44403c] hover:bg-[#f5f5f4] hover:text-[#98928e]"
+                      } `}
+                    >
+                      {fac.name}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  );
+};
 
 const MobileMenu = ({
   mobileMenuOpen,
@@ -192,41 +232,53 @@ const MobileMenu = ({
 
 export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { data: session } = useSession() as {
-    data: { user: { name: string } };
-  };
+  // const { data: session } = useSession() as {
+  //   data: { user: { name: string } };
+  // };
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    const email = localStorage.getItem("userEmail");
+    if (email) setUserEmail(email);
+  }, []);
+  const pathname = usePathname();
+
+  if (["/login", "/signup"].includes(pathname)) return null;
 
   return (
-    <header className="bg-green-600 shadow-md">
+    <header className="h-35 bg-[#064e3b] shadow-md">
       <nav
-        className="mx-auto flex max-w-7xl items-center justify-between p-6 lg:px-8"
+        className="flex h-full translate-y-[20px] transform items-end justify-around lg:px-8"
         aria-label="Global"
       >
-        <div className="flex lg:flex-1">
+        <div className="flex">
           <Logo />
         </div>
         <div className="flex lg:hidden">
           <MobileMenuButton onClick={() => setMobileMenuOpen(true)} />
         </div>
         <DesktopNav />
-        <div className="hidden lg:flex lg:flex-1 lg:justify-end">
-          {session ? (
-            <div className="flex">
-              <a
-                className="self-center font-semibold text-indigo-600 hover:text-white"
-                href="/profile"
-              >{`Hello ${session?.user.name}!`}</a>
-            </div>
+        <div>
+          {userEmail ? (
+            <a
+              href="/profile"
+              className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-300 bg-cover"
+              style={{
+                backgroundImage: 'url("blank-profile-picture.png")',
+                scale: 1,
+              }}
+            ></a>
           ) : (
-            <button
-              onClick={() => signIn()}
-              className="inline-block rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold leading-6 text-white shadow-lg transition-all duration-150 ease-in-out hover:bg-indigo-700 hover:shadow-xl"
+            <a
+              href="/login"
+              className="rounded-lg border-2 border-[#5b5754] bg-white px-5 py-2 font-semibold text-[#44403c] hover:text-[#98928e]"
             >
               Log in <span aria-hidden="true">&rarr;</span>
-            </button>
+            </a>
           )}
         </div>
       </nav>
+
       <MobileMenu
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
