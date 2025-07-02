@@ -291,33 +291,12 @@ model SupperGroup {
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
 model User {
   id            String          @id @default(auto()) @map("_id") @db.ObjectId
-  name          String?
-  email         String?         @unique
-  emailVerified DateTime?
-  accounts      Account[]
-  sessions      Session[]
+  email         String          
+  password      String
+  createdAt     DateTime?       @default(now())
+  Session       Session[]
+  Account       Account[]
   Authenticator Authenticator[]
-
-  // outdated fields
-  bio                 String?
-  block               Int?
-  displayName         String?
-  image               String?
-  imageKey            String?
-  merged              Boolean?
-  modules             String[]
-  passwordHash        String?
-  profilePicSignedUrl String?
-  profilePicURI       String?
-  profilePictureURI   String?
-  profilePictureUrl   String?
-  telegramHandle      String?
-  token               String?
-  /// Multiple data types found: Json: 1.4%, Array(String): 1.4%, Array(Int): 97.2% out of 350 sampled entries
-  userCCA             Json?
-  userID              String?  @unique
-
-  @@unique([userID, passwordHash], map: "userID, passwordHash")
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
