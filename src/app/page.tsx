@@ -4,6 +4,8 @@ import { LatestPost } from "~/app/_components/post";
 import { auth } from "~/server/auth";
 import { api, HydrateClient } from "~/trpc/server";
 import Calendar from "~/app/_components/Calendar";
+import Calendar_v2 from "./_components/Calender_v2";
+import { useState } from "react";
 
 export default async function Home() {
   const hello = await api.post.hello({ text: "from tRPC" });
@@ -13,14 +15,9 @@ export default async function Home() {
     <HydrateClient>
       <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">
         <div className="container flex flex-col items-center justify-center gap-12 px-4 py-16">
-          <h1 className="flex items-baseline font-extrabold tracking-tight sm:text-[5rem]">
-            <span className="text-5xl text-[hsl(280,100%,70%)]">RHApp</span>
-            <span className="ml-2 text-lg">By RH Dev</span>
-          </h1>
+          <Calendar_v2 session={session}/>
 
-          <Calendar />
-
-          <div className="flex flex-col items-center gap-2">
+          {/* <div className="flex flex-col items-center gap-2">
             <p className="text-2xl text-white">
               {hello ? hello.greeting : "Loading tRPC query..."}
             </p>
@@ -36,9 +33,9 @@ export default async function Home() {
                 {session ? "Sign out" : "Sign in"}
               </Link>
             </div>
-          </div>
+          </div> */}
 
-          {session?.user && <LatestPost />}
+          {/* {session?.user && <LatestPost />} */}
         </div>
       </main>
     </HydrateClient>
