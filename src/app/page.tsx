@@ -1,18 +1,13 @@
-import Link from "next/link";
-
-import { LatestPost } from "~/app/_components/post";
-import { auth } from "~/server/auth";
 import { api, HydrateClient } from "~/trpc/server";
-import Calendar from "~/app/_components/Calendar";
 import Calendar_v2 from "./_components/Calender_v2";
-import { useState } from "react";
+import Header from "./_components/header";
 
 export default async function Home() {
-  const session = await auth();
 
   return (
     <HydrateClient>
-      <div className="text-center mt-4">
+      <Header currentPage={"Home"} />
+      <div className="mt-4 text-center">
         <h1 className="text-2xl font-bold text-gray-900">
           Your RH Booking Hub
         </h1>
@@ -21,7 +16,7 @@ export default async function Home() {
         </p>
       </div>
       <div className="mb-20">
-        <Calendar_v2 session={session} />
+        <Calendar_v2 />
       </div>
     </HydrateClient>
   );

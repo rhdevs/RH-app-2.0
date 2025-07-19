@@ -4,7 +4,6 @@ import { GeistSans } from "geist/font/sans";
 import { type Metadata } from "next";
 
 import { TRPCReactProvider } from "~/trpc/react";
-import Header from "@/app/_components/header";
 
 import SessionProviderWrapper from "./sessionProviderWrapper";
 
@@ -21,7 +20,6 @@ export default function RootLayout({
     <html lang="en" className={`${GeistSans.variable}`}>
       <body className="min-h-screen bg-gray-100">
         <SessionProviderWrapper>
-          <Header />
           <TRPCReactProvider>{children}</TRPCReactProvider>
           <footer className="w-full bg-emerald-800 py-4 text-center text-sm text-white fixed bottom-0">
             Thanks for using the RH App! It’s still new – feel free to report
