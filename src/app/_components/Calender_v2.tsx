@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   Calendar,
   ChevronLeft,
@@ -28,18 +28,14 @@ import {
   parseISO,
 } from "date-fns";
 import Loading from "./Loading";
-import { Session } from "next-auth";
 import Toast from "./Toast";
+import { useSession } from "next-auth/react";
 
 function classNames(...classes: (string | boolean | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
 }
 
-interface CalendarProps {
-  session: Session | null;
-}
-
-const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
+const Calendar_v2: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [facility, setFacility] = useState<number>(-1);
@@ -48,6 +44,7 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
   const [toastType, setToastType] = useState<"success" | "danger">("success");
   const [toastOpen, setToastOpen] = useState<boolean>(false);
 
+  const { data: session } = useSession();
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
 
@@ -118,6 +115,7 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
       location: booking.location || "TBD",
       status: booking.status || "confirmed",
       category: booking.category || "default",
+      user: booking.user
     }));
   }, [bookingsInMonth.data]);
 
@@ -191,7 +189,11 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
   };
 
   if (bookingsInMonth.isLoading || facilitiesQuery.isLoading) {
-    return <Loading />;
+    return (
+      <div className="mt-40 flex items-center justify-center">
+        <Loading />
+      </div>
+    );
   }
 
   const bookFacility = () => {
@@ -203,8 +205,6 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
   };
 
   const today = new Date();
-  const todayDate = format(today, "d");
-  const todayDay = format(today, "EEEE");
 
   return (
     <div className="">
@@ -322,7 +322,7 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
                       >
                         {dayNumber}
                         {day.hasEvent && (
-                          <div className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 transform rounded-full bg-gray-900" />
+                          <div className="absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 transform rounded-full bg-gray-900" />
                         )}
                       </button>
                     );
@@ -339,10 +339,10 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
                   <div className="flex items-center">
                     <button
                       onClick={bookFacility}
-                      className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900"
+                      className="inline-flex items-center gap-2 rounded-full bg-emerald-700 px-4 py-1 text-white hover:bg-emerald-900"
                     >
                       <Plus className="h-4 w-4" />
-                      Add Event
+                      Book a Facility
                     </button>
                   </div>
                   <div>
@@ -385,7 +385,7 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
                               {booking.title}
                             </div>
                             <div className="text-sm text-gray-600">
-                              By: {booking.status}
+                              By: {booking.user}
                             </div>
                           </div>
                         </div>

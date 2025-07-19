@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
+import { createHash } from "crypto";
 
 const prisma = new PrismaClient();
 
 export async function POST(req: Request) {
   try {
     const { email, password, confirmPassword } = await req.json();
-
     if (!email || !password || !confirmPassword) {
       return NextResponse.json(
         { error: "Please fill in all fields." },
@@ -24,7 +23,7 @@ export async function POST(req: Request) {
 
     if (password.length < 8){
       return NextResponse.json(
-        { error: "Password should be atleast 8 characters long." },
+        { error: "Password should be at least 8 characters long." },
         { status: 400 }
       );
     }
@@ -46,12 +45,12 @@ export async function POST(req: Request) {
       );
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    console.log("Creating user with:", { email, password: hashedPassword });
+    const hashedPassword = createHash("sha256").update(password).digest("hex");
+    // console.log("Creating user with:", { email, password: hashedPassword });
     const newUser = await prisma.user.create({
       data: {
-        email,
-        password: hashedPassword,
+        email: email.toLowerCase(),
+        passwordHash: hashedPassword,
       },
     });
 

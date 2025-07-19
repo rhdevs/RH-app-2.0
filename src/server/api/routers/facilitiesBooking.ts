@@ -65,7 +65,7 @@ export const facilityBookingRouter = createTRPCRouter({
       if (!booking) throw new Error("Booking not found");
 
       const [user, facility, cca] = await Promise.all([
-        ctx.db.user.findFirst({ where: { userID: booking.userID } }),
+        ctx.db.user.findFirst({ where: { id: booking.userID } }),
         ctx.db.facilities.findFirst({
           where: { facilityID: booking.facilityID },
         }),
@@ -82,7 +82,6 @@ export const facilityBookingRouter = createTRPCRouter({
 
   // Get all bookings within specific time period, optionally filtered by ccaID
   getBookings: publicProcedure
-    // ToDo: convert to protectedProcedure
     .input(
       z.object({
         startTime: z.number(),
@@ -99,6 +98,15 @@ export const facilityBookingRouter = createTRPCRouter({
           ...(facilityID ? { facilityID } : {}),
         },
       });
+      const userIDs = [...new Set(bookings.map((b) => b.userID))];
+
+      const users = await ctx.db.user.findMany({
+        where: {
+          userID: { in: userIDs },
+        },
+      });
+      const userMap = new Map(users.map((u) => [u.userID, u.displayName]));
+            console.log(userMap, "users")
 
       const facilities = await ctx.db.facilities.findMany();
 
@@ -108,6 +116,7 @@ export const facilityBookingRouter = createTRPCRouter({
           end: new Date(booking.endTime * 1000),
           title: facilities.find((fac) => fac.facilityID === booking.facilityID)
             ?.facilityName,
+          user: userMap.get(booking.userID),
         };
       });
     }),
