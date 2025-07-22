@@ -51,6 +51,7 @@ export async function POST(req: Request) {
       data: {
         email: email.toLowerCase(),
         passwordHash: hashedPassword,
+        userID: email.toUpperCase().replace("@U.NUS.EDU", "")
       },
     });
 
