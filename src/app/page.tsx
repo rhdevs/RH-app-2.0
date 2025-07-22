@@ -11,9 +11,6 @@ export default async function Home() {
         <h1 className="text-2xl font-bold text-gray-900">
           Your RH Booking Hub
         </h1>
-        <p className="mt-1 text-sm text-gray-600">
-          Check what's booked today or browse by date using the calendar.
-        </p>
       </div>
       <div className="mb-20">
         <Calendar_v2 />

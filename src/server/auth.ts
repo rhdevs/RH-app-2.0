@@ -27,8 +27,8 @@ declare module "next-auth" {
   interface Session extends DefaultSession {
     user: {
       id: string;
-      // ...other properties
-      // role: UserRole;
+      userID: string;
+      bio: string;
     } & DefaultSession["user"];
   }
 
@@ -94,6 +94,9 @@ export const authOptions = {
           if (sha256Hash === user.passwordHash) {
             return {
               id: user.id,
+              email: user.email,
+              name: user.displayName,
+              bio: user.bio,
             };
           } else {
             return null;
@@ -118,12 +121,19 @@ export const authOptions = {
       // This runs on sign-in
       if (user) {
         token.id = user.id;
+        token.email = user.email;
+        token.name = user.name;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user && token.id) {
         session.user.id = token.id as string;
+        session.user.userID = (token.email ?? "")
+          .toUpperCase()
+          .replace("@U.NUS.EDU", "");
+        session.user.email = token.email;
+        session.user.name = token.name;
       }
       return session;
     },

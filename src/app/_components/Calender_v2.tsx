@@ -43,6 +43,7 @@ const Calendar_v2: React.FC = () => {
   const [toastContent, setToastContent] = useState<string>("");
   const [toastType, setToastType] = useState<"success" | "danger">("success");
   const [toastOpen, setToastOpen] = useState<boolean>(false);
+  const [checkOwnBookings, setCheckOwnBookings] = useState<boolean>(false);
 
   const { data: session } = useSession();
   const monthStart = startOfMonth(currentMonth);
@@ -61,12 +62,17 @@ const Calendar_v2: React.FC = () => {
     setSelectedDate(date);
   };
 
-  const bookingsInMonth = api.bookings.getBookings.useQuery({
-    startTime: start,
-    endTime: end,
-    ...(facility !== -1 ? { facilityID: facility } : {}),
-  });
-
+  const bookingsInMonth = api.bookings.getBookings.useQuery(
+    {
+      startTime: start,
+      endTime: end,
+      ...(facility !== -1 ? { facilityID: facility } : {}),
+      ...(checkOwnBookings ? { userId: session?.user?.userID } : {}),
+    },
+    {
+      enabled: !checkOwnBookings || !!session?.user?.userID,
+    },
+  );
   const facilitiesQuery = api.bookings.getAllFacilities.useQuery();
 
   const facilities = useMemo(() => {
@@ -102,21 +108,31 @@ const Calendar_v2: React.FC = () => {
   const processedBookings = useMemo(() => {
     if (!bookingsInMonth.data) return [];
 
-    return bookingsInMonth.data.map((booking: any) => ({
-      id: booking.id || Math.random().toString(),
-      title: booking.title || "Untitled Event",
-      start: booking.start ? new Date(booking.start) : new Date(),
-      end: booking.end ? new Date(booking.end) : new Date(),
-      date: booking.start
-        ? format(new Date(booking.start), "MMMM do, yyyy")
-        : "",
-      time: booking.start ? format(new Date(booking.start), "h:mm a") : "",
-      endTime: booking.end ? format(new Date(booking.end), "h:mm a") : "",
-      location: booking.location || "TBD",
-      status: booking.status || "confirmed",
-      category: booking.category || "default",
-      user: booking.user
-    }));
+    return bookingsInMonth.data.map((booking: any) => {
+      const start = booking.start ? new Date(booking.start) : new Date();
+      const end = booking.end ? new Date(booking.end) : new Date();
+
+      const isFullDay =
+        start.getHours() === 0 &&
+        start.getMinutes() === 0 &&
+        end.getHours() === 0 &&
+        end.getMinutes() === 0 &&
+        end.getTime() - start.getTime() === 24 * 60 * 60 * 1000;
+
+      return {
+        id: booking.id || Math.random().toString(),
+        title: booking.title || "Untitled Event",
+        start,
+        end,
+        date: format(start, "MMMM do, yyyy"),
+        time: isFullDay ? "All day" : format(start, "h:mm a"),
+        endTime: isFullDay ? "" : format(end, "h:mm a"),
+        location: booking.location || "TBD",
+        status: booking.status || "confirmed",
+        category: booking.category || "default",
+        user: booking.user,
+      };
+    });
   }, [bookingsInMonth.data]);
 
   const calendarDaysWithEvents = useMemo(() => {
@@ -216,7 +232,13 @@ const Calendar_v2: React.FC = () => {
       />
 
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mb-8 flex items-center justify-end">
+        <div className="mb-8 flex items-center justify-end gap-x-4">
+          <div
+            onClick={() => setCheckOwnBookings(!checkOwnBookings)}
+            className="rounded-full bg-emerald-700 px-4 py-1 text-white hover:bg-emerald-900"
+          >
+            {checkOwnBookings ? "All Bookings" : "My Bookings"}
+          </div>
           <div className="relative">
             <button
               type="button"
@@ -258,10 +280,15 @@ const Calendar_v2: React.FC = () => {
             )}
           </div>
         </div>
-
+        <div className="text-xs text-gray-500">
+          Current View:{" "}
+          {checkOwnBookings
+            ? `My Bookings (${session?.user?.userID ?? "..."})`
+            : "All Bookings"}
+        </div>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-7">
-            <div className="h-[450px] rounded-lg border border-gray-200 bg-white shadow-sm">
+            <div className="h-[500px] rounded-lg border border-gray-200 bg-white shadow-sm">
               <div className="flex items-center justify-between border-b border-gray-200 p-6">
                 <button
                   onClick={() => navigateMonth("prev")}
@@ -333,7 +360,7 @@ const Calendar_v2: React.FC = () => {
           </div>
 
           <div className="lg:col-span-5">
-            <div className="flex max-h-[450px] min-h-[450px] flex-col rounded-lg border border-gray-200 bg-white shadow-sm">
+            <div className="flex max-h-[450px] min-h-[500px] flex-col rounded-lg border border-gray-200 bg-white shadow-sm">
               <div className="border-b border-gray-200 p-6">
                 <div className="flex justify-between">
                   <div className="flex items-center">

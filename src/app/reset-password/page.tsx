@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 const LoginPage = () => {
   const [formData, setFormData] = useState({
     email: "",
-    personalEmail: ""
+    personalEmail: "",
   });
   const [isLoading, setIsLoading] = useState(false);
   const [toastContent, setToastContent] = useState<string>("");
@@ -226,7 +226,7 @@ const LoginPage = () => {
               <p className="text-gray-600">
                 We sent a 6-digit code to <br />
                 <span className="font-semibold text-gray-900">
-                  {formData.email}
+                  {formData.personalEmail}
                 </span>
               </p>
             </div>
@@ -310,7 +310,15 @@ const LoginPage = () => {
               <h1 className="mb-2 text-3xl font-bold text-gray-900">
                 Forgot Password?
               </h1>
-              <p className="text-gray-600">No worries</p>
+              <span className="text-xs text-gray-600">
+                  (Note: Due to strict email filtering policies by NUS, we’re
+                  unable to deliver password reset emails to @u.nus.edu
+                  addresses. To ensure you receive your verification code,
+                  please provide a personal email address. Yeah, we know it’s a bit dumb
+                   — but if anything ever goes wrong (like someone resetting
+                  your account), just reach out to the RH Developers and we’ll
+                  sort it out. We keep track of the records.)
+                </span>
             </div>
 
             <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">
@@ -364,13 +372,6 @@ const LoginPage = () => {
                     />
                   </div>
                 </div>
-                <span className="text-xs">
-                  (Note: Due to strict email filtering policies by NUS, we’re
-                  unable to deliver password reset emails to @u.nus.edu
-                  addresses. To ensure you receive your verification code,
-                  please provide a personal email address (e.g. Gmail, Outlook,
-                  etc.) along with your NUS email.)
-                </span>
 
                 <button
                   type="submit"

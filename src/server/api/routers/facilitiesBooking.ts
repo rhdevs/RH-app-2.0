@@ -87,17 +87,20 @@ export const facilityBookingRouter = createTRPCRouter({
         startTime: z.number(),
         endTime: z.number(),
         facilityID: z.number().optional(),
+        userId: z.string().optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
-      const { startTime, endTime, facilityID } = input;
+      const { startTime, endTime, facilityID, userId } = input;
       const bookings = await ctx.db.bookings.findMany({
         where: {
           startTime: { lte: endTime },
           endTime: { gte: startTime },
           ...(facilityID ? { facilityID } : {}),
+          ...(userId ? { userID: userId } : {}),
         },
       });
+
       const userIDs = [...new Set(bookings.map((b) => b.userID))];
 
       const users = await ctx.db.user.findMany({
@@ -106,7 +109,6 @@ export const facilityBookingRouter = createTRPCRouter({
         },
       });
       const userMap = new Map(users.map((u) => [u.userID, u.displayName]));
-            console.log(userMap, "users")
 
       const facilities = await ctx.db.facilities.findMany();
 
@@ -117,6 +119,8 @@ export const facilityBookingRouter = createTRPCRouter({
           title: facilities.find((fac) => fac.facilityID === booking.facilityID)
             ?.facilityName,
           user: userMap.get(booking.userID),
+          eventName: booking.eventName,
+          eventDescription: booking.description
         };
       });
     }),

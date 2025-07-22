@@ -1,7 +1,17 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { Menu, X, ChevronDown, Home, Calendar, Box, User } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Menu,
+  X,
+  ChevronDown,
+  Home,
+  Calendar,
+  Box,
+  User,
+  LogOut,
+  UserCircle,
+} from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -12,13 +22,17 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ currentPage }) => {
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] =
+    useState<boolean>(false);
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const { data: session } = useSession();
+
   const navLinks = [
     { name: "Home", href: "/", icon: Home },
-    { name: "Bookings", href: "/bookings", icon: Calendar },
-    { name: "Facilities", href: "/facilities", icon: Box },
+    { name: "Past Bookings", href: "/bookings", icon: Calendar },
+    // { name: "Facilities", href: "/facilities", icon: Box },
   ];
 
   const isActive = (page: string) => {
@@ -26,10 +40,29 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     return false;
   };
 
+  const handleProfile = () => {
+    router.push("/profile");
+    setIsProfileDropdownOpen(false);
+  };
+
+  const handleLogout = () => {
+    signOut();
+    setIsProfileDropdownOpen(false);
+  };
+
   useEffect(() => {
     const handleClickOutside = (event: any) => {
+      // Handle mobile menu click outside
       if (isMobileMenuOpen && !event.target.closest(".mobile-menu-container")) {
         setIsMobileMenuOpen(false);
+      }
+
+      // Handle profile dropdown click outside
+      if (
+        profileDropdownRef.current &&
+        !profileDropdownRef.current.contains(event.target)
+      ) {
+        setIsProfileDropdownOpen(false);
       }
     };
 
@@ -82,13 +115,47 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
           <div className="hidden items-center space-x-4 md:flex">
             {session ? (
               <div className="flex items-center space-x-3">
-                <span className="text-sm text-emerald-100">Welcome back!</span>
-                <button
-                  onClick={() => {signOut()}}
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 transition-colors duration-200 hover:bg-emerald-500"
-                >
-                  <User size={20} className="text-white" />
-                </button>
+                <span className="text-sm text-emerald-100">
+                  Welcome back, {session.user.name}!
+                </span>
+                <div className="relative" ref={profileDropdownRef}>
+                  <button
+                    onClick={() =>
+                      setIsProfileDropdownOpen(!isProfileDropdownOpen)
+                    }
+                    className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 transition-colors duration-200 hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2"
+                  >
+                    <User size={20} className="text-white" />
+                  </button>
+
+                  {/* Desktop Profile Dropdown */}
+                  {isProfileDropdownOpen && (
+                    <div className="absolute right-0 z-50 mt-2 w-48 rounded-lg bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                      <div className="py-1">
+                        <button
+                          onClick={handleProfile}
+                          className="flex w-full items-center px-4 py-2 text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
+                        >
+                          <UserCircle
+                            size={16}
+                            className="mr-3 text-gray-400"
+                          />
+                          Profile
+                        </button>
+
+                        <hr className="border-gray-100" />
+
+                        <button
+                          onClick={handleLogout}
+                          className="flex w-full items-center px-4 py-2 text-sm text-red-600 transition-colors duration-150 hover:bg-red-50"
+                        >
+                          <LogOut size={16} className="mr-3 text-red-500" />
+                          Logout
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <button
@@ -132,13 +199,22 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
 
               <div className="border-t border-emerald-700 pt-4">
                 {session ? (
-                  <button
-                    onClick={() => {}}
-                    className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
-                  >
-                    <User size={18} />
-                    <span>Profile</span>
-                  </button>
+                  <div>
+                    <button
+                      onClick={handleProfile}
+                      className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
+                    >
+                      <UserCircle size={18} />
+                      <span>Profile</span>
+                    </button>
+                    <button
+                      onClick={handleLogout}
+                      className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
+                    >
+                      <LogOut size={18} />
+                      <span>Logout</span>
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={() => {
@@ -150,6 +226,11 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                   </button>
                 )}
               </div>
+              {session?.user.name && (
+                <span className="flex justify-center text-sm text-emerald-100">
+                  Welcome back, {session?.user.name}!
+                </span>
+              )}
             </div>
           </div>
         )}
