@@ -23,12 +23,13 @@ export default function RootLayout({
           <TRPCReactProvider>{children}</TRPCReactProvider>
           <footer className="w-full bg-emerald-800 py-4 text-center text-sm text-white fixed bottom-0">
             Thanks for using the RH App! It’s beta version – feel free to report
-            bugs or suggest features via Telegram:
+            bugs or suggest features via form:
             <a
-              href="https://t.me/lcw14"
+              href="https://forms.gle/ocUqt5CPXXAUpYfL8"
+              target="_blank"
               className="ml-1 underline hover:text-emerald-300"
             >
-              @lcw14
+              here
             </a>
           </footer>
         </SessionProviderWrapper>
