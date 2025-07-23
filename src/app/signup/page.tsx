@@ -37,7 +37,11 @@ const SignUpPage = () => {
 
   const blockOptions = [2, 3, 4, 5, 6, 7, 8];
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  const handleInputChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >,
+  ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
@@ -57,7 +61,7 @@ const SignUpPage = () => {
       setToastType("danger");
       return;
     }
-    
+
     if (formData.password !== formData.confirmPassword) {
       setToastContent("Passwords do not match!");
       setToastOpen(true);
@@ -67,8 +71,9 @@ const SignUpPage = () => {
 
     setNextPage(true);
   };
-  console.log(formData)
+
   const onSubmitStep2 = async (e: React.FormEvent) => {
+    console.log("asdadasd");
     e.preventDefault();
     if (
       formData.fullName === "" ||
@@ -99,9 +104,10 @@ const SignUpPage = () => {
           router.push("/login");
         }, 1500);
       } else {
-        setToastContent("Email already exists!");
-        setToastOpen(true);
+        const data = await res.json();
+        setToastContent(data.error ?? "Something went wrong!");
         setToastType("danger");
+        setToastOpen(true);
       }
     } catch {
       setToastContent(
@@ -125,12 +131,14 @@ const SignUpPage = () => {
         onClose={() => setToastOpen(false)}
       />
       <Header currentPage="login" />
-      <div className="mt-10 mb-16 flex items-center justify-center p-4">
+      <div className="mb-16 mt-10 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <div className="mb-8 text-center">
             <h1 className="mb-2 text-3xl font-bold text-gray-900">Welcome</h1>
             <p className="text-gray-600">
-              {nextPage ? "Tell us more about yourself" : "Sign up get your Raffles Hall account"}
+              {nextPage
+                ? "Tell us more about yourself"
+                : "Sign up get your Raffles Hall account"}
             </p>
           </div>
 
@@ -238,11 +246,11 @@ const SignUpPage = () => {
             ) : (
               // Step 2: Personal Information
               <div className="space-y-6">
-                <div className="flex items-center justify-between mb-4">
+                <div className="mb-4 flex items-center justify-between">
                   <button
                     type="button"
                     onClick={goBackToStep1}
-                    className="flex items-center space-x-2 text-gray-600 hover:text-gray-800 transition-colors"
+                    className="flex items-center space-x-2 text-gray-600 transition-colors hover:text-gray-800"
                   >
                     <ArrowLeft size={20} />
                     <span>Back</span>
@@ -293,7 +301,7 @@ const SignUpPage = () => {
                       onChange={handleInputChange}
                       required
                       rows={3}
-                      className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500 resize-none"
+                      className="w-full resize-none rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
                       placeholder="Tell us about yourself..."
                     />
                   </div>
@@ -317,7 +325,7 @@ const SignUpPage = () => {
                       value={formData.blockNumber}
                       onChange={handleInputChange}
                       required
-                      className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500 appearance-none"
+                      className="w-full appearance-none rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="">Select your block</option>
                       {blockOptions.map((block) => (
