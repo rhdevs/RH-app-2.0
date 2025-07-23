@@ -6,6 +6,8 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 export async function POST(req: NextRequest) {
+    console.log("🔍 DATABASE_URL used:", process.env.DATABASE_URL); // <-- add this here
+
   try {
     const body = await req.json();
     const { email, password } = body;
