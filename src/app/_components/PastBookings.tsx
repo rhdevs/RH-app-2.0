@@ -69,10 +69,15 @@ const PastBookings = () => {
   const now = Math.floor(Date.now() / 1000);
   const startTime = getTimeFrameStart(selectedTimeFrame) ?? 0;
 
-  const { data: bookings = [], isLoading } = api.bookings.getBookings.useQuery(
+  const {
+    data: bookings = [],
+    isLoading,
+    refetch,
+  } = api.bookings.getBookings.useQuery(
     {
       startTime,
       endTime: now,
+      seeAll: true,
       ...(selectedFacility !== "All Facilities"
         ? {
             facilityID:
@@ -109,6 +114,19 @@ const PastBookings = () => {
     selectedFacility !== "All Facilities" ||
     selectedTimeFrame !== "all" ||
     searchQuery.trim();
+
+  const utils = api.useUtils();
+
+  const deleteBooking = api.bookings.deleteBooking.useMutation({
+    onSuccess: () => {
+      utils.bookings.getBookings.invalidate();
+      refetch();
+    },
+  });
+
+  const handleDelete = (id: string) => {
+    deleteBooking.mutate({ id });
+  };
 
   const getFacilityColor = (facility: string) => {
     switch (facility) {
@@ -289,6 +307,15 @@ const PastBookings = () => {
                       >
                         {booking.title}
                       </div>
+                      <div
+                        className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          booking.end < new Date()
+                            ? "bg-gray-100 text-gray-600"
+                            : "bg-emerald-100 text-emerald-600"
+                        }`}
+                      >
+                        {booking.end < new Date() ? "Completed" : "Incoming"}
+                      </div>
                     </div>
 
                     <div className="mt-3 grid grid-cols-1 gap-4 text-sm text-gray-600 md:grid-cols-3">
@@ -305,6 +332,14 @@ const PastBookings = () => {
                     <div className="mt-2 text-sm text-gray-600">
                       <span>Event: {booking.eventName}</span>
                     </div>
+                    {booking.end >= new Date() && (
+                      <button
+                        onClick={() => handleDelete(booking.id)}
+                        className="ml-auto mt-2 rounded-md bg-red-100 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-200"
+                      >
+                        Delete booking
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

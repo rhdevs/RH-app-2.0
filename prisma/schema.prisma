@@ -100,7 +100,7 @@ model BookingLogs {
 model Bookings {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   bookUntil   Int?
-  bookingID   Int      @unique(map: "bookingID")
+  bookingID   Int      @default(autoincrement()) @unique
   ccaID       Int
   description String?
   endTime     Int
