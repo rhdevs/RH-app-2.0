@@ -230,6 +230,16 @@ const Calendar_v2: React.FC = () => {
     setBookingModalOpen(true);
   };
 
+  const handleCheckOwnBookings = () => {
+    if (!session) {
+      setToastContent("Log in to see your bookings!");
+      setToastOpen(true);
+      setToastType("danger");
+      return;
+    }
+    setCheckOwnBookings(!checkOwnBookings);
+  };
+
   return (
     <div className="">
       <Toast
@@ -249,7 +259,7 @@ const Calendar_v2: React.FC = () => {
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="mb-8 flex items-center justify-end gap-x-4">
           <div
-            onClick={() => setCheckOwnBookings(!checkOwnBookings)}
+            onClick={handleCheckOwnBookings}
             className="rounded-full bg-emerald-700 px-4 py-1 text-white hover:bg-emerald-900"
           >
             {checkOwnBookings ? "All Bookings" : "My Bookings"}
