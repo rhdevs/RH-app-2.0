@@ -4,10 +4,8 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Menu,
   X,
-  ChevronDown,
   Home,
   Calendar,
-  Box,
   User,
   LogOut,
   UserCircle,
@@ -45,22 +43,22 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     setIsProfileDropdownOpen(false);
   };
 
-  const handleLogout = () => {
-    signOut();
+  const handleLogout = async () => {
+    await signOut();
     setIsProfileDropdownOpen(false);
   };
 
   useEffect(() => {
-    const handleClickOutside = (event: any) => {
+    const handleClickOutside = (event: MouseEvent) => {
       // Handle mobile menu click outside
-      if (isMobileMenuOpen && !event.target.closest(".mobile-menu-container")) {
+      if (isMobileMenuOpen && !(event.target as HTMLElement).closest(".mobile-menu-container")) {
         setIsMobileMenuOpen(false);
       }
 
       // Handle profile dropdown click outside
       if (
         profileDropdownRef.current &&
-        !profileDropdownRef.current.contains(event.target)
+        !profileDropdownRef.current.contains(event.target as Node)
       ) {
         setIsProfileDropdownOpen(false);
       }
