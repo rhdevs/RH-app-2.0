@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   Calendar,
   ChevronLeft,
@@ -26,20 +26,19 @@ import {
   isToday,
   isSameDay,
   parseISO,
+  startOfDay,
+  endOfDay,
 } from "date-fns";
 import Loading from "./Loading";
-import { Session } from "next-auth";
 import Toast from "./Toast";
+import { useSession } from "next-auth/react";
+import BookingModal from "./BookingModal";
 
 function classNames(...classes: (string | boolean | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
 }
 
-interface CalendarProps {
-  session: Session | null;
-}
-
-const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
+const Calendar_v2: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [facility, setFacility] = useState<number>(-1);
@@ -47,7 +46,10 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
   const [toastContent, setToastContent] = useState<string>("");
   const [toastType, setToastType] = useState<"success" | "danger">("success");
   const [toastOpen, setToastOpen] = useState<boolean>(false);
+  const [checkOwnBookings, setCheckOwnBookings] = useState<boolean>(false);
+  const [bookingModalOpen, setBookingModalOpen] = useState<boolean>(false);
 
+  const { data: session } = useSession();
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
 
@@ -55,9 +57,7 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
   const [end, setEnd] = useState(getUnixTime(monthEnd));
 
   const handleDateClick = (date: Date) => {
-    // Check if the clicked date is not in the current month
     if (!isSameMonth(date, currentMonth)) {
-      // Navigate to the appropriate month
       const newMonth = new Date(date.getFullYear(), date.getMonth(), 1);
       setCurrentMonth(newMonth);
       setStart(getUnixTime(startOfMonth(newMonth)));
@@ -66,12 +66,21 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
     setSelectedDate(date);
   };
 
-  const bookingsInMonth = api.bookings.getBookings.useQuery({
-    startTime: start,
-    endTime: end,
-    ...(facility !== -1 ? { facilityID: facility } : {}),
-  });
-
+  const {
+    data: bookingsInMonth = [],
+    isLoading,
+    refetch: refetchBookingsInMonth,
+  } = api.bookings.getBookings.useQuery(
+    {
+      startTime: start,
+      endTime: end,
+      ...(facility !== -1 ? { facilityID: facility } : {}),
+      ...(checkOwnBookings ? { userId: session?.user?.userID } : {}),
+    },
+    {
+      enabled: !checkOwnBookings || !!session?.user?.userID,
+    },
+  );
   const facilitiesQuery = api.bookings.getAllFacilities.useQuery();
 
   const facilities = useMemo(() => {
@@ -105,23 +114,35 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
   }, [currentMonth, selectedDate]);
 
   const processedBookings = useMemo(() => {
-    if (!bookingsInMonth.data) return [];
+    if (!bookingsInMonth) return [];
 
-    return bookingsInMonth.data.map((booking: any) => ({
-      id: booking.id || Math.random().toString(),
-      title: booking.title || "Untitled Event",
-      start: booking.start ? new Date(booking.start) : new Date(),
-      end: booking.end ? new Date(booking.end) : new Date(),
-      // Format for display
-      date: booking.start
-        ? format(new Date(booking.start), "MMMM do, yyyy")
-        : "",
-      time: booking.start ? format(new Date(booking.start), "h:mm a") : "",
-      endTime: booking.end ? format(new Date(booking.end), "h:mm a") : "",
-      location: booking.location || "TBD",
-      status: booking.status || "confirmed",
-    }));
-  }, [bookingsInMonth.data]);
+    return bookingsInMonth.map((booking: any) => {
+      const start = booking.start ? new Date(booking.start) : new Date();
+      const end = booking.end ? new Date(booking.end) : new Date();
+
+      const isFullDay =
+        start.getHours() === 0 &&
+        start.getMinutes() === 0 &&
+        end.getHours() === 0 &&
+        end.getMinutes() === 0 &&
+        end.getTime() - start.getTime() === 24 * 60 * 60 * 1000;
+
+      return {
+        id: booking.id || Math.random().toString(),
+        title: booking.title || "Untitled Event",
+        start,
+        end,
+        date: format(start, "MMMM do, yyyy"),
+        time: isFullDay ? "All day" : format(start, "h:mm a"),
+        endTime: isFullDay ? "" : format(end, "h:mm a"),
+        location: booking.location || "TBD",
+        status: booking.status || "confirmed",
+        category: booking.category || "default",
+        user: booking.user,
+        eventName: booking.eventName,
+      };
+    });
+  }, [bookingsInMonth]);
 
   const calendarDaysWithEvents = useMemo(() => {
     return calendarDays.map((day) => ({
@@ -150,26 +171,54 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
     setEnd(getUnixTime(endOfMonth(newMonth)));
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "confirmed":
-        return "bg-green-100 text-green-800";
-      case "pending":
-        return "bg-yellow-100 text-yellow-800";
-      case "cancelled":
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-
   const handleFacilityChange = (facilityID: number) => {
     setFacility(facilityID);
     setIsFilterDropdownOpen(false);
   };
 
-  if (bookingsInMonth.isLoading || facilitiesQuery.isLoading) {
-    return <Loading />;
+  const getFacilityColor = (facility: string) => {
+    switch (facility) {
+      case "Main Area (UL)":
+        return "bg-green-100 text-green-800 border-green-800";
+      case "UL Conf Rm":
+        return "bg-red-100 text-red-800 border-red-800";
+      case "Alumni Room":
+        return "bg-blue-100 text-blue-800 border-blue-800";
+      case "Heritage Corner":
+        return "bg-orange-100 text-orange-800 border-orange-800";
+      case "Stage":
+        return "bg-amber-100 text-amber-800 border-amber-800";
+      case "Comm Hall (Front)":
+        return "bg-lime-100 text-lime-800 border-lime-800";
+      case "Band Room":
+        return "bg-teal-100 text-teal-800 border-teal-800";
+      case "Pool Area":
+        return "bg-cyan-100 text-cyan-800 border-cyan-800";
+      case "TV Room":
+        return "bg-sky-100 text-sky-800 border-sky-800";
+      case "Meeting Room":
+        return "bg-indigo-100 text-indigo-800 border-indigo-800";
+      case "Kuok Conf Rm":
+        return "bg-violet-100 text-violet-800 border-violet-800";
+      case "Hard Court":
+        return "bg-rose-100 text-rose-800 border-rose-800";
+      case "Basketball Court":
+        return "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-800";
+      case "Dance Studio":
+        return "bg-pink-100 text-pink-800 border-pink-800";
+      case "Comm Hall (Back)":
+        return "bg-emerald-100 text-emerald-800 border-emerald-800";
+      default:
+        return "bg-gray-100 text-gray-800";
+    }
+  };
+
+  if (isLoading || facilitiesQuery.isLoading) {
+    return (
+      <div className="mt-40 flex items-center justify-center">
+        <Loading />
+      </div>
+    );
   }
 
   const bookFacility = () => {
@@ -177,7 +226,9 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
       setToastContent("Log in to book facility!");
       setToastOpen(true);
       setToastType("danger");
+      return;
     }
+    setBookingModalOpen(true);
   };
 
   return (
@@ -188,14 +239,28 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
         show={toastOpen}
         onClose={() => setToastOpen(false)}
       />
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-6 flex items-center justify-between">
-          <div></div>
+      <BookingModal
+        isOpen={bookingModalOpen}
+        onClose={() => setBookingModalOpen(false)}
+        bookings={bookingsInMonth ?? []}
+        facilities={facilities}
+        userId={session?.user?.userID}
+        currentDate={selectedDate}
+        refetch={refetchBookingsInMonth}
+      />
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mb-8 flex items-center justify-end gap-x-4">
+          <div
+            onClick={() => setCheckOwnBookings(!checkOwnBookings)}
+            className="rounded-full bg-emerald-700 px-4 py-1 text-white hover:bg-emerald-900"
+          >
+            {checkOwnBookings ? "All Bookings" : "My Bookings"}
+          </div>
           <div className="relative">
             <button
               type="button"
               onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
-              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
               <Filter className="h-4 w-4" />
               <span className="max-w-40 truncate">
@@ -205,7 +270,7 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
             </button>
 
             {isFilterDropdownOpen && (
-              <div className="absolute right-0 z-10 mt-2 w-64 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+              <div className="absolute right-0 z-20 mt-2 w-64 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5">
                 <div className="max-h-60 overflow-y-auto py-1">
                   {facilities.map((facilityOption) => (
                     <button
@@ -216,7 +281,7 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
                       className={classNames(
                         "flex w-full items-center px-4 py-2 text-left text-sm hover:bg-gray-100",
                         facility === facilityOption.facilityID
-                          ? "bg-indigo-50 text-indigo-700"
+                          ? "bg-gray-100 text-gray-900"
                           : "text-gray-700",
                       )}
                     >
@@ -225,9 +290,6 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
                           {facilityOption.facilityName}
                         </div>
                       </div>
-                      {facility === facilityOption.facilityID && (
-                        <div className="ml-2 h-2 w-2 rounded-full bg-indigo-600"></div>
-                      )}
                     </button>
                   ))}
                 </div>
@@ -235,194 +297,156 @@ const Calendar_v2: React.FC<CalendarProps> = ({ session }) => {
             )}
           </div>
         </div>
+        <div className="text-xs text-gray-500">
+          Current View:{" "}
+          {checkOwnBookings
+            ? `My Bookings (${session?.user?.userID ?? "..."})`
+            : "All Bookings"}
+        </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div className="lg:col-span-7">
+            <div className="h-[500px] rounded-lg border border-gray-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between border-b border-gray-200 p-6">
+                <button
+                  onClick={() => navigateMonth("prev")}
+                  className="rounded-lg p-2 hover:bg-gray-100"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
 
-        <div className="lg:grid lg:grid-cols-12 lg:gap-8">
-          <div className="lg:col-span-5 xl:col-span-4">
-            <div className="h-[450px] rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-              <div className="mb-6 flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-gray-900">
-                  {format(currentMonth, "MMMM yyyy")}
+                  {format(currentMonth, "MMM yyyy").toUpperCase()}
                 </h2>
-                <div className="flex items-center space-x-1">
-                  <button
-                    type="button"
-                    onClick={() => navigateMonth("prev")}
-                    className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                  >
-                    <ChevronLeft className="h-5 w-5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigateMonth("next")}
-                    className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                  >
-                    <ChevronRight className="h-5 w-5" />
-                  </button>
+
+                <button
+                  onClick={() => navigateMonth("next")}
+                  className="rounded-lg p-2 hover:bg-gray-100"
+                >
+                  <ChevronRight className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-6">
+                <div className="mb-4 grid grid-cols-7 gap-1">
+                  {["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"].map(
+                    (day) => (
+                      <div
+                        key={day}
+                        className="py-3 text-center text-xs font-medium text-gray-500"
+                      >
+                        {day}
+                      </div>
+                    ),
+                  )}
+                </div>
+
+                <div className="grid grid-cols-7 gap-1">
+                  {calendarDaysWithEvents.map((day) => {
+                    const dayNumber = format(day.date, "d");
+                    const isWeekend = [0, 6].includes(day.date.getDay());
+
+                    return (
+                      <button
+                        key={day.date.toISOString()}
+                        onClick={() => handleDateClick(day.date)}
+                        className={classNames(
+                          "relative h-12 w-full rounded-lg text-sm font-medium transition-all",
+                          day.isCurrentMonth
+                            ? "text-gray-900"
+                            : "text-gray-400",
+                          day.isSelected && "bg-gray-900 text-white",
+                          !day.isSelected &&
+                            day.isToday &&
+                            "bg-gray-100 text-gray-900",
+                          !day.isSelected && !day.isToday && "hover:bg-gray-50",
+                          isWeekend &&
+                            day.isCurrentMonth &&
+                            !day.isSelected &&
+                            "text-red-600",
+                        )}
+                      >
+                        {dayNumber}
+                        {day.hasEvent && (
+                          <div className="absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 transform rounded-full bg-gray-900" />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-
-              <div className="mb-2 grid grid-cols-7 gap-1">
-                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
-                  (day) => (
-                    <div
-                      key={day}
-                      className="py-2 text-center text-xs font-medium text-gray-500"
-                    >
-                      {day}
-                    </div>
-                  ),
-                )}
-              </div>
-
-              <div className="grid grid-cols-7 gap-1">
-                {calendarDaysWithEvents.map((day, dayIdx) => {
-                  const dayNumber = format(day.date, "d");
-
-                  return (
-                    <button
-                      key={day.date.toISOString()}
-                      type="button"
-                      onClick={() => handleDateClick(day.date)}
-                      className={classNames(
-                        "relative rounded-lg p-2 text-sm font-medium transition-all duration-200 hover:bg-gray-50",
-                        day.isCurrentMonth ? "text-gray-900" : "text-gray-400",
-                        day.isSelected &&
-                          "bg-indigo-600 text-white hover:bg-indigo-700",
-                        day.isToday &&
-                          !day.isSelected &&
-                          "bg-indigo-50 font-semibold text-indigo-600",
-                        !day.isCurrentMonth && "hover:bg-gray-25",
-                      )}
-                    >
-                      <span className="relative z-10">{dayNumber}</span>
-                      {day.hasEvent && (
-                        <div
-                          className={classNames(
-                            "absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 transform rounded-full",
-                            day.isSelected ? "bg-white" : "bg-indigo-600",
-                          )}
-                        />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => bookFacility()}
-                className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 font-medium text-white transition-colors hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-              >
-                <Plus className="h-5 w-5" />
-                Book Facility
-              </button>
             </div>
           </div>
 
-          <div className="mt-8 lg:col-span-7 lg:mt-0 xl:col-span-8">
-            <div className="flex h-[450px] flex-col rounded-xl border border-gray-200 bg-white shadow-sm">
-              <div className="flex-shrink-0 border-b border-gray-200 p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-xl font-semibold text-gray-900">
-                      {isSameDay(selectedDate, new Date())
-                        ? "Today's Events"
-                        : `Events for ${format(selectedDate, "MMMM do, yyyy")}`}
-                    </h2>
-                    <p className="mt-1 text-sm text-gray-600">
-                      {eventsForSelectedDate.length} event
-                      {eventsForSelectedDate.length !== 1 ? "s" : ""} scheduled
-                      {facility !== -1 && selectedFacility && (
-                        <span className="ml-2 text-indigo-600">
-                          • {selectedFacility.facilityName}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  {facility !== -1 && (
+          <div className="lg:col-span-5">
+            <div className="flex max-h-[450px] min-h-[500px] flex-col rounded-lg border border-gray-200 bg-white shadow-sm">
+              <div className="border-b border-gray-200 p-6">
+                <div className="flex justify-between">
+                  <div className="flex items-center">
                     <button
-                      onClick={() => setFacility(-1)}
-                      className="text-sm text-indigo-600 hover:text-indigo-700"
+                      onClick={bookFacility}
+                      className="inline-flex items-center gap-2 rounded-full bg-emerald-700 px-4 py-1 text-white hover:bg-emerald-900"
                     >
-                      Clear filter
+                      <Plus className="h-4 w-4" />
+                      Book a Facility
                     </button>
-                  )}
+                  </div>
+                  <div>
+                    <div className="text-3xl font-bold text-gray-900">
+                      {format(selectedDate, "d")}{" "}
+                      {format(selectedDate, "MMM").toUpperCase()}
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {format(selectedDate, "EEEE")}
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto">
-                <div className="divide-y divide-gray-100">
-                  {eventsForSelectedDate.map((booking) => (
-                    <div
-                      key={booking.id}
-                      className="cursor-pointer p-6 transition-colors hover:bg-gray-50"
-                    >
-                      <div className="flex items-start gap-4">
-                        {/* Event Icon */}
-                        <div className="flex-shrink-0">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100">
-                            <Calendar className="h-6 w-6 text-indigo-600" />
-                          </div>
-                        </div>
-
-                        {/* Content */}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h3 className="mb-1 text-lg font-semibold text-gray-900">
-                                {booking.title}
-                              </h3>
-                              <div className="flex items-center gap-4 text-sm text-gray-600">
-                                <div className="flex items-center gap-1.5">
-                                  <Clock className="h-4 w-4" />
-                                  <span>
-                                    {booking.time}
-                                    {booking.endTime &&
-                                      booking.endTime !== booking.time &&
-                                      ` - ${booking.endTime}`}
-                                  </span>
-                                </div>
-                                {booking.location &&
-                                  booking.location !== "TBD" && (
-                                    <div className="flex items-center gap-1.5">
-                                      <MapPin className="h-4 w-4" />
-                                      <span>{booking.location}</span>
-                                    </div>
-                                  )}
-                              </div>
+              <div className="my-1 text-center text-gray-500">
+                Facilities: {selectedFacility?.facilityName}
+              </div>
+              <div className="flex-1 overflow-y-auto pb-4">
+                <div className="space-y-4 px-6">
+                  {eventsForSelectedDate
+                    .slice()
+                    .sort((a, b) => a.start.getTime() - b.start.getTime())
+                    .map((booking) => (
+                      <div
+                        key={booking.id}
+                        className={classNames(
+                          "rounded-lg border-l-4 p-4",
+                          getFacilityColor(booking.title),
+                        )}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="mb-1 text-xs font-medium text-gray-500">
+                              {booking.time}
+                              {booking.endTime &&
+                                booking.endTime !== booking.time &&
+                                ` TO ${booking.endTime}`}
+                            </div>
+                            <div className="mb-1 font-medium text-gray-900">
+                              {booking.title}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              Event: {booking.eventName}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              By: {booking.user}
                             </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
 
-                {eventsForSelectedDate.length === 0 && (
-                  <div className="py-12 text-center">
-                    <Calendar className="mx-auto mb-4 h-12 w-12 text-gray-400" />
-                    <h3 className="mb-2 text-lg font-medium text-gray-900">
-                      No events scheduled
-                    </h3>
-                    <p className="text-gray-600">
-                      {facility !== -1 && selectedFacility ? (
-                        <>
-                          No events for {selectedFacility.facilityName} on{" "}
-                          {isSameDay(selectedDate, new Date())
-                            ? "today"
-                            : "this date"}
-                          .
-                        </>
-                      ) : (
-                        <>
-                          {isSameDay(selectedDate, new Date())
-                            ? "You have no events today."
-                            : "No events scheduled for this date."}
-                        </>
-                      )}
-                    </p>
-                  </div>
-                )}
+                  {eventsForSelectedDate.length === 0 && (
+                    <div className="py-12 text-center">
+                      <div className="mb-2 text-gray-400">
+                        No events scheduled
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
