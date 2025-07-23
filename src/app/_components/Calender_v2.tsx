@@ -26,10 +26,13 @@ import {
   isToday,
   isSameDay,
   parseISO,
+  startOfDay,
+  endOfDay,
 } from "date-fns";
 import Loading from "./Loading";
 import Toast from "./Toast";
 import { useSession } from "next-auth/react";
+import BookingModal from "./BookingModal";
 
 function classNames(...classes: (string | boolean | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
@@ -44,6 +47,7 @@ const Calendar_v2: React.FC = () => {
   const [toastType, setToastType] = useState<"success" | "danger">("success");
   const [toastOpen, setToastOpen] = useState<boolean>(false);
   const [checkOwnBookings, setCheckOwnBookings] = useState<boolean>(false);
+  const [bookingModalOpen, setBookingModalOpen] = useState<boolean>(false);
 
   const { data: session } = useSession();
   const monthStart = startOfMonth(currentMonth);
@@ -62,7 +66,11 @@ const Calendar_v2: React.FC = () => {
     setSelectedDate(date);
   };
 
-  const bookingsInMonth = api.bookings.getBookings.useQuery(
+  const {
+    data: bookingsInMonth = [],
+    isLoading,
+    refetch: refetchBookingsInMonth,
+  } = api.bookings.getBookings.useQuery(
     {
       startTime: start,
       endTime: end,
@@ -106,9 +114,9 @@ const Calendar_v2: React.FC = () => {
   }, [currentMonth, selectedDate]);
 
   const processedBookings = useMemo(() => {
-    if (!bookingsInMonth.data) return [];
+    if (!bookingsInMonth) return [];
 
-    return bookingsInMonth.data.map((booking: any) => {
+    return bookingsInMonth.map((booking: any) => {
       const start = booking.start ? new Date(booking.start) : new Date();
       const end = booking.end ? new Date(booking.end) : new Date();
 
@@ -131,9 +139,10 @@ const Calendar_v2: React.FC = () => {
         status: booking.status || "confirmed",
         category: booking.category || "default",
         user: booking.user,
+        eventName: booking.eventName,
       };
     });
-  }, [bookingsInMonth.data]);
+  }, [bookingsInMonth]);
 
   const calendarDaysWithEvents = useMemo(() => {
     return calendarDays.map((day) => ({
@@ -204,7 +213,7 @@ const Calendar_v2: React.FC = () => {
     }
   };
 
-  if (bookingsInMonth.isLoading || facilitiesQuery.isLoading) {
+  if (isLoading || facilitiesQuery.isLoading) {
     return (
       <div className="mt-40 flex items-center justify-center">
         <Loading />
@@ -217,10 +226,10 @@ const Calendar_v2: React.FC = () => {
       setToastContent("Log in to book facility!");
       setToastOpen(true);
       setToastType("danger");
+      return;
     }
+    setBookingModalOpen(true);
   };
-
-  const today = new Date();
 
   return (
     <div className="">
@@ -230,7 +239,15 @@ const Calendar_v2: React.FC = () => {
         show={toastOpen}
         onClose={() => setToastOpen(false)}
       />
-
+      <BookingModal
+        isOpen={bookingModalOpen}
+        onClose={() => setBookingModalOpen(false)}
+        bookings={bookingsInMonth ?? []}
+        facilities={facilities}
+        userId={session?.user?.userID}
+        currentDate={selectedDate}
+        refetch={refetchBookingsInMonth}
+      />
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="mb-8 flex items-center justify-end gap-x-4">
           <div
@@ -410,6 +427,9 @@ const Calendar_v2: React.FC = () => {
                             </div>
                             <div className="mb-1 font-medium text-gray-900">
                               {booking.title}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              Event: {booking.eventName}
                             </div>
                             <div className="text-sm text-gray-600">
                               By: {booking.user}
