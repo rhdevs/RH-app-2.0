@@ -15,6 +15,7 @@ import { z } from "zod";
 import { env } from "~/env";
 import { db } from "~/server/db";
 import * as bcrypt from "bcrypt";
+import { createHash } from "crypto";
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -26,8 +27,8 @@ declare module "next-auth" {
   interface Session extends DefaultSession {
     user: {
       id: string;
-      // ...other properties
-      // role: UserRole;
+      userID: string;
+      bio: string;
     } & DefaultSession["user"];
   }
 
@@ -43,12 +44,6 @@ declare module "next-auth" {
  * @see https://next-auth.js.org/configuration/options
  */
 export const authOptions = {
-  callbacks: {
-    async redirect({ baseUrl }) {
-      // Redirect users to the /profile route after login
-      return `${baseUrl}/`;
-    },
-  },
   adapter: PrismaAdapter(db) as Adapter,
   providers: [
     DiscordProvider({
@@ -86,19 +81,28 @@ export const authOptions = {
           const { email, password } = parsedCredentials.data;
           const user = await db.user.findFirst({
             where: {
-              email: email,
+              email: {
+                mode: "insensitive",
+                equals: email,
+              },
             },
           });
           if (!user?.passwordHash) return null;
-
-          const passwordsMatch = await bcrypt.compare(
-            password,
-            user.passwordHash,
-          );
-          if (passwordsMatch) return user;
+          const sha256Hash = createHash("sha256")
+            .update(password)
+            .digest("hex");
+          if (sha256Hash === user.passwordHash) {
+            return {
+              id: user.id,
+              email: user.email,
+              name: user.displayName,
+              bio: user.bio,
+            };
+          } else {
+            return null;
+          }
         }
 
-        console.log("Invalid credentials");
         return null;
       },
     }),
@@ -111,6 +115,31 @@ export const authOptions = {
     strategy: "jwt",
     maxAge: 30 * 24 * 60 * 60,
     updateAge: 24 * 60 * 60,
+  },
+  callbacks: {
+    async jwt({ token, user }) {
+      // This runs on sign-in
+      if (user) {
+        token.id = user.id;
+        token.email = user.email;
+        token.name = user.name;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user && token.id) {
+        session.user.id = token.id as string;
+        session.user.userID = (token.email ?? "")
+          .toUpperCase()
+          .replace("@U.NUS.EDU", "");
+        session.user.email = token.email;
+        session.user.name = token.name;
+      }
+      return session;
+    },
+    async redirect({ baseUrl }) {
+      return `${baseUrl}/`;
+    },
   },
 } satisfies NextAuthOptions;
 

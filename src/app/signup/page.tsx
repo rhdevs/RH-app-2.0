@@ -1,182 +1,236 @@
 "use client";
 
 import React, { useState } from "react";
-import Modal from "@/app/_components/modal";
-import { fa } from "@faker-js/faker";
+import {
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  CheckCircle,
+} from "lucide-react";
+import Header from "../_components/header";
+import Toast from "../_components/Toast";
+import { useRouter } from "next/navigation";
 
-const SignupPage: React.FC = () => {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalMessage, setModalMessage] = useState("");
-  const [modalTitle, setModalTitle] = useState("");
+const SignUpPage = () => {
+  const [formData, setFormData] = useState({
+    email: "",
+    password: "",
+    confirmPassword: "",
+  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPassword2, setShowPassword2] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [toastContent, setToastContent] = useState<string>("");
+  const [toastType, setToastType] = useState<"success" | "danger">("success");
+  const [toastOpen, setToastOpen] = useState<boolean>(false);
+  const router = useRouter();
 
-  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEmail(e.target.value);
+  const handleInputChange = (e: any) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   };
 
-  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setPassword(e.target.value);
-  };
-
-  const [successMessage, setSuccessMessage] = useState("");
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
+    if (
+      formData.email === "" ||
+      formData.password === "" ||
+      formData.confirmPassword === ""
+    ) {
+      setToastContent("Please fill in required field!");
+      setToastOpen(true);
+      setToastType("danger");
+      return;
+    }
     try {
+      setIsLoading(true);
       const res = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, confirmPassword }),
+        body: JSON.stringify(formData),
       });
-
+      setIsLoading(false);
       const text = await res.text();
       let data;
       try {
         data = JSON.parse(text);
       } catch {
-        console.error("Raw response:", text);
         alert("Unexpected response from server.");
         return;
       }
       if (res.ok) {
-        setModalTitle("Success");
-        setModalMessage("Account created successfully!");
-        setIsModalOpen(true);
+        setToastContent("Account created successfully!");
+        setToastOpen(true);
+        setToastType("success");
+
         setTimeout(() => {
-          window.location.href = "/";
-        }, 2000);
+          router.push("/login");
+        }, 1500);
       } else {
-        setModalTitle("Error");
-        setModalMessage(
-          data.error || "An account with this email already exists.",
-        );
-        setIsModalOpen(true);
-        setTimeout(() => {
-          setIsModalOpen(false);
-        }, 2000);
+        setToastContent("Email already exists!");
+        setToastOpen(true);
+        setToastType("danger");
       }
     } catch (err) {
-      console.error(err);
-      alert("Network or server error.");
+      setToastContent(
+        "There is something wrong with the app! Please contact RHDevs!",
+      );
+      setToastOpen(true);
+      setToastType("danger");
     }
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-gray-500">
-      <div className="relaive z-10 w-full max-w-md overflow-hidden rounded-xl bg-white shadow-lg">
-        {" "}
-        <div
-          className="h-56 w-full bg-cover bg-[left_20%]"
-          style={{
-            backgroundImage: 'url("raffles-hall.png")',
-          }}
-        ></div>
-        <div className="p-6">
-          <h2 className="mb-6 text-3xl font-bold text-gray-800">
-            Create Account
-          </h2>
+    <>
+      <Toast
+        content={toastContent}
+        type={toastType}
+        show={toastOpen}
+        onClose={() => setToastOpen(false)}
+      />
+      <Header currentPage="login" />
+      <div className="mt-10 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="mb-8 text-center">
+            <h1 className="mb-2 text-3xl font-bold text-gray-900">Welcome</h1>
+            <p className="text-gray-600">
+              Sign up get your Raffles Hall account
+            </p>
+          </div>
 
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            <div>
-              <input
-                type="text"
-                placeholder="Email (@u.nus.edu)"
-                className="bg-white-200 placeholder-grey-700 w-full rounded-[1vw] border px-4 py-2 text-black focus:outline-none"
-                onChange={(e) => setEmail(e.target.value)}
-                // {...register("email")}
-              />
+          <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Email Address
+                </label>
+                <div className="relative">
+                  <Mail
+                    className="absolute left-3 top-1/2 -translate-y-1/2 transform text-gray-400"
+                    size={20}
+                  />
+                  <input
+                    type="email"
+                    id="email"
+                    name="email"
+                    value={formData.email}
+                    onChange={handleInputChange}
+                    required
+                    className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    placeholder="Enter your email"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 transform text-gray-400"
+                    size={20}
+                  />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    id="password"
+                    name="password"
+                    value={formData.password}
+                    onChange={handleInputChange}
+                    required
+                    className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-12 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    placeholder="Enter your password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 transform text-gray-400 transition-colors hover:text-gray-600"
+                  >
+                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 transform text-gray-400"
+                    size={20}
+                  />
+                  <input
+                    type={showPassword2 ? "text" : "password"}
+                    id="confirmPassword"
+                    name="confirmPassword"
+                    value={formData.confirmPassword}
+                    onChange={handleInputChange}
+                    required
+                    className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-12 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    placeholder="Enter your password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword2(!showPassword2)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 transform text-gray-400 transition-colors hover:text-gray-600"
+                  >
+                    {showPassword2 ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                onClick={onSubmit}
+                disabled={isLoading}
+                className={`w-full rounded-xl px-4 py-3 font-semibold transition-all duration-200 ${
+                  isLoading
+                    ? "cursor-not-allowed bg-gray-400"
+                    : "bg-emerald-600 hover:bg-emerald-700 active:scale-95 active:transform"
+                } text-white shadow-lg hover:shadow-xl`}
+              >
+                {isLoading ? (
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                    <span>Signing Up...</span>
+                  </div>
+                ) : (
+                  "Sign Up"
+                )}
+              </button>
             </div>
 
-            <div>
-              <input
-                type="password"
-                placeholder="Password"
-                className="bg-white-200 placeholder-grey-700 w-full rounded-[1vw] border px-4 py-2 text-black focus:outline-none"
-                onChange={(e) => setPassword(e.target.value)}
-
-                // {...register("password")}
-              />
+            <div className="mt-8 text-center">
+              <p className="text-gray-600">
+                Already have an account?{" "}
+                <span
+                  onClick={() => router.push("/login")}
+                  className="cursor-pointer font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
+                >
+                  Sign in
+                </span>
+              </p>
             </div>
-
-            <div>
-              <input
-                type="password"
-                placeholder="Confirm Password"
-                className="bg-white-200 placeholder-grey-700 w-full rounded-[1vw] border px-4 py-2 text-black focus:outline-none"
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                // {...register("password")}
-              />
-            </div>
-
-            {/* <div className="flex items-center justify-between text-sm text-gray-600">
-                  <label className="flex items-center">
-                    <input type="checkbox" className="mr-2" /> remember me
-                  </label>
-                  <a href="#" className="hover:underline">
-                    forgot password
-                  </a>
-                </div> */}
-
-            <button
-              type="submit"
-              className="w-full rounded bg-green-700 py-2 text-white hover:bg-green-800"
-              // onClick={handleSubmit(onSubmit)}
-            >
-              Sign Up
-            </button>
-
-            <button
-              className="w-full rounded border bg-white py-2 text-zinc-700 hover:bg-zinc-200"
-              disabled={true}
-              // onClick={() => signIn("google")}
-            >
-              <span className="mr-2 font-bold text-red-700">G</span> Sign Up
-              with Google
-            </button>
-            <Modal
-              isOpen={isModalOpen}
-              title={modalTitle}
-              message={modalMessage}
-              onClose={() => setIsModalOpen(false)}
-            />
-          </form>
-
-          <div className="mt-4 text-center">
-            <span className="text-sm text-gray-600">
-              Already have an account?{" "}
-            </span>
-            <a
-              href="/login"
-              className="text-sm text-emerald-800 hover:underline"
-            >
-              Login
-            </a>
           </div>
         </div>
       </div>
-    </div>
-    // <div>
-    //   <h2>Signup Page</h2>
-    //   <form onSubmit={handleSubmit}>
-    //     <div>
-    //       <label>Email:</label>
-    //       <input type="email" value={email} onChange={handleEmailChange} />
-    //     </div>
-    //     <div>
-    //       <label>Password:</label>
-    //       <input
-    //         type="password"
-    //         value={password}
-    //         onChange={handlePasswordChange}
-    //       />
-    //     </div>
-    //     <button type="submit">Sign Up</button>
-    //   </form>
-    // </div>
+    </>
   );
 };
 
-export default SignupPage;
+export default SignUpPage;

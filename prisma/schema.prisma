@@ -100,7 +100,7 @@ model BookingLogs {
 model Bookings {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   bookUntil   Int?
-  bookingID   Int      @unique(map: "bookingID")
+  bookingID   Int      @default(autoincrement()) @unique
   ccaID       Int
   description String?
   endTime     Int
@@ -204,13 +204,11 @@ model Order {
 }
 
 model PasswordResetSession {
-  id                  String @id @default(auto()) @map("_id") @db.ObjectId
-  email               String
-  /// Field referred in an index, but found no data to define the type.
-  resetTokenCreatedAt Json?
-  userID              String
-
-  @@index([resetTokenCreatedAt], map: "resetTokenCreatedAt_1")
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
@@ -241,8 +239,8 @@ model Restaurants {
 
 model Session {
   id           String   @id @default(auto()) @map("_id") @db.ObjectId
-  sessionToken String   @unique
-  userId       String   @db.ObjectId
+  sessionToken String?
+  userId       String
   expires      DateTime
   user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -290,13 +288,18 @@ model SupperGroup {
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
 model User {
-  id            String          @id @default(auto()) @map("_id") @db.ObjectId
-  email         String          
-  password      String
-  createdAt     DateTime?       @default(now())
-  Session       Session[]
-  Account       Account[]
-  Authenticator Authenticator[]
+  id             String          @id @default(auto()) @map("_id") @db.ObjectId
+  email          String
+  userID         String?
+  passwordHash   String
+  displayName    String?
+  createdAt      DateTime?       @default(now())
+  Session        Session[]
+  Account        Account[]
+  Authenticator  Authenticator[]
+  bio            String?
+  telegramHandle String?
+  block          Int?
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
