@@ -19,7 +19,7 @@ const LoginPage = () => {
   const [toastOpen, setToastOpen] = useState<boolean>(false);
   const router = useRouter();
 
-  const handleInputChange = (e: any) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
@@ -32,7 +32,7 @@ const LoginPage = () => {
       setToastContent("Please fill in required field!");
       setToastOpen(true);
       setToastType("danger");
-      return
+      return;
     }
     setIsLoading(true);
     const res = await signIn("credentials", {
@@ -161,7 +161,7 @@ const LoginPage = () => {
 
             <div className="mt-8 text-center">
               <p className="text-gray-600">
-                Don't have an account?{" "}
+                Don&apos;t have an account?{" "}
                 <span
                   onClick={() => router.push("/signup")}
                   className="cursor-pointer font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
