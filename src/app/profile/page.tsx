@@ -5,12 +5,9 @@ import { useSession } from "next-auth/react";
 import {
   User,
   Mail,
-  Hash,
   MessageCircle,
-  Calendar,
   Edit3,
   UserIcon,
-  Users,
 } from "lucide-react";
 import Toast from "../_components/Toast";
 import Header from "../_components/header";
@@ -29,7 +26,6 @@ const ProfilePage: React.FC = () => {
   const {
     data: user,
     isLoading,
-    error,
     refetch,
   } = api.user.getCurrentUserData.useQuery();
 

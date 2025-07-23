@@ -4,10 +4,20 @@ import { createHash } from "crypto";
 
 const prisma = new PrismaClient();
 
+interface registerPayload {
+  email: string;
+  password: string;
+  confirmPassword: string;
+  fullName: string;
+  bio: string;
+  blockNumber: string;
+  telegramHandle: string;
+}
+
 export async function POST(req: Request) {
   try {
-    const { email, password, confirmPassword } = await req.json();
-    if (!email || !password || !confirmPassword) {
+    const { email, password, confirmPassword, fullName, bio, blockNumber, telegramHandle }: registerPayload = await req.json();
+    if (!email || !password || !confirmPassword || !fullName || !bio || !blockNumber || !telegramHandle) {
       return NextResponse.json(
         { error: "Please fill in all fields." },
         { status: 400 }
@@ -51,7 +61,11 @@ export async function POST(req: Request) {
       data: {
         email: email.toLowerCase(),
         passwordHash: hashedPassword,
-        userID: email.toUpperCase().replace("@U.NUS.EDU", "")
+        userID: email.toUpperCase().replace("@U.NUS.EDU", ""),
+        telegramHandle: telegramHandle,
+        displayName: fullName,
+        block: Number(blockNumber),
+        bio: bio,
       },
     });
 
@@ -59,7 +73,7 @@ export async function POST(req: Request) {
       { message: "User created successfully.", userId: newUser.id },
       { status: 201 }
     );
-  } catch (err: any) {
+  } catch (err) {
     console.error("Registration error:", err);
     return NextResponse.json(
       { error: "Internal server error." },

@@ -1,13 +1,10 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import {
-  Calendar,
   ChevronLeft,
   ChevronRight,
-  MapPin,
   Plus,
-  Clock,
   Filter,
   ChevronDown,
 } from "lucide-react";
@@ -16,18 +13,13 @@ import {
   endOfMonth,
   getUnixTime,
   startOfMonth,
-  set,
   format,
-  fromUnixTime,
   eachDayOfInterval,
   startOfWeek,
   endOfWeek,
   isSameMonth,
   isToday,
   isSameDay,
-  parseISO,
-  startOfDay,
-  endOfDay,
 } from "date-fns";
 import Loading from "./Loading";
 import Toast from "./Toast";
@@ -36,6 +28,16 @@ import BookingModal from "./BookingModal";
 
 function classNames(...classes: (string | boolean | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
+}
+
+export interface Booking {
+  id: string;
+  start: Date;
+  end: Date;
+  title?: string;
+  user: string | null | undefined;
+  eventName: string | null;
+  eventDescription: string | null;
 }
 
 const Calendar_v2: React.FC = () => {
@@ -111,12 +113,12 @@ const Calendar_v2: React.FC = () => {
         hasEvent: false,
       }),
     );
-  }, [currentMonth, selectedDate]);
+  }, [currentMonth, selectedDate, monthEnd, monthStart]);
 
   const processedBookings = useMemo(() => {
     if (!bookingsInMonth) return [];
 
-    return bookingsInMonth.map((booking: any) => {
+    return bookingsInMonth.map((booking: Booking) => {
       const start = booking.start ? new Date(booking.start) : new Date();
       const end = booking.end ? new Date(booking.end) : new Date();
 
@@ -129,15 +131,12 @@ const Calendar_v2: React.FC = () => {
 
       return {
         id: booking.id || Math.random().toString(),
-        title: booking.title || "Untitled Event",
+        title: booking.title ?? "Untitled Event",
         start,
         end,
         date: format(start, "MMMM do, yyyy"),
         time: isFullDay ? "All day" : format(start, "h:mm a"),
         endTime: isFullDay ? "" : format(end, "h:mm a"),
-        location: booking.location || "TBD",
-        status: booking.status || "confirmed",
-        category: booking.category || "default",
         user: booking.user,
         eventName: booking.eventName,
       };
@@ -242,7 +241,6 @@ const Calendar_v2: React.FC = () => {
       <BookingModal
         isOpen={bookingModalOpen}
         onClose={() => setBookingModalOpen(false)}
-        bookings={bookingsInMonth ?? []}
         facilities={facilities}
         userId={session?.user?.userID}
         currentDate={selectedDate}
@@ -264,7 +262,7 @@ const Calendar_v2: React.FC = () => {
             >
               <Filter className="h-4 w-4" />
               <span className="max-w-40 truncate">
-                {selectedFacility?.facilityName || "All Facilities"}
+                {selectedFacility?.facilityName ?? "All Facilities"}
               </span>
               <ChevronDown className="h-4 w-4" />
             </button>

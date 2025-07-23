@@ -1,4 +1,4 @@
-import { api, HydrateClient } from "~/trpc/server";
+import { HydrateClient } from "~/trpc/server";
 import Calendar_v2 from "./_components/Calender_v2";
 import Header from "./_components/header";
 

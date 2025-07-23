@@ -3,7 +3,6 @@
 
 import React, { useState } from "react";
 import { api } from "~/trpc/react";
-import { useSession } from "next-auth/react";
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -23,7 +22,6 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   initialData,
   onSuccess,
 }) => {
-  const { data: session } = useSession();
   const [telegramHandle, setTelegramHandle] = useState<string>(
     initialData.telegramHandle,
   );
@@ -103,7 +101,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
               ))}
             </select>
             {error && (
-              <p className="mt-1 text-sm text-red-500">Don't anyhow leh</p>
+              <p className="mt-1 text-sm text-red-500">Don&apos;t anyhow leh</p>
             )}
           </div>
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Mail, ArrowLeft, Lock } from "lucide-react";
 import Header from "../_components/header";
 import Toast from "../_components/Toast";
@@ -40,7 +40,7 @@ const LoginPage = () => {
     }
   };
 
-  const handleInputChange = (e: any) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
@@ -64,14 +64,6 @@ const LoginPage = () => {
         body: JSON.stringify(formData),
       });
       setIsLoading(false);
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        alert("Unexpected response from server.");
-        return;
-      }
       if (res.ok) {
         setToastContent("Verification code has been sent to your email!");
         setToastOpen(true);
@@ -82,7 +74,7 @@ const LoginPage = () => {
         setToastOpen(true);
         setToastType("danger");
       }
-    } catch (err) {
+    } catch {
       setToastContent(
         "There is something wrong with the app! Please contact RHDevs!",
       );
@@ -273,7 +265,7 @@ const LoginPage = () => {
 
                 <div className="text-center">
                   <p className="text-sm text-gray-600">
-                    Didn't receive the code?{" "}
+                    Didn&apos;t receive the code?{" "}
                     {canResend ? (
                       <button
                         onClick={handleResend}
@@ -311,14 +303,14 @@ const LoginPage = () => {
                 Forgot Password?
               </h1>
               <span className="text-xs text-gray-600">
-                  (Note: Due to strict email filtering policies by NUS, we’re
-                  unable to deliver password reset emails to @u.nus.edu
-                  addresses. To ensure you receive your verification code,
-                  please provide a personal email address. Yeah, we know it’s a bit dumb
-                   — but if anything ever goes wrong (like someone resetting
-                  your account), just reach out to the RH Developers and we’ll
-                  sort it out. We keep track of the records.)
-                </span>
+                (Note: Due to strict email filtering policies by NUS, we’re
+                unable to deliver password reset emails to @u.nus.edu addresses.
+                To ensure you receive your verification code, please provide a
+                personal email address. Yeah, we know it’s a bit dumb — but we
+                have to keep track of the records and if anything ever goes
+                wrong (like someone resetting your account), just reach out to
+                the RH Developers and we’ll sort it out.)
+              </span>
             </div>
 
             <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">

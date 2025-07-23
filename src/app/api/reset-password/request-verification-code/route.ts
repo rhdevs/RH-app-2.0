@@ -13,9 +13,15 @@ function generateResetCode(length = 6) {
   return code;
 }
 
+interface requestVerificationCodePayload {
+  email: string;
+  personalEmail: string;
+}
+
 export async function POST(req: Request) {
   try {
-    const { email, personalEmail } = await req.json();
+    const { email, personalEmail }: requestVerificationCodePayload =
+      await req.json();
     if (!email) {
       return NextResponse.json(
         { error: "Please fill in all fields." },
@@ -47,12 +53,12 @@ export async function POST(req: Request) {
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
       },
     });
-    sendVerificationCodeEmail(personalEmail, code);
+    await sendVerificationCodeEmail(personalEmail, code);
     return NextResponse.json(
       { message: "Verification code has been sent to your email." },
       { status: 201 },
     );
-  } catch (err: any) {
+  } catch (err) {
     console.error("Error:", err);
     return NextResponse.json(
       { error: "Internal server error." },

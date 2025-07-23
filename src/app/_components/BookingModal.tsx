@@ -1,4 +1,3 @@
-// BookingModal.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -10,8 +9,6 @@ import {
   User,
   ChevronLeft,
   ChevronRight,
-  AlertCircle,
-  CheckCircle,
 } from "lucide-react";
 import { format } from "date-fns";
 import { api } from "~/trpc/react";
@@ -26,17 +23,15 @@ interface Facility {
 interface BookingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  bookings: any[];
   facilities: Facility[];
   userId?: string;
   currentDate: Date;
-  refetch: any;
+  refetch: () => void;
 }
 
 const BookingModal: React.FC<BookingModalProps> = ({
   isOpen,
   onClose,
-  bookings,
   facilities,
   userId,
   currentDate,
@@ -99,7 +94,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
         eventName: eventName,
         endTime: Number(Math.floor(endDateTime.getTime() / 1000)),
         facilityID: Number(
-          facilities.filter((e) => e.facilityName == selectedFacility)[0]
+          facilities.find((e) => e.facilityName == selectedFacility)
             ?.facilityID,
         ),
         startTime: Number(Math.floor(startDateTime.getTime() / 1000)),

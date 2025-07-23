@@ -242,7 +242,7 @@ export const facilityBookingRouter = createTRPCRouter({
         select: { bookingID: true },
       });
 
-      const nextBookingID = (lastBooking?.bookingID || 0) + 1;
+      const nextBookingID = (lastBooking?.bookingID ?? 0) + 1;
 
       return ctx.db.bookings.create({
         data: {

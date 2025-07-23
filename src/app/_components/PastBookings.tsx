@@ -1,15 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import {
-  Filter,
-  ChevronDown,
-  Calendar,
-  Clock,
-  MapPin,
-  Search,
-  X,
-} from "lucide-react";
+import { ChevronDown, Calendar, Clock, Search, X } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { api } from "~/trpc/react";
 import { format } from "date-fns";
@@ -96,6 +88,7 @@ const PastBookings = () => {
     return bookings
       .filter((booking) => {
         const lower = searchQuery.toLowerCase();
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
         return (
           booking.title?.toLowerCase().includes(lower) ||
           booking.eventName?.toLowerCase().includes(lower)
@@ -118,9 +111,9 @@ const PastBookings = () => {
   const utils = api.useUtils();
 
   const deleteBooking = api.bookings.deleteBooking.useMutation({
-    onSuccess: () => {
-      utils.bookings.getBookings.invalidate();
-      refetch();
+    onSuccess: async () => {
+      await utils.bookings.getBookings.invalidate();
+      await refetch();
     },
   });
 
@@ -302,7 +295,7 @@ const PastBookings = () => {
                     <div className="flex items-start space-x-4">
                       <div
                         className={`inline-flex items-center rounded-full border px-3 py-1 text-sm font-medium ${getFacilityColor(
-                          booking.title || "",
+                          booking.title ?? "",
                         )}`}
                       >
                         {booking.title}

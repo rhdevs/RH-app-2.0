@@ -1,7 +1,5 @@
 import React from "react";
-import Calendar_v2 from "../_components/Calender_v2";
 import { HydrateClient } from "~/trpc/server";
-import { auth } from "~/server/auth";
 import Header from "../_components/header";
 import PastBookings from "../_components/PastBookings";
 

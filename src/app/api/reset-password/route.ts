@@ -4,9 +4,14 @@ import { createHash } from "crypto";
 
 const prisma = new PrismaClient();
 
+interface ResetPayload {
+  email: string;
+  password: string;
+}
+
 export async function POST(req: Request) {
   try {
-    const { email, password } = await req.json();
+    const { email, password }: ResetPayload = await req.json();
 
     if (!email || !password) {
       return NextResponse.json(
@@ -43,7 +48,7 @@ export async function POST(req: Request) {
       { message: "Password has been reset." },
       { status: 201 },
     );
-  } catch (err: any) {
+  } catch (err) {
     console.error("Error:", err);
     return NextResponse.json(
       { error: "Internal server error." },
