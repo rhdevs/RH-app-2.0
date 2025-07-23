@@ -3,9 +3,14 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+interface PasswordResetCodePayload {
+  email: string;
+  code: string;
+}
+
 export async function POST(req: Request) {
   try {
-    const code = await req.json();
+    const code: PasswordResetCodePayload = await req.json();
 
     const session = await prisma.passwordResetSession.findFirst({
       where: {
@@ -31,7 +36,7 @@ export async function POST(req: Request) {
       { message: "Verified successfully." },
       { status: 201 },
     );
-  } catch (err: any) {
+  } catch (err) {
     console.error("Error:", err);
     return NextResponse.json(
       { error: "Internal server error." },

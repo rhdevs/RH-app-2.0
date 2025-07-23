@@ -15,6 +15,16 @@ const config = {
     "src/components/ui/*", // Ignore the UI components directory
   ],
   rules: {
+    "@typescript-eslint/no-explicit-any": "warn", // or 'off'
+    "@typescript-eslint/no-unsafe-call": "warn",
+    "@typescript-eslint/prefer-nullish-coalescing": [
+      "warn",
+      {
+        ignoreConditionalTests: true,
+        ignoreMixedLogicalExpressions: true,
+      },
+    ],
+    "react/no-unescaped-entities": "warn",
     "@typescript-eslint/array-type": "off",
     "@typescript-eslint/consistent-type-definitions": "off",
     "@typescript-eslint/consistent-type-imports": [

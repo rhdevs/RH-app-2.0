@@ -14,7 +14,6 @@ import { z } from "zod";
 
 import { env } from "~/env";
 import { db } from "~/server/db";
-import * as bcrypt from "bcrypt";
 import { createHash } from "crypto";
 
 /**
