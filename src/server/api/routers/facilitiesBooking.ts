@@ -113,7 +113,15 @@ export const facilityBookingRouter = createTRPCRouter({
           userID: { in: userIDs },
         },
       });
-      const userMap = new Map(users.map((u) => [u.userID, u.displayName]));
+      const userDict = Object.fromEntries(
+        users.map((u) => [
+          u.userID,
+          {
+            displayName: u.displayName,
+            telegramHandle: u.telegramHandle,
+          },
+        ]),
+      );
 
       const facilities = await ctx.db.facilities.findMany();
       const ONE_DAY = 86400; // seconds in a day
@@ -158,9 +166,10 @@ export const facilityBookingRouter = createTRPCRouter({
           end: new Date(booking.endTime * 1000),
           title: facilities.find((fac) => fac.facilityID === booking.facilityID)
             ?.facilityName,
-          user: userMap.get(booking.userID),
+          user: userDict[booking.userID].displayName,
           eventName: booking.eventName,
           eventDescription: booking.description,
+          userTeleHandle: userDict[booking.userID].telegramHandle,
         };
       });
     }),

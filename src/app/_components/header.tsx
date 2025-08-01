@@ -29,7 +29,7 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
 
   const navLinks = [
     { name: "Home", href: "/", icon: Home },
-    { name: "Past Bookings", href: "/bookings", icon: Calendar },
+    { name: "My Bookings", href: "/bookings", icon: Calendar },
     // { name: "Facilities", href: "/facilities", icon: Box },
   ];
 

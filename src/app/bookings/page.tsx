@@ -7,10 +7,10 @@ const BookingsPage: React.FC = async () => {
 
   return (
     <HydrateClient>
-      <Header currentPage={"Past Bookings"} />
+      <Header currentPage={"My Bookings"} />
       <div className="mt-4 text-center">
         <h1 className="text-2xl font-bold text-gray-900">
-          Your Past Bookings
+          Your Bookings
         </h1>
       </div>
       <div className="mb-20">

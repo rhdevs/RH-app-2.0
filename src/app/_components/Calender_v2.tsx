@@ -38,6 +38,7 @@ export interface Booking {
   user: string | null | undefined;
   eventName: string | null;
   eventDescription: string | null;
+  userTeleHandle: string | null;
 }
 
 const Calendar_v2: React.FC = () => {
@@ -139,6 +140,7 @@ const Calendar_v2: React.FC = () => {
         endTime: isFullDay ? "" : format(end, "h:mm a"),
         user: booking.user,
         eventName: booking.eventName,
+        userTeleHandle: booking.userTeleHandle,
       };
     });
   }, [bookingsInMonth]);
@@ -262,7 +264,7 @@ const Calendar_v2: React.FC = () => {
             onClick={handleCheckOwnBookings}
             className="rounded-full bg-emerald-700 px-4 py-1 text-white hover:bg-emerald-900"
           >
-            {checkOwnBookings ? "All Bookings" : "My Bookings"}
+            {checkOwnBookings ? "See All Bookings" : "See My Bookings"}
           </div>
           <div className="relative">
             <button
@@ -306,10 +308,13 @@ const Calendar_v2: React.FC = () => {
           </div>
         </div>
         <div className="text-xs text-gray-500">
-          Current View:{" "}
+          Viewing:{" "}
           {checkOwnBookings
-            ? `My Bookings (${session?.user?.userID ?? "..."})`
-            : "All Bookings"}
+            ? `My Bookings`
+            : 'All Bookings (Click "See My Bookings" to view your bookings by date.)'}
+        </div>
+        <div className="text-xs text-gray-500">
+          Note: To see all your bookings in one place, navigate to "My Bookings" tab.
         </div>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-7">
@@ -383,7 +388,6 @@ const Calendar_v2: React.FC = () => {
               </div>
             </div>
           </div>
-
           <div className="lg:col-span-5">
             <div className="flex max-h-[450px] min-h-[500px] flex-col rounded-lg border border-gray-200 bg-white shadow-sm">
               <div className="border-b border-gray-200 p-6">
@@ -440,7 +444,7 @@ const Calendar_v2: React.FC = () => {
                               Event: {booking.eventName}
                             </div>
                             <div className="text-sm text-gray-600">
-                              By: {booking.user}
+                              By: {booking.user} (@{booking.userTeleHandle})
                             </div>
                           </div>
                         </div>
