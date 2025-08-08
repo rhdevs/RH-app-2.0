@@ -16,42 +16,60 @@ interface registerPayload {
 
 export async function POST(req: Request) {
   try {
-    const { email, password, confirmPassword, fullName, bio, blockNumber, telegramHandle }: registerPayload = await req.json();
-    if (!email || !password || !confirmPassword || !fullName || !bio || !blockNumber || !telegramHandle) {
+    const {
+      email,
+      password,
+      confirmPassword,
+      fullName,
+      bio,
+      blockNumber,
+      telegramHandle,
+    }: registerPayload = await req.json();
+    if (
+      !email ||
+      !password ||
+      !confirmPassword ||
+      !fullName ||
+      !bio ||
+      !blockNumber ||
+      !telegramHandle
+    ) {
       return NextResponse.json(
         { error: "Please fill in all fields." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    if (!(email.endsWith("@u.nus.edu")) || (email.endsWith("@nus.edu.sg"))){
-      return NextResponse.json(
-        { error: "Invalid Email" },
-        { status: 400 }
-      );
+    if (!email.endsWith("@u.nus.edu") || email.endsWith("@nus.edu.sg")) {
+      return NextResponse.json({ error: "Invalid Email" }, { status: 400 });
     }
 
-    if (password.length < 8){
+    if (password.length < 8) {
       return NextResponse.json(
         { error: "Password should be at least 8 characters long." },
-        { status: 400 }
+        { status: 400 },
       );
     }
     if (password !== confirmPassword) {
       return NextResponse.json(
         { error: "Passwords do not match." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const existingUser = await prisma.user.findFirst({
-      where: { email },
+      where: {
+        email: {
+          equals: email,
+          mode: "insensitive",
+        },
+      },
     });
 
     if (existingUser) {
       return NextResponse.json(
         { error: "User already exists." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -71,13 +89,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json(
       { message: "User created successfully.", userId: newUser.id },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (err) {
     console.error("Registration error:", err);
     return NextResponse.json(
       { error: "Internal server error." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
