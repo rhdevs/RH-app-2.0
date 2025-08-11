@@ -182,6 +182,11 @@ const BookingModal: React.FC<BookingModalProps> = ({
                 ))}
               </select>
             </div>
+            {selectedFacility === "Dance Studio" && (
+              <p className="text-sm text-red-600">
+                Note: Dance Studio cannot be booked in this app. To book the Dance Studio, please approach the Dance CCA Exco.
+              </p>
+            )}
 
             <div className="grid grid-cols-2 gap-10">
               {["Start Time", "End Time"].map((label, idx) => (
@@ -219,7 +224,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
             <div className="flex justify-end pt-2">
               <button
                 onClick={handleSubmit}
-                disabled={!selectedFacility || !eventName}
+                disabled={!selectedFacility || !eventName || selectedFacility === "Dance Studio"}
                 className="rounded-lg bg-emerald-600 px-6 py-2 text-white hover:bg-emerald-700 disabled:bg-gray-300"
               >
                 Confirm Booking
