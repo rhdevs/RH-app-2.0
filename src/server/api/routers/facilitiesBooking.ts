@@ -86,13 +86,13 @@ export const facilityBookingRouter = createTRPCRouter({
       z.object({
         startTime: z.number(),
         endTime: z.number(),
-        facilityID: z.number().optional(),
+        facilityIDs: z.array(z.number()).optional(),
         userId: z.string().optional(),
         seeAll: z.boolean().optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
-      const { startTime, endTime, facilityID, userId, seeAll } = input;
+      const { startTime, endTime, facilityIDs, userId, seeAll } = input;
       const timeFilter = seeAll
         ? {}
         : {
@@ -102,7 +102,9 @@ export const facilityBookingRouter = createTRPCRouter({
       const bookings = await ctx.db.bookings.findMany({
         where: {
           ...timeFilter,
-          ...(facilityID ? { facilityID } : {}),
+          ...(facilityIDs && facilityIDs.length > 0
+            ? { facilityID: { in: facilityIDs } }
+            : {}),
           ...(userId ? { userID: userId } : {}),
         },
       });

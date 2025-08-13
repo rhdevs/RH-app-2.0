@@ -17,7 +17,7 @@ const Calendar = () => {
   const bookingsInMonth = api.bookings.getBookings.useQuery({
     startTime: start,
     endTime: end,
-    ...(facility !== -1 ? { facilityID: facility } : {}),
+    ...(facility !== -1 ? { facilityIDs: [facility] } : {}),
   });
 
   const facilities = [
