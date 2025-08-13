@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { ChevronDown, Calendar, Clock, Search, X } from "lucide-react";
+import { ChevronDown, Calendar, Clock, Search, X, Check } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { api } from "~/trpc/react";
 import { format } from "date-fns";
@@ -44,7 +44,7 @@ const getTimeFrameStart = (value: string): number | null => {
 const PastBookings = () => {
   const { data: session } = useSession();
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedFacility, setSelectedFacility] = useState("All Facilities");
+  const [selectedFacilityIds, setSelectedFacilityIds] = useState<number[]>([]);
   const [selectedTimeFrame, setSelectedTimeFrame] = useState("all");
   const [isFacilityDropdownOpen, setIsFacilityDropdownOpen] = useState(false);
   const [isTimeFrameDropdownOpen, setIsTimeFrameDropdownOpen] = useState(false);
@@ -70,18 +70,20 @@ const PastBookings = () => {
       startTime,
       endTime: now,
       seeAll: true,
-      ...(selectedFacility !== "All Facilities"
-        ? {
-            facilityID:
-              facilities.find((f) => f.facilityName === selectedFacility)
-                ?.facilityID ?? undefined,
-          }
+      ...(selectedFacilityIds.length > 0
+        ? { facilityIDs: selectedFacilityIds }
         : {}),
       userId: session?.user?.userID,
     },
     {
       enabled: !!session?.user?.userID,
     },
+  );
+
+  const selectedFacilities = useMemo(
+    () =>
+      facilities.filter((f) => selectedFacilityIds.includes(f.facilityID)),
+    [facilities, selectedFacilityIds],
   );
 
   const filteredBookings = useMemo(() => {
@@ -98,13 +100,13 @@ const PastBookings = () => {
   }, [bookings, searchQuery]);
 
   const clearFilters = () => {
-    setSelectedFacility("All Facilities");
+    setSelectedFacilityIds([]);
     setSelectedTimeFrame("all");
     setSearchQuery("");
   };
 
   const hasActiveFilters =
-    selectedFacility !== "All Facilities" ||
+    selectedFacilityIds.length > 0 ||
     selectedTimeFrame !== "all" ||
     searchQuery.trim();
 
@@ -186,27 +188,70 @@ const PastBookings = () => {
               onClick={() => setIsFacilityDropdownOpen(!isFacilityDropdownOpen)}
               className="flex w-full items-center justify-between rounded-lg border border-gray-200 px-4 py-2 text-left hover:bg-gray-50"
             >
-              <span className="truncate">{selectedFacility}</span>
+              <span className="truncate">
+                {selectedFacilityIds.length === 0
+                  ? "All Facilities"
+                  : selectedFacilities
+                      .map((f) => f.facilityName)
+                      .slice(0, 2)
+                      .join(", ") +
+                    (selectedFacilityIds.length > 2
+                      ? ` +${selectedFacilityIds.length - 2} more`
+                      : "")}
+              </span>
               <ChevronDown className="h-4 w-4 text-gray-400" />
             </button>
             {isFacilityDropdownOpen && (
-              <div className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
-                {facilities.map((f) => (
+              <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                <div className="max-h-60 overflow-y-auto py-1">
+                  {facilities
+                    .filter((f) => f.facilityID !== -1)
+                    .map((f) => {
+                      const selected = selectedFacilityIds.includes(
+                        f.facilityID,
+                      );
+                      return (
+                        <button
+                          key={f.facilityID}
+                          onClick={() =>
+                            setSelectedFacilityIds((prev) =>
+                              prev.includes(f.facilityID)
+                                ? prev.filter((id) => id !== f.facilityID)
+                                : [...prev, f.facilityID],
+                            )
+                          }
+                          className={`flex w-full items-center px-4 py-2 text-left text-sm hover:bg-gray-50 ${
+                            selected
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "text-gray-700"
+                          }`}
+                        >
+                          <div className="flex-1">
+                            <div className="font-medium">{f.facilityName}</div>
+                          </div>
+                          {selected && (
+                            <Check className="h-4 w-4 text-emerald-600" />
+                          )}
+                        </button>
+                      );
+                    })}
+                </div>
+                <div className="flex items-center justify-between border-t border-gray-200 px-2 py-2">
                   <button
-                    key={f.facilityID}
-                    onClick={() => {
-                      setSelectedFacility(f.facilityName);
-                      setIsFacilityDropdownOpen(false);
-                    }}
-                    className={`w-full px-4 py-2 text-left hover:bg-gray-50 ${
-                      selectedFacility === f.facilityName
-                        ? "bg-emerald-50 text-emerald-700"
-                        : "text-gray-700"
-                    }`}
+                    type="button"
+                    onClick={() => setSelectedFacilityIds([])}
+                    className="text-xs text-gray-600 hover:text-gray-900"
                   >
-                    {f.facilityName}
+                    Clear
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    onClick={() => setIsFacilityDropdownOpen(false)}
+                    className="text-xs font-medium text-emerald-700 hover:text-emerald-900"
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
             )}
           </div>
