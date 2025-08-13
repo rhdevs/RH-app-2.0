@@ -7,6 +7,7 @@ import {
   Plus,
   Filter,
   ChevronDown,
+  Check,
 } from "lucide-react";
 import { api } from "~/trpc/react";
 import {
@@ -44,7 +45,7 @@ export interface Booking {
 const Calendar_v2: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [facility, setFacility] = useState<number>(-1);
+  const [selectedFacilityIds, setSelectedFacilityIds] = useState<number[]>([]);
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
   const [toastContent, setToastContent] = useState<string>("");
   const [toastType, setToastType] = useState<"success" | "danger">("success");
@@ -77,7 +78,9 @@ const Calendar_v2: React.FC = () => {
     {
       startTime: start,
       endTime: end,
-      ...(facility !== -1 ? { facilityID: facility } : {}),
+      ...(selectedFacilityIds.length > 0
+        ? { facilityIDs: selectedFacilityIds }
+        : {}),
       ...(checkOwnBookings ? { userId: session?.user?.userID } : {}),
     },
     {
@@ -99,7 +102,9 @@ const Calendar_v2: React.FC = () => {
     ];
   }, [facilitiesQuery.data]);
 
-  const selectedFacility = facilities.find((f) => f.facilityID === facility);
+  const selectedFacilities = facilities.filter((f) =>
+    selectedFacilityIds.includes(f.facilityID),
+  );
 
   const calendarDays = useMemo(() => {
     const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 });
@@ -172,9 +177,13 @@ const Calendar_v2: React.FC = () => {
     setEnd(getUnixTime(endOfMonth(newMonth)));
   };
 
-  const handleFacilityChange = (facilityID: number) => {
-    setFacility(facilityID);
-    setIsFilterDropdownOpen(false);
+  const handleFacilityToggle = (facilityID: number) => {
+    setSelectedFacilityIds((prev) =>
+      prev.includes(facilityID)
+        ? prev.filter((id) => id !== facilityID)
+        : [...prev, facilityID],
+    );
+    // keep dropdown open for multi-select
   };
 
   const getFacilityColor = (facility: string) => {
@@ -274,7 +283,15 @@ const Calendar_v2: React.FC = () => {
             >
               <Filter className="h-4 w-4" />
               <span className="max-w-40 truncate">
-                {selectedFacility?.facilityName ?? "All Facilities"}
+                {selectedFacilityIds.length === 0
+                  ? "All Facilities"
+                  : selectedFacilities
+                      .map((f) => f.facilityName)
+                      .slice(0, 2)
+                      .join(", ") +
+                    (selectedFacilityIds.length > 2
+                      ? ` +${selectedFacilityIds.length - 2} more`
+                      : "")}
               </span>
               <ChevronDown className="h-4 w-4" />
             </button>
@@ -282,26 +299,52 @@ const Calendar_v2: React.FC = () => {
             {isFilterDropdownOpen && (
               <div className="absolute right-0 z-20 mt-2 w-64 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5">
                 <div className="max-h-60 overflow-y-auto py-1">
-                  {facilities.map((facilityOption) => (
-                    <button
-                      key={facilityOption.facilityID}
-                      onClick={() =>
-                        handleFacilityChange(facilityOption.facilityID)
-                      }
-                      className={classNames(
-                        "flex w-full items-center px-4 py-2 text-left text-sm hover:bg-gray-100",
-                        facility === facilityOption.facilityID
-                          ? "bg-gray-100 text-gray-900"
-                          : "text-gray-700",
-                      )}
-                    >
-                      <div className="flex-1">
-                        <div className="font-medium">
-                          {facilityOption.facilityName}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
+                  {facilities
+                    .filter((f) => f.facilityID !== -1)
+                    .map((facilityOption) => {
+                      const selected = selectedFacilityIds.includes(
+                        facilityOption.facilityID,
+                      );
+                      return (
+                        <button
+                          key={facilityOption.facilityID}
+                          onClick={() =>
+                            handleFacilityToggle(facilityOption.facilityID)
+                          }
+                          className={classNames(
+                            "flex w-full items-center px-4 py-2 text-left text-sm hover:bg-gray-100",
+                            selected
+                              ? "bg-gray-100 text-gray-900"
+                              : "text-gray-700",
+                          )}
+                        >
+                          <div className="flex-1">
+                            <div className="font-medium">
+                              {facilityOption.facilityName}
+                            </div>
+                          </div>
+                          {selected && (
+                            <Check className="h-4 w-4 text-emerald-600" />
+                          )}
+                        </button>
+                      );
+                    })}
+                </div>
+                <div className="flex items-center justify-between border-t border-gray-200 px-2 py-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFacilityIds([])}
+                    className="text-xs text-gray-600 hover:text-gray-900"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsFilterDropdownOpen(false)}
+                    className="text-xs font-medium text-emerald-700 hover:text-emerald-900"
+                  >
+                    Done
+                  </button>
                 </div>
               </div>
             )}
@@ -414,7 +457,12 @@ const Calendar_v2: React.FC = () => {
               </div>
 
               <div className="my-1 text-center text-gray-500">
-                Facilities: {selectedFacility?.facilityName}
+                Facilities: {""}
+                {selectedFacilityIds.length === 0
+                  ? "All Facilities"
+                  : selectedFacilities
+                      .map((f) => f.facilityName)
+                      .join(", ")}
               </div>
               <div className="flex-1 overflow-y-auto pb-4">
                 <div className="space-y-4 px-6">
