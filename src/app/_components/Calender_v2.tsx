@@ -91,15 +91,7 @@ const Calendar_v2: React.FC = () => {
 
   const facilities = useMemo(() => {
     const baseFacilities = facilitiesQuery.data ?? [];
-    return [
-      {
-        id: "",
-        facilityName: "All Facilities",
-        facilityLocation: "",
-        facilityID: -1,
-      },
-      ...baseFacilities,
-    ];
+    return baseFacilities;
   }, [facilitiesQuery.data]);
 
   const selectedFacilities = facilities.filter((f) =>
