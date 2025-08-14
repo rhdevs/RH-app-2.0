@@ -90,10 +90,9 @@ const PastBookings = () => {
     return bookings
       .filter((booking) => {
         const lower = searchQuery.toLowerCase();
-        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
         return (
-          booking.title?.toLowerCase().includes(lower) ||
-          booking.eventName?.toLowerCase().includes(lower)
+          (booking.title?.toLowerCase().includes(lower) ?? false) ||
+          (booking.eventName?.toLowerCase().includes(lower) ?? false)
         );
       })
       .sort((a, b) => b.start.getTime() - a.start.getTime());

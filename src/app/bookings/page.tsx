@@ -13,7 +13,7 @@ const BookingsPage: React.FC = async () => {
           Your Bookings
         </h1>
       </div>
-      <div className="mb-20">
+      <div className="min-h-[calc(100vh-4rem-5rem)] overflow-y-auto pb-20">
         <PastBookings />
       </div>
     </HydrateClient>
