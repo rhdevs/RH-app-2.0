@@ -206,6 +206,7 @@ const PastBookings = () => {
                 <div className="max-h-60 overflow-y-auto py-1">
                   {facilities
                     .filter((f) => f.facilityID !== -1)
+                    .sort((a, b) => a.facilityName.localeCompare(b.facilityName))
                     .map((f) => {
                       const selected = selectedFacilityIds.includes(
                         f.facilityID,
