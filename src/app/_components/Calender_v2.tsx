@@ -301,6 +301,7 @@ const Calendar_v2: React.FC = () => {
                 <div className="max-h-60 overflow-y-auto py-1">
                   {facilities
                     .filter((f) => f.facilityID !== -1)
+                    .sort((a, b) => a.facilityName.localeCompare(b.facilityName))
                     .map((facilityOption) => {
                       const selected = selectedFacilityIds.includes(
                         facilityOption.facilityID,
