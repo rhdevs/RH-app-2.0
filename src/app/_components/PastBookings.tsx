@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { ChevronDown, Calendar, Clock, Search, X, Check } from "lucide-react";
+import { ChevronDown, Calendar, Clock, Search, X, Check, Edit } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { api } from "~/trpc/react";
 import { format } from "date-fns";
 import Loading from "./Loading";
+import EditBookingModal from "./EditBookingModal";
+import type { BookingData } from "~/types/booking";
 
 const timeFrames = [
   { label: "All Time", value: "all" },
@@ -48,6 +50,8 @@ const PastBookings = () => {
   const [selectedTimeFrame, setSelectedTimeFrame] = useState("all");
   const [isFacilityDropdownOpen, setIsFacilityDropdownOpen] = useState(false);
   const [isTimeFrameDropdownOpen, setIsTimeFrameDropdownOpen] = useState(false);
+  const [editingBooking, setEditingBooking] = useState<BookingData | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const { data: facilitiesData } = api.bookings.getAllFacilities.useQuery();
   const facilities = useMemo(
@@ -90,10 +94,9 @@ const PastBookings = () => {
     return bookings
       .filter((booking) => {
         const lower = searchQuery.toLowerCase();
-        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
         return (
-          booking.title?.toLowerCase().includes(lower) ||
-          booking.eventName?.toLowerCase().includes(lower)
+          (booking.title?.toLowerCase().includes(lower) ?? false) ||
+          (booking.eventName?.toLowerCase().includes(lower) ?? false)
         );
       })
       .sort((a, b) => b.start.getTime() - a.start.getTime());
@@ -158,6 +161,16 @@ const PastBookings = () => {
       default:
         return "bg-gray-100 text-gray-800";
     }
+  };
+
+  const handleEdit = (booking: BookingData) => {
+    setEditingBooking(booking);
+    setIsEditModalOpen(true);
+  };
+
+  const handleCloseEditModal = () => {
+    setIsEditModalOpen(false);
+    setEditingBooking(null);
   };
 
   return (
@@ -372,12 +385,21 @@ const PastBookings = () => {
                       <span>Event: {booking.eventName}</span>
                     </div>
                     {booking.end >= new Date() && (
-                      <button
-                        onClick={() => handleDelete(booking.id)}
-                        className="ml-auto mt-2 rounded-md bg-red-100 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-200"
-                      >
-                        Delete booking
-                      </button>
+                      <div className="ml-auto mt-2 flex space-x-2">
+                        <button
+                          onClick={() => handleEdit(booking)}
+                          className="flex items-center rounded-md bg-blue-100 px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-200"
+                        >
+                          <Edit className="mr-1 h-3 w-3" />
+                          Edit booking
+                        </button>
+                        <button
+                          onClick={() => handleDelete(booking.id)}
+                          className="rounded-md bg-red-100 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-200"
+                        >
+                          Delete booking
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -386,6 +408,13 @@ const PastBookings = () => {
           )}
         </div>
       )}
+      
+      <EditBookingModal
+        isOpen={isEditModalOpen}
+        onClose={handleCloseEditModal}
+        booking={editingBooking}
+        refetch={refetch}
+      />
     </div>
   );
 };
