@@ -175,11 +175,13 @@ const BookingModal: React.FC<BookingModalProps> = ({
                 className="w-full rounded-lg border border-gray-300 p-3"
               >
                 <option value="">Select a facility</option>
-                {facilities.map((f) => (
+                {[...facilities]
+                  .sort((a, b) => a.facilityName.localeCompare(b.facilityName))
+                  .map((f) => (
                   <option key={f.facilityID} value={f.facilityName}>
                     {f.facilityName} - {f.facilityLocation}
                   </option>
-                ))}
+                  ))}
               </select>
             </div>
             {selectedFacility === "Dance Studio" && (
