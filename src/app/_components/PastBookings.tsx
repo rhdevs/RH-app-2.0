@@ -349,9 +349,9 @@ const PastBookings = () => {
                 key={idx}
                 className="rounded-lg border border-gray-200 bg-white p-6 transition-shadow hover:shadow-md"
               >
-                <div className="flex items-start justify-between">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                   <div className="flex-1">
-                    <div className="flex items-start space-x-4">
+                    <div className="flex flex-wrap items-center gap-2">
                       <div
                         className={`inline-flex items-center rounded-full border px-3 py-1 text-sm font-medium ${getFacilityColor(
                           booking.title ?? "",
@@ -360,7 +360,7 @@ const PastBookings = () => {
                         {booking.title}
                       </div>
                       <div
-                        className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                           booking.end < new Date()
                             ? "bg-gray-100 text-gray-600"
                             : "bg-emerald-100 text-emerald-600"
@@ -370,38 +370,40 @@ const PastBookings = () => {
                       </div>
                     </div>
 
-                    <div className="mt-3 grid grid-cols-1 gap-4 text-sm text-gray-600 md:grid-cols-3">
+                    <div className="mt-3 grid grid-cols-1 gap-4 text-sm text-gray-600 md:grid-cols-2 lg:grid-cols-3">
                       <div className="flex items-center">
                         <Calendar className="mr-2 h-4 w-4 text-gray-400" />
                         {format(booking.start, "MMM d, yyyy")}
                       </div>
                       <div className="flex items-center">
                         <Clock className="mr-2 h-4 w-4 text-gray-400" />
-                        {format(booking.start, "h:mm a")} -{" "}
-                        {format(booking.end, "h:mm a")}
+                        {format(booking.start, "h:mm a")} - {format(booking.end, "h:mm a")}
                       </div>
                     </div>
-                    <div className="mt-2 text-sm text-gray-600">
-                      <span>Event: {booking.eventName}</span>
-                    </div>
-                    {booking.end >= new Date() && (
-                      <div className="ml-auto mt-2 flex space-x-2">
-                        <button
-                          onClick={() => handleEdit(booking)}
-                          className="flex items-center rounded-md bg-blue-100 px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-200"
-                        >
-                          <Edit className="mr-1 h-3 w-3" />
-                          Edit booking
-                        </button>
-                        <button
-                          onClick={() => handleDelete(booking.id)}
-                          className="rounded-md bg-red-100 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-200"
-                        >
-                          Delete booking
-                        </button>
+                    {booking.eventName && (
+                      <div className="mt-2 text-sm text-gray-600">
+                        <span>Event: {booking.eventName}</span>
                       </div>
                     )}
                   </div>
+
+                  {booking.end >= new Date() && (
+                    <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:justify-end">
+                      <button
+                        onClick={() => handleEdit(booking)}
+                        className="inline-flex items-center justify-center rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                      >
+                        <Edit className="mr-1 h-4 w-4" />
+                        Edit booking
+                      </button>
+                      <button
+                        onClick={() => handleDelete(booking.id)}
+                        className="inline-flex items-center justify-center rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100"
+                      >
+                        Delete booking
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))
