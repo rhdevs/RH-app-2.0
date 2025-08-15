@@ -42,6 +42,12 @@ export interface Booking {
   userTeleHandle: string | null;
 }
 
+interface Facility {
+  facilityID: number;
+  facilityName: string;
+  facilityLocation: string;
+}
+
 const Calendar_v2: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -89,12 +95,12 @@ const Calendar_v2: React.FC = () => {
   );
   const facilitiesQuery = api.bookings.getAllFacilities.useQuery();
 
-  const facilities = useMemo(() => {
-    const baseFacilities = facilitiesQuery.data ?? [];
+  const facilities: Facility[] = useMemo(() => {
+    const baseFacilities = (facilitiesQuery.data ?? []) as Facility[];
     return baseFacilities;
   }, [facilitiesQuery.data]);
 
-  const selectedFacilities = facilities.filter((f) =>
+  const selectedFacilities = facilities.filter((f: Facility) =>
     selectedFacilityIds.includes(f.facilityID),
   );
 
@@ -278,7 +284,7 @@ const Calendar_v2: React.FC = () => {
                 {selectedFacilityIds.length === 0
                   ? "All Facilities"
                   : selectedFacilities
-                      .map((f) => f.facilityName)
+                      .map((f: Facility) => f.facilityName)
                       .slice(0, 2)
                       .join(", ") +
                     (selectedFacilityIds.length > 2
@@ -292,9 +298,11 @@ const Calendar_v2: React.FC = () => {
               <div className="absolute right-0 z-20 mt-2 w-64 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5">
                 <div className="max-h-60 overflow-y-auto py-1">
                   {facilities
-                    .filter((f) => f.facilityID !== -1)
-                    .sort((a, b) => a.facilityName.localeCompare(b.facilityName))
-                    .map((facilityOption) => {
+                    .filter((f: Facility) => f.facilityID !== -1)
+                    .sort((a: Facility, b: Facility) =>
+                      a.facilityName.localeCompare(b.facilityName),
+                    )
+                    .map((facilityOption: Facility) => {
                       const selected = selectedFacilityIds.includes(
                         facilityOption.facilityID,
                       );
@@ -350,7 +358,7 @@ const Calendar_v2: React.FC = () => {
             : 'All Bookings (Click "See My Bookings" to view your bookings by date.)'}
         </div>
         <div className="text-xs text-gray-500">
-          Note: To see all your bookings in one place, navigate to "My Bookings" tab.
+          Note: To see all your bookings in one place, navigate to &quot;My Bookings&quot; tab.
         </div>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-7">
@@ -454,7 +462,7 @@ const Calendar_v2: React.FC = () => {
                 {selectedFacilityIds.length === 0
                   ? "All Facilities"
                   : selectedFacilities
-                      .map((f) => f.facilityName)
+                      .map((f: Facility) => f.facilityName)
                       .join(", ")}
               </div>
               <div className="flex-1 overflow-y-auto pb-4">
