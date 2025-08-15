@@ -282,4 +282,71 @@ export const facilityBookingRouter = createTRPCRouter({
 
       return deleted;
     }),
+
+  updateBooking: protectedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        eventName: z.string().optional(),
+        description: z.string().optional(),
+        startTime: z.number().optional(),
+        endTime: z.number().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { id, eventName, description, startTime, endTime } = input;
+
+      // Get the existing booking first
+      const existingBooking = await ctx.db.bookings.findUnique({
+        where: { id },
+      });
+
+      if (!existingBooking) {
+        throw new Error("Booking not found");
+      }
+
+      // Ensure user can only edit their own bookings
+      if (existingBooking.userID !== ctx.session?.user?.userID) {
+        throw new Error("Unauthorized: Can only edit your own bookings");
+      }
+
+      // If time is being updated, validate the new times
+      const newStartTime = startTime ?? existingBooking.startTime;
+      const newEndTime = endTime ?? existingBooking.endTime;
+
+      if (newEndTime <= newStartTime) {
+        throw new Error("End time must be after start time");
+      }
+
+      // Check for conflicts only if time is being changed
+      if (startTime !== undefined || endTime !== undefined) {
+        const conflicts = await ctx.db.bookings.findMany({
+          where: {
+            facilityID: existingBooking.facilityID,
+            id: { not: id }, // Exclude current booking
+            AND: [
+              { endTime: { gt: newStartTime } },
+              { startTime: { lt: newEndTime } },
+            ],
+          },
+        });
+
+        if (conflicts.length > 0) {
+          throw new Error("Time conflicts with existing bookings");
+        }
+      }
+
+      // Update the booking
+      const updated = await ctx.db.bookings.update({
+        where: { id },
+        data: {
+          ...(eventName !== undefined && { eventName }),
+          ...(description !== undefined && { description }),
+          ...(startTime !== undefined && { startTime }),
+          ...(endTime !== undefined && { endTime }),
+        },
+      });
+
+      return updated;
+    }),
 });
