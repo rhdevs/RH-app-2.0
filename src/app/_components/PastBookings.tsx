@@ -53,7 +53,13 @@ const PastBookings = () => {
   const [editingBooking, setEditingBooking] = useState<BookingData | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
-  const { data: facilitiesData } = api.bookings.getAllFacilities.useQuery();
+  const { data: facilitiesData } = api.bookings.getAllFacilities.useQuery(
+    undefined,
+    {
+      staleTime: 24 * 60 * 60 * 1000, // 24 hours
+      gcTime: 24 * 60 * 60 * 1000, // 24 hours
+    },
+  );
   const facilities = useMemo(
     () => [
       { facilityID: -1, facilityName: "All Facilities" },
@@ -66,14 +72,13 @@ const PastBookings = () => {
   const startTime = getTimeFrameStart(selectedTimeFrame) ?? 0;
 
   const {
-    data: bookings = [],
+    data: bookingData,
     isLoading,
     refetch,
   } = api.bookings.getBookings.useQuery(
     {
       startTime,
       endTime: now,
-      seeAll: true,
       ...(selectedFacilityIds.length > 0
         ? { facilityIDs: selectedFacilityIds }
         : {}),
@@ -91,6 +96,7 @@ const PastBookings = () => {
   );
 
   const filteredBookings = useMemo(() => {
+    const bookings = bookingData?.bookings ?? [];
     return bookings
       .filter((booking) => {
         const lower = searchQuery.toLowerCase();
@@ -100,7 +106,7 @@ const PastBookings = () => {
         );
       })
       .sort((a, b) => b.start.getTime() - a.start.getTime());
-  }, [bookings, searchQuery]);
+  }, [bookingData?.bookings, searchQuery]);
 
   const clearFilters = () => {
     setSelectedFacilityIds([]);

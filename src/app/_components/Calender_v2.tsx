@@ -122,7 +122,10 @@ const Calendar_v2: React.FC = () => {
   const processedBookings = useMemo(() => {
     if (!bookingsInMonth) return [];
 
-    return bookingsInMonth.map((booking: Booking) => {
+    const bookings = Array.isArray(bookingsInMonth) 
+      ? bookingsInMonth 
+      : bookingsInMonth?.bookings ?? [];
+    return bookings.map((booking: Booking) => {
       const start = booking.start ? new Date(booking.start) : new Date();
       const end = booking.end ? new Date(booking.end) : new Date();
 

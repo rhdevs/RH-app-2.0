@@ -47,7 +47,7 @@ const Calendar = () => {
     <div className={"container"}>
       <FullCalendar
         plugins={[timeGridPlugin, listPlugin]}
-        events={bookingsInMonth.data}
+        events={bookingsInMonth.data?.bookings ?? []}
         initialView="timeGridWeek"
         datesSet={(dateInfo) => {
           setStart(getUnixTime(startOfMonth(dateInfo.start)));
