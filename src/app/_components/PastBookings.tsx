@@ -79,6 +79,7 @@ const PastBookings = () => {
     {
       startTime,
       endTime: now,
+      seeAll: true,
       ...(selectedFacilityIds.length > 0
         ? { facilityIDs: selectedFacilityIds }
         : {}),
