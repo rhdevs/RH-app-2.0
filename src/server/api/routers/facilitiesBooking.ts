@@ -89,10 +89,15 @@ export const facilityBookingRouter = createTRPCRouter({
         facilityIDs: z.array(z.number()).optional(),
         userId: z.string().optional(),
         seeAll: z.boolean().optional(),
+        limit: z.number().default(100),
+        cursor: z.object({
+          startTime: z.number(),
+          id: z.string(),
+        }).optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
-      const { startTime, endTime, facilityIDs, userId, seeAll } = input;
+      const { startTime, endTime, facilityIDs, userId, seeAll, limit, cursor } = input;
       const timeFilter = seeAll
         ? {}
         : {
@@ -106,6 +111,15 @@ export const facilityBookingRouter = createTRPCRouter({
             ? { facilityID: { in: facilityIDs } }
             : {}),
           ...(userId ? { userID: userId } : {}),
+          ...(cursor ? {
+            OR: [
+              { startTime: { lt: cursor.startTime } },
+              {
+                startTime: cursor.startTime,
+                id: { gt: cursor.id },
+              },
+            ],
+          } : {}),
         },
       });
       const userIDs = [...new Set(bookings.map((b) => b.userID))];
@@ -125,7 +139,17 @@ export const facilityBookingRouter = createTRPCRouter({
         ]),
       );
 
-      const facilities = await ctx.db.facilities.findMany();
+      const facilities = await ctx.db.facilities.findMany({
+        select: {
+          facilityID: true,
+          facilityName: true,
+        },
+      });
+      
+      // Create facility dictionary for O(1) lookups
+      const facilityDict = Object.fromEntries(
+        facilities.map((f) => [f.facilityID, f.facilityName])
+      );
       const ONE_DAY = 86400; // seconds in a day
 
       const splitBookings = [];
@@ -151,7 +175,6 @@ export const facilityBookingRouter = createTRPCRouter({
             ...booking,
             startTime: currentStart,
             endTime: endTime,
-            originalBookingID: booking.bookingID,
           });
         }
       }
@@ -161,19 +184,34 @@ export const facilityBookingRouter = createTRPCRouter({
         ...splitBookings,
       ];
 
-      return processedBookings.map((booking) => {
-        return {
+      // Light resort after splitting (most bookings will already be ordered)
+      processedBookings.sort((a, b) => {
+        if (b.startTime !== a.startTime) {
+          return b.startTime - a.startTime;
+        }
+        return b.id.localeCompare(a.id);
+      });
+
+      const nextCursor = processedBookings.length === limit && processedBookings.length > 0
+        ? {
+            startTime: processedBookings[processedBookings.length - 1]!.startTime,
+            id: processedBookings[processedBookings.length - 1]!.id,
+          }
+        : undefined;
+
+      return {
+        bookings: processedBookings.map((booking) => ({
           id: booking.id,
           start: new Date(booking.startTime * 1000),
           end: new Date(booking.endTime * 1000),
-          title: facilities.find((fac) => fac.facilityID === booking.facilityID)
-            ?.facilityName,
-          user: userDict[booking.userID].displayName,
+          title: facilityDict[booking.facilityID],
+          user: userDict[booking.userID]?.displayName,
           eventName: booking.eventName,
           eventDescription: booking.description,
-          userTeleHandle: userDict[booking.userID].telegramHandle,
-        };
-      });
+          userTeleHandle: userDict[booking.userID]?.telegramHandle,
+        })),
+        nextCursor,
+      };
     }),
 
   // Get bookings of a user
