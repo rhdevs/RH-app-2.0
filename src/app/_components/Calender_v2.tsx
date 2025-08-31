@@ -191,7 +191,7 @@ const Calendar_v2: React.FC = () => {
     switch (facility) {
       case "Main Area (UL)":
         return "bg-green-100 text-green-800 border-green-800";
-      case "UL Conf Rm":
+      case "Quiet Room":
         return "bg-red-100 text-red-800 border-red-800";
       case "Alumni Room":
         return "bg-blue-100 text-blue-800 border-blue-800";
