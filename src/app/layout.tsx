@@ -22,7 +22,7 @@ export default function RootLayout({
         <SessionProviderWrapper>
           <TRPCReactProvider>{children}</TRPCReactProvider>
           <footer className="w-full bg-emerald-800 py-4 text-center text-sm text-white fixed bottom-0">
-            Thanks for using the RH App! It’s beta version – feel free to report
+            Thanks for using the RH App! Feel free to report
             bugs or suggest features via form:
             <a
               href="https://forms.gle/ocUqt5CPXXAUpYfL8"
