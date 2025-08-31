@@ -1,7 +1,15 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { ChevronDown, Calendar, Clock, Search, X, Check, Edit } from "lucide-react";
+import {
+  ChevronDown,
+  Calendar,
+  Clock,
+  Search,
+  X,
+  Check,
+  Edit,
+} from "lucide-react";
 import { useSession } from "next-auth/react";
 import { api } from "~/trpc/react";
 import { format } from "date-fns";
@@ -50,7 +58,9 @@ const PastBookings = () => {
   const [selectedTimeFrame, setSelectedTimeFrame] = useState("all");
   const [isFacilityDropdownOpen, setIsFacilityDropdownOpen] = useState(false);
   const [isTimeFrameDropdownOpen, setIsTimeFrameDropdownOpen] = useState(false);
-  const [editingBooking, setEditingBooking] = useState<BookingData | null>(null);
+  const [editingBooking, setEditingBooking] = useState<BookingData | null>(
+    null,
+  );
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const { data: facilitiesData } = api.bookings.getAllFacilities.useQuery(
@@ -71,28 +81,28 @@ const PastBookings = () => {
   const now = Math.floor(Date.now() / 1000);
   const startTime = getTimeFrameStart(selectedTimeFrame) ?? 0;
 
-  const {
-    data: bookingData,
-    isLoading,
-    refetch,
-  } = api.bookings.getBookings.useQuery(
-    {
+  const queryInput = useMemo(
+    () => ({
       startTime,
-      endTime: now,
+      endTime: Math.floor(Date.now() / 1000),
       seeAll: true,
       ...(selectedFacilityIds.length > 0
         ? { facilityIDs: selectedFacilityIds }
         : {}),
       userId: session?.user?.userID,
-    },
+    }),
+    [startTime, selectedFacilityIds, session?.user?.userID],
+  );
+
+  const { data: bookingData, isLoading } = api.bookings.getBookings.useQuery(
+    queryInput,
     {
       enabled: !!session?.user?.userID,
     },
   );
 
   const selectedFacilities = useMemo(
-    () =>
-      facilities.filter((f) => selectedFacilityIds.includes(f.facilityID)),
+    () => facilities.filter((f) => selectedFacilityIds.includes(f.facilityID)),
     [facilities, selectedFacilityIds],
   );
 
@@ -125,7 +135,6 @@ const PastBookings = () => {
   const deleteBooking = api.bookings.deleteBooking.useMutation({
     onSuccess: async () => {
       await utils.bookings.getBookings.invalidate();
-      await refetch();
     },
   });
 
@@ -226,7 +235,9 @@ const PastBookings = () => {
                 <div className="max-h-60 overflow-y-auto py-1">
                   {facilities
                     .filter((f) => f.facilityID !== -1)
-                    .sort((a, b) => a.facilityName.localeCompare(b.facilityName))
+                    .sort((a, b) =>
+                      a.facilityName.localeCompare(b.facilityName),
+                    )
                     .map((f) => {
                       const selected = selectedFacilityIds.includes(
                         f.facilityID,
@@ -384,7 +395,8 @@ const PastBookings = () => {
                       </div>
                       <div className="flex items-center">
                         <Clock className="mr-2 h-4 w-4 text-gray-400" />
-                        {format(booking.start, "h:mm a")} - {format(booking.end, "h:mm a")}
+                        {format(booking.start, "h:mm a")} -{" "}
+                        {format(booking.end, "h:mm a")}
                       </div>
                     </div>
                     {booking.eventName && (
@@ -417,12 +429,11 @@ const PastBookings = () => {
           )}
         </div>
       )}
-      
+
       <EditBookingModal
         isOpen={isEditModalOpen}
         onClose={handleCloseEditModal}
         booking={editingBooking}
-        refetch={refetch}
       />
     </div>
   );

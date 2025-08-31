@@ -18,14 +18,12 @@ interface EditBookingModalProps {
   isOpen: boolean;
   onClose: () => void;
   booking: BookingData | null;
-  refetch: () => void;
 }
 
 const EditBookingModal: React.FC<EditBookingModalProps> = ({
   isOpen,
   onClose,
   booking,
-  refetch,
 }) => {
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
@@ -54,7 +52,6 @@ const EditBookingModal: React.FC<EditBookingModalProps> = ({
       setToastOpen(true);
       setTimeout(() => {
         onClose();
-        refetch();
       }, 1000);
     },
     onError: (error) => {
