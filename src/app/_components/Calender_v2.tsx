@@ -219,6 +219,8 @@ const Calendar_v2: React.FC = () => {
         return "bg-pink-100 text-pink-800 border-pink-800";
       case "Comm Hall (Back)":
         return "bg-emerald-100 text-emerald-800 border-emerald-800";
+      case "SCRC Room":
+        return "bg-teal-300 text-teal-800 border-teal-800"
       default:
         return "bg-gray-100 text-gray-800";
     }
