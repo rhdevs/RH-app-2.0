@@ -266,7 +266,7 @@ const Calendar_v2: React.FC = () => {
         isOpen={bookingModalOpen}
         onClose={() => setBookingModalOpen(false)}
         facilities={facilities}
-        userId={session?.user?.userID}
+        userId={session?.user?.userID ?? ""}
         currentDate={selectedDate}
         refetch={refetchBookingsInMonth}
       />

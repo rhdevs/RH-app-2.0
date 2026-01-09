@@ -24,7 +24,7 @@ interface BookingModalProps {
   isOpen: boolean;
   onClose: () => void;
   facilities: Facility[];
-  userId?: string;
+  userId: string;
   currentDate: Date;
   refetch: () => void;
 }
@@ -46,6 +46,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
   const [toastContent, setToastContent] = useState<string>("");
   const [toastType, setToastType] = useState<"success" | "danger">("success");
   const [toastOpen, setToastOpen] = useState<boolean>(false);
+  const jcrcList = ["E1293802", "E1454218", "E1337187", "E1122423", "E1121407", "E1186145", "E1249457", "E1397941", "E1121047"];
   const handleDateChange = (
     type: "start" | "end",
     direction: "prev" | "next",
@@ -62,7 +63,6 @@ const BookingModal: React.FC<BookingModalProps> = ({
       setEndDate(newDate);
     }
   };
-
   const createBooking = api.bookings.createBooking.useMutation({
     onSuccess: () => {
       onClose();
@@ -176,17 +176,23 @@ const BookingModal: React.FC<BookingModalProps> = ({
               >
                 <option value="">Select a facility</option>
                 {[...facilities]
+                  .filter(
+                    (f) =>
+                      jcrcList.includes(userId) ||
+                      f.facilityName !== "SCRC Room",
+                  )
                   .sort((a, b) => a.facilityName.localeCompare(b.facilityName))
                   .map((f) => (
-                  <option key={f.facilityID} value={f.facilityName}>
-                    {f.facilityName} - {f.facilityLocation}
-                  </option>
+                    <option key={f.facilityID} value={f.facilityName}>
+                      {f.facilityName} - {f.facilityLocation}
+                    </option>
                   ))}
               </select>
             </div>
             {selectedFacility === "Dance Studio" && (
               <p className="text-sm text-red-600">
-                Note: Dance Studio cannot be booked in this app. To book the Dance Studio, please approach the Dance CCA Exco.
+                Note: Dance Studio cannot be booked in this app. To book the
+                Dance Studio, please approach the Dance CCA Exco.
               </p>
             )}
 
@@ -226,7 +232,11 @@ const BookingModal: React.FC<BookingModalProps> = ({
             <div className="flex justify-end pt-2">
               <button
                 onClick={handleSubmit}
-                disabled={!selectedFacility || !eventName || selectedFacility === "Dance Studio"}
+                disabled={
+                  !selectedFacility ||
+                  !eventName ||
+                  selectedFacility === "Dance Studio"
+                }
                 className="rounded-lg bg-emerald-600 px-6 py-2 text-white hover:bg-emerald-700 disabled:bg-gray-300"
               >
                 Confirm Booking
