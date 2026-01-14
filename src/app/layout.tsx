@@ -25,7 +25,7 @@ export default function RootLayout({
             Thanks for using the RH App! Feel free to report
             bugs or suggest features via form:
             <a
-              href="https://forms.gle/ocUqt5CPXXAUpYfL8"
+              href="https://forms.gle/foqWNsYHDhgWFjrK8"
               target="_blank"
               className="ml-1 underline hover:text-emerald-300"
             >
