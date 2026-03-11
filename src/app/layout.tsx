@@ -21,9 +21,9 @@ export default function RootLayout({
       <body className="min-h-screen bg-gray-100">
         <SessionProviderWrapper>
           <TRPCReactProvider>{children}</TRPCReactProvider>
-          <footer className="w-full bg-emerald-800 py-4 text-center text-sm text-white fixed bottom-0">
-            Thanks for using the RH App! Feel free to report
-            bugs or suggest features via form:
+          <footer className="fixed bottom-0 w-full bg-emerald-800 py-4 text-center text-sm text-white">
+            Thanks for using the RH App! Feel free to report bugs or suggest
+            features via form:
             <a
               href="https://forms.gle/foqWNsYHDhgWFjrK8"
               target="_blank"
