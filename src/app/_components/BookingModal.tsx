@@ -46,7 +46,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
   const [toastContent, setToastContent] = useState<string>("");
   const [toastType, setToastType] = useState<"success" | "danger">("success");
   const [toastOpen, setToastOpen] = useState<boolean>(false);
-  const jcrcList = ["E1293802", "E1454218", "E1337187", "E1122423", "E1121407", "E1186145", "E1249457", "E1397941", "E1121047", "E1156691"];
+  const jcrcList = ["E1293802", "E1454218", "E1337187", "E1122423", "E1121407", "E1186145", "E1249457", "E1397941", "E1121047", "E1156691", "E1375422"];
   const handleDateChange = (
     type: "start" | "end",
     direction: "prev" | "next",
