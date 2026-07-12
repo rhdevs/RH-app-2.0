@@ -3,7 +3,7 @@ import { Resend } from "resend";
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 export async function sendVerificationCodeEmail(email: string, code: string) {
-  const res = await resend.emails.send({
+  const { data, error } = await resend.emails.send({
     from: "RHApp <noreply@rhapp.lol>",
     to: [email],
     subject: "Your Password Reset Code",
@@ -16,5 +16,11 @@ export async function sendVerificationCodeEmail(email: string, code: string) {
   </div>
 `,
   });
-  console.log(res)
+
+  if (error) {
+    console.error("Failed to send verification code email:", error);
+    throw new Error(error.message);
+  }
+
+  return data;
 }
