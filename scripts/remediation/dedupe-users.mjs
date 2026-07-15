@@ -77,6 +77,24 @@ async function main() {
   }
   console.log(`\nAccounts to delete: ${toDelete.length}`);
 
+  // SAFETY GUARD (#16): if any group's duplicates have DIFFERENT userIDs, they
+  // are dual-identity accounts (A-matric vs E-NUSNET) whose dependent data is
+  // split across both userIDs. Deleting the non-keeper would ORPHAN that data.
+  // This needs a MERGE (reassign Bookings/Gym/UserCCA/Posts/Order to the
+  // canonical userID first), not a delete. Refuse to apply unless forced.
+  const mixedGroups = groups.filter(
+    (g) => new Set(g.docs.map((d) => d.userID)).size > 1,
+  );
+  if (mixedGroups.length && process.env.FORCE_UNSAFE_DELETE !== "yes") {
+    console.log(
+      `\n*** ABORTED: ${mixedGroups.length} group(s) have differing userIDs. ` +
+        `Deleting would orphan data keyed by the removed userID. Use a merge, ` +
+        `not this delete. (Override only if you truly know what you're doing: ` +
+        `FORCE_UNSAFE_DELETE=yes.) ***`,
+    );
+    return;
+  }
+
   if (DRY) {
     console.log("\nDRY RUN — nothing changed. Re-run with DRY_RUN=false to apply.");
     return;

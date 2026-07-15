@@ -35,23 +35,31 @@ server-side. Also seeds the bookingID counter.
 node scripts/remediation/seed-rbac.mjs
 ```
 
-## Step 2 — De-duplicate accounts + enforce email uniqueness (#16)
+## Step 2 — Merge duplicate-email accounts, then enforce uniqueness (#16)
 
-The DB has ~59 groups of duplicate-email accounts. Because `userID` is derived
-from the email, these are duplicate accounts for the same person and all
-dependent data references the shared `userID` string, so removing the extras is
-safe. Preview first, then apply:
+⚠️ **This is a MERGE, not a delete.** A dry-run revealed that 58 of 59
+duplicate-email groups have accounts under TWO different identity schemes for the
+same person — `A0xxxxxxX` (matric number) and `E0/E1xxxxxx` (NUSNET id derived
+from the email) — and their data is SPLIT across both userIDs (~396 bookings +
+146 gym records + CCA/orders on the accounts a naive de-dup would delete). So the
+data must be reassigned before any account is removed.
 
 ```bash
-node scripts/remediation/dedupe-users.mjs               # preview keeper/delete plan
-DRY_RUN=false node scripts/remediation/dedupe-users.mjs # apply + create unique index
+node scripts/remediation/dedupe-users.mjs   # preview only; the destructive path
+                                            # is guarded and refuses mixed-userID
+                                            # groups (FORCE_UNSAFE_DELETE=yes to override)
 ```
 
-Keeper rule (edit `pickKeeper()` to change): prefer an account with a
-passwordHash, then newest, then lowest `_id`. On apply it deletes the non-keeper
-duplicates (Prisma cascades their Session/Account rows) and creates a
-**case-insensitive unique index** on `User.email` (collation strength 2) — no
-schema field or validator change required.
+Proper resolution (pending a decision on the canonical userID scheme — the live
+app derives `session.user.userID` from the email, i.e. the E-NUSNET form):
+1. For each pair, pick the canonical userID.
+2. Reassign `Bookings`, `Gym`, `UserCCA`, `Posts`, `Order` from the other userID
+   to the canonical one.
+3. Delete the redundant `User` document.
+4. Create a case-insensitive unique index on `User.email` (collation strength 2).
+
+This is entangled with the deeper userID inconsistency (audit finding #9) and
+should be done as a deliberate, reviewed migration.
 
 ## Step 3 — Money as integer cents (#18)
 
