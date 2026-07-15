@@ -35,22 +35,23 @@ server-side. Also seeds the bookingID counter.
 node scripts/remediation/seed-rbac.mjs
 ```
 
-## Step 2 — emailLower unique (#16)
+## Step 2 — De-duplicate accounts + enforce email uniqueness (#16)
+
+The DB has ~59 groups of duplicate-email accounts. Because `userID` is derived
+from the email, these are duplicate accounts for the same person and all
+dependent data references the shared `userID` string, so removing the extras is
+safe. Preview first, then apply:
 
 ```bash
-node scripts/remediation/backfill-emailLower.mjs
+node scripts/remediation/dedupe-users.mjs               # preview keeper/delete plan
+DRY_RUN=false node scripts/remediation/dedupe-users.mjs # apply + create unique index
 ```
 
-Then add to the `User` model and `npx prisma generate`:
-
-```prisma
-emailLower String? @unique
-```
-
-> If the `User` collection has a strict `$jsonSchema` validator, add `emailLower`
-> to it first (Compass → collection → Validation), or the `$set` write is rejected.
-> Update `register` and the auth lookups to write/read `emailLower` for full
-> case-insensitive uniqueness.
+Keeper rule (edit `pickKeeper()` to change): prefer an account with a
+passwordHash, then newest, then lowest `_id`. On apply it deletes the non-keeper
+duplicates (Prisma cascades their Session/Account rows) and creates a
+**case-insensitive unique index** on `User.email` (collation strength 2) — no
+schema field or validator change required.
 
 ## Step 3 — Money as integer cents (#18)
 
