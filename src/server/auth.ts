@@ -7,14 +7,13 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { type DefaultSession, type NextAuthOptions } from "next-auth";
 import { getServerSession } from "next-auth/next";
 import { type Adapter } from "next-auth/adapters";
-import DiscordProvider from "next-auth/providers/discord";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { z } from "zod";
 
 import { env } from "~/env";
 import { db } from "~/server/db";
-import { createHash } from "crypto";
+import { verifyPassword } from "~/lib/password";
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -45,23 +44,16 @@ declare module "next-auth" {
 export const authOptions = {
   adapter: PrismaAdapter(db) as Adapter,
   providers: [
-    DiscordProvider({
-      clientId: env.DISCORD_CLIENT_ID,
-      clientSecret: env.DISCORD_CLIENT_SECRET,
-    }),
-    /**
-     * ...add more providers here.
-     *
-     * Most other providers require a bit more work than the Discord provider. For example, the
-     * GitHub provider requires you to add the `refresh_token_expires_in` field to the Account
-     * model. Refer to the NextAuth.js docs for the provider you want to use. Example:
-     *
-     * @see https://next-auth.js.org/providers/github
-     */
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
+    // Google OAuth is only registered when both credentials are configured, so
+    // a deployment without them still boots (env vars are validated in env.js).
+    ...(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+      ? [
+          GoogleProvider({
+            clientId: env.GOOGLE_CLIENT_ID,
+            clientSecret: env.GOOGLE_CLIENT_SECRET,
+          }),
+        ]
+      : []),
     CredentialsProvider({
       name: "credentials",
       credentials: {
@@ -76,33 +68,40 @@ export const authOptions = {
           })
           .safeParse(credentials);
 
-        if (parsedCredentials.success) {
-          const { email, password } = parsedCredentials.data;
-          const user = await db.user.findFirst({
-            where: {
-              email: {
-                mode: "insensitive",
-                equals: email,
-              },
+        if (!parsedCredentials.success) return null;
+
+        const { email, password } = parsedCredentials.data;
+        const user = await db.user.findFirst({
+          where: {
+            email: {
+              mode: "insensitive",
+              equals: email,
             },
+          },
+        });
+        if (!user?.passwordHash) return null;
+
+        // Verifies bcrypt or legacy SHA-256 (#3); transparently upgrades the
+        // stored hash to bcrypt on a successful legacy login.
+        const { valid, upgradedHash } = await verifyPassword(
+          password,
+          user.passwordHash,
+        );
+        if (!valid) return null;
+
+        if (upgradedHash) {
+          await db.user.update({
+            where: { id: user.id },
+            data: { passwordHash: upgradedHash },
           });
-          if (!user?.passwordHash) return null;
-          const sha256Hash = createHash("sha256")
-            .update(password)
-            .digest("hex");
-          if (sha256Hash === user.passwordHash) {
-            return {
-              id: user.id,
-              email: user.email,
-              name: user.displayName,
-              bio: user.bio,
-            };
-          } else {
-            return null;
-          }
         }
 
-        return null;
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.displayName,
+          bio: user.bio,
+        };
       },
     }),
   ],

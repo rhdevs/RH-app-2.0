@@ -46,7 +46,6 @@ const BookingModal: React.FC<BookingModalProps> = ({
   const [toastContent, setToastContent] = useState<string>("");
   const [toastType, setToastType] = useState<"success" | "danger">("success");
   const [toastOpen, setToastOpen] = useState<boolean>(false);
-  const jcrcList = ["E1293802", "E1454218", "E1337187", "E1122423", "E1121407", "E1186145", "E1249457", "E1397941", "E1121047", "E1156691", "E1375422"];
   const handleDateChange = (
     type: "start" | "end",
     direction: "prev" | "next",
@@ -98,7 +97,6 @@ const BookingModal: React.FC<BookingModalProps> = ({
             ?.facilityID,
         ),
         startTime: Number(Math.floor(startDateTime.getTime() / 1000)),
-        userID: userId,
         forceBook: false,
         bookUntil: Math.floor(endDateTime.getTime() / 1000),
         repeat: 0,
@@ -175,12 +173,9 @@ const BookingModal: React.FC<BookingModalProps> = ({
                 className="w-full rounded-lg border border-gray-300 p-3"
               >
                 <option value="">Select a facility</option>
+                {/* Facility access is enforced server-side (#23); no
+                    hardcoded employee-ID allowlist here anymore. */}
                 {[...facilities]
-                  .filter(
-                    (f) =>
-                      jcrcList.includes(userId) ||
-                      f.facilityName !== "SCRC Room",
-                  )
                   .sort((a, b) => a.facilityName.localeCompare(b.facilityName))
                   .map((f) => (
                     <option key={f.facilityID} value={f.facilityName}>

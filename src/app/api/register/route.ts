@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-import { createHash } from "crypto";
-
-const prisma = new PrismaClient();
+import { db } from "~/server/db";
+import { hashPassword } from "~/lib/password";
+import { rateLimit, clientIp } from "~/lib/rateLimit";
 
 interface registerPayload {
   email: string;
@@ -16,6 +15,15 @@ interface registerPayload {
 
 export async function POST(req: Request) {
   try {
+    // Throttle account creation per IP (#5).
+    const limit = await rateLimit(`register:${clientIp(req)}`, 10, 60 * 60 * 1000);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: "Too many attempts. Please try again later." },
+        { status: 429, headers: { "Retry-After": String(limit.retryAfter) } },
+      );
+    }
+
     const {
       email,
       password,
@@ -57,7 +65,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const existingUser = await prisma.user.findFirst({
+    const existingUser = await db.user.findFirst({
       where: {
         email: {
           equals: email,
@@ -73,9 +81,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const hashedPassword = createHash("sha256").update(password).digest("hex");
-    // console.log("Creating user with:", { email, password: hashedPassword });
-    const newUser = await prisma.user.create({
+    const hashedPassword = await hashPassword(password);
+    const newUser = await db.user.create({
       data: {
         email: email.toLowerCase(),
         passwordHash: hashedPassword,

@@ -52,7 +52,7 @@ const ProfilePage: React.FC = () => {
             name: user?.displayName ?? "",
             telegramHandle: user?.telegramHandle ?? "",
             bio: user?.bio ?? "",
-            block: 8,
+            block: user?.block ?? 8,
           }}
           onSuccess={handleEditSuccess}
         />

@@ -1,4 +1,5 @@
 import { protectedProcedure, createTRPCRouter } from "~/server/api/trpc";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 export const userRouter = createTRPCRouter({
@@ -7,9 +8,20 @@ export const userRouter = createTRPCRouter({
 
     const user = await ctx.db.user.findUnique({
       where: { id: userId },
+      // Never ship passwordHash to the client (#9).
+      select: {
+        id: true,
+        userID: true,
+        email: true,
+        displayName: true,
+        telegramHandle: true,
+        bio: true,
+        block: true,
+        createdAt: true,
+      },
     });
 
-    if (!user) throw new Error("User not found");
+    if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
 
     return user;
   }),

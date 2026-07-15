@@ -1,132 +1,53 @@
 "use client";
 
-import React, { useState } from "react";
-import { Mail, ArrowLeft, Lock } from "lucide-react";
+import React, { Suspense, useState } from "react";
+import { Mail, Lock } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Header from "../_components/header";
 import Toast from "../_components/Toast";
-import { useRouter } from "next/navigation";
 
-const LoginPage = () => {
-  const [formData, setFormData] = useState({
-    email: "",
-    personalEmail: "",
-  });
+const RequestResetForm = () => {
+  const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [toastContent, setToastContent] = useState<string>("");
+  const [sent, setSent] = useState(false);
+  const [toastContent, setToastContent] = useState("");
   const [toastType, setToastType] = useState<"success" | "danger">("success");
-  const [toastOpen, setToastOpen] = useState<boolean>(false);
-  const [verificationCodeSent, setVerificationCodeSent] =
-    useState<boolean>(false);
-  const [verificationCode, setVerificationCode] = useState<string>("");
-  const [isVerifying, setIsVerifying] = useState<boolean>(false);
-  const [canResend, setCanResend] = useState<boolean>(true);
-  const [hasVerified, setHasVerified] = useState<boolean>(false);
-  const [resetPassword, setResetPassword] = useState<string>("");
-
+  const [toastOpen, setToastOpen] = useState(false);
   const router = useRouter();
 
-  const handleResend = async () => {
-    setCanResend(false);
-    const res = await fetch("/api/reset-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData),
-    });
-    if (res.ok) {
-      setToastContent("Verification code has been sent to your email!");
-      setToastOpen(true);
-      setToastType("success");
-      setVerificationCodeSent(true);
-    }
+  const showToast = (content: string, type: "success" | "danger") => {
+    setToastContent(content);
+    setToastType(type);
+    setToastOpen(true);
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-  };
-
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (formData.email === "" || formData.personalEmail === "") {
-      setToastContent("Please fill in required field!");
-      setToastOpen(true);
-      setToastType("danger");
+  const requestLink = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (email.trim() === "") {
+      showToast("Please enter your email!", "danger");
       return;
     }
     try {
       setIsLoading(true);
-      const res = await fetch("/api/reset-password/request-verification-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
-      });
+      const res = await fetch(
+        "/api/reset-password/request-verification-code",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        },
+      );
       setIsLoading(false);
       if (res.ok) {
-        setToastContent("Verification code has been sent to your email!");
-        setToastOpen(true);
-        setToastType("success");
-        setVerificationCodeSent(true);
+        setSent(true);
+        showToast("If that account exists, a reset link is on its way.", "success");
       } else {
-        setToastContent("Email does not exist!");
-        setToastOpen(true);
-        setToastType("danger");
+        const data = (await res.json()) as { error?: string };
+        showToast(data.error ?? "Something went wrong.", "danger");
       }
     } catch {
-      setToastContent(
-        "There is something wrong with the app! Please contact RHDevs!",
-      );
-      setToastOpen(true);
-      setToastType("danger");
-    }
-  };
-
-  const handleVerify = async () => {
-    setIsVerifying(true);
-    const res = await fetch("/api/reset-password/verify-verification-code", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: verificationCode, email: formData.email }),
-    });
-    setIsVerifying(false);
-    if (!res.ok) {
-      const data = await res.json();
-      setToastContent(data.error);
-      setToastOpen(true);
-      setToastType("danger");
-    } else {
-      setHasVerified(true);
-    }
-  };
-
-  const onResetPassword = async () => {
-    if (resetPassword === "") {
-      setToastContent("New password cannot be empty!");
-      setToastOpen(true);
-      setToastType("danger");
-      return;
-    }
-    setIsLoading(true);
-    const res = await fetch("/api/reset-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: resetPassword, email: formData.email }),
-    });
-    setIsLoading(false);
-    if (!res.ok) {
-      const data = await res.json();
-      setToastContent(data.error);
-      setToastOpen(true);
-      setToastType("danger");
-    } else {
-      setToastContent("Your password has been updated!");
-      setToastOpen(true);
-      setToastType("success");
-      setTimeout(() => {
-        router.push("/login");
-      }, 1500);
+      setIsLoading(false);
+      showToast("There is something wrong with the app! Please contact RHDevs!", "danger");
     }
   };
 
@@ -138,183 +59,35 @@ const LoginPage = () => {
         show={toastOpen}
         onClose={() => setToastOpen(false)}
       />
-      <Header currentPage="login" />
-      {hasVerified ? (
-        <div className="mt-10 flex items-center justify-center p-4">
-          <div className="w-full max-w-md">
-            <div className="mb-8 text-center">
-              <h1 className="mb-2 text-3xl font-bold text-gray-900">
-                Forgot Password?
-              </h1>
-              <p className="text-gray-600">No worries</p>
-            </div>
-
-            <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label
-                    htmlFor="email"
-                    className="block text-sm font-medium text-gray-700"
-                  >
-                    Reset your password
-                  </label>
-                  <div className="relative">
-                    <Lock
-                      className="absolute left-3 top-1/2 -translate-y-1/2 transform text-gray-400"
-                      size={20}
-                    />
-                    <input
-                      type="password"
-                      id="password"
-                      name="password"
-                      value={resetPassword}
-                      onChange={(e) => setResetPassword(e.target.value)}
-                      required
-                      className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                      placeholder="Reset your password"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  onClick={onResetPassword}
-                  disabled={isLoading}
-                  className={`w-full rounded-xl px-4 py-3 font-semibold transition-all duration-200 ${
-                    isLoading
-                      ? "cursor-not-allowed bg-gray-400"
-                      : "bg-emerald-600 hover:bg-emerald-700 active:scale-95 active:transform"
-                  } text-white shadow-lg hover:shadow-xl`}
-                >
-                  {isLoading ? (
-                    <div className="flex items-center justify-center space-x-2">
-                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
-                      <span>Resetting your password...</span>
-                    </div>
-                  ) : (
-                    "Reset"
-                  )}
-                </button>
-              </div>
-
-              <div className="mt-8 text-center">
-                <span
-                  onClick={() => router.push("/login")}
-                  className="cursor-pointer font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
-                >
-                  Back to login
-                </span>
-              </div>
-            </div>
+      <div className="mt-10 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="mb-8 text-center">
+            <h1 className="mb-2 text-3xl font-bold text-gray-900">
+              Forgot Password?
+            </h1>
+            <p className="text-gray-600">
+              Enter your RHApp email and we&apos;ll send a secure reset link to it.
+            </p>
           </div>
-        </div>
-      ) : verificationCodeSent ? (
-        <div className="mt-10 flex items-center justify-center p-4">
-          <div className="w-full max-w-md">
-            <div className="mb-8 text-center">
-              <h1 className="mb-2 text-3xl font-bold text-gray-900">
-                Check Your Email
-              </h1>
-              <p className="text-gray-600">
-                We sent a 6-digit code to <br />
-                <span className="font-semibold text-gray-900">
-                  {formData.personalEmail}
-                </span>
-              </p>
-            </div>
 
-            <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">
-              <div className="space-y-6">
-                <div className="space-y-4">
-                  <label className="block text-center text-sm font-medium text-gray-700">
-                    Enter Verification Code
-                  </label>
-
-                  <div className="flex justify-center">
-                    <input
-                      type="text"
-                      maxLength={6}
-                      value={verificationCode}
-                      onChange={(e) => {
-                        setVerificationCode(e.target.value.toUpperCase());
-                      }}
-                      className="h-12 w-48 rounded-xl border-2 border-gray-300 bg-gray-50 text-center text-xl font-bold tracking-widest transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-200"
-                      placeholder="ABC123"
-                    />
-                  </div>
-                </div>
-
+          <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">
+            {sent ? (
+              <div className="space-y-4 text-center">
+                <p className="text-gray-700">
+                  If an account exists for{" "}
+                  <span className="font-semibold text-gray-900">{email}</span>,
+                  a password reset link has been sent. The link expires in 15
+                  minutes.
+                </p>
                 <button
-                  onClick={handleVerify}
-                  disabled={isVerifying || verificationCode.length !== 6}
-                  className={`w-full rounded-xl px-4 py-3 font-semibold transition-all duration-200 ${
-                    isVerifying || verificationCode.length !== 6
-                      ? "cursor-not-allowed bg-gray-400"
-                      : "bg-emerald-600 hover:bg-emerald-700 active:scale-95 active:transform"
-                  } text-white shadow-lg hover:shadow-xl`}
+                  onClick={() => requestLink()}
+                  className="font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
                 >
-                  {isVerifying ? (
-                    <div className="flex items-center justify-center space-x-2">
-                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
-                      <span>Verifying...</span>
-                    </div>
-                  ) : (
-                    "Verify Code"
-                  )}
-                </button>
-
-                <div className="text-center">
-                  <p className="text-sm text-gray-600">
-                    Didn&apos;t receive the code?{" "}
-                    {canResend ? (
-                      <button
-                        onClick={handleResend}
-                        className="font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
-                      >
-                        Resend Code
-                      </button>
-                    ) : (
-                      <span className="font-semibold">Code Resent</span>
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-8 text-center">
-                <button
-                  onClick={() => {
-                    setVerificationCodeSent(false);
-                    setVerificationCode("");
-                  }}
-                  className="mx-auto flex items-center justify-center space-x-2 font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
-                >
-                  <ArrowLeft size={16} />
-                  <span>Back to email</span>
+                  Resend link
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-10 flex items-center justify-center p-4">
-          <div className="w-full max-w-md">
-            <div className="mb-8 text-center">
-              <h1 className="mb-2 text-3xl font-bold text-gray-900">
-                Forgot Password?
-              </h1>
-              <span className="text-xs text-gray-600">
-                (Note: Due to strict email filtering policies by NUS, we’re
-                unable to deliver password reset emails to @u.nus.edu addresses.
-                To ensure you receive your verification code, please provide a
-                personal email address. Yeah, we know it’s a bit dumb — but we
-                have to keep track of the records and if anything ever goes
-                wrong (like someone resetting your account), just reach out to
-                the RH Developers and we’ll sort it out.)
-              </span>
-            </div>
-
-            <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">
-              <div className="space-y-6">
+            ) : (
+              <form onSubmit={requestLink} className="space-y-6">
                 <div className="space-y-2">
                   <label
                     htmlFor="email"
@@ -331,8 +104,8 @@ const LoginPage = () => {
                       type="email"
                       id="email"
                       name="email"
-                      value={formData.email}
-                      onChange={handleInputChange}
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
                       required
                       className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
                       placeholder="Enter your email"
@@ -340,34 +113,8 @@ const LoginPage = () => {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label
-                    htmlFor="email"
-                    className="block text-sm font-medium text-gray-700"
-                  >
-                    Personal Email Address
-                  </label>
-                  <div className="relative">
-                    <Mail
-                      className="absolute left-3 top-1/2 -translate-y-1/2 transform text-gray-400"
-                      size={20}
-                    />
-                    <input
-                      type="email"
-                      id="personalEmail"
-                      name="personalEmail"
-                      value={formData.personalEmail}
-                      onChange={handleInputChange}
-                      required
-                      className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                      placeholder="Enter your personal email"
-                    />
-                  </div>
-                </div>
-
                 <button
                   type="submit"
-                  onClick={onSubmit}
                   disabled={isLoading}
                   className={`w-full rounded-xl px-4 py-3 font-semibold transition-all duration-200 ${
                     isLoading
@@ -375,31 +122,179 @@ const LoginPage = () => {
                       : "bg-emerald-600 hover:bg-emerald-700 active:scale-95 active:transform"
                   } text-white shadow-lg hover:shadow-xl`}
                 >
-                  {isLoading ? (
-                    <div className="flex items-center justify-center space-x-2">
-                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
-                      <span>Sending Verification Code...</span>
-                    </div>
-                  ) : (
-                    "Send Verification Code"
-                  )}
+                  {isLoading ? "Sending reset link..." : "Send Reset Link"}
                 </button>
-              </div>
+              </form>
+            )}
 
-              <div className="mt-8 text-center">
-                <span
-                  onClick={() => router.push("/login")}
-                  className="cursor-pointer font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
-                >
-                  Back to login
-                </span>
-              </div>
+            <div className="mt-8 text-center">
+              <button
+                onClick={() => router.push("/login")}
+                className="cursor-pointer font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
+              >
+                Back to login
+              </button>
             </div>
           </div>
         </div>
-      )}
+      </div>
     </>
   );
 };
 
-export default LoginPage;
+const SetNewPasswordForm = ({ token }: { token: string }) => {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [toastContent, setToastContent] = useState("");
+  const [toastType, setToastType] = useState<"success" | "danger">("success");
+  const [toastOpen, setToastOpen] = useState(false);
+  const router = useRouter();
+
+  const showToast = (content: string, type: "success" | "danger") => {
+    setToastContent(content);
+    setToastType(type);
+    setToastOpen(true);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password.length < 8) {
+      showToast("Password should be at least 8 characters long.", "danger");
+      return;
+    }
+    if (password !== confirm) {
+      showToast("Passwords do not match.", "danger");
+      return;
+    }
+    setIsLoading(true);
+    const res = await fetch("/api/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, password }),
+    });
+    setIsLoading(false);
+    if (res.ok) {
+      showToast("Your password has been updated!", "success");
+      setTimeout(() => router.push("/login"), 1500);
+    } else {
+      const data = (await res.json()) as { error?: string };
+      showToast(data.error ?? "Could not reset password.", "danger");
+    }
+  };
+
+  return (
+    <>
+      <Toast
+        content={toastContent}
+        type={toastType}
+        show={toastOpen}
+        onClose={() => setToastOpen(false)}
+      />
+      <div className="mt-10 flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="mb-8 text-center">
+            <h1 className="mb-2 text-3xl font-bold text-gray-900">
+              Reset Your Password
+            </h1>
+            <p className="text-gray-600">Choose a new password for your account.</p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">
+            <form onSubmit={submit} className="space-y-6">
+              <div className="space-y-2">
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  New password
+                </label>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 transform text-gray-400"
+                    size={20}
+                  />
+                  <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    placeholder="At least 8 characters"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  htmlFor="confirm"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Confirm new password
+                </label>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 transform text-gray-400"
+                    size={20}
+                  />
+                  <input
+                    type="password"
+                    id="confirm"
+                    name="confirm"
+                    value={confirm}
+                    onChange={(e) => setConfirm(e.target.value)}
+                    required
+                    className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                    placeholder="Re-enter your new password"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className={`w-full rounded-xl px-4 py-3 font-semibold transition-all duration-200 ${
+                  isLoading
+                    ? "cursor-not-allowed bg-gray-400"
+                    : "bg-emerald-600 hover:bg-emerald-700 active:scale-95 active:transform"
+                } text-white shadow-lg hover:shadow-xl`}
+              >
+                {isLoading ? "Resetting your password..." : "Reset Password"}
+              </button>
+            </form>
+
+            <div className="mt-8 text-center">
+              <button
+                onClick={() => router.push("/login")}
+                className="cursor-pointer font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
+              >
+                Back to login
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
+const ResetPasswordInner = () => {
+  const searchParams = useSearchParams();
+  const token = searchParams.get("token");
+  return token ? <SetNewPasswordForm token={token} /> : <RequestResetForm />;
+};
+
+const ResetPasswordPage = () => {
+  return (
+    <>
+      <Header currentPage="login" />
+      <Suspense fallback={null}>
+        <ResetPasswordInner />
+      </Suspense>
+    </>
+  );
+};
+
+export default ResetPasswordPage;

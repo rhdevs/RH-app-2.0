@@ -211,6 +211,48 @@ model PasswordResetSession {
   token     String   @unique
   expiresAt DateTime
   createdAt DateTime @default(now())
+  used      Boolean  @default(false)
+}
+
+// --- Added by remediation pass ---------------------------------------------
+// These are brand-new collections (no DB-level JSON-Schema validator), so
+// `prisma db push` can create them and their unique indexes safely.
+
+/// Fixed-window rate limiting for auth endpoints (#5).
+model RateLimit {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  key       String   @unique
+  count     Int      @default(0)
+  expiresAt DateTime
+}
+
+/// Atomic sequence allocator, e.g. for Bookings.bookingID (#13).
+model Counter {
+  id  String @id @default(auto()) @map("_id") @db.ObjectId
+  key String @unique
+  seq Int    @default(0)
+}
+
+/// Advisory mutex documents for per-facility booking serialization (#11/#12).
+model BookingLock {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  key       String   @unique
+  createdAt DateTime @default(now())
+}
+
+/// Role assignments kept out of the validator-guarded User collection (#23).
+model UserRole {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userID String @unique
+  role   String
+}
+
+/// Per-facility access requirement kept out of the validator-guarded
+/// Facilities collection (#23). facilityID with no row = open to all.
+model FacilityAccess {
+  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  facilityID   Int    @unique
+  requiredRole String
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.

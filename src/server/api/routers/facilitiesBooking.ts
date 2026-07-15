@@ -1,5 +1,22 @@
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
+import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
+import { canBookFacility, getUserRole, ADMIN_ROLE } from "../services/access";
+import { nextBookingId, withFacilityLock } from "../services/booking";
+
+/**
+ * Fields safe to expose about a user (#9). Deliberately excludes passwordHash
+ * and anything else sensitive. Reuse everywhere a booking is joined to a user.
+ */
+const publicUserSelect = {
+  id: true,
+  userID: true,
+  displayName: true,
+  telegramHandle: true,
+  block: true,
+  bio: true,
+} satisfies Prisma.UserSelect;
 
 export const facilityBookingRouter = createTRPCRouter({
   // Get all facilities in ascending order
@@ -62,10 +79,15 @@ export const facilityBookingRouter = createTRPCRouter({
         where: { bookingID: input },
       });
 
-      if (!booking) throw new Error("Booking not found");
+      if (!booking) throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
 
       const [user, facility, cca] = await Promise.all([
-        ctx.db.user.findFirst({ where: { id: booking.userID } }),
+        // booking.userID holds User.userID (the matric-style id), not the
+        // ObjectId — the previous `id:` lookup always returned null (#15).
+        ctx.db.user.findFirst({
+          where: { userID: booking.userID },
+          select: publicUserSelect,
+        }),
         ctx.db.facilities.findFirst({
           where: { facilityID: booking.facilityID },
         }),
@@ -81,7 +103,7 @@ export const facilityBookingRouter = createTRPCRouter({
     }),
 
   // Get all bookings within specific time period, optionally filtered by ccaID
-  getBookings: publicProcedure
+  getBookings: protectedProcedure
     .input(
       z.object({
         startTime: z.number(),
@@ -98,7 +120,11 @@ export const facilityBookingRouter = createTRPCRouter({
     )
     .query(async ({ ctx, input }) => {
       const { startTime, endTime, facilityIDs, userId, seeAll, limit, cursor } = input;
-      const timeFilter = seeAll
+      const callerUserID = ctx.session.user.userID;
+      // `seeAll` (full-table dump) is admin-only (#10).
+      const role = await getUserRole(ctx.db, callerUserID);
+      const canSeeAll = Boolean(seeAll) && role === ADMIN_ROLE;
+      const timeFilter = canSeeAll
         ? {}
         : {
             startTime: { lte: endTime },
@@ -208,23 +234,28 @@ export const facilityBookingRouter = createTRPCRouter({
           user: userDict[booking.userID]?.displayName,
           eventName: booking.eventName,
           eventDescription: booking.description,
-          userTeleHandle: userDict[booking.userID]?.telegramHandle,
+          // Only reveal a personal Telegram handle on the caller's own
+          // bookings (#10).
+          userTeleHandle:
+            booking.userID === callerUserID
+              ? userDict[booking.userID]?.telegramHandle
+              : undefined,
         })),
         nextCursor,
       };
     }),
 
-  // Get bookings of a user
-  getUserBookings: protectedProcedure
-    .input(z.string())
-    .query(async ({ ctx, input }) => {
-      const currentTime = Math.floor(Date.now() / 1000);
-      const bookings = await ctx.db.bookings.findMany({
-        where: {
-          userID: input,
-          endTime: { gte: currentTime },
-        },
-      });
+  // Get the signed-in user's own upcoming bookings
+  getUserBookings: protectedProcedure.query(async ({ ctx }) => {
+    // Owner is always the caller — never a client-supplied id (#8).
+    const userID = ctx.session.user.userID;
+    const currentTime = Math.floor(Date.now() / 1000);
+    const bookings = await ctx.db.bookings.findMany({
+      where: {
+        userID,
+        endTime: { gte: currentTime },
+      },
+    });
       const bookingsWithDetails = await Promise.all(
         bookings.map(async (booking) => {
           const [user, facility, cca] = await Promise.all([
@@ -261,7 +292,6 @@ export const facilityBookingRouter = createTRPCRouter({
         endTime: z.number(),
         facilityID: z.number(),
         startTime: z.number(),
-        userID: z.string(),
         repeat: z.number().optional(),
         bookUntil: z.number().optional(),
         forceBook: z.boolean().optional(),
@@ -269,40 +299,63 @@ export const facilityBookingRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       if (input.endTime <= input.startTime) {
-        throw new Error("End time earlier than start time");
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "End time earlier than start time",
+        });
       }
 
-      const conflicts = await ctx.db.bookings.findMany({
-        where: {
-          facilityID: input.facilityID,
-          AND: [
-            { endTime: { gt: input.startTime } },
-            { startTime: { lt: input.endTime } },
-          ],
-        },
-      });
+      // Owner is always the caller — never client-supplied (#6).
+      const userID = ctx.session.user.userID;
 
-      if (conflicts.length > 0 && !input.forceBook) {
-        throw new Error("Conflicting bookings exist");
+      // Facility-level access control (#23), replacing the client-side allowlist.
+      if (!(await canBookFacility(ctx.db, userID, input.facilityID))) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You are not allowed to book this facility.",
+        });
       }
 
-      const lastBooking = await ctx.db.bookings.findFirst({
-        orderBy: { bookingID: "desc" },
-        select: { bookingID: true },
-      });
+      // Serialize per facility so the conflict check and the create can't
+      // interleave with a competing booking (#11/#12).
+      return withFacilityLock(ctx.db, input.facilityID, async () => {
+        const conflicts = await ctx.db.bookings.findMany({
+          where: {
+            facilityID: input.facilityID,
+            AND: [
+              { endTime: { gt: input.startTime } },
+              { startTime: { lt: input.endTime } },
+            ],
+          },
+        });
 
-      const nextBookingID = (lastBooking?.bookingID ?? 0) + 1;
+        if (conflicts.length > 0 && !input.forceBook) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Conflicting bookings exist",
+          });
+        }
 
-      return ctx.db.bookings.create({
-        data: {
-          bookingID: Number(nextBookingID),
-          eventName: input.eventName,
-          endTime: input.endTime,
-          facilityID: input.facilityID,
-          startTime: input.startTime,
-          userID: input.userID,
-          ccaID: 0,
-        },
+        // Atomic id allocation instead of a racy max()+1 read (#13).
+        const bookingID = await nextBookingId(ctx.db);
+
+        // Persist every field the form collects instead of dropping them and
+        // hardcoding ccaID: 0 (#14).
+        return ctx.db.bookings.create({
+          data: {
+            bookingID,
+            eventName: input.eventName,
+            description: input.description,
+            endTime: input.endTime,
+            facilityID: input.facilityID,
+            startTime: input.startTime,
+            userID,
+            ccaID: input.ccaID,
+            repeat: input.repeat,
+            bookUntil: input.bookUntil,
+            forceBook: input.forceBook,
+          },
+        });
       });
     }),
   deleteBooking: protectedProcedure
@@ -312,13 +365,23 @@ export const facilityBookingRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const deleted = await ctx.db.bookings.delete({
-        where: {
-          id: input.id,
-        },
+      // Load first and verify ownership before deleting (#7).
+      const existing = await ctx.db.bookings.findUnique({
+        where: { id: input.id },
       });
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
+      }
 
-      return deleted;
+      const role = await getUserRole(ctx.db, ctx.session.user.userID);
+      if (existing.userID !== ctx.session.user.userID && role !== ADMIN_ROLE) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You can only delete your own bookings.",
+        });
+      }
+
+      return ctx.db.bookings.delete({ where: { id: input.id } });
     }),
 
   updateBooking: protectedProcedure

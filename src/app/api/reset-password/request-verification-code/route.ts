@@ -1,65 +1,85 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-import { sendVerificationCodeEmail } from "~/lib/email";
+import { randomBytes } from "crypto";
 
-const prisma = new PrismaClient();
+import { db } from "~/server/db";
+import { env } from "~/env";
+import { sendPasswordResetEmail } from "~/lib/email";
+import { rateLimit, clientIp } from "~/lib/rateLimit";
 
-function generateResetCode(length = 6) {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  let code = "";
-  for (let i = 0; i < length; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
-}
-
-interface requestVerificationCodePayload {
+interface RequestResetPayload {
   email: string;
-  personalEmail: string;
 }
+
+const TOKEN_TTL_MS = 15 * 60 * 1000;
 
 export async function POST(req: Request) {
   try {
-    const { email, personalEmail }: requestVerificationCodePayload =
-      await req.json();
+    const { email }: RequestResetPayload = await req.json();
+
     if (!email) {
       return NextResponse.json(
-        { error: "Please fill in all fields." },
+        { error: "Please enter your email." },
         { status: 400 },
       );
     }
 
-    if (!email.endsWith("@u.nus.edu") || email.endsWith("@nus.edu.sg")) {
+    const normalizedEmail = email.toLowerCase();
+
+    if (!normalizedEmail.endsWith("@u.nus.edu")) {
       return NextResponse.json({ error: "Invalid Email" }, { status: 400 });
     }
 
-    const existingUser = await prisma.user.findFirst({
-      where: { email },
-    });
-
-    if (!existingUser) {
+    // Throttle by email and by IP (#5).
+    const [byEmail, byIp] = await Promise.all([
+      rateLimit(`reset:${normalizedEmail}`, 5, 15 * 60 * 1000),
+      rateLimit(`reset-ip:${clientIp(req)}`, 20, 15 * 60 * 1000),
+    ]);
+    if (!byEmail.allowed || !byIp.allowed) {
+      const retryAfter = Math.max(byEmail.retryAfter, byIp.retryAfter);
       return NextResponse.json(
-        { error: "User does not exists." },
-        { status: 400 },
+        { error: "Too many requests. Please try again later." },
+        { status: 429, headers: { "Retry-After": String(retryAfter) } },
       );
     }
-    const code = generateResetCode();
 
-    await prisma.passwordResetSession.create({
-      data: {
-        email: email.toLowerCase(),
-        token: code,
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-      },
+    const existingUser = await db.user.findFirst({
+      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
     });
-    await sendVerificationCodeEmail(personalEmail, code);
+
+    // Only send when the account actually exists, but always return the same
+    // response so this endpoint doesn't reveal which emails are registered.
+    if (existingUser) {
+      const token = randomBytes(32).toString("hex");
+
+      // Invalidate any earlier outstanding tokens for this account.
+      await db.passwordResetSession.deleteMany({
+        where: { email: normalizedEmail },
+      });
+
+      await db.passwordResetSession.create({
+        data: {
+          email: normalizedEmail,
+          token,
+          expiresAt: new Date(Date.now() + TOKEN_TTL_MS),
+        },
+      });
+
+      const base = env.APP_URL ?? env.NEXTAUTH_URL;
+      const resetUrl = `${base}/reset-password?token=${token}`;
+
+      // Delivered to the account's own @u.nus.edu address (not a client-supplied one).
+      await sendPasswordResetEmail(existingUser.email, resetUrl);
+    }
+
     return NextResponse.json(
-      { message: "Verification code has been sent to your email." },
-      { status: 201 },
+      {
+        message:
+          "If an account exists for that email, a reset link has been sent.",
+      },
+      { status: 200 },
     );
   } catch (err) {
-    console.error("Error:", err);
+    console.error("Error requesting password reset:", err);
     return NextResponse.json(
       { error: "Internal server error." },
       { status: 500 },
