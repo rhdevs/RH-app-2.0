@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import { Mail, Lock } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Header from "../_components/header";
@@ -10,10 +10,19 @@ const RequestResetForm = () => {
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  // Seconds left before "Resend link" can be clicked again (#UX: 60s cooldown).
+  const [cooldown, setCooldown] = useState(0);
   const [toastContent, setToastContent] = useState("");
   const [toastType, setToastType] = useState<"success" | "danger">("success");
   const [toastOpen, setToastOpen] = useState(false);
   const router = useRouter();
+
+  // Tick the resend cooldown down to zero, one second at a time.
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
 
   const showToast = (content: string, type: "success" | "danger") => {
     setToastContent(content);
@@ -23,6 +32,8 @@ const RequestResetForm = () => {
 
   const requestLink = async (e?: React.FormEvent) => {
     e?.preventDefault();
+    // Block resends while the cooldown is still running.
+    if (cooldown > 0) return;
     if (email.trim() === "") {
       showToast("Please enter your email!", "danger");
       return;
@@ -40,6 +51,7 @@ const RequestResetForm = () => {
       setIsLoading(false);
       if (res.ok) {
         setSent(true);
+        setCooldown(60);
         showToast("If that account exists, a reset link is on its way.", "success");
       } else {
         const data = (await res.json()) as { error?: string };
@@ -81,9 +93,14 @@ const RequestResetForm = () => {
                 </p>
                 <button
                   onClick={() => requestLink()}
-                  className="font-semibold text-emerald-600 transition-colors hover:text-emerald-700"
+                  disabled={cooldown > 0}
+                  className={`font-semibold transition-colors ${
+                    cooldown > 0
+                      ? "cursor-not-allowed text-gray-400"
+                      : "text-emerald-600 hover:text-emerald-700"
+                  }`}
                 >
-                  Resend link
+                  {cooldown > 0 ? `Resend link in ${cooldown}s` : "Resend link"}
                 </button>
               </div>
             ) : (
