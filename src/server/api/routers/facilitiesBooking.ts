@@ -1,8 +1,18 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
-import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
-import { canBookFacility, getUserRole, ADMIN_ROLE } from "../services/access";
+import {
+  createTRPCRouter,
+  protectedProcedure,
+  publicProcedure,
+  matricProcedure,
+} from "../trpc";
+import {
+  evaluateBookingWithMode,
+  isAdmin,
+  getBookableFacilityMap,
+  type BookDecision,
+} from "../services/access";
 import { nextBookingId, withFacilityLock } from "../services/booking";
 
 /**
@@ -18,12 +28,63 @@ const publicUserSelect = {
   bio: true,
 } satisfies Prisma.UserSelect;
 
+/**
+ * Turns a structured BookDecision into a message the user can act on.
+ *
+ * The reason codes are deliberately disjoint from matricProcedure's
+ * MATRIC_REQUIRED: triage of a lockout must not have to guess which gate fired.
+ * The old code discarded the reason and said "not allowed", which turned every
+ * lockout into a support ticket (02-backend-authz.md §4.4).
+ */
+function denialMessage(d: Extract<BookDecision, { ok: false }>): string {
+  switch (d.reason) {
+    case "NOT_ELIGIBLE":
+      return "Your account is not a verified NUS student account. Please sign in with your @u.nus.edu email.";
+    case "NOT_RESIDENT":
+      return "Your account is not recognised as a hall resident. Please contact the JCRC.";
+    case "ROLE_REQUIRED":
+      return `This room is restricted to: ${d.requiredRoles.join(" or ")}.`;
+  }
+}
+
 export const facilityBookingRouter = createTRPCRouter({
   // Get all facilities in ascending order
   getAllFacilities: publicProcedure.query(async ({ ctx }) => {
     return ctx.db.facilities.findMany({
       orderBy: { facilityID: "asc" },
     });
+  }),
+
+  /**
+   * Server-driven facility permissions for the booking picker, replacing the
+   * hardcoded client-side room allowlist.
+   *
+   * ADVISORY ONLY (I-7): createBooking remains the enforcement point, and this
+   * query is never the thing that stops a booking. The I-7 v2 corollary is why
+   * `canBook` is computed by getBookableFacilityMap rather than by any rule of
+   * the client's own — a client gate must never be STRICTER than the server, so
+   * the picker and the enforcement point must read the same flag, the same
+   * roles and the same requiredRoles. Under the kill switch "off" that means
+   * every facility open today still reports canBook: true.
+   *
+   * `requiredRoles` is returned alongside so the UI can say WHAT is needed
+   * instead of silently hiding a room.
+   *
+   * getAllFacilities is deliberately RETAINED and unchanged: it is a
+   * publicProcedure with display-only consumers (Calendar.tsx, PastBookings.tsx,
+   * and the calendar grid in Calender_v2.tsx), which must keep rendering for
+   * signed-out visitors. This procedure is the one that gates a booking control.
+   */
+  getFacilitiesForBooking: protectedProcedure.query(async ({ ctx }) => {
+    const [facilities, permMap] = await Promise.all([
+      ctx.db.facilities.findMany({ orderBy: { facilityID: "asc" } }),
+      getBookableFacilityMap(ctx.db, ctx.session.user.userID),
+    ]);
+    return facilities.map((f) => ({
+      ...f,
+      canBook: permMap.get(f.facilityID)?.canBook ?? false,
+      requiredRoles: permMap.get(f.facilityID)?.requiredRoles ?? ["resident"],
+    }));
   }),
 
   // Get facility by facilityID
@@ -122,8 +183,11 @@ export const facilityBookingRouter = createTRPCRouter({
       const { startTime, endTime, facilityIDs, userId, seeAll, limit, cursor } = input;
       const callerUserID = ctx.session.user.userID;
       // `seeAll` (full-table dump) is admin-only (#10).
-      const role = await getUserRole(ctx.db, callerUserID);
-      const canSeeAll = Boolean(seeAll) && role === ADMIN_ROLE;
+      // I-6: was `getUserRole(...) === ADMIN_ROLE`, i.e. a positional roles[0]
+      // read. roles[0] is $addToSet insertion order, so a user holding
+      // ["jcrc","admin"] silently lost admin here and was denied their own
+      // capability. isAdmin() tests membership over the whole set.
+      const canSeeAll = Boolean(seeAll) && (await isAdmin(ctx.db, callerUserID));
       const timeFilter = canSeeAll
         ? {}
         : {
@@ -283,7 +347,9 @@ export const facilityBookingRouter = createTRPCRouter({
       return bookingsWithDetails.sort((a, b) => a.startTime - b.startTime);
     }),
 
-  createBooking: protectedProcedure
+  // Gated: a user without a matric on file cannot create bookings, even via a
+  // hand-crafted API call that bypasses the client MatricGate (#login-gate).
+  createBooking: matricProcedure
     .input(
       z.object({
         ccaID: z.number(),
@@ -309,10 +375,27 @@ export const facilityBookingRouter = createTRPCRouter({
       const userID = ctx.session.user.userID;
 
       // Facility-level access control (#23), replacing the client-side allowlist.
-      if (!(await canBookFacility(ctx.db, userID, input.facilityID))) {
+      //
+      // I-11: evaluateBookingWithMode reads the SystemFlag kill switch, which
+      // defaults to "off" — and "off" means LEGACY semantics, not blanket-allow.
+      // With the flag unset this branch is byte-identical to the canBookFacility
+      // call it replaces: empty/missing requiredRoles allows, a non-empty one is
+      // still enforced with the admin bypass. Flipping the row to "enforce" is
+      // what turns on D-1 default-deny, with no redeploy.
+      //
+      // The 4th argument is the VERIFIED session email, and it is what makes
+      // repair-on-deny reachable. Omitting it silently downgrades a recoverable
+      // NOT_RESIDENT into a hard denial.
+      const decision = await evaluateBookingWithMode(
+        ctx.db,
+        userID,
+        input.facilityID,
+        ctx.session.user.email,
+      );
+      if (!decision.ok) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "You are not allowed to book this facility.",
+          message: denialMessage(decision),
         });
       }
 
@@ -373,8 +456,15 @@ export const facilityBookingRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
       }
 
-      const role = await getUserRole(ctx.db, ctx.session.user.userID);
-      if (existing.userID !== ctx.session.user.userID && role !== ADMIN_ROLE) {
+      // I-6, second and final call site — converted in the SAME commit as the
+      // one in getBookings. A deprecated roles[0] shim left here would have
+      // kept compiling and kept denying admin-held-second deletions.
+      // Short-circuits on ownership, so the role read is skipped for the
+      // overwhelmingly common self-delete.
+      if (
+        existing.userID !== ctx.session.user.userID &&
+        !(await isAdmin(ctx.db, ctx.session.user.userID))
+      ) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You can only delete your own bookings.",
@@ -384,7 +474,15 @@ export const facilityBookingRouter = createTRPCRouter({
       return ctx.db.bookings.delete({ where: { id: input.id } });
     }),
 
-  updateBooking: protectedProcedure
+  // matricProcedure, matching createBooking. An edit is a booking write, and
+  // gating creation but not mutation left the matric gate trivially bypassable
+  // by creating before the gate landed and editing afterwards.
+  //
+  // NOTE: unlike everything else in this file, this gate is NOT behind the
+  // enforcement kill switch — see the handoff note. It affects only a caller
+  // with no UserMatric row editing a pre-existing booking, who is routed to
+  // /onboarding/matric rather than locked out.
+  updateBooking: matricProcedure
     .input(
       z.object({
         id: z.string(),
@@ -406,9 +504,35 @@ export const facilityBookingRouter = createTRPCRouter({
         throw new Error("Booking not found");
       }
 
-      // Ensure user can only edit their own bookings
+      // Ensure user can only edit their own bookings. Was a bare `Error`, which
+      // tRPC surfaces as INTERNAL_SERVER_ERROR — an authorization failure must
+      // not be reported to the client as a server fault.
       if (existingBooking.userID !== ctx.session?.user?.userID) {
-        throw new Error("Unauthorized: Can only edit your own bookings");
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You can only edit your own bookings.",
+        });
+      }
+
+      // Re-check facility access when the times change. facilityID is not
+      // editable, so this is not a cross-facility escalation — it closes the
+      // hole where a user whose role was revoked (or a room that was newly
+      // gated) could extend an existing booking indefinitely, since the only
+      // access check used to live in createBooking.
+      //
+      // Same kill switch as createBooking: with the flag "off" this reduces to
+      // today's legacy predicate, so it denies nobody who is not already denied
+      // at create time.
+      if (startTime !== undefined || endTime !== undefined) {
+        const d = await evaluateBookingWithMode(
+          ctx.db,
+          ctx.session.user.userID,
+          existingBooking.facilityID,
+          ctx.session.user.email,
+        );
+        if (!d.ok) {
+          throw new TRPCError({ code: "FORBIDDEN", message: denialMessage(d) });
+        }
       }
 
       // If time is being updated, validate the new times

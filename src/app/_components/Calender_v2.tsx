@@ -93,12 +93,51 @@ const Calendar_v2: React.FC = () => {
       enabled: !checkOwnBookings || !!session?.user?.userID,
     },
   );
+  // Display source for the calendar grid, the filter dropdown and the colour
+  // map. publicProcedure, so it keeps working signed-out. Retained unchanged:
+  // it must never decide whether a booking control is enabled.
   const facilitiesQuery = api.bookings.getAllFacilities.useQuery();
+
+  // Booking source. Server-computed per-facility permission, replacing the
+  // hardcoded client-side room allowlist this component used to carry.
+  //
+  // protectedProcedure, so it is only enabled with a session — an unauthenticated
+  // visitor must still get the calendar. Errors are deliberately not surfaced:
+  // this query is cosmetic (I-7), and `bookFacility` already handles the
+  // signed-out case.
+  const bookableQuery = api.bookings.getFacilitiesForBooking.useQuery(
+    undefined,
+    { enabled: !!session?.user?.userID },
+  );
 
   const facilities: Facility[] = useMemo(() => {
     const baseFacilities = (facilitiesQuery.data ?? []) as Facility[];
     return baseFacilities;
   }, [facilitiesQuery.data]);
+
+  /**
+   * Facilities offered in the booking modal.
+   *
+   * I-7 v2 corollary — a client gate must never be STRICTER than the server.
+   * Two consequences encoded here:
+   *   - the filter is the server's own `canBook`, computed by the same
+   *     getBookableFacilityMap that reads the same kill switch as createBooking,
+   *     so this list cannot disagree with the enforcement point;
+   *   - until that query resolves (or if it fails) we fall back to the full
+   *     list, never to the empty one. Hiding every room on a failed advisory
+   *     query would be a client-only lockout with no server denial behind it.
+   * The server still re-checks on submit, which is the real gate.
+   */
+  const bookableFacilities: Facility[] = useMemo(() => {
+    if (!bookableQuery.data) return facilities;
+    return bookableQuery.data
+      .filter((f) => f.canBook)
+      .map((f) => ({
+        facilityID: f.facilityID,
+        facilityName: f.facilityName,
+        facilityLocation: f.facilityLocation,
+      }));
+  }, [bookableQuery.data, facilities]);
 
   const selectedFacilities = facilities.filter((f: Facility) =>
     selectedFacilityIds.includes(f.facilityID),
@@ -265,7 +304,7 @@ const Calendar_v2: React.FC = () => {
       <BookingModal
         isOpen={bookingModalOpen}
         onClose={() => setBookingModalOpen(false)}
-        facilities={facilities}
+        facilities={bookableFacilities}
         userId={session?.user?.userID ?? ""}
         currentDate={selectedDate}
         refetch={refetchBookingsInMonth}

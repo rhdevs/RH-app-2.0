@@ -9,9 +9,10 @@ import {
   User,
   LogOut,
   UserCircle,
+  ShieldCheck,
 } from "lucide-react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { signOut } from "next-auth/react";
 
@@ -25,17 +26,47 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     useState<boolean>(false);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const pathname = usePathname();
   const { data: session } = useSession();
+
+  /**
+   * COSMETIC ONLY. The real gate is the server-side guard in
+   * src/app/admin/layout.tsx, which does a LIVE role read and redirects; this
+   * only avoids showing a link that would bounce.
+   *
+   * Kept as a role test rather than a capability — the single sanctioned
+   * exception to 03 §1.2's "no component branches on a role string" rule.
+   * header.tsx sits outside the admin bundle and is rendered on every page for
+   * every user, so it must not pull in the capability module or issue a
+   * whoAmI query on every page load just to decide whether to draw one link.
+   * `session.user.roles` is render-only (I-5); nothing is authorised from it.
+   */
+  const roles = session?.user?.roles ?? [];
+  const canReachAdmin = roles.includes("admin") || roles.includes("jcrc");
 
   const navLinks = [
     { name: "Home", href: "/", icon: Home },
     { name: "My Bookings", href: "/bookings", icon: Calendar },
     // { name: "Facilities", href: "/facilities", icon: Box },
+    ...(canReachAdmin
+      ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }]
+      : []),
   ];
 
-  const isActive = (page: string) => {
-    if (currentPage === page) return true;
-    return false;
+  /**
+   * Pre-existing bug fixed in place: desktop called isActive(link.name) while
+   * mobile called isActive(link.href), and callers pass values like
+   * currentPage="profile" that match neither — so mobile highlighting never
+   * worked. Both call sites now pass the link, and the pathname is the primary
+   * signal. `currentPage` is retained as a fallback so the existing callers
+   * (page.tsx, bookings/, profile/) keep working untouched; 03 §6 wants it
+   * deleted outright, but that touches every caller and belongs in its own
+   * commit.
+   */
+  const isActive = (link: { name: string; href: string }) => {
+    if (currentPage === link.name) return true;
+    if (link.href === "/") return pathname === "/";
+    return pathname.startsWith(link.href);
   };
 
   const handleProfile = () => {
@@ -99,7 +130,7 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                   router.push(link.href);
                 }}
                 className={`flex items-center space-x-2 rounded-lg px-4 py-2 font-medium transition-all duration-200 ${
-                  isActive(link.name)
+                  isActive(link)
                     ? "bg-emerald-700 text-white shadow-md"
                     : "text-emerald-100 hover:bg-emerald-700 hover:text-white"
                 }`}
@@ -185,7 +216,7 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                     router.push(link.href);
                   }}
                   className={`flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium transition-colors duration-200 ${
-                    isActive(link.href)
+                    isActive(link)
                       ? "bg-emerald-700 text-white"
                       : "text-emerald-100 hover:bg-emerald-700 hover:text-white"
                   }`}

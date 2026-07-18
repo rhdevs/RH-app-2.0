@@ -14,6 +14,36 @@ import { z } from "zod";
 import { env } from "~/env";
 import { db } from "~/server/db";
 import { verifyPassword } from "~/lib/password";
+import { canonicalUserID, isNusStudentEmail, normalizeEmail } from "~/lib/identity";
+import {
+  BASELINE_ROLE,
+  ADMIN_ROLE,
+  ensureBaseline,
+  normalizeStoredRoles,
+  redeemPendingGrants,
+} from "~/server/api/services/roles";
+import { isMatricRequired } from "~/server/api/services/access";
+
+/**
+ * D-7 + I-12. THE eligibility predicate for sign-in, and the only one. The
+ * domain rule itself lives in ~/lib/identity — this wrapper adds nothing but
+ * the break-glass allowlist, which is SIGN-IN ONLY: an allowlisted non-NUS
+ * address still has canonicalUserID() === "", so it receives no stored
+ * baseline (I-8d), holds no roles and cannot book.
+ *
+ * Read from process.env rather than ~/env because src/env.js is outside this
+ * change's scope; unset means "no exceptions", which is the safe default.
+ */
+function maySignIn(rawEmail: string | null | undefined): boolean {
+  const email = normalizeEmail(rawEmail);
+  if (!email) return false;
+  if (isNusStudentEmail(email)) return true;
+  const allow = (process.env.AUTH_EMAIL_ALLOWLIST ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return allow.includes(email);
+}
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -26,7 +56,37 @@ declare module "next-auth" {
     user: {
       id: string;
       userID: string;
-      bio: string;
+      // `bio` was declared here but never populated by any callback, so every
+      // reader got `undefined` while the type promised `string`. The profile
+      // page reads bio from the tRPC query, not the session.
+      // Matric attribute exposed on the session for the login gate. `matric`
+      // is the stored A-format number (or null if not yet set); `hasMatric` is
+      // the boolean the client guard / server middleware enforce on.
+      matric: string | null;
+      hasMatric: boolean;
+      /**
+       * I-11. Live read of the `rbac.matric.enforcement` kill switch, so the
+       * client `MatricGate` is inert by default exactly like the server
+       * `matricProcedure`. WITHOUT this the gate would redirect every existing
+       * user to onboarding on deploy (UserMatric is new and empty) and no flag
+       * flip could stop it — only a redeploy.
+       */
+      matricRequired: boolean;
+      /**
+       * D-7. False only for a pre-cutover JWT on an ineligible address, or a
+       * blank/malformed stored email. RENDER-ONLY — protectedProcedure
+       * re-derives it server-side.
+       */
+      eligible: boolean;
+      /**
+       * Live role list, re-read from the database on EVERY session read
+       * (invariant I-4 — never baked into the 30-day JWT).
+       *
+       * FOR RENDERING ONLY (invariant I-5). Never authorize a mutation off
+       * this value; every privilege-changing procedure re-reads from the DB.
+       */
+      roles: string[];
+      isAdmin: boolean;
     } & DefaultSession["user"];
   }
 
@@ -71,6 +131,12 @@ export const authOptions = {
         if (!parsedCredentials.success) return null;
 
         const { email, password } = parsedCredentials.data;
+
+        // D-7 gate #1, before any DB work. Return null (not throw) so the
+        // response shape is identical to a wrong password — this endpoint must
+        // not become an oracle for "which domains are accepted".
+        if (!maySignIn(email)) return null;
+
         const user = await db.user.findFirst({
           where: {
             email: {
@@ -80,6 +146,12 @@ export const authOptions = {
           },
         });
         if (!user?.passwordHash) return null;
+
+        // D-7 gate #2, on the STORED address. The lookup above is
+        // case-insensitive-equals, so the stored value can differ from the
+        // submitted one, and only the stored value is used downstream to
+        // derive the canonical role key.
+        if (!maySignIn(user.email)) return null;
 
         // Verifies bcrypt or legacy SHA-256 (#3); transparently upgrades the
         // stored hash to bcrypt on a successful legacy login.
@@ -100,13 +172,16 @@ export const authOptions = {
           id: user.id,
           email: user.email,
           name: user.displayName,
-          bio: user.bio,
         };
       },
     }),
   ],
   pages: {
     signIn: "/login",
+    // Without this, a rejected OAuth sign-in lands on NextAuth's unbranded
+    // /api/auth/error. Pointing it at /login means the denial surfaces as
+    // /login?error=AccessDenied, which the login page renders.
+    error: "/login",
   },
   secret: env.NEXTAUTH_SECRET,
   session: {
@@ -115,6 +190,51 @@ export const authOptions = {
     updateAge: 24 * 60 * 60,
   },
   callbacks: {
+    /**
+     * D-7. Runs BEFORE PrismaAdapter persists anything on the OAuth path, so a
+     * rejected Google account leaves NO User row and NO Account row behind —
+     * and therefore never reaches events.createUser (G-B), so no baseline is
+     * minted for an ineligible identity. This callback keeps EXACTLY ONE JOB:
+     * return false for non-NUS. The baseline grant does NOT go here — it would
+     * turn a failed write into a sign-in denial, and the User row does not yet
+     * exist at this point.
+     *
+     * Returns `false`, never a redirect string. On the CREDENTIALS branch a
+     * string return yields HTTP 200 with no `status` field, so
+     * signIn(..., { redirect: false }) computes ok:true on the client while no
+     * session cookie was set — a "successful" login into nothing. `false`
+     * gives 403 + ?error=AccessDenied on both providers, and `pages.error`
+     * routes it to /login.
+     *
+     * PROSPECTIVE ONLY: session.maxAge is 30 days and this does not re-run for
+     * a live token. Ineligible legacy sessions are marked `eligible: false` in
+     * the session callback and denied server-side.
+     */
+    async signIn({ user, account, profile }) {
+      const email = normalizeEmail(user?.email);
+      if (!maySignIn(email)) {
+        // Log the DOMAIN only — never the full address of a denied,
+        // unauthenticated party.
+        console.warn(
+          JSON.stringify({
+            evt: "signin_rejected_domain",
+            provider: account?.provider,
+            domain: email.split("@")[1] ?? "(none)",
+          }),
+        );
+        return false;
+      }
+      // OAuth only: an unverified profile email is an unauthenticated claim,
+      // and under D-1 a successful sign-in confers booking capability.
+      if (
+        account?.type === "oauth" &&
+        (profile as { email_verified?: boolean } | undefined)?.email_verified !==
+          true
+      ) {
+        return false;
+      }
+      return true;
+    },
     async jwt({ token, user }) {
       // This runs on sign-in
       if (user) {
@@ -124,19 +244,175 @@ export const authOptions = {
       }
       return token;
     },
+    /**
+     * THE hot path: trpc.ts calls auth() on every tRPC request, and under the
+     * JWT strategy there is no server-side session cache, so this body runs on
+     * every single authenticated request. Two rules govern every line below.
+     *
+     * 1. It must never throw. A rejected session callback force-logs-out the
+     *    user, which is an unrecoverable state — so no promise originated here
+     *    may reject, not just ensureBaseline.
+     * 2. Steady state must issue ZERO reads and ZERO writes beyond the two
+     *    indexed findUniques that were already required.
+     */
     async session({ session, token }) {
       if (session.user && token.id) {
         session.user.id = token.id as string;
-        session.user.userID = (token.email ?? "")
-          .toUpperCase()
-          .replace("@U.NUS.EDU", "");
+        // I-1: anchored derivation via the ONE shared helper, replacing an
+        // unanchored .replace() with no .trim() that returned garbage-but-truthy
+        // keys like "ALICE@GMAIL.COM" for non-NUS addresses.
+        const userID = canonicalUserID(token.email);
+        session.user.userID = userID;
+        session.user.eligible = userID !== "";
         session.user.email = token.email;
         session.user.name = token.name;
+
+        if (!session.user.eligible) {
+          // userID === "" here. Backstop for a JWT minted before the D-7
+          // deploy, or a blank/malformed stored email. Do NOT throw — see rule
+          // 1 above. Mark it and let the server-side checks deny.
+          //
+          // The early RETURN is load-bearing, not tidiness: without it this
+          // callback would run userRole.findUnique({ where: { userID: "" } }),
+          // and if a ""-keyed UserRole row ever exists (I-8d calls one a red
+          // line) EVERY non-canonicalizable principal would inherit its roles
+          // wholesale, including `admin`, with no grant path and therefore no
+          // escalation guard firing. getUserRoles already guards this; the
+          // session callback must not be weaker than the read boundary it
+          // feeds. ensureBaseline is likewise skipped entirely.
+          session.user.matric = null;
+          session.user.hasMatric = false;
+          // Irrelevant on this branch — MatricGate routes ineligible users to
+          // the ineligibility page before it ever consults hasMatric — but it
+          // must be a boolean, and "false" is the non-blocking value.
+          session.user.matricRequired = false;
+          session.user.roles = [];
+          session.user.isAdmin = false;
+          return session;
+        }
+
+        // Parallel indexed lookups — one round-trip of latency, not two. The
+        // matric lookup is the pre-existing one, unchanged in meaning: reading
+        // it live (rather than baking it into the stateless JWT) means a user
+        // who submits their matric is un-gated on the very next session read,
+        // with no re-login and no waiting out `updateAge`. The userRole lookup
+        // was ALWAYS going to be required to read admin/jcrc, which are not
+        // derivable from anything — so the self-heal below adds no query.
+        //
+        // This callback runs in the Node runtime (getServerSession / the
+        // /api/auth/session route), so Prisma/Atlas is reachable here; this is
+        // also why the matric gate is NOT a Next edge middleware.
+        // The third read costs nothing in steady state: getMatricEnforcement
+        // shares access.ts's 15s per-lambda flag cache, so it issues a query at
+        // most once per instance per 15s, and it never throws (it degrades to
+        // "off" = no gate).
+        const [record, roleRow, matricRequired] = await Promise.all([
+          db.userMatric.findUnique({ where: { userID } }),
+          db.userRole.findUnique({ where: { userID } }),
+          isMatricRequired(db),
+        ]);
+
+        session.user.matric = record?.matric ?? null;
+        session.user.hasMatric = Boolean(record?.matric);
+        session.user.matricRequired = matricRequired;
+
+        // Legacy-tolerant read for the D-6 dual-write window. Removing this
+        // fallback belongs to doc 06 — dropping it early silently demotes any
+        // admin/jcrc row the backfill missed, and unlike `resident` those roles
+        // have no self-heal path: nothing puts them back.
+        let stored: string[] = roleRow?.roles?.length
+          ? roleRow.roles
+          : roleRow?.role
+            ? [roleRow.role]
+            : [];
+
+        // ---- I-8b SELF-HEAL. Cold path only. ----------------------------
+        // In steady state (row exists AND contains "resident") this block is a
+        // single Array.includes() on a <=4-element array and issues NOTHING.
+        //
+        // It is AWAITED, unlike a fire-and-forget materialization, so the SAME
+        // request sees the repaired set. That is sound because this callback
+        // runs before every authoritative check: repairing here repairs BEFORE
+        // USE. ensureBaseline never throws, so awaiting it cannot reject the
+        // session, and its circuit breaker bounds a UserRole-scoped write fault
+        // to one attempt per lambda per window.
+        if (!stored.includes(BASELINE_ROLE)) {
+          // Pass the EMAIL, not the id: ensureBaseline canonicalizes internally
+          // so the write cannot be reached without an @u.nus.edu address having
+          // been presented (I-8d — provenance, not shape).
+          const healed = await ensureBaseline(db, token.email);
+          if (healed) stored = [...stored, BASELINE_ROLE];
+          // If it did NOT heal we do NOT synthesise the role. The stored value
+          // is the truth (I-8); access.ts retries the repair once more before
+          // denying a booking (repair-on-deny).
+        }
+        // ------------------------------------------------------------------
+
+        // I-4: resolved LIVE, per request. Nothing here is written into the
+        // token — a revoked admin loses admin on the very next page load
+        // rather than at the end of the 30-day JWT lifetime.
+        const roles = normalizeStoredRoles(stored);
+        session.user.roles = roles;
+        session.user.isAdmin = roles.includes(ADMIN_ROLE);
+
+        // D-8 pending-grant redemption. `pendingCheckedAt` is stamped
+        // unconditionally by redeemPendingGrants as its final step (INCLUDING
+        // the no-grants and expired cases), which is what makes this check cost
+        // ZERO queries forever after one run per user.
+        //
+        // FIRE-AND-FORGET, with its own .catch() even though redeemPendingGrants
+        // already contains its own failures: an unhandled rejection on this path
+        // is a lambda-level fault on the hottest route in the app, i.e. a mass
+        // availability event rather than a single-user one. Deliberately NOT
+        // awaited — unlike the I-8b self-heal, a newly claimed jcrc/admin role
+        // does not need to be visible in THIS request (the claimant has just
+        // signed up and is being redirected anyway), and awaiting it would put a
+        // multi-write path in front of every first page load.
+        if (roleRow?.pendingCheckedAt == null) {
+          void redeemPendingGrants(db, userID).catch(() => {
+            /* contained */
+          });
+        }
       }
       return session;
     },
-    async redirect({ baseUrl }) {
-      return `${baseUrl}/`;
+    async redirect({ url, baseUrl }) {
+      // The old unconditional `${baseUrl}/` form discarded every URL including
+      // NextAuth's own error redirect, so a D-7-rejected user was silently
+      // bounced to "/" with no indication of why. Same-origin pass-through;
+      // anything external still collapses to home.
+      return url.startsWith(baseUrl) ? url : `${baseUrl}/`;
+    },
+  },
+  events: {
+    /**
+     * G-B / I-8a — the resident grant for Google first sign-in. PrismaAdapter
+     * creates the User row itself, and events.createUser is the only hook that
+     * fires exactly once, immediately after that insert, with the created user
+     * in hand. Not callbacks.signIn (runs BEFORE the row exists, and its return
+     * value is the D-7 gate — one job only); not events.linkAccount (fires when
+     * an Account is attached to an EXISTING user, who already holds a baseline).
+     *
+     * MUST be individually try/caught. next-auth v4 awaits events.createUser
+     * inside callback-handler, and a rejection propagates to routes/callback,
+     * which redirects to /api/auth/error?error=Callback — i.e. the user's FIRST
+     * Google sign-in fails. It self-recovers (on retry the User row exists,
+     * createUser does not re-fire, and I-8b heals them), but do not write "a
+     * rejection does not deny the sign-in" here: it does.
+     */
+    async createUser({ user }) {
+      try {
+        // PrismaAdapter writes ONLY email/name/image/emailVerified — User.userID
+        // is NOT set on adapter-created rows. Reading user.userID here yields
+        // null and silently keys the grant on "": the classic mis-keyed grant.
+        // The key comes from the EMAIL (I-1), and ensureBaseline canonicalizes
+        // it itself (I-8d).
+        await ensureBaseline(db, user.email ?? "");
+      } catch (e) {
+        console.error(
+          JSON.stringify({ evt: "baseline_grant_failed", err: String(e) }),
+        );
+      }
     },
   },
 } satisfies NextAuthOptions;
