@@ -1,9 +1,17 @@
 /**
- * Sets the RBAC booking-enforcement kill switch (I-11).
+ * Sets an RBAC kill switch (I-11). There are THREE, all defaulting to "off":
  *
- *   node scripts/remediation/set-enforcement.mjs                     # show current
- *   node scripts/remediation/set-enforcement.mjs off                 # dry run
- *   node scripts/remediation/set-enforcement.mjs off --commit        # apply
+ *   booking   rbac.booking.enforcement   default-deny room booking
+ *   matric    rbac.matric.enforcement    the matric onboarding gate (off|enforce)
+ *   auth      rbac.auth.enforcement      the D-7 @u.nus.edu sign-in restriction
+ *
+ *   node scripts/remediation/set-enforcement.mjs                          # show all three
+ *   node scripts/remediation/set-enforcement.mjs booking off              # dry run
+ *   node scripts/remediation/set-enforcement.mjs booking off --commit     # apply
+ *   node scripts/remediation/set-enforcement.mjs auth permissive --commit
+ *
+ * The switch name may be omitted, in which case it defaults to `booking` — the
+ * historical behaviour of this script.
  *
  * SET IT TO "off" BEFORE ANY PHASE 2 CODE DEPLOYS, so the new default-deny code
  * lands behaviourally INERT and the rollout is a data-only flip afterwards.
@@ -26,15 +34,35 @@ import { PrismaClient } from "@prisma/client";
 import { inspectWriteReply, isCommit, abort, nowExt } from "./lib/rbac.mjs";
 
 const db = new PrismaClient();
-const KEY = "rbac.booking.enforcement";
-const MODES = ["off", "permissive", "enforce"];
 
-const MODE = process.argv.slice(2).find((a) => !a.startsWith("--"));
+/**
+ * The matric gate is off|enforce only: it has no shadow mode, because a
+ * "permissive" matric gate is indistinguishable from "off" (nothing to log —
+ * the gate either denies or it does not).
+ */
+const SWITCHES = {
+  booking: { key: "rbac.booking.enforcement", modes: ["off", "permissive", "enforce"], soak: true },
+  matric: { key: "rbac.matric.enforcement", modes: ["off", "enforce"], soak: false },
+  auth: { key: "rbac.auth.enforcement", modes: ["off", "permissive", "enforce"], soak: true },
+};
+
+const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+// `<switch> <mode>` or, for backwards compatibility, a bare `<mode>` meaning booking.
+const NAME = positional.length > 1 ? positional[0] : "booking";
+const MODE = positional.length > 1 ? positional[1] : positional[0];
 const COMMIT = isCommit();
 
-async function current() {
-  const r = await db.$runCommandRaw({ find: "SystemFlag", filter: { key: KEY }, limit: 1 });
+const SWITCH = SWITCHES[NAME];
+const KEY = SWITCH?.key;
+const MODES = SWITCH?.modes ?? [];
+
+async function readFlag(key) {
+  const r = await db.$runCommandRaw({ find: "SystemFlag", filter: { key }, limit: 1 });
   return r?.cursor?.firstBatch?.[0] ?? null;
+}
+
+async function current() {
+  return readFlag(KEY);
 }
 
 async function main() {
@@ -53,7 +81,7 @@ async function main() {
   // Refuse to skip the soak stage. "off" -> "enforce" in one step deploys
   // default-deny to ~515 users with no shadow-denial evidence that the baseline
   // backfill actually covered them.
-  if (MODE === "enforce" && (before?.value ?? "off") === "off") {
+  if (SWITCH.soak && MODE === "enforce" && (before?.value ?? "off") === "off") {
     return abort(`refusing to jump "off" -> "enforce". Go through "permissive" and soak it: ` +
       `the shadow-denial log it produces is the ONLY evidence that flipping to enforce will ` +
       `not lock out users the resident backfill missed. Set "permissive" first.`);
@@ -71,7 +99,7 @@ async function main() {
       q: { key: KEY },
       // `key` is $set here, so it must NOT also appear in a $setOnInsert —
       // the same path in both operators is a MongoDB parse error.
-      u: { $set: { key: KEY, value: MODE, updatedAt: nowExt(), updatedBy: "script:set-enforcement" } },
+      u: { $set: { key: KEY, value: MODE, updatedAt: nowExt(), updatedBy: `script:set-enforcement:${NAME}` } },
       upsert: true,
     }],
   });

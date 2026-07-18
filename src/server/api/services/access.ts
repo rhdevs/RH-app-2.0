@@ -82,6 +82,7 @@ export async function getEnforcementMode(
 export function resetEnforcementModeCache(): void {
   flagCache = null;
   matricFlagCache = null;
+  authFlagCache = null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -144,6 +145,72 @@ export async function getMatricEnforcement(
 /** True when the matric gate should actually deny. The ONE predicate. */
 export async function isMatricRequired(db: PrismaClient): Promise<boolean> {
   return (await getMatricEnforcement(db)) === "enforce";
+}
+
+/* -------------------------------------------------------------------------- */
+/* I-11 (third switch) — the D-7 @u.nus.edu sign-in restriction                 */
+/* -------------------------------------------------------------------------- */
+
+export type AuthEnforcement = "off" | "permissive" | "enforce";
+
+const AUTH_FLAG_KEY = "rbac.auth.enforcement";
+const AUTH_MODES = ["off", "permissive", "enforce"] as const;
+
+let authFlagCache: { at: number; mode: AuthEnforcement } | null = null;
+
+/**
+ * I-11, applied to D-7.
+ *
+ * The domain restriction is the one part of this change that is NOT inert on
+ * deploy: it denies at the door, so an ungated rollout logs out every non-NUS
+ * account the moment it ships — and, via `protectedProcedure`'s `eligible`
+ * backstop, strips their bookings, posts and profile too, not merely new
+ * logins. The Phase-1 inventory that would tell us who those accounts are is a
+ * production read and has not been run.
+ *
+ * `AUTH_EMAIL_ALLOWLIST` is a real break-glass but a slow one: it is an env
+ * var, so on Vercel recovering someone costs an env edit plus a redeploy. That
+ * is the wrong shape for a lockout you discover from a user's message.
+ *
+ * Hence a row, defaulting to "off":
+ *   off        no restriction at all — exactly today's behaviour
+ *   permissive allow, but log every address that WOULD be denied. This is the
+ *              discovery mode: run it for a day and the logs tell you the
+ *              non-NUS population without touching the database by hand.
+ *   enforce    deny (the D-7 design)
+ *
+ * Same degrade-to-legacy-on-error shape as the other two switches: an
+ * unreachable flag must mean "behave as the app did yesterday", and a database
+ * hiccup must never lock the whole userbase out of signing in.
+ */
+export async function getAuthEnforcement(
+  db: PrismaClient,
+): Promise<AuthEnforcement> {
+  const fallback = (process.env.RBAC_AUTH_ENFORCEMENT ??
+    "off") as AuthEnforcement;
+  if (authFlagCache && Date.now() - authFlagCache.at < FLAG_TTL_MS) {
+    return authFlagCache.mode;
+  }
+  try {
+    const row = await db.systemFlag.findUnique({
+      where: { key: AUTH_FLAG_KEY },
+    });
+    const mode = (AUTH_MODES as readonly string[]).includes(row?.value ?? "")
+      ? (row!.value as AuthEnforcement)
+      : AUTH_MODES.includes(fallback)
+        ? fallback
+        : "off";
+    authFlagCache = { at: Date.now(), mode };
+    return mode;
+  } catch {
+    // Not cached, deliberately — see getEnforcementMode.
+    return "off";
+  }
+}
+
+/** True when a failing address should actually be turned away. */
+export async function isAuthRestricted(db: PrismaClient): Promise<boolean> {
+  return (await getAuthEnforcement(db)) === "enforce";
 }
 
 /* -------------------------------------------------------------------------- */

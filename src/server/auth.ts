@@ -22,7 +22,10 @@ import {
   normalizeStoredRoles,
   redeemPendingGrants,
 } from "~/server/api/services/roles";
-import { isMatricRequired } from "~/server/api/services/access";
+import {
+  getAuthEnforcement,
+  isMatricRequired,
+} from "~/server/api/services/access";
 
 /**
  * D-7 + I-12. THE eligibility predicate for sign-in, and the only one. The
@@ -34,7 +37,7 @@ import { isMatricRequired } from "~/server/api/services/access";
  * Read from process.env rather than ~/env because src/env.js is outside this
  * change's scope; unset means "no exceptions", which is the safe default.
  */
-function maySignIn(rawEmail: string | null | undefined): boolean {
+function passesDomainRule(rawEmail: string | null | undefined): boolean {
   const email = normalizeEmail(rawEmail);
   if (!email) return false;
   if (isNusStudentEmail(email)) return true;
@@ -43,6 +46,41 @@ function maySignIn(rawEmail: string | null | undefined): boolean {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
   return allow.includes(email);
+}
+
+/**
+ * I-11 — the flag-aware D-7 decision, and the ONLY thing sign-in paths call.
+ *
+ * `passesDomainRule` above is the rule; this is whether we ACT on it. Split
+ * deliberately: gating the rule itself would also gate the allowlist and the
+ * empty-email rejection, and an empty email must be refused in every mode
+ * (it canonicalizes to "", which is the ""-keyed-role hazard of I-8d).
+ *
+ * With the flag "off" — the default, and the state on deploy day — this
+ * returns true for every non-empty address, so sign-in behaves exactly as it
+ * did before D-7 shipped. See getAuthEnforcement for why this is a row and not
+ * an env var.
+ */
+async function maySignIn(rawEmail: string | null | undefined): Promise<boolean> {
+  const email = normalizeEmail(rawEmail);
+  if (!email) return false;
+  if (passesDomainRule(email)) return true;
+
+  const mode = await getAuthEnforcement(db);
+  if (mode === "enforce") return false;
+
+  if (mode === "permissive") {
+    // Discovery mode: surface WHO would be denied, without denying them. The
+    // full address is logged here (unlike the enforce-path warning, which logs
+    // the domain only) because the entire point is to hand you the remediation
+    // list — and unlike that path, this party is not an unauthenticated
+    // stranger being probed away, it is an existing user you are about to lock
+    // out. Turn this off once you have the list.
+    console.warn(
+      JSON.stringify({ evt: "signin_would_be_rejected", email, mode }),
+    );
+  }
+  return true;
 }
 
 /**
@@ -135,7 +173,7 @@ export const authOptions = {
         // D-7 gate #1, before any DB work. Return null (not throw) so the
         // response shape is identical to a wrong password — this endpoint must
         // not become an oracle for "which domains are accepted".
-        if (!maySignIn(email)) return null;
+        if (!(await maySignIn(email))) return null;
 
         const user = await db.user.findFirst({
           where: {
@@ -151,7 +189,7 @@ export const authOptions = {
         // case-insensitive-equals, so the stored value can differ from the
         // submitted one, and only the stored value is used downstream to
         // derive the canonical role key.
-        if (!maySignIn(user.email)) return null;
+        if (!(await maySignIn(user.email))) return null;
 
         // Verifies bcrypt or legacy SHA-256 (#3); transparently upgrades the
         // stored hash to bcrypt on a successful legacy login.
@@ -212,7 +250,7 @@ export const authOptions = {
      */
     async signIn({ user, account, profile }) {
       const email = normalizeEmail(user?.email);
-      if (!maySignIn(email)) {
+      if (!(await maySignIn(email))) {
         // Log the DOMAIN only — never the full address of a denied,
         // unauthenticated party.
         console.warn(
@@ -263,14 +301,26 @@ export const authOptions = {
         // keys like "ALICE@GMAIL.COM" for non-NUS addresses.
         const userID = canonicalUserID(token.email);
         session.user.userID = userID;
-        session.user.eligible = userID !== "";
+        // I-11. `eligible` is the D-7 DECISION, so it follows the switch: with
+        // the flag "off" nobody is marked ineligible and protectedProcedure's
+        // backstop never fires, which is what keeps deploy day inert for
+        // existing non-NUS sessions. The `userID === ""` early return below is
+        // NOT gated — it guards the ""-keyed-role hazard (I-8d), which has
+        // nothing to do with D-7 and must hold in every mode.
+        session.user.eligible =
+          userID !== "" || (await getAuthEnforcement(db)) !== "enforce";
         session.user.email = token.email;
         session.user.name = token.name;
 
-        if (!session.user.eligible) {
-          // userID === "" here. Backstop for a JWT minted before the D-7
-          // deploy, or a blank/malformed stored email. Do NOT throw — see rule
-          // 1 above. Mark it and let the server-side checks deny.
+        if (userID === "") {
+          // Branches on userID, NOT on `eligible`: since I-11 made `eligible`
+          // flag-aware, keying this on it would let a ""-canonicalizing
+          // principal fall through to the lookups below whenever the switch is
+          // off — the exact hazard the paragraph beneath describes.
+          //
+          // Backstop for a JWT minted before the D-7 deploy, or a
+          // blank/malformed stored email. Do NOT throw — see rule 1 above.
+          // Mark it and let the server-side checks deny.
           //
           // The early RETURN is load-bearing, not tidiness: without it this
           // callback would run userRole.findUnique({ where: { userID: "" } }),
