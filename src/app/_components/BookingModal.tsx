@@ -9,6 +9,7 @@ import {
   User,
   ChevronLeft,
   ChevronRight,
+  AlertTriangle,
 } from "lucide-react";
 import { format } from "date-fns";
 import { api } from "~/trpc/react";
@@ -19,6 +20,12 @@ interface Facility {
   facilityName: string;
   facilityLocation: string;
 }
+
+/** 08 §1.2: the one wording for an empty canonical userID, shared with the
+ *  calendar so the toast and the panel cannot drift apart. Written in the user's
+ *  terms — they have no idea what a "userID" is, only which email they used. */
+export const NO_IDENTITY_MESSAGE =
+  "This account isn't recognised as an NUS student account, so bookings can't be linked to it. Sign in with your @u.nus.edu email, or contact the JCRC if you think this is a mistake.";
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -74,9 +81,25 @@ const BookingModal: React.FC<BookingModalProps> = ({
     },
   });
 
+  // 08 §1.2: `userId` is the canonical session userID, which is EMPTY for an
+  // account that is not on @u.nus.edu. Key off the id itself — NOT off
+  // session.user.eligible, which is `true` for these accounts while the auth
+  // kill switch sits at its default "off", so an eligible-keyed check no-ops.
+  const hasIdentity = Boolean(userId);
+
   const handleSubmit = () => {
-    if (!userId || !selectedFacility || !startTime || !endTime) {
-      console.error("Missing required fields");
+    // Previously this returned silently with a console.error, so the Confirm
+    // button was simply dead for an empty identity: click, nothing, no reason.
+    if (!hasIdentity) {
+      setToastContent(NO_IDENTITY_MESSAGE);
+      setToastType("danger");
+      setToastOpen(true);
+      return;
+    }
+    if (!selectedFacility || !startTime || !endTime) {
+      setToastContent("Pick a facility and a start and end time first.");
+      setToastType("danger");
+      setToastOpen(true);
       return;
     }
     const startDateTime = new Date(startDate);
@@ -129,6 +152,28 @@ const BookingModal: React.FC<BookingModalProps> = ({
             </button>
           </div>
 
+          {!hasIdentity ? (
+            /* 08 §1.2: a dedicated, explanatory state, matching the panel in
+               profile/page.tsx. The booking form is not rendered at all — the
+               server denies the write with NO_IDENTITY in every enforcement
+               mode, so offering a form that can only ever fail is the silent
+               failure this section exists to remove. */
+            <div className="flex flex-col items-center gap-4 px-6 py-10 text-center">
+              <AlertTriangle className="h-10 w-10 text-amber-500" />
+              <h3 className="text-lg font-medium text-gray-900">
+                Bookings can&apos;t be made from this account
+              </h3>
+              <p className="max-w-md text-sm text-gray-600">
+                {NO_IDENTITY_MESSAGE}
+              </p>
+              <button
+                onClick={onClose}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700"
+              >
+                Close
+              </button>
+            </div>
+          ) : (
           <div className="space-y-4 p-4">
             <div className="grid grid-cols-2 gap-4">
               {["start", "end"].map((type) => {
@@ -238,6 +283,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
               </button>
             </div>
           </div>
+          )}
         </div>
       </div>
     </>

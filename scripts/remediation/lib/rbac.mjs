@@ -63,6 +63,34 @@ export async function countWhere(db, collection, filter) {
 }
 
 /**
+ * Aggregation, cursor drained FULLY, reply INSPECTED. Same truncation trap as
+ * findAll(): a $group over a booking collection returns far more buckets than
+ * one batch holds, and a reader that takes firstBatch reports a census of a
+ * prefix. Unlike countWhere() this also surfaces command failure — $runCommandRaw
+ * resolves rather than throwing, so an aggregate against a collection that does
+ * not exist on this cluster would otherwise read as "zero rows", which is the
+ * one answer a census must never invent.
+ *
+ * Returns { ok, errmsg, rows }. READ-ONLY: callers pass read pipelines only;
+ * never give this a $merge or $out stage.
+ */
+export async function aggregateAll(db, collection, pipeline) {
+  const raw = (cmd) => db.$runCommandRaw(cmd);
+  const rows = [];
+  let res = await raw({ aggregate: collection, pipeline, cursor: { batchSize: 1000 } });
+  if (numify(res?.ok) !== 1) return { ok: false, errmsg: String(res?.errmsg ?? "(no errmsg)"), rows };
+  rows.push(...(res?.cursor?.firstBatch ?? []));
+  let id = res?.cursor?.id;
+  while (id && String(numify(id)) !== "0" && String(id) !== "0") {
+    res = await raw({ getMore: id, collection, batchSize: 1000 });
+    if (numify(res?.ok) !== 1) return { ok: false, errmsg: String(res?.errmsg ?? "(no errmsg)"), rows };
+    rows.push(...(res?.cursor?.nextBatch ?? []));
+    id = res?.cursor?.id;
+  }
+  return { ok: true, errmsg: null, rows };
+}
+
+/**
  * THE REVIEW FINDING, ENCODED ONCE.
  *
  * $runCommandRaw does NOT throw on a per-write failure. An `update` command

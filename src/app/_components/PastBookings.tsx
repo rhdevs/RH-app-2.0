@@ -9,6 +9,7 @@ import {
   X,
   Check,
   Edit,
+  AlertTriangle,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { api } from "~/trpc/react";
@@ -52,7 +53,12 @@ const getTimeFrameStart = (value: string): number | null => {
 };
 
 const PastBookings = () => {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
+  // 08 §1.2: canonical session userID, "" for an account that is not on
+  // @u.nus.edu. Keyed off the id, NOT off session.user.eligible, which stays
+  // `true` for these accounts under the auth kill switch's default "off".
+  const userID = session?.user?.userID ?? "";
+  const hasIdentity = Boolean(userID);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFacilityIds, setSelectedFacilityIds] = useState<number[]>([]);
   const [selectedTimeFrame, setSelectedTimeFrame] = useState("all");
@@ -78,7 +84,6 @@ const PastBookings = () => {
     [facilitiesData],
   );
 
-  const now = Math.floor(Date.now() / 1000);
   const startTime = getTimeFrameStart(selectedTimeFrame) ?? 0;
 
   const queryInput = useMemo(
@@ -89,15 +94,15 @@ const PastBookings = () => {
       ...(selectedFacilityIds.length > 0
         ? { facilityIDs: selectedFacilityIds }
         : {}),
-      userId: session?.user?.userID,
+      userId: userID,
     }),
-    [startTime, selectedFacilityIds, session?.user?.userID],
+    [startTime, selectedFacilityIds, userID],
   );
 
   const { data: bookingData, isLoading } = api.bookings.getBookings.useQuery(
     queryInput,
     {
-      enabled: !!session?.user?.userID,
+      enabled: hasIdentity,
     },
   );
 
@@ -188,6 +193,32 @@ const PastBookings = () => {
     setIsEditModalOpen(false);
     setEditingBooking(null);
   };
+
+  // 08 §1.2: with no canonical userID the query above is disabled, and a
+  // disabled react-query v5 query reports isLoading:false — so this page used to
+  // fall straight through to "No bookings found" and sit there forever, which is
+  // indistinguishable from genuinely having none. Give the state its own panel,
+  // the way profile/page.tsx does, instead of a filter bar over an empty list.
+  // Gated on `authenticated` so it does not flash while the session resolves,
+  // and so the signed-out path keeps its existing behaviour.
+  if (sessionStatus === "authenticated" && !hasIdentity) {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+        <div className="rounded-lg border border-gray-200 bg-white p-12 text-center">
+          <AlertTriangle className="mx-auto mb-4 h-10 w-10 text-amber-500" />
+          <h3 className="mb-2 text-lg font-medium text-gray-900">
+            We can&apos;t look up bookings for this account
+          </h3>
+          <p className="mx-auto max-w-md text-sm text-gray-600">
+            This account isn&apos;t recognised as an NUS student account, so no
+            bookings are linked to it. Sign in with your{" "}
+            <span className="font-medium">@u.nus.edu</span> email to see your
+            bookings, or contact the JCRC if you think this is a mistake.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">

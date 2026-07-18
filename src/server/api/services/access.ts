@@ -330,7 +330,11 @@ function rawRequired(row: {
 /* Decisions                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export type BookDenialReason = "NOT_ELIGIBLE" | "NOT_RESIDENT" | "ROLE_REQUIRED";
+export type BookDenialReason =
+  | "NO_IDENTITY"
+  | "NOT_ELIGIBLE"
+  | "NOT_RESIDENT"
+  | "ROLE_REQUIRED";
 
 export type BookDecision =
   | { ok: true }
@@ -338,9 +342,9 @@ export type BookDecision =
 
 /**
  * Full D-1 evaluation with a STRUCTURED denial, so the UI can say WHY instead
- * of a bare FORBIDDEN. The three reason codes are disjoint from
- * matricProcedure's MATRIC_REQUIRED on purpose: triage of a lockout must not
- * have to guess which gate fired.
+ * of a bare FORBIDDEN. The reason codes are disjoint from matricProcedure's
+ * MATRIC_REQUIRED on purpose: triage of a lockout must not have to guess which
+ * gate fired.
  *
  * `email` is OPTIONAL and must be the caller's VERIFIED session email. Callers
  * on a real request path (createBooking, updateBooking) pass
@@ -409,6 +413,51 @@ export async function evaluateBookingWithMode(
   facilityID: number,
   email?: string | null,
 ): Promise<BookDecision> {
+  // 08 §1.1: ABOVE the mode branch, deliberately. `canonicalUserID` returns ""
+  // for any address that is not @u.nus.edu, so a non-NUS session reaches here
+  // with an empty identity — and the "off" branch below returns before any
+  // identity check while canBookLegacy allows an empty requirement, so without
+  // this the default shipping config writes `Bookings.userID: ""`. Those rows
+  // are invisible to their creator and collide with each other in the userDict
+  // join (facilitiesBooking.ts:215-230).
+  //
+  // This one denial is NOT shadowed in `permissive`. Permissive exists to
+  // shadow the ROLE rollout — to learn who WOULD be denied by D-1 before anyone
+  // is hurt — not to permit unattributable writes. An empty identity is not a
+  // policy question: there is no mode in which an unownable booking row is the
+  // correct outcome, so it denies in off, permissive and enforce alike.
+  //
+  // Distinct reason code, NOT "NOT_RESIDENT": the shadow-denial log is the
+  // permissive -> enforce go/no-go signal, and conflating "has no canonical id"
+  // with "lacks the baseline" corrupts it. They need different remediation.
+  if (!userID) {
+    // Audited even though it is a hard deny, because this log IS the §2
+    // measurement of the affected population. Best-effort, like the shadow
+    // write below: an audit failure must never change the decision.
+    //
+    // The caller's `email` is deliberately NOT written into an id column: a
+    // non-canonical value in a *ID field is the exact disease this doc is
+    // about. Attribution comes from the doctor's non-NUS user list (§2).
+    try {
+      await db.roleAuditLog.create({
+        data: {
+          actorUserID: "(anon)",
+          actorRoles: [],
+          targetUserID: null,
+          targetFacilityID: facilityID,
+          action: "booking.denied.no_identity",
+          rolesBefore: [],
+          rolesAfter: [],
+          ok: false,
+          denyReason: "NO_IDENTITY",
+        },
+      });
+    } catch {
+      /* best effort */
+    }
+    return { ok: false, reason: "NO_IDENTITY", requiredRoles: [] };
+  }
+
   const mode = await getEnforcementMode(db);
 
   if (mode === "off") {
@@ -433,9 +482,13 @@ export async function evaluateBookingWithMode(
     try {
       await db.roleAuditLog.create({
         data: {
-          actorUserID: userID ?? "(anon)",
+          // 08 §1.1: FALSY, not nullish. `""` is not nullish, so `??` recorded
+          // audit rows with an empty actor — indistinguishable in the log from
+          // a genuine id. Unreachable now that the guard above denies an empty
+          // identity outright, but the log must not depend on that.
+          actorUserID: userID || "(anon)",
           actorRoles: [],
-          targetUserID: userID ?? null,
+          targetUserID: userID || null,
           targetFacilityID: facilityID,
           action: "booking.denied.shadow",
           rolesBefore: [],
