@@ -38,6 +38,11 @@ const publicUserSelect = {
  */
 function denialMessage(d: Extract<BookDecision, { ok: false }>): string {
   switch (d.reason) {
+    case "NO_IDENTITY":
+      // 08 §1.1: distinct from NOT_ELIGIBLE because the remediation differs —
+      // this account HAS a session, it just has no canonical id to own a row
+      // with, so nothing it writes could ever be found again.
+      return "Your account has no NUS student ID associated with it, so a booking could not be attributed to you. Please sign in with your @u.nus.edu email, or contact the JCRC.";
     case "NOT_ELIGIBLE":
       return "Your account is not a verified NUS student account. Please sign in with your @u.nus.edu email.";
     case "NOT_RESIDENT":
@@ -143,8 +148,15 @@ export const facilityBookingRouter = createTRPCRouter({
       if (!booking) throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
 
       const [user, facility, cca] = await Promise.all([
-        // booking.userID holds User.userID (the matric-style id), not the
-        // ObjectId — the previous `id:` lookup always returned null (#15).
+        // booking.userID holds the CANONICAL session id (E-format, or the
+        // legacy uppercased email for pre-merge non-NUS rows) — not the
+        // ObjectId, so the previous `id:` lookup always returned null (#15).
+        //
+        // 08 §0.2: it has never held an A-format matric, but `User.userID` is
+        // heterogeneous (E-format, ~515 legacy A-format matrics, and null for
+        // Google/adapter-created rows). So this join is correct for E-format
+        // owners and MISSES the A-format rows, which render with a blank owner
+        // name. That is Problem B, repaired by the re-key, not here.
         ctx.db.user.findFirst({
           where: { userID: booking.userID },
           select: publicUserSelect,
@@ -300,8 +312,13 @@ export const facilityBookingRouter = createTRPCRouter({
           eventDescription: booking.description,
           // Only reveal a personal Telegram handle on the caller's own
           // bookings (#10).
+          //
+          // 08 §1.1: `Boolean(callerUserID) &&` guards the same false match as
+          // the two ownership checks below — without it a caller with an empty
+          // canonical id matches every ""-keyed booking and is handed a
+          // stranger's Telegram handle.
           userTeleHandle:
-            booking.userID === callerUserID
+            Boolean(callerUserID) && booking.userID === callerUserID
               ? userDict[booking.userID]?.telegramHandle
               : undefined,
         })),
@@ -313,6 +330,10 @@ export const facilityBookingRouter = createTRPCRouter({
   getUserBookings: protectedProcedure.query(async ({ ctx }) => {
     // Owner is always the caller — never a client-supplied id (#8).
     const userID = ctx.session.user.userID;
+    // 08 §1.1: an empty canonical id is not a filter, it is a match on every
+    // ""-keyed row — so querying with it would return OTHER users' orphaned
+    // bookings as if they were the caller's. An empty id owns nothing.
+    if (!userID) return [];
     const currentTime = Math.floor(Date.now() / 1000);
     const bookings = await ctx.db.bookings.findMany({
       where: {
@@ -461,10 +482,16 @@ export const facilityBookingRouter = createTRPCRouter({
       // kept compiling and kept denying admin-held-second deletions.
       // Short-circuits on ownership, so the role read is skipped for the
       // overwhelmingly common self-delete.
-      if (
-        existing.userID !== ctx.session.user.userID &&
-        !(await isAdmin(ctx.db, ctx.session.user.userID))
-      ) {
+      //
+      // 08 §1.1: the `Boolean(callerUserID)` conjunct is load-bearing. A
+      // non-NUS session carries `userID === ""`, and `"" === ""` makes a bare
+      // equality check a FALSE MATCH against any ""-keyed booking row — i.e. it
+      // would hand deletion of a stranger's row to an unattributable session.
+      // An empty id owns nothing. (isAdmin("") is already false: getUserRoles
+      // returns [] for a falsy id, so there is no bypass through the admin arm.)
+      const callerUserID = ctx.session.user.userID;
+      const owns = Boolean(callerUserID) && existing.userID === callerUserID;
+      if (!owns && !(await isAdmin(ctx.db, callerUserID))) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You can only delete your own bookings.",
@@ -507,7 +534,12 @@ export const facilityBookingRouter = createTRPCRouter({
       // Ensure user can only edit their own bookings. Was a bare `Error`, which
       // tRPC surfaces as INTERNAL_SERVER_ERROR — an authorization failure must
       // not be reported to the client as a server fault.
-      if (existingBooking.userID !== ctx.session?.user?.userID) {
+      //
+      // 08 §1.1: same false-match guard as deleteBooking — `"" === ""` would
+      // otherwise make every ""-keyed booking editable by every empty-identity
+      // session. An empty id owns nothing.
+      const callerUserID = ctx.session?.user?.userID;
+      if (!callerUserID || existingBooking.userID !== callerUserID) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You can only edit your own bookings.",

@@ -8,6 +8,7 @@ import {
   Filter,
   ChevronDown,
   Check,
+  AlertTriangle,
 } from "lucide-react";
 import { api } from "~/trpc/react";
 import {
@@ -25,7 +26,7 @@ import {
 import Loading from "./Loading";
 import Toast from "./Toast";
 import { useSession } from "next-auth/react";
-import BookingModal from "./BookingModal";
+import BookingModal, { NO_IDENTITY_MESSAGE } from "./BookingModal";
 
 function classNames(...classes: (string | boolean | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
@@ -60,6 +61,12 @@ const Calendar_v2: React.FC = () => {
   const [bookingModalOpen, setBookingModalOpen] = useState<boolean>(false);
 
   const { data: session } = useSession();
+  // 08 §1.2: the canonical session userID, "" for an account that is not on
+  // @u.nus.edu. Every identity check below keys off this, NOT off
+  // session.user.eligible — eligible is `true` for these accounts while the auth
+  // kill switch is at its default "off", so an eligible-keyed check does nothing.
+  const userID = session?.user?.userID ?? "";
+  const hasIdentity = Boolean(userID);
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
 
@@ -87,10 +94,13 @@ const Calendar_v2: React.FC = () => {
       ...(selectedFacilityIds.length > 0
         ? { facilityIDs: selectedFacilityIds }
         : {}),
-      ...(checkOwnBookings ? { userId: session?.user?.userID } : {}),
+      ...(checkOwnBookings && hasIdentity ? { userId: userID } : {}),
     },
     {
-      enabled: !checkOwnBookings || !!session?.user?.userID,
+      // "My Bookings" is unreachable without an identity (handleCheckOwnBookings
+      // refuses the toggle and explains why), so this can no longer leave the
+      // calendar permanently blank with no stated reason.
+      enabled: !checkOwnBookings || hasIdentity,
     },
   );
   // Display source for the calendar grid, the filter dropdown and the colour
@@ -107,7 +117,7 @@ const Calendar_v2: React.FC = () => {
   // signed-out case.
   const bookableQuery = api.bookings.getFacilitiesForBooking.useQuery(
     undefined,
-    { enabled: !!session?.user?.userID },
+    { enabled: hasIdentity },
   );
 
   const facilities: Facility[] = useMemo(() => {
@@ -280,12 +290,24 @@ const Calendar_v2: React.FC = () => {
       setToastType("danger");
       return;
     }
+    // Signed in but with no canonical userID: still open the modal, which
+    // renders the explanatory panel instead of a form that can only fail. The
+    // dead end has to say something; it must not be a Book button that opens a
+    // form whose Confirm is rejected server-side with no on-screen cause.
     setBookingModalOpen(true);
   };
 
   const handleCheckOwnBookings = () => {
     if (!session) {
       setToastContent("Log in to see your bookings!");
+      setToastOpen(true);
+      setToastType("danger");
+      return;
+    }
+    // Without an identity the query was simply disabled and the calendar went
+    // blank, which reads as "you have no bookings". Refuse the toggle and say why.
+    if (!hasIdentity) {
+      setToastContent(NO_IDENTITY_MESSAGE);
       setToastOpen(true);
       setToastType("danger");
       return;
@@ -305,11 +327,27 @@ const Calendar_v2: React.FC = () => {
         isOpen={bookingModalOpen}
         onClose={() => setBookingModalOpen(false)}
         facilities={bookableFacilities}
-        userId={session?.user?.userID ?? ""}
+        userId={userID}
         currentDate={selectedDate}
         refetch={refetchBookingsInMonth}
       />
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        {/* 08 §1.2: state the situation once, up front, rather than only when a
+            control is pressed. The calendar itself stays fully usable — this is
+            about booking and "My Bookings", not about reading the schedule. */}
+        {session && !hasIdentity && (
+          <div className="mb-6 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+            <div>
+              <div className="text-sm font-medium text-amber-900">
+                Bookings can&apos;t be made from this account
+              </div>
+              <p className="mt-1 text-sm text-amber-800">
+                {NO_IDENTITY_MESSAGE}
+              </p>
+            </div>
+          </div>
+        )}
         <div className="mb-8 flex items-center justify-end gap-x-4">
           <div
             onClick={handleCheckOwnBookings}
