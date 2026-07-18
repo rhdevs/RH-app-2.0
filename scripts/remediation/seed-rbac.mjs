@@ -1,75 +1,43 @@
 /**
- * Seeds role data so the server-side facility RBAC (#23) reproduces the old
- * hardcoded `jcrcList` gate on "SCRC Room".
+ * SUPERSEDED — DO NOT RUN. This script is a live hazard and now refuses to
+ * execute.
  *
- * Run AFTER `npx prisma db push` (which creates the UserRole / FacilityAccess
- * collections + indexes):
+ * It wrote the LEGACY SINGULAR shape: `db.userRole.upsert({ userID, role })`
+ * and `db.facilityAccess.upsert({ facilityID, requiredRole })`, with NO `roles`
+ * / `requiredRoles` array. Under RBAC v2 one run creates a roles-less document,
+ * and once the legacy reads are removed that user reads as ZERO roles and
+ * silently loses `admin` or `jcrc`. The containment gate has already passed by
+ * then, so nothing catches it. It also hardcoded an 11-id jcrc grant list and
+ * resolved the restricted facility BY NAME, which under D-1 means a rename
+ * LOCKS a room rather than opening it.
  *
- *   node scripts/remediation/seed-rbac.mjs
+ * Its logic has been moved, not lost:
+ *   - the 11 JCRC ids  -> scripts/remediation/data/jcrc-users.json
+ *   - the bookingID counter seed (the ONLY place this existed)
+ *                      -> scripts/remediation/seed-counters.mjs
+ *   - role + facility seeding
+ *                      -> scripts/remediation/seed-roles-v2.mjs
  *
- * Idempotent: safe to run more than once.
+ * See docs/plans/rbac/01-data-model.md Step 9 and 06-legacy-cutover.md §5 step 2.
+ *
+ * The file is retained rather than deleted so that a stale shell history entry,
+ * a stale README link or a stale runbook line hits THIS message instead of a
+ * "command not found" that invites someone to go looking for the old file in
+ * git history and run that copy instead.
  */
-import { PrismaClient } from "@prisma/client";
+console.error(`
+*** seed-rbac.mjs is SUPERSEDED and will not run. ***
 
-const db = new PrismaClient();
+It writes the legacy singular role shape with no roles[] array, which silently
+strips privileges once the legacy reads are removed.
 
-// The matric IDs that were previously hardcoded in BookingModal.tsx.
-const JCRC_USERS = [
-  "E1293802", "E1454218", "E1337187", "E1122423", "E1121407", "E1186145",
-  "E1249457", "E1397941", "E1121047", "E1156691", "E1375422",
-];
+Use instead:
+    node scripts/remediation/seed-roles-v2.mjs            # dry run
+    node scripts/remediation/seed-roles-v2.mjs --commit   # apply
+    node scripts/remediation/seed-counters.mjs --commit   # the bookingID counter
 
-const RESTRICTED_FACILITY_NAME = "SCRC Room";
-const REQUIRED_ROLE = "jcrc";
-
-async function main() {
-  // 1. Grant the jcrc role to each user.
-  for (const userID of JCRC_USERS) {
-    await db.userRole.upsert({
-      where: { userID },
-      create: { userID, role: REQUIRED_ROLE },
-      update: { role: REQUIRED_ROLE },
-    });
-  }
-  console.log(`Granted "${REQUIRED_ROLE}" to ${JCRC_USERS.length} users.`);
-
-  // 2. Mark the restricted facility as requiring that role.
-  const facility = await db.facilities.findFirst({
-    where: { facilityName: RESTRICTED_FACILITY_NAME },
-  });
-  if (!facility) {
-    console.warn(
-      `Facility "${RESTRICTED_FACILITY_NAME}" not found — skipping FacilityAccess seed.`,
-    );
-    return;
-  }
-  await db.facilityAccess.upsert({
-    where: { facilityID: facility.facilityID },
-    create: { facilityID: facility.facilityID, requiredRole: REQUIRED_ROLE },
-    update: { requiredRole: REQUIRED_ROLE },
-  });
-  console.log(
-    `"${RESTRICTED_FACILITY_NAME}" (facilityID ${facility.facilityID}) now requires role "${REQUIRED_ROLE}".`,
-  );
-
-  // 3. Optional: seed the bookingID counter to the current max so allocation
-  //    never collides with existing bookings.
-  const last = await db.bookings.findFirst({
-    orderBy: { bookingID: "desc" },
-    select: { bookingID: true },
-  });
-  await db.counter.upsert({
-    where: { key: "bookingID" },
-    create: { key: "bookingID", seq: last?.bookingID ?? 0 },
-    update: {},
-  });
-  console.log(`Seeded bookingID counter at ${last?.bookingID ?? 0}.`);
-}
-
-main()
-  .then(() => console.log("RBAC seed complete."))
-  .catch((e) => {
-    console.error(e);
-    process.exitCode = 1;
-  })
-  .finally(() => db.$disconnect());
+Roster:   scripts/remediation/data/jcrc-users.json
+Gating:   scripts/remediation/data/facility-roles.json
+Runbook:  docs/plans/rbac/01-data-model.md
+`);
+process.exit(1);

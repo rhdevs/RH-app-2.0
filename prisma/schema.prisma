@@ -241,18 +241,200 @@ model BookingLock {
 }
 
 /// Role assignments kept out of the validator-guarded User collection (#23).
+/// MULTI-ROLE (RBAC v2): `roles` is the source of truth.
+///
+/// `resident` IS stored here and IS authoritative. Every eligible identity
+/// holds it, admins included. normalizeStoredRoles()
+/// (src/server/api/services/roles.ts) keeps it verbatim. A row that lacks it is
+/// repaired by ensureBaseline() at the next session read (I-8b); no set-payload
+/// can revoke it because role writes are $pull/$addToSet over GRANTABLE_ROLES,
+/// which excludes it (I-8c).
+///
+/// Keyed on the canonical userID = canonicalUserID(email), the same key
+/// UserMatric, Bookings, UserCCA and session.user.userID use. NEVER key on
+/// User.userID: ~515 users have an A-format matric there (invariant I-1).
+///
+/// INVARIANT I-2: no required non-list scalar may be added to this model. It is
+/// already populated and is read inside the session callback; Prisma throws on
+/// a document missing a required scalar, which would break login for everyone.
+/// This is why `role` below is OPTIONAL — the resident backfill AND the
+/// runtime ensureBaseline() both create documents that do not naturally carry
+/// it. Every such write must $setOnInsert `role: ""` (I-9): empty string, never
+/// null, never "user".
 model UserRole {
-  id     String @id @default(auto()) @map("_id") @db.ObjectId
-  userID String @unique
-  role   String
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  userID           String    @unique
+  roles            String[]  @default([])
+  /// LEGACY mirror, dual-written for the rollback window only. Dropped in
+  /// 06-legacy-cutover.md. NEVER holds "resident" (see doc 06 section 0.1).
+  role             String?
+  /// Set once PendingRoleGrant has been consulted for this user. Its purpose is
+  /// to make the steady-state cost of the pending-grant check exactly ZERO
+  /// extra queries. Nullable — I-2.
+  pendingCheckedAt DateTime?
+  updatedAt        DateTime?
+  updatedBy        String?
+
+  @@index([roles], map: "roles_multikey")
 }
 
 /// Per-facility access requirement kept out of the validator-guarded
-/// Facilities collection (#23). facilityID with no row = open to all.
+/// Facilities collection (#23).
+///
+/// requiredRoles is an OR-set: a user may book if they hold ANY listed role.
+/// `admin` always passes and is NEVER stored here.
+///
+/// SEMANTICS CHANGED BY D-1. No row for a facilityID, OR an empty
+/// requiredRoles array, both mean ["resident"] — the DEFAULT, not open-to-all.
+/// There is no "open to everyone" state any more. Every facility is given an
+/// explicit row by seed-roles-v2.mjs so that "configured as a normal room" is
+/// distinguishable from "never configured" (see rbac-doctor's UNCONFIGURED
+/// line). Allowed values: resident | jcrc | cca_head.
+///
+/// Same I-2 no-required-scalar invariant as UserRole.
 model FacilityAccess {
-  id           String @id @default(auto()) @map("_id") @db.ObjectId
-  facilityID   Int    @unique
-  requiredRole String
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  facilityID    Int       @unique
+  requiredRoles String[]  @default([])
+  /// LEGACY mirror. Frozen: existing values are preserved untouched, new rows
+  /// get "". Nothing after this phase ever writes it. Dropped in doc 06.
+  requiredRole  String?
+  updatedAt     DateTime?
+  updatedBy     String?
+}
+
+/// Append-only audit trail for every role and facility-access mutation, and for
+/// every DENIED attempt. Brand-new collection, no $jsonSchema validator.
+/// Append-only is a code contract — Mongo cannot enforce it. There is no update
+/// or delete path in any router, and none may be added.
+model RoleAuditLog {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  at               DateTime @default(now())
+  actorUserID      String
+  /// Actor's roles AT THE TIME. Denormalized on purpose: a join back to
+  /// UserRole answers "are they authorized now", not "were they authorized then".
+  actorRoles       String[] @default([])
+  targetUserID     String?
+  targetFacilityID Int?
+  /// Reserved now so the future CCA system's history is queryable alongside
+  /// role history with no backfill. See 07-cca-future.md.
+  targetCcaID      Int?
+  /// One of AUDIT_ACTIONS in src/server/api/services/roles.ts:
+  /// grant | revoke | set | facilityAccess.set | denied | pending.create |
+  /// pending.claim | pending.revoke | booking.denied.shadow |
+  /// ccaHead.grant | ccaHead.revoke | ccaHead.transfer
+  action           String
+  rolesBefore      String[] @default([])
+  rolesAfter       String[] @default([])
+  reason           String?
+  ok               Boolean  @default(true)
+  denyReason       String?
+  /// groups one bulk import, or the two halves of a handover
+  batchId          String?
+
+  @@index([at(sort: Desc)], map: "at_desc")
+  @@index([targetUserID, at(sort: Desc)], map: "target_at")
+  @@index([actorUserID, at(sort: Desc)], map: "actor_at")
+  @@index([batchId], map: "batch")
+  @@index([targetCcaID, at(sort: Desc)], map: "cca_at")
+}
+
+/// A role grant for someone who has NOT signed up yet (D-8). Applied at their
+/// first login, re-authorized against the granter's CURRENT roles at that time.
+///
+/// SECURITY: `userID` is ALWAYS a canonical E-format id, derived from an
+/// explicit E-id or from an @u.nus.edu email. NEVER from a matric number
+/// (UserMatric.matric is self-asserted — src/server/api/routers/user.ts:85-99)
+/// and NEVER from a display name. Whoever first controls that NUS address gets
+/// this grant, so the trust boundary is exactly NUS account issuance — the same
+/// boundary D-7 relies on. `resident` may never be deferred.
+model PendingRoleGrant {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  userID         String   @unique
+  roles          String[] @default([])
+  createdAt      DateTime @default(now())
+  createdBy      String
+  createdByRoles String[] @default([])
+  expiresAt      DateTime
+  batchId        String?
+  reason         String?
+
+  @@index([expiresAt], map: "expires")
+  @@index([batchId], map: "batch")
+}
+
+/// Header row for one bulk role import (D-8), so a large import is one
+/// reviewable and undoable object rather than N loose audit rows.
+model BulkRoleImport {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  batchId     String    @unique
+  actorUserID String
+  actorRoles  String[]  @default([])
+  /// "add" | "set"
+  mode        String
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  note        String?
+  /// batchId of the import this one undoes / the undo that reversed this one.
+  undoOf      String?
+  undoneBy    String?
+
+  @@index([startedAt(sort: Desc)], map: "started_desc")
+  @@index([actorUserID, startedAt(sort: Desc)], map: "actor_started")
+}
+
+/// Live operational flags. New collection, no validator. Read on the booking
+/// path behind a short in-process cache. Exists because Vercel snapshots env
+/// vars per deployment — an env var alone cannot be a no-redeploy kill switch.
+/// Key in use: "rbac.booking.enforcement" -> "off" | "permissive" | "enforce".
+model SystemFlag {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  key       String    @unique
+  value     String
+  updatedAt DateTime?
+  updatedBy String?
+}
+
+/// Which CCA(s) a user heads. `cca_head` CANNOT be derived from existing data:
+/// CCA and UserCCA are BOTH validator-guarded and neither has a head/position
+/// column, so an `isHead` field is impossible.
+///
+/// POPULATED FROM THE FIRST GRANT, not "later": every cca_head grant writes a
+/// row here in the same transaction. This collection is DELIBERATELY NOT
+/// consulted by the booking path in this phase — per D-1 any cca_head may book
+/// any CCA-gated room. The single function that will start consulting it is
+/// `canBookWithRoles` in src/server/api/services/access.ts; adding an optional
+/// `ccaID` parameter there is the only edit needed to make cca_head scoped.
+/// See 07-cca-future.md.
+model CcaHead {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userID    String
+  ccaID     Int
+  grantedAt DateTime @default(now())
+  grantedBy String?
+
+  @@unique([userID, ccaID], map: "user_cca_head")
+  @@index([ccaID], map: "ccaID")
+}
+
+/// Matric number stored as an ATTRIBUTE (not identity), kept out of the
+/// validator-guarded User collection (same pattern as UserRole/FacilityAccess:
+/// the User $jsonSchema validator has no `matric` property, so writing it onto
+/// User would be rejected). Keyed by the canonical userID =
+/// email.toUpperCase().replace("@U.NUS.EDU","") so it matches
+/// session.user.userID at runtime with no join through User. A row's presence
+/// (with a non-empty matric) means the user has cleared the login gate. matric
+/// format is A + 7 digits + an uppercase letter, e.g. A0234567X. This is the
+/// single source of truth the login gate reads and the merge migration writes.
+model UserMatric {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userID String @unique
+  matric String
+
+  /// Added for bulk matric -> userID resolution (D-8). Deliberately NOT
+  /// @unique: duplicate matrics are possible and must surface as AMBIGUOUS in
+  /// the bulk preview, not as a write failure.
+  @@index([matric], map: "matric")
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.

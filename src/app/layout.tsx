@@ -6,6 +6,7 @@ import { type Metadata } from "next";
 import { TRPCReactProvider } from "~/trpc/react";
 
 import SessionProviderWrapper from "./sessionProviderWrapper";
+import MatricGate from "./_components/MatricGate";
 
 export const metadata: Metadata = {
   title: "RHApp",
@@ -20,7 +21,9 @@ export default function RootLayout({
     <html lang="en" className={`${GeistSans.variable}`}>
       <body className="min-h-screen bg-gray-100">
         <SessionProviderWrapper>
-          <TRPCReactProvider>{children}</TRPCReactProvider>
+          <TRPCReactProvider>
+            <MatricGate>{children}</MatricGate>
+          </TRPCReactProvider>
           <footer className="fixed bottom-0 w-full bg-emerald-800 py-4 text-center text-sm text-white">
             Thanks for using the RH App! Feel free to report bugs or suggest
             features via form:

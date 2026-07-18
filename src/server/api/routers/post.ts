@@ -4,6 +4,7 @@ import {
   createTRPCRouter,
   protectedProcedure,
   publicProcedure,
+  matricProcedure,
 } from "~/server/api/trpc";
 
 export const postRouter = createTRPCRouter({
@@ -16,7 +17,8 @@ export const postRouter = createTRPCRouter({
     }),
 
   // post feature not top priority so not implemented yet
-  create: protectedProcedure
+  // Gated: creating content requires a matric on file (#login-gate).
+  create: matricProcedure
     .input(z.object({ name: z.string().min(1) }))
     .mutation(async () => {
       return null;

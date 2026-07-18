@@ -59,7 +59,84 @@ app derives `session.user.userID` from the email, i.e. the E-NUSNET form):
 4. Create a case-insensitive unique index on `User.email` (collation strength 2).
 
 This is entangled with the deeper userID inconsistency (audit finding #9) and
-should be done as a deliberate, reviewed migration.
+should be done as a deliberate, reviewed migration — implemented as
+`merge-accounts.mjs` below.
+
+## Step: merge accounts (#16) — `merge-accounts.mjs`
+
+The real, non-destructive resolution of Step 2. It MERGES every same-email group
+into ONE canonical account, **reassigns all dependent data before deleting
+anything** (so the ~396 bookings / 146 gym / CCA / order / post rows on the
+"extra" accounts are never orphaned), records each user's matric as an ATTRIBUTE
+in the new `UserMatric` collection (the SAME storage the login gate reads), and
+finally enforces case-insensitive email uniqueness. It supersedes
+`dedupe-users.mjs` for the 58 mixed-userID groups that script refuses to touch.
+
+Canonical identity per email group mirrors `src/server/auth.ts` exactly:
+`canonical = email.toUpperCase().replace("@U.NUS.EDU","")`. The surviving
+`User.userID` is forced to this so it matches `session.user.userID` at runtime.
+
+**Write flag:** this script uses `APPLY=yes` (NOT `DRY_RUN=false`) — default is
+dry-run. **Backup:** every affected `User` doc is written to
+`scripts/remediation/backups/merge-backup.json` before any delete (the run aborts
+if that write fails). **Idempotent:** safe to re-run — merged groups collapse to
+singletons, reassignments match 0 rows, the keeper is already canonical, matric
+upserts are stable, and index creation is a no-op if present.
+
+### Prerequisites (in order)
+
+1. **`npx prisma db push`** — creates the `UserMatric` collection + its `userID`
+   unique index and regenerates the client. `src/server/auth.ts` already reads
+   `db.userMatric`, so this is required before the app (and the gate) run.
+   (The migration itself writes `UserMatric` via `$runCommandRaw`, so it does not
+   depend on the regenerated delegate — but the app does.)
+2. **Deploy the login-gate code first** (auth session lookup, `matricProcedure`,
+   `MatricGate`, `/onboarding/matric`, `user.setMatric`) so freshly-merged users
+   who have no matric can actually clear the gate.
+3. Capture pre-migration global per-collection counts for Bookings/Posts/Order/
+   UserCCA/Gym as an independent baseline (see the risk register R17).
+
+### Run order
+
+```bash
+npx prisma db push                                  # create UserMatric (prereq)
+node scripts/remediation/merge-accounts.mjs         # DRY RUN — review output
+# ...review: 58 mixed groups expected; check flags, matric picks, deletes,
+#    before/after conservation lines, and the IDENTITY_MISMATCH_FOLLOWUP list...
+APPLY=yes node scripts/remediation/merge-accounts.mjs   # apply (writes)
+```
+
+Dry-run prints, per group: canonical userID, chosen matric, keeper `_id` (and any
+`userID -> canonical` rename), the source userIDs whose data moves, delete count,
+before-counts per dependent collection, and any flags (`NO_HASH_IN_GROUP`,
+`NON_NUS_EMAIL`, `MULTIPLE_MATRICS`, `CANONICAL_COLLISION_OUTSIDE_GROUP`, etc.).
+Groups flagged `NO_HASH_IN_GROUP` / `EMPTY_CANONICAL` /
+`CANONICAL_COLLISION_OUTSIDE_GROUP` are **skipped** for manual handling and block
+index creation. Apply mode recounts after the merge and asserts, per collection:
+`after[canonical] == Σ before[oldIDs]`, `after[source] == 0`, and global
+conservation — printing `*** VERIFY FAILED ***` and exiting non-zero on any miss.
+The `email_unique_ci` index is created only when there are **zero** failures.
+
+### Finding #9 — the 515 non-duplicate matric-only users (documented follow-up)
+
+These have a UNIQUE email, so they are **singletons** and are NOT merged. But
+their `userID` is their A-format matric, while their runtime
+`session.user.userID` is the E-format value derived from their email — so their
+Bookings/etc. are **mis-keyed** and look empty at runtime. This migration:
+
+- **Pre-seeds** `UserMatric{ userID: <their A-format userID>, matric: <same> }`
+  (create-only, never clobbers) so the login gate does **not** needlessly prompt
+  them. It does **NOT** rewrite their `userID`.
+- **Reports** every such singleton as `IDENTITY_MISMATCH_FOLLOWUP` with a sample,
+  recommending a **separate, backed-up, signed-off re-key migration** that
+  reassigns their dependent data from the A-format userID to their canonical
+  NUSNET id. That changes 515 users' data keys and must be run deliberately.
+
+The 713 NUSNET-only users have no A-format account anywhere, so they get no
+`UserMatric` row and the gate correctly prompts each of them once — intended.
+
+`BookingLogs` (audit history) is **counted per userID but not reassigned** — an
+explicit out-of-scope follow-up printed under `AUDIT-ONLY`.
 
 ## Step 3 — Money as integer cents (#18)
 

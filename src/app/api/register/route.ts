@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { db } from "~/server/db";
 import { hashPassword } from "~/lib/password";
 import { rateLimit, clientIp } from "~/lib/rateLimit";
+import { canonicalUserID, isNusStudentEmail } from "~/lib/identity";
+import { ensureBaseline } from "~/server/api/services/roles";
 
 interface registerPayload {
   email: string;
@@ -48,7 +50,14 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!email.endsWith("@u.nus.edu") || email.endsWith("@nus.edu.sg")) {
+    // D-7 via the ONE shared predicate (I-12). This replaces an endsWith()
+    // pair that was a live bug: it rejected "E1234567@U.NUS.EDU" outright
+    // (endsWith is case-sensitive) and accepted "bob@u.nus.edu.evil.com" and
+    // "bob@evil.com@u.nus.edu". A user who cannot register cannot receive the
+    // resident baseline, so this rejection was a lockout, not just an
+    // inconvenience. The @nus.edu.sg clause is now subsumed: the anchored
+    // regex admits u.nus.edu and nothing else.
+    if (!isNusStudentEmail(email)) {
       return NextResponse.json({ error: "Invalid Email" }, { status: 400 });
     }
 
@@ -86,13 +95,28 @@ export async function POST(req: Request) {
       data: {
         email: email.toLowerCase(),
         passwordHash: hashedPassword,
-        userID: email.toUpperCase().replace("@U.NUS.EDU", ""),
+        // I-1: the anchored shared derivation, not an unanchored .replace().
+        // Guaranteed non-empty here — isNusStudentEmail() passed above, and
+        // canonicalUserID() !== "" is exactly equivalent to it by construction.
+        userID: canonicalUserID(email),
         telegramHandle: telegramHandle,
         displayName: fullName,
         block: Number(blockNumber),
         bio: bio,
       },
     });
+
+    // G-A / I-8a: every path that creates a User must ensure the resident
+    // baseline in the SAME request, or the account it created is silently
+    // unable to book.
+    //
+    // Deliberately AFTER the create and deliberately NOT in a cross-collection
+    // transaction with it: the baseline is repairable and the User row is not,
+    // so a transaction failure would fail an otherwise-good registration to
+    // protect the cheaper half. ensureBaseline never throws and takes the
+    // EMAIL, canonicalizing internally (I-8d). If it returns false we still
+    // return 201 — I-8b repairs at first login.
+    await ensureBaseline(db, email);
 
     return NextResponse.json(
       { message: "User created successfully.", userId: newUser.id },

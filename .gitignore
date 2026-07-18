@@ -46,3 +46,7 @@ yarn-error.log*
 # idea files
 .idea
 .env*
+
+# migration data dumps — contain user records (emails, display names), never commit
+/scripts/remediation/backups/
+/scripts/remediation/data/
