@@ -41,9 +41,15 @@ const ProfilePage: React.FC = () => {
     refetch,
   } = api.user.getCurrentUserData.useQuery();
 
-  const handleEditSuccess = async () => {
+  // The message comes FROM the modal: it is the only thing that knows which of
+  // the two writes actually landed, so a fixed string here would report a
+  // matric change that never happened.
+  const handleEditSuccess = async (message: string) => {
     await refetch();
-    setToastContent("Profile updated successfully");
+    // Re-mask on every save. Editing must not leave the matric permanently
+    // visible on the page behind the modal.
+    setShowMatric(false);
+    setToastContent(message);
     setToastType("success");
     setToastOpen(true);
   };
@@ -73,6 +79,7 @@ const ProfilePage: React.FC = () => {
             // "" — NOT a fabricated `?? 8`, which pre-selected Block 8 for a user
             // who had never chosen one and let them save it by accident.
             block: user.block ?? "",
+            matric: user.matric ?? "",
           }}
           onSuccess={handleEditSuccess}
         />
@@ -275,9 +282,11 @@ const ProfilePage: React.FC = () => {
                           )}
                         </span>
                       </div>
-                      {/* Set once at onboarding; not self-service in v1. */}
+                      {/* Editable via Edit Profile, but the DEFAULT render
+                          stays masked behind the show/hide toggle above —
+                          it is an identity credential, not a display field. */}
                       <p className="mt-1 text-xs text-gray-400">
-                        Wrong matric? Contact the JCRC.
+                        Wrong matric? Change it under Edit Profile.
                       </p>
                     </div>
 

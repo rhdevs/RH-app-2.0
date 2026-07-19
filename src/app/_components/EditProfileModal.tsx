@@ -15,6 +15,7 @@ import {
   BIO_MAX,
   BLOCKS,
   DISPLAY_NAME_MAX,
+  MATRIC_RE,
   updateProfileInput,
 } from "~/lib/schemas/profile";
 
@@ -29,9 +30,18 @@ interface EditProfileModalProps {
      *  a real block: pre-selecting one lets a user save a block they never
      *  picked. */
     block: number | "";
+    /** "" when no matric has been set yet. */
+    matric: string;
   };
-  onSuccess: () => void;
+  /** Given the message to surface, so the toast reflects what ACTUALLY saved
+   *  rather than a fixed "Profile updated" that lies on a partial save. */
+  onSuccess: (message: string) => void;
 }
+
+/** The stored form of a typed matric. Matches the server's own transform
+ *  (trim + uppercase) so the "did it change?" comparison is not fooled by
+ *  whitespace or case. */
+const normalizeMatric = (v: string) => v.trim().toUpperCase();
 
 /**
  * This modal renders NO role control of any kind — no checkbox, no select, and
@@ -54,32 +64,25 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   );
   const [bio, setBio] = useState<string>(initialData.bio);
   const [block, setBlock] = useState<number | "">(initialData.block);
+  const [matric, setMatric] = useState<string>(initialData.matric);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   const utils = api.useUtils();
 
-  const updateUser = api.user.updateUserData.useMutation({
-    onSuccess: (updated) => {
-      // The MERGE matters: the mutation deliberately returns neither roles nor
-      // matric nor eligible, so a naive setData(updated) would blank the badges
-      // until the background invalidate resolves — i.e. it would flash the
-      // "No roles — cannot book" warning at a user who is perfectly fine.
-      // The mutation's select also omits userID and email, so this cannot
-      // clobber the session-derived canonical id (I-1).
-      utils.user.getCurrentUserData.setData(undefined, (old) =>
-        old ? { ...old, ...updated } : old,
-      );
-      void utils.user.getCurrentUserData.invalidate();
-      onSuccess();
-      onClose();
-    },
-    // Without this the modal just sits there on a rejection with no feedback,
-    // which is how a validation change fails silently app-wide.
-    onError: (e) => setFormError(e.message),
-  });
+  // Both mutations are driven imperatively from handleSubmit via mutateAsync
+  // rather than through onSuccess/onError callbacks. Two independent writes
+  // land here (profile fields via updateUserData, matric via setMatric —
+  // `writeMatric` is the single matric writer, so it CANNOT be folded into
+  // updateUserData), and per-mutation callbacks cannot express "one succeeded,
+  // the other did not". Closing the modal and toasting success from the first
+  // callback while the second is still in flight is exactly how a failed save
+  // gets reported as a good one.
+  const updateUser = api.user.updateUserData.useMutation();
+  const setMatricMutation = api.user.setMatric.useMutation();
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setFormError(null);
 
     if (block === "") {
@@ -96,21 +99,92 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
       block,
     });
 
+    const errs: Record<string, string> = {};
     if (!parsed.success) {
-      const errs: Record<string, string> = {};
       for (const issue of parsed.error.issues) {
         const key = issue.path[0];
         if (typeof key === "string" && !errs[key]) errs[key] = issue.message;
       }
+    }
+
+    // Same regex the server refines on (MATRIC_RE from the shared schema) —
+    // not a second validator.
+    const nextMatric = normalizeMatric(matric);
+    const matricChanged = nextMatric !== normalizeMatric(initialData.matric);
+    if (matricChanged && !MATRIC_RE.test(nextMatric)) {
+      errs.matric =
+        nextMatric === ""
+          ? "Enter your matriculation number."
+          : "Enter it in the format A0234567X — a letter, seven digits and a letter.";
+    }
+
+    if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
       return;
     }
 
     setFieldErrors({});
-    updateUser.mutate({ displayName, telegramHandle, bio, block });
+    setIsSaving(true);
+
+    // ORDER IS DELIBERATE: matric first. It is the write that can be REFUSED
+    // outright (already registered to another account), and running it first
+    // means that refusal leaves nothing at all saved — a clean "nothing
+    // happened, fix this and retry" instead of a half-applied form.
+    let matricSaved = false;
+    try {
+      if (matricChanged) {
+        await setMatricMutation.mutateAsync({ matric: nextMatric });
+        matricSaved = true;
+        // No optimistic setData for matric. The cached profile is a UNION of an
+        // ordinary profile and the empty-identity shape, and patching `matric`
+        // across it does not typecheck — nor should it, since the two shapes
+        // disagree about whether a matric can exist at all. The invalidate
+        // below plus the page's own refetch supply the new value.
+      }
+
+      const updated = await updateUser.mutateAsync({
+        displayName,
+        telegramHandle,
+        bio,
+        block,
+      });
+
+      // The MERGE matters: the mutation deliberately returns neither roles nor
+      // matric nor eligible, so a naive setData(updated) would blank the badges
+      // until the background invalidate resolves — i.e. it would flash the
+      // "No roles — cannot book" warning at a user who is perfectly fine.
+      // The mutation's select also omits userID and email, so this cannot
+      // clobber the session-derived canonical id (I-1).
+      utils.user.getCurrentUserData.setData(undefined, (old) =>
+        old ? { ...old, ...updated } : old,
+      );
+      void utils.user.getCurrentUserData.invalidate();
+
+      onSuccess(
+        matricSaved
+          ? "Profile and matriculation number updated"
+          : "Profile updated successfully",
+      );
+      onClose();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Something went wrong.";
+      // If matric went through and the profile write then failed, say so. The
+      // alternative — a bare "could not save" — would send the user back to
+      // re-enter a matric that is already stored.
+      setFormError(
+        matricSaved
+          ? `Your matriculation number was saved, but the rest of your profile was not: ${message}`
+          : message,
+      );
+      // A partial save means the cache no longer matches the database (the
+      // matric landed, the profile fields did not), so refetch the truth.
+      void utils.user.getCurrentUserData.invalidate();
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const isPending = updateUser.isPending;
+  const isPending = isSaving;
 
   return (
     <Dialog
@@ -127,7 +201,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
             Edit Profile
           </DialogTitle>
           <DialogDescription className="text-sm text-gray-500">
-            Your email, matric number and roles cannot be changed here.
+            Your email and roles cannot be changed here.
           </DialogDescription>
         </DialogHeader>
 
@@ -244,6 +318,34 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
               <p className="mt-1 text-sm text-red-600">{fieldErrors.block}</p>
             )}
           </div>
+
+          <div>
+            <label
+              htmlFor="profile-matric"
+              className="block text-sm font-medium text-gray-700"
+            >
+              Matriculation Number
+            </label>
+            {/* Uppercased as you type so what is shown is what is stored — the
+                server applies the same transform. */}
+            <input
+              id="profile-matric"
+              value={matric}
+              maxLength={9}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="A0234567X"
+              onChange={(e) => setMatric(e.target.value.toUpperCase())}
+              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 font-mono uppercase shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              The number on your student card, like A0234567X. It is used to
+              match you to hall records, so make sure it is exactly right.
+            </p>
+            {fieldErrors.matric && (
+              <p className="mt-1 text-sm text-red-600">{fieldErrors.matric}</p>
+            )}
+          </div>
         </div>
 
         <DialogFooter className="mt-6 gap-2">
@@ -257,7 +359,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
           </button>
           <button
             type="button"
-            onClick={handleSubmit}
+            onClick={() => void handleSubmit()}
             // Save must be disabled while in flight, or rapid clicks fire N
             // concurrent updates.
             disabled={isPending}

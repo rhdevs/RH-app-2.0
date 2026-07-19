@@ -39,7 +39,9 @@ export const sanitizeName = (s: string) =>
  * `matric` key. The mutation targets `ctx.session.user.id` and zod strips
  * unknown keys, so the only way a user escalates through the profile save is if
  * someone ADDS such a key here. Role mutation lives behind the admin router's
- * G1..G7 guards; matric is set once via `user.setMatric`.
+ * G1..G7 guards; matric is written ONLY via `user.setMatric`, which routes
+ * through `writeMatric` and enforces its own duplicate guard. The profile edit
+ * modal calls that procedure separately — it does not smuggle matric in here.
  */
 export const updateProfileInput = z.object({
   // NOT .min(1): pre-existing rows (created by the NextAuth Google adapter) may

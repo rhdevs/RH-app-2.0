@@ -94,6 +94,51 @@ async function writeMatric(
   return record.matric;
 }
 
+/**
+ * Refuse a matric that a DIFFERENT canonical userID already holds.
+ *
+ * Why this is a check and not a `@unique` index: `UserMatric.matric` is
+ * deliberately non-unique in schema.prisma because the legacy data ALREADY
+ * contains duplicate matrics, and bulk resolution needs to READ those rows and
+ * report them as AMBIGUOUS rather than have the database refuse to hold them.
+ * Adding a unique index would break that remediation path (and could not be
+ * created against the live collection anyway while the duplicates exist).
+ *
+ * But "we must be able to read pre-existing duplicates" is not "a user may
+ * newly claim someone else's number". Matric is an identity key in the bulk
+ * import: if two accounts hold one matric, an import row can resolve to the
+ * wrong person, which is an impersonation primitive, not a display bug. So the
+ * WRITE path refuses new collisions while the SCHEMA stays permissive enough to
+ * represent the old ones.
+ *
+ * This is a read-then-write check and is therefore TOCTOU-racy in principle;
+ * two users would have to submit the same matric within the same few
+ * milliseconds to slip through, and the result is the pre-existing AMBIGUOUS
+ * state that bulk resolution already handles rather than a new failure mode.
+ *
+ * Applied in `setMatric` (self-service) only. `completeProfile` resolves a
+ * post-merge flag against a matric the merge itself derived, and hard-failing
+ * there would strand a user in a form they cannot clear.
+ */
+async function assertMatricUnclaimed(
+  db: PrismaClient,
+  userID: string,
+  matric: string,
+): Promise<void> {
+  const claimedByAnother = await db.userMatric.findFirst({
+    where: { matric, userID: { not: userID } },
+    select: { id: true },
+  });
+
+  if (claimedByAnother) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message:
+        "That matriculation number is already registered to another account. If you think that is wrong, contact the JCRC.",
+    });
+  }
+}
+
 export const userRouter = createTRPCRouter({
   getCurrentUserData: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id;
@@ -254,6 +299,10 @@ export const userRouter = createTRPCRouter({
           message: "No canonical userID on session.",
         });
       }
+
+      // Before writing: refuse a number another account already holds. See the
+      // note on the helper for why this is a check rather than a unique index.
+      await assertMatricUnclaimed(ctx.db, userID, input.matric);
 
       return { matric: await writeMatric(ctx.db, userID, input.matric) };
     }),
