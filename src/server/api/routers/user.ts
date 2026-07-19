@@ -93,7 +93,10 @@ export const userRouter = createTRPCRouter({
         matric: null,
         hasMatric: false,
         roles: [] as string[],
-        eligible: false,
+        // D-C: the same field MatricGate branches on, so the gate and this page
+        // can no longer disagree about what an empty-identity session is.
+        hasIdentity: false,
+        // Retained, and identical in value on this branch, so /profile's
       };
     }
 
@@ -115,7 +118,7 @@ export const userRouter = createTRPCRouter({
       matric: matricRow?.matric ?? null,
       hasMatric: Boolean(matricRow?.matric),
       roles: roles as string[], // DISPLAY ONLY (I-5)
-      eligible: true,
+      hasIdentity: true, // D-C — reached only when `userID` is non-empty
     };
   }),
 
