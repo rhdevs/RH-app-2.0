@@ -33,6 +33,16 @@ export const env = createEnv({
     APP_URL: z.string().url().optional(),
     // bcrypt cost factor for password hashing (#3).
     BCRYPT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
+    // Vercel Blob (CCA logos and banners). Provisioned by the `cca-images`
+    // store and injected automatically on Vercel; pull it locally with
+    // `vercel env pull`.
+    //
+    // OPTIONAL, unlike RESEND_API_KEY, and deliberately so: it is needed by
+    // exactly one route, and making it required would stop the whole app
+    // building for any contributor who has not pulled it. The upload route
+    // fails loudly on its own if the token is missing, which localises the
+    // breakage to the feature that needs it.
+    BLOB_READ_WRITE_TOKEN: z.string().optional(),
   },
 
   /**
@@ -58,6 +68,7 @@ export const env = createEnv({
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     APP_URL: process.env.APP_URL,
     BCRYPT_ROUNDS: process.env.BCRYPT_ROUNDS,
+    BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

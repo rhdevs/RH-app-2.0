@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { ccaProfileInput, CCA_DESCRIPTION_MAX } from "~/lib/schemas/cca";
+import CcaImageField from "./CcaImageField";
 
 /**
  * Edit the CCA's description — the only thing a head can currently change.
@@ -24,13 +25,19 @@ export default function CcaDetailsForm({ ccaID }: { ccaID: number }) {
   const profile = api.cca.getProfile.useQuery({ ccaID }, { retry: false });
 
   const [description, setDescription] = useState("");
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  // Seed the textarea once the saved value arrives. Keyed on the query data
+  // Seed the fields once the saved values arrive. Keyed on the query data
   // rather than done in render so typing is never clobbered by a refetch.
   useEffect(() => {
-    if (profile.data) setDescription(profile.data.description);
+    if (profile.data) {
+      setDescription(profile.data.description);
+      setLogoUrl(profile.data.logoUrl);
+      setBannerUrl(profile.data.bannerUrl);
+    }
   }, [profile.data]);
 
   const update = api.cca.updateProfile.useMutation({
@@ -72,7 +79,10 @@ export default function CcaDetailsForm({ ccaID }: { ccaID: number }) {
         : "That didn't save. Try again."
     : null;
 
-  const dirty = description !== (profile.data?.description ?? "");
+  const dirty =
+    description !== (profile.data?.description ?? "") ||
+    logoUrl !== (profile.data?.logoUrl ?? null) ||
+    bannerUrl !== (profile.data?.bannerUrl ?? null);
 
   return (
     <form
@@ -82,10 +92,18 @@ export default function CcaDetailsForm({ ccaID }: { ccaID: number }) {
         setSaved(false);
         // Mirror the server's validation client-side using the SAME schema, so
         // the two can never disagree about what is accepted.
-        const parsed = ccaProfileInput.safeParse({ ccaID, description });
+        const parsed = ccaProfileInput.safeParse({
+          ccaID,
+          description,
+          logoUrl,
+          bannerUrl,
+        });
         if (!parsed.success) {
+          const issue = parsed.error.issues[0];
           setFieldError(
-            parsed.error.issues[0]?.message ?? "That description isn't valid.",
+            issue?.message === "NOT_A_VALID_CCA_IMAGE_URL"
+              ? "That image doesn't belong to this CCA. Re-upload it."
+              : (issue?.message ?? "That description isn't valid."),
           );
           return;
         }
@@ -120,6 +138,37 @@ export default function CcaDetailsForm({ ccaID }: { ccaID: number }) {
           {description.length}/{CCA_DESCRIPTION_MAX}
         </p>
       </div>
+
+      <div className="grid gap-5 border-t border-gray-100 pt-5 sm:grid-cols-2">
+        <CcaImageField
+          ccaID={ccaID}
+          kind="logo"
+          label="Logo"
+          help="Square works best. Shown next to your CCA's name."
+          value={logoUrl}
+          onChange={(url) => {
+            setLogoUrl(url);
+            setSaved(false);
+          }}
+          disabled={update.isPending}
+        />
+        <CcaImageField
+          ccaID={ccaID}
+          kind="banner"
+          label="Banner"
+          help="A wide image for the top of your CCA's page."
+          value={bannerUrl}
+          onChange={(url) => {
+            setBannerUrl(url);
+            setSaved(false);
+          }}
+          disabled={update.isPending}
+        />
+      </div>
+
+      <p className="text-xs text-gray-400">
+        Images upload straight away, but only stick once you save.
+      </p>
 
       {fieldError && <p className="text-sm text-red-600">{fieldError}</p>}
       {serverError && <p className="text-sm text-red-600">{serverError}</p>}

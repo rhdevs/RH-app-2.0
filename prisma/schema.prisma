@@ -451,6 +451,15 @@ model CcaProfile {
   id          String    @id @default(auto()) @map("_id") @db.ObjectId
   ccaID       Int       @unique(map: "ccaID")
   description String?
+  /// Vercel Blob URLs in the public `cca-images` store.
+  ///
+  /// VALIDATED BEFORE PERSISTING, never trusted. These arrive from the CLIENT
+  /// — the browser uploads directly to Blob and then hands us the resulting
+  /// URL — so `cca.updateProfile` checks the host against the store's and the
+  /// pathname against `cca/{ccaID}/` before writing. Without that a head could
+  /// point their CCA at an arbitrary external image, or at another CCA's blob.
+  logoUrl     String?
+  bannerUrl   String?
   updatedAt   DateTime?
   updatedBy   String?
 }
