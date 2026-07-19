@@ -52,6 +52,9 @@ const getTimeFrameStart = (value: string): number | null => {
   }
 };
 
+/** 2100-01-01. The upper bound exists only because getBookings requires one. */
+const UNBOUNDED_END = 4102444800;
+
 const PastBookings = () => {
   const { data: session, status: sessionStatus } = useSession();
   // 08 §1.2: canonical session userID, "" for an account that is not on
@@ -86,10 +89,20 @@ const PastBookings = () => {
 
   const startTime = getTimeFrameStart(selectedTimeFrame) ?? 0;
 
+  // This page is "Your Bookings", not "Your Past Bookings". `endTime` used to
+  // be `now`, and the server filter is an OVERLAP test
+  // (`startTime <= endTime && endTime >= startTime`), so a booking that had not
+  // started yet failed the first half and was invisible — you could make a
+  // booking and never see it again anywhere in the app. There is no other
+  // upcoming view; this component is the only consumer.
+  //
+  // The timeframe dropdown chooses how far BACK to look, so only the lower
+  // bound is a real filter. The upper bound exists solely because the procedure
+  // requires one; unbounded is what this page always meant.
   const queryInput = useMemo(
     () => ({
       startTime,
-      endTime: Math.floor(Date.now() / 1000),
+      endTime: UNBOUNDED_END,
       seeAll: true,
       ...(selectedFacilityIds.length > 0
         ? { facilityIDs: selectedFacilityIds }
