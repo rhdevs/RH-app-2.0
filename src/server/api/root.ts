@@ -3,6 +3,8 @@ import { facilityBookingRouter } from "~/server/api/routers/facilitiesBooking";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 import { userRouter } from "./routers/user";
 import { adminRouter } from "./routers/admin";
+import { ccaRouter } from "./routers/cca";
+import { ccaAdminRouter } from "./routers/ccaAdmin";
 
 /**
  * This is the primary router for your server.
@@ -14,6 +16,10 @@ export const appRouter = createTRPCRouter({
   bookings: facilityBookingRouter,
   user: userRouter,
   admin: adminRouter,
+  /** Object-scoped CCA reads. Guarded per-ccaID, not per-role — see cca.ts. */
+  cca: ccaRouter,
+  /** Admin-only CCA management, behind the cca.management.enabled switch. */
+  ccaAdmin: ccaAdminRouter,
 });
 
 // export type definition of API

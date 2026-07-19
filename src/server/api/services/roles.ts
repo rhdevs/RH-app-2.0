@@ -110,6 +110,14 @@ export const AUDIT_ACTIONS = [
   "ccaHead.grant",
   "ccaHead.revoke",
   "ccaHead.transfer",
+  // CCA management (/admin/manage-ccas). There is deliberately NO "cca.delete":
+  // no surface deletes a CCA, and deleteCcaCascade is script-only and guarded.
+  // Do not add one without re-reading cascade.ts — a delete that reaches
+  // bookings by ccaID is the most destructive write in this codebase.
+  "cca.create",
+  "cca.rename",
+  "ccaMember.add",
+  "ccaMember.remove",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -724,6 +732,33 @@ export type Capabilities = {
    * admin AND jcrc.
    */
   manageCcaHeads: boolean;
+  /**
+   * May reach /cca AT ALL — the CCA head's own surface.
+   *
+   * COARSE, exactly like reachDashboard: it answers "is this surface for you",
+   * NEVER "which CCA". Which ccaID is enforced per request by assertHeadsCca
+   * (services/ccaScope.ts), which reads CcaHead directly.
+   *
+   * The first capability in which `cca_head` appears. That couples the route to
+   * CH-1, and it is safe in the failure direction: if the string ever outlives
+   * its CcaHead rows, the holder reaches an index whose CONTENT comes from
+   * CcaHead — so they see an empty list and every [ccaID] is refused. A stale
+   * string yields an empty page, never a leaked roster.
+   *
+   * THIS IS NOT AN AUTHORIZATION STATEMENT. Do not "optimize" cca.getRoster by
+   * trusting it.
+   */
+  reachCcaDashboard: boolean;
+  /** May pick any CCA and read its roster (/admin/ccas). Read-only. */
+  viewAnyCcaRoster: boolean;
+  /**
+   * May create/rename CCAs, manage their heads, and add/remove members
+   * (/admin/manage-ccas). Admin only, and additionally behind the
+   * `cca.management.enabled` kill switch checked in the procedures.
+   *
+   * Deliberately NOT a licence to delete: no surface deletes a CCA.
+   */
+  manageCcas: boolean;
   /** May act on a user who holds `admin` at all. D-2: admin only. */
   modifyAdmins: boolean;
   /** May see WHO holds admin (counts and identities). D-2: admin only. */
@@ -751,6 +786,11 @@ export function computeCapabilities(roles: readonly string[]): Capabilities {
     assignableRoles: [...assignableBy(roles)],
     revocableRoles: [...revocableFromOthersBy(roles)],
     manageCcaHeads: manager,
+    // CCA_HEAD_ROLE's first appearance in a capability. Managers are included
+    // so an admin who also heads a CCA still reaches their own surface.
+    reachCcaDashboard: manager || roles.includes(CCA_HEAD_ROLE),
+    viewAnyCcaRoster: manager,
+    manageCcas: admin,
     modifyAdmins: admin,
     seeAdminIdentities: admin,
     bulkAssign: manager,
