@@ -24,11 +24,32 @@ export async function deleteFacilityCascade(
   });
 }
 
+/**
+ * NO UI REACHES THIS. CCA deletion is deliberately not exposed by any surface —
+ * not /cca, not /admin/ccas, not /admin/manage-ccas. It remains here for scripts
+ * only, and the two guards below exist because "there is no button" is not a
+ * safety property: a script, a REPL, or a future contributor can still call it.
+ *
+ * GUARD 1 — ccaID 0 IS RESERVED (07-cca-future.md §5).
+ * BookingModal.tsx hardcodes `ccaID: 0` on every booking the current UI creates.
+ * The bookings.deleteMany below matches on ccaID, so deleting a CCA row that
+ * happens to hold ccaID 0 would delete EVERY BOOKING IN THE SYSTEM. There is no
+ * reserved-value constraint on the column, so this is enforced here.
+ *
+ * GUARD 2 — CcaHead must be cleaned up (07-cca-future.md §5.1).
+ * Orphaned CcaHead rows keep an ex-head's `cca_head` string alive permanently:
+ * revokeCcaHead drops the string only when `remaining === 0`, and that count
+ * never reaches zero because the row survives — while the CCA no longer exists
+ * to revoke against. That is CH-1 drift the string↔row detector cannot see,
+ * because it checks string↔row, not row↔CCA.
+ */
 export async function deleteCcaCascade(db: PrismaClient, ccaID: number) {
+  if (ccaID === 0) throw new Error("RESERVED_CCAID");
   return db.$transaction(async (tx) => {
     await tx.posts.deleteMany({ where: { ccaID } });
     await tx.userCCA.deleteMany({ where: { ccaID } });
     await tx.bookings.deleteMany({ where: { ccaID } });
+    await tx.ccaHead.deleteMany({ where: { ccaID } });
     return tx.cCA.delete({ where: { ccaID } });
   });
 }

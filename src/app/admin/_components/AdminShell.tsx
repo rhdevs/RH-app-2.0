@@ -5,9 +5,11 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Users,
+  Users2,
   Upload,
   DoorOpen,
   ScrollText,
+  Settings2,
 } from "lucide-react";
 
 import Header from "~/app/_components/header";
@@ -35,6 +37,21 @@ const ADMIN_TABS = [
   },
   { href: "/admin/users", label: "Users", icon: Users, requires: "listUsers" },
   { href: "/admin/bulk", label: "Bulk", icon: Upload, requires: "bulkAssign" },
+  // Read-only roster viewer — admin + jcrc.
+  {
+    href: "/admin/ccas",
+    label: "CCAs",
+    icon: Users2,
+    requires: "viewAnyCcaRoster",
+  },
+  // CCA create/rename, heads and members — admin only, and additionally behind
+  // the cca.management.enabled kill switch checked in the procedures.
+  {
+    href: "/admin/manage-ccas",
+    label: "Manage CCAs",
+    icon: Settings2,
+    requires: "manageCcas",
+  },
   {
     href: "/admin/facilities",
     label: "Facilities",
