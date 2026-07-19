@@ -56,7 +56,16 @@ function describe(f: Facility) {
 
 export default function FacilityAccessTable() {
   const utils = api.useUtils();
-  const { data, isLoading } = api.admin.listFacilityAccess.useQuery();
+  const {
+    data,
+    isLoading,
+    isError,
+    error: loadError,
+    refetch,
+  } = api.admin.listFacilityAccess.useQuery();
+  /** Initial-load failure only — a later refetch blip keeps the previous rows
+   *  (09 §2.8). */
+  const loadFailed = isError && !data;
   const [editing, setEditing] = useState<Facility | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +90,31 @@ export default function FacilityAccessTable() {
 
   return (
     <div className="space-y-6">
+      {/* Before anything derived from `data ?? []`. The amber "N facilities have
+          no access rule" warning below comes from the SAME array as the
+          all-clear, so on a failed read the fail-safe warning disappears
+          exactly when the data is unavailable (09 §2.8). Say so instead. */}
+      {loadFailed && (
+        <Alert variant="destructive">
+          <AlertTitle>Could not load facility access rules</AlertTitle>
+          <AlertDescription>
+            The table below is empty because the rules could not be fetched, not
+            because no facilities are configured. Any facility missing an access
+            rule will not be flagged here until this loads.{" "}
+            {loadError?.message ?? "Something went wrong."}
+            <div className="mt-3">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void refetch()}
+              >
+                Try again
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* The operational half of the fail-safe default: this is what keeps a
           silent config gap from becoming a permanent one. */}
       {unconfigured.length > 0 && (
@@ -127,12 +161,21 @@ export default function FacilityAccessTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading && (
+            {loadFailed ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-sm text-gray-500">
-                  Loading…
+                <TableCell colSpan={5} className="text-sm text-red-700">
+                  Could not load facility access rules. This is not a list of
+                  zero facilities — nothing could be read.
                 </TableCell>
               </TableRow>
+            ) : (
+              isLoading && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-sm text-gray-500">
+                    Loading…
+                  </TableCell>
+                </TableRow>
+              )
             )}
             {facilities.map((f) => (
               <TableRow key={f.facilityID}>

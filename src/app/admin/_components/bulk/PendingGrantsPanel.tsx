@@ -46,9 +46,19 @@ function ExpiryBadge({ expiresAt }: { expiresAt: Date }) {
 export default function PendingGrantsPanel() {
   const cap = useCapabilities();
   const utils = api.useUtils();
-  const { data, isLoading } = api.admin.listPendingGrants.useQuery({
+  const {
+    data,
+    isLoading,
+    isError,
+    error: loadError,
+    refetch,
+  } = api.admin.listPendingGrants.useQuery({
     limit: 50,
   });
+
+  /** A failed FIRST load, not a later blip: react-query keeps previous data, and
+   *  a transient refetch failure must not blank a working page (09 §2.8). */
+  const loadFailed = isError && !data;
 
   const [identifiers, setIdentifiers] = useState("");
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
@@ -103,6 +113,27 @@ export default function PendingGrantsPanel() {
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* A SECOND surface, deliberately not the Alert above: that one reports a
+          failed revoke or create. A failed read is a different fact and needs
+          its own message. */}
+      {loadFailed && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            The list of deferred grants could not be loaded, so this page cannot
+            tell you whether any are outstanding. Do not read the table below as
+            &quot;none&quot;. {loadError?.message ?? "Something went wrong."}{" "}
+            <Button
+              size="sm"
+              variant="outline"
+              className="ml-2"
+              onClick={() => void refetch()}
+            >
+              Try again
+            </Button>
+          </AlertDescription>
         </Alert>
       )}
 
@@ -211,12 +242,27 @@ export default function PendingGrantsPanel() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!isLoading && rows.length === 0 && (
+            {/* The error branch comes FIRST, so `data ?? []` can never reach the
+                EmptyState and turn a failed read into an all-clear about
+                outstanding privileged bearer credentials (09 §2.8). */}
+            {loadFailed ? (
               <TableRow>
                 <TableCell colSpan={6}>
-                  <EmptyState title="No deferred grants outstanding." />
+                  <EmptyState
+                    title="Could not load deferred grants"
+                    hint="There may or may not be grants outstanding — the list could not be fetched. Use Try again above."
+                  />
                 </TableCell>
               </TableRow>
+            ) : (
+              !isLoading &&
+              rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6}>
+                    <EmptyState title="No deferred grants outstanding." />
+                  </TableCell>
+                </TableRow>
+              )
             )}
             {rows.map((r) => (
               <TableRow key={r.userID}>
