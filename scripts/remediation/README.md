@@ -72,9 +72,19 @@ in the new `UserMatric` collection (the SAME storage the login gate reads), and
 finally enforces case-insensitive email uniqueness. It supersedes
 `dedupe-users.mjs` for the 58 mixed-userID groups that script refuses to touch.
 
-Canonical identity per email group mirrors `src/server/auth.ts` exactly:
-`canonical = email.toUpperCase().replace("@U.NUS.EDU","")`. The surviving
-`User.userID` is forced to this so it matches `session.user.userID` at runtime.
+Canonical identity per email group is derived by `canonicalUserID()` from
+`scripts/remediation/lib/identity.mjs` — the one shared derivation, mirrored by
+`src/lib/identity.ts` and gated by `verify-identity-parity.mjs`. **This runbook
+deliberately states no formula:** an earlier revision of this line restated the
+pre-`9cb701b` unanchored `.replace()` and kept restating it for months after the
+code changed, which is how a reviewer re-derives a wrong invariant from the docs.
+Read the module. The surviving `User.userID` is forced to that value so it
+matches `session.user.userID` at runtime.
+
+An address that is not `@u.nus.edu` canonicalises to `""`. Such a group is
+**refused**, twice over (`EMPTY_CANONICAL` and `NON_NUS_EMAIL`), and if one ever
+reaches the apply loop un-refused the entire run aborts without writing —
+there is no key the script could write for it that a session would ever produce.
 
 **Write flag:** this script uses `APPLY=yes` (NOT `DRY_RUN=false`) — default is
 dry-run. **Backup:** every affected `User` doc is written to
