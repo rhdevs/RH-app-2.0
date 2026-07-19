@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { z } from "zod";
 import { canonicalUserID, isCanonicalResidentID } from "~/lib/identity";
 
 /**
@@ -269,6 +270,24 @@ export const E_FORMAT = /^E\d{7}$/;
 export function isEFormatUserID(id: string): boolean {
   return E_FORMAT.test(id);
 }
+
+/**
+ * THE identity predicate for grant targets and for any UI that filters on one
+ * (I-12: one predicate, not two). Lives here — and not in admin.ts — because
+ * this module is runtime-pure and therefore importable by client components,
+ * while admin.ts pulls in `node:crypto` and `~/env` and cannot be.
+ *
+ * `.trim()` and `.toUpperCase()` run BEFORE the regex and are load-bearing: a
+ * value pasted from a spreadsheet carries an invisible trailing space, and a
+ * client guard that rejects what this schema accepts fails open (09 §2.6).
+ * Behaviour is exactly what admin.ts defined locally before this move — do not
+ * "tidy" it; 11 server input sites depend on it verbatim.
+ */
+export const userIDSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(E_FORMAT, "Must be an E-format NUSNET id");
 
 /* -------------------------------------------------------------------------- */
 /* I-8b — the stored baseline's self-heal                                      */

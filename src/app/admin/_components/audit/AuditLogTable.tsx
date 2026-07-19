@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { format, formatDistanceToNow } from "date-fns";
 
 import { api, type RouterOutputs } from "~/trpc/react";
+import { userIDSchema } from "~/server/api/services/roles";
 import {
   Accordion,
   AccordionContent,
@@ -92,17 +93,50 @@ export default function AuditLogTable({
   const [action, setAction] = useState("");
   const [batchId, setBatchId] = useState(initialBatchId ?? "");
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    api.admin.listAuditLog.useInfiniteQuery(
-      {
-        limit: 50,
-        actorUserID: /^E\d{7}$/.test(actorUserID) ? actorUserID : undefined,
-        targetUserID: /^E\d{7}$/.test(targetUserID) ? targetUserID : undefined,
-        action: action || undefined,
-        batchId: batchId || undefined,
-      },
-      { getNextPageParam: (l) => l.nextCursor ?? undefined },
-    );
+  /**
+   * ONE identity predicate, shared with the server (I-12). The old
+   * `/^E\d{7}$/.test(...)` here was STRICTER than `userIDSchema` and failed
+   * open on the difference: a value pasted with a trailing space failed the
+   * test, the ternary substituted `undefined`, tRPC omitted the key, and the
+   * server ran `findMany` with an empty `where` — the 50 most recent rows for
+   * EVERY user, presented as one person's role history (09 §2.6). Parsing with
+   * the server's own schema means the trailing space is normalised away and the
+   * filter applies, which is what the operator meant.
+   *
+   * And when a filter is present but genuinely unparseable we FAIL CLOSED: the
+   * query does not run at all. Showing everything is the one outcome an audit
+   * surface must never produce silently.
+   */
+  const actorParsed = userIDSchema.safeParse(actorUserID);
+  const targetParsed = userIDSchema.safeParse(targetUserID);
+  const actorInvalid = actorUserID.trim() !== "" && !actorParsed.success;
+  const targetInvalid = targetUserID.trim() !== "" && !targetParsed.success;
+  const filterInvalid = actorInvalid || targetInvalid;
+
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = api.admin.listAuditLog.useInfiniteQuery(
+    {
+      limit: 50,
+      actorUserID: actorParsed.success ? actorParsed.data : undefined,
+      targetUserID: targetParsed.success ? targetParsed.data : undefined,
+      // Blank means "do not filter on this" for these two, deliberately —
+      // unlike the identity boxes above, where blank and unparseable differ.
+      action: action || undefined,
+      batchId: batchId || undefined,
+    },
+    {
+      getNextPageParam: (l) => l.nextCursor ?? undefined,
+      enabled: !filterInvalid,
+    },
+  );
 
   const rows = useMemo(
     () => data?.pages.flatMap((p) => p.items) ?? [],
@@ -163,6 +197,19 @@ export default function AuditLogTable({
         />
       </div>
 
+      {filterInvalid && (
+        <p className="text-sm text-amber-700">
+          {actorInvalid && targetInvalid
+            ? "The Actor and Target boxes do not contain NUSNET ids."
+            : actorInvalid
+              ? "The Actor box does not contain a NUSNET id."
+              : "The Target box does not contain a NUSNET id."}{" "}
+          A NUSNET id looks like E1234567. Nothing is shown while it is
+          unreadable, because showing the whole log here would look like that
+          person&apos;s history. Correct it or clear the box.
+        </p>
+      )}
+
       {batches.length > 0 && (
         <Accordion type="multiple" className="rounded-xl bg-white px-4 shadow-lg">
           {batches.map((b) => (
@@ -203,12 +250,45 @@ export default function AuditLogTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {!isLoading && rows.length === 0 && (
+            {/* Order matters. "Could not load" is checked BEFORE "there is
+                nothing", so a failed read can never render an all-clear about
+                the history of the system (09 §2.8). `isError && !data` and not
+                `isError` alone: react-query keeps the previous pages on a later
+                failure, and a background blip must not wipe a working page. */}
+            {filterInvalid ? (
               <TableRow>
                 <TableCell colSpan={6}>
-                  <EmptyState title="No role changes recorded yet." />
+                  <EmptyState
+                    title="Not showing any entries"
+                    hint="The id you filtered on could not be read, so this table is paused. Fix the id above or clear it to see the log again."
+                  />
                 </TableCell>
               </TableRow>
+            ) : isError && !data ? (
+              <TableRow>
+                <TableCell colSpan={6}>
+                  <EmptyState
+                    title="Could not load the audit log"
+                    hint={`This is not an empty log — the entries could not be fetched, so none can be shown. ${
+                      error?.message ?? "Something went wrong."
+                    }`}
+                    action={
+                      <Button variant="outline" onClick={() => void refetch()}>
+                        Try again
+                      </Button>
+                    }
+                  />
+                </TableCell>
+              </TableRow>
+            ) : (
+              !isLoading &&
+              rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6}>
+                    <EmptyState title="No role changes recorded yet." />
+                  </TableCell>
+                </TableRow>
+              )
             )}
             {singles.map((r) => (
               <RowLine key={r.id} r={r} />

@@ -20,7 +20,6 @@ import {
   ADMIN_ROLE,
   BASELINE_ROLE,
   CCA_HEAD_ROLE,
-  E_FORMAT,
   FACILITY_ROLES,
   GRANTABLE_ROLES,
   JCRC_ROLE,
@@ -32,6 +31,7 @@ import {
   isNusStudentEmail,
   legacyMirror,
   revocableFromOthersBy,
+  userIDSchema,
   type Capabilities,
   type GrantableRole,
 } from "../services/roles";
@@ -63,12 +63,14 @@ import {
 /* SECTION A — schemas, capability assertion, plan tokens                     */
 /* ========================================================================== */
 
-/** Roles are keyed on the canonical E-format id. Re-enforced in guard G7. */
-const userIDSchema = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .regex(E_FORMAT, "Must be an E-format NUSNET id");
+/**
+ * Roles are keyed on the canonical E-format id. Re-enforced in guard G7.
+ *
+ * Defined in `../services/roles` so the audit-log filter UI can parse with the
+ * SAME predicate instead of a hand-rolled `/^E\d{7}$/` that rejects what this
+ * accepts and then silently drops the filter (I-12, 09 §2.6). Behaviour here is
+ * unchanged at all 11 input sites.
+ */
 
 /**
  * z.enum, never z.string() — unknown strings die at the boundary.
