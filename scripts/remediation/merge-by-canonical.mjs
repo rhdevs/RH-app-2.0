@@ -18,6 +18,20 @@
  *     case it carries. (The trailing-space row is a SINGLETON; it needs
  *     normalizing, not merging, and step 8 does exactly that.)
  *
+ *  1b. GROUPING IS ALSO BY SHARED MATRIC, AND IT IS TRANSITIVE. Two rows are
+ *     the same person if they share a canonical id OR a non-empty stored
+ *     `User.userID`. The live data has three pairs that email-only grouping
+ *     misses outright — E1355967 (lgd@ vs e1355967@), E1523366 (e153366@, a
+ *     one-digit-short TYPO, vs e1523366@) and E1525917 (danvern@ vs
+ *     e1525917@) — all of which are one human holding two accounts. Grouping
+ *     is therefore connected-components (union-find) over both relations, so
+ *     A~B by email and B~C by matric yield ONE group of three.
+ *
+ *     Consequence: a group can span SEVERAL canonical ids. One of them becomes
+ *     the group's identity and the rest are LOSING KEYS whose dependent rows
+ *     are reassigned onto it. See pickGroupCanonical() for the rule (E-format
+ *     institutional id beats a name-style alias) and why.
+ *
  *  2. PER-FIELD CONFLICT DETECTION. merge-accounts takes a best-of value and
  *     never notices disagreement. Here every mergeable field is classified:
  *     AGREE (all non-absent values equal under that field's normalizer) -> keep
@@ -34,6 +48,21 @@
  *     number. So: no UserMatric row is written, any existing one for that
  *     canonical id is REMOVED, and "matric" is flagged. The user re-keys it and
  *     the existing setMatric validator checks the format.
+ *
+ *  4. userCCA IS UNIONED, NEVER CLEARED. Two rows holding different CCA
+ *     memberships are not contradicting each other — they are one person's
+ *     memberships spread across two accounts. Clearing destroys real data that
+ *     nothing else records, so the merged value is the deduplicated union and
+ *     userCCA never appears in needsFields. Every other array field keeps the
+ *     old rule (see the `modules` note in FIELDS for why they differ).
+ *
+ *  5. ONLY CONSEQUENTIAL FIELDS ARE PROMPTED FOR. Conflicting fields are all
+ *     still CLEARED; `needsFields` — the list the login gate interrupts the
+ *     user with — is filtered to PROMPTABLE (matric, telegramHandle,
+ *     displayName, block). `bio` and the profile picture are cleared and NOT
+ *     prompted: cosmetic, self-service, not worth a login interruption. A group
+ *     whose only conflicts were cosmetic gets NO ProfileCompletion row at all
+ *     rather than one with an empty needsFields.
  *
  * WHAT IS NEVER CLEARED, AND WHY. `userID` on the survivor is FORCED to the
  * canonical id and is not subject to conflict-clearing. It is not a profile
@@ -80,11 +109,120 @@ import {
 
 const db = new PrismaClient();
 const COMMIT = isCommit();
+
+/**
+ * Opt-in for groups that span more than one canonical id. Held back by default
+ * because deleting the losing row also deletes a WORKING LOGIN — see the
+ * skipReason at the plan site. Review those by hand; this flag exists so the
+ * decision is explicit rather than a code edit.
+ */
+const INCLUDE_CROSS_CANONICAL = process.argv.includes("--include-cross-canonical");
 const HERE = dirname(fileURLToPath(import.meta.url));
 const raw = (cmd) => db.$runCommandRaw(cmd);
 
 /** Matches the setMatric validator in src/server/api/routers/user.ts. */
 const A_FORMAT = /^A\d{7}[A-Z]$/;
+
+/**
+ * A WELL-FORMED institutional NUSNET id: "E" + exactly seven digits. Used ONLY
+ * to rank two canonical ids against each other in pickGroupCanonical(). It is
+ * NEVER an eligibility test — L-27 (`g.s_samuel@u.nus.edu` -> "G.S_SAMUEL") is
+ * a real account and must keep working, which is why a group whose canonicals
+ * are all name-style still merges, it just ranks them lexicographically.
+ */
+const E_FORMAT = /^E\d{7}$/;
+
+/**
+ * CHANGE 3 — the ONLY field names that may reach ProfileCompletion.needsFields.
+ *
+ * Conflicting fields are still CLEARED exactly as before; this list decides
+ * only what the login gate INTERRUPTS the user to re-collect. The bar is
+ * "wrong/absent value has a consequence someone else feels": a wrong matric
+ * mis-identifies the human, a wrong telegramHandle messages a stranger, a wrong
+ * displayName mis-labels them to the hall, a wrong block decides which
+ * facilities they may book.
+ *
+ * DELIBERATELY ABSENT: "bio" and "profilePicture" (the imageKey clear). Both
+ * are cosmetic and self-service — the owner's ruling: "its non essential so they
+ * can edit the profile and add it later on too". They are still cleared, just
+ * not prompted for. "modules" is likewise absent: it is self-service and
+ * re-derivable each semester, and it is not on the owner's include list.
+ *
+ * If filtering leaves a group with NO promptable fields, NO ProfileCompletion
+ * row is written at all (step 6d already guards on needsFields.length) — an
+ * empty flag is a login interruption with nothing to ask for.
+ */
+const PROMPTABLE = new Set(["matric", "telegramHandle", "displayName", "block"]);
+
+/**
+ * SURVIVOR CANONICAL SELECTION (new in CHANGE 1).
+ *
+ * A group may now span SEVERAL canonical ids, because two rows also group when
+ * they share a stored matric. One of those canonicals becomes the group's
+ * identity — the key every dependent row is moved onto — and the rest become
+ * LOSING KEYS whose rows are reassigned to it.
+ *
+ * THE RULE, in order:
+ *   1. A well-formed E-format canonical (/^E\d{7}$/) beats a name-style one.
+ *   2. Otherwise, lowest lexicographically (total, deterministic, re-run stable).
+ *
+ * WHY RULE 1. The E-format address is the INSTITUTIONAL one — it is issued with
+ * the matric, it is what the university will still resolve after graduation, and
+ * it is the address every other NUS system keys on. A name-style localpart
+ * (`lgd@`, `danvern@`) is a self-chosen ALIAS pointing at the same mailbox.
+ * Merging onto the alias would key the account on something the institution does
+ * not consider primary and that the user may re-point.
+ *
+ * Rule 1 also happens to resolve the nastiest live case correctly WITHOUT
+ * special-casing it: `e153366@u.nus.edu` is a one-digit-short typo of
+ * `e1523366@u.nus.edu`, so its canonical "E153366" (six digits) FAILS E_FORMAT
+ * while the real "E1523366" passes, and the typo becomes the losing key. That is
+ * a consequence of the rule, not a patch for the row — but it is exactly why the
+ * rule tests the SHAPE rather than merely preferring anything starting with "E".
+ *
+ * NOTE this is independent of pickSurvivor(), which chooses which _id survives.
+ * The surviving ROW need not be one whose own email produced the surviving
+ * CANONICAL; its userID is forced to the group canonical either way.
+ */
+function pickGroupCanonical(canonicals) {
+  return [...canonicals].sort((a, b) => {
+    const ea = E_FORMAT.test(a) ? 0 : 1;
+    const eb = E_FORMAT.test(b) ? 0 : 1;
+    if (ea !== eb) return ea - eb;
+    return a < b ? -1 : 1;
+  })[0];
+}
+
+/**
+ * CHANGE 1 — TRANSITIVE grouping (union-find / connected components).
+ *
+ * Two User rows are the same person if they share a canonical id (the original
+ * rule) OR a non-empty stored `User.userID` (the matric). Transitivity is not
+ * optional: A~B by email and B~C by matric must put all three in ONE group, and
+ * a pairwise or single-pass grouping would emit A+B and a separate C, then merge
+ * them onto keys that still collide. Union-find is the only shape that gets that
+ * right regardless of iteration order.
+ *
+ * Nodes are namespaced strings ("doc:<id>", "canon:<C>", "matric:<M>") so a
+ * canonical id and an identically-spelled stored matric — which is the common
+ * case, not an edge case — cannot alias each other.
+ */
+function makeUnionFind() {
+  const parent = new Map();
+  const add = (x) => { if (!parent.has(x)) parent.set(x, x); return x; };
+  const find = (x) => {
+    add(x);
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r);
+    while (parent.get(x) !== r) { const n = parent.get(x); parent.set(x, r); x = n; }
+    return r;
+  };
+  const union = (a, b) => {
+    const ra = find(a); const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  return { find, union };
+}
 
 /**
  * Dependent collections keyed by the userID STRING with NO uniqueness
@@ -186,14 +324,27 @@ const FIELDS = [
   },
   {
     name: "userCCA",
-    // Same shape and same rule as modules: [] is absent, two different
-    // non-empty sets conflict. NOTE this is the User-embedded copy; the
-    // separate `UserCCA` COLLECTION is a dependent and is re-keyed in step 5a.
+    // CHANGE 2 — userCCA IS NEVER CLEARED. IT IS UNIONED.
+    //
+    // Same SHAPE as modules, opposite RULE, and the difference is what the two
+    // fields mean. `modules` is a snapshot of one semester's enrolment: a union
+    // would re-enrol someone in a module they dropped, so disagreement there is
+    // a genuine contradiction and gets cleared. `userCCA` is a membership LIST,
+    // and two rows carrying different memberships are not contradicting each
+    // other — they are two accounts of ONE person, each holding the CCAs that
+    // person joined while signed into that account. The union is the true
+    // answer, and clearing it would destroy real data that nothing else in the
+    // system records.
+    //
+    // Consequence: userCCA can never reach "conflict" status, is never CLEARed,
+    // and carries NO flag — it must not appear in ProfileCompletion.needsFields,
+    // because there is nothing for the user to re-enter.
+    union: true,
     norm: (v) => JSON.stringify([...new Set((Array.isArray(v) ? v : []).map((x) => numify(x)))].sort((a, b) => a - b)),
     keep: (v) => [...new Set((Array.isArray(v) ? v : []).map((x) => numify(x)))],
     absent: (v) => !Array.isArray(v) || v.length === 0,
     clear: [],
-    flag: "modules", // re-prompted alongside modules; there is no separate CCA step
+    flag: null, // never prompted — see above
   },
   {
     name: "imageKey",
@@ -309,7 +460,11 @@ function bestHash(docs, survivor) {
 
 /**
  * Classify one field across a group.
- * Returns { status: "absent"|"agree"|"conflict", value, distinct }.
+ * Returns { status: "absent"|"agree"|"union"|"conflict", value, distinct }.
+ *
+ * "union" is reachable only for a field declaring `union: true` (userCCA), and
+ * only where a non-union field would have said "conflict". It is NOT a conflict:
+ * nothing is cleared and nothing is flagged.
  */
 function classify(docs, field) {
   const present = docs.filter((d) => !field.absent(d[field.name]));
@@ -326,6 +481,14 @@ function classify(docs, field) {
     // " hello" into "hello" instead of preserving a stray space forever.
     const rep = byRecent(present)[0];
     return { status: "agree", value: field.keep(rep[field.name]), distinct: [...buckets.keys()] };
+  }
+  if (field.union) {
+    // Deduplicated union across every present row, in the field's own kept form.
+    // Numeric ids sort numerically so the stored order is stable across re-runs
+    // (idempotence: a second pass must produce a byte-identical array).
+    const merged = [...new Set(present.flatMap((d) => field.keep(d[field.name])))]
+      .sort((a, b) => (typeof a === "number" && typeof b === "number" ? a - b : String(a) < String(b) ? -1 : 1));
+    return { status: "union", value: merged, distinct: [...buckets.keys()] };
   }
   return { status: "conflict", value: field.clear, distinct: [...buckets.keys()] };
 }
@@ -394,8 +557,8 @@ async function main() {
   const users = await findAll(db, "User");
   console.log(`User rows read: ${users.length}`);
 
-  const groups = new Map(); // canonical -> docs[]
-  const ineligible = [];    // rows with no canonical id at all
+  const eligible = [];   // docs that HAVE a canonical id
+  const ineligible = []; // rows with no canonical id at all
   for (const u of users) {
     const email = typeof u.email === "string" ? u.email : "";
     const canonical = canonicalUserID(email);
@@ -417,14 +580,54 @@ async function main() {
       ineligible.push({ ...doc, reason: isNusStudentEmail(email) ? "NO_CANONICAL" : "NON_NUS_EMAIL" });
       continue;
     }
-    if (!groups.has(canonical)) groups.set(canonical, []);
-    groups.get(canonical).push(doc);
+    doc.canonical = canonical;
+    eligible.push(doc);
   }
 
-  const multi = [...groups.entries()].filter(([, d]) => d.length > 1);
-  const singles = [...groups.entries()].filter(([, d]) => d.length === 1);
-  console.log(`Canonical identities:        ${groups.size}`);
+  // -- 1b. CONNECTED COMPONENTS over {shared canonical} U {shared matric}. ----
+  //
+  // A row with NO canonical id is NOT admitted here even if its stored userID
+  // matches a group's. It has no identity this script could merge it onto, the
+  // whole point of the canonical grouping is that the key must be one a SESSION
+  // would derive, and pulling such a row in would make it a loser and DELETE it.
+  // They stay named in the UNCANONICAL list above and are left alone.
+  const uf = makeUnionFind();
+  for (const d of eligible) {
+    uf.union(`doc:${d.id}`, `canon:${d.canonical}`);
+    // The stored matric edge. Namespaced separately from `canon:` so that the
+    // extremely common `userID === own canonical` case adds a harmless second
+    // edge to the same component rather than aliasing two different key spaces.
+    if (nonEmpty(d.userID)) uf.union(`doc:${d.id}`, `matric:${d.userID}`);
+  }
+
+  const components = new Map(); // root -> docs[]
+  for (const d of eligible) {
+    const root = uf.find(`doc:${d.id}`);
+    if (!components.has(root)) components.set(root, []);
+    components.get(root).push(d);
+  }
+
+  const groups = [];
+  for (const docs of components.values()) {
+    const canonicals = [...new Set(docs.map((d) => d.canonical))].sort();
+    const canonical = pickGroupCanonical(canonicals);
+    groups.push({
+      canonical,
+      canonicals,
+      // Every OTHER canonical in the component. These are real keys that
+      // dependent rows may be filed under, so they join sourceIDs below.
+      losingCanonicals: canonicals.filter((c) => c !== canonical),
+      docs,
+    });
+  }
+
+  const multi = groups.filter((g) => g.docs.length > 1);
+  const singles = groups.filter((g) => g.docs.length === 1);
+  const distinctCanonicals = new Set(eligible.map((d) => d.canonical));
+  console.log(`Canonical identities:        ${distinctCanonicals.size}`);
+  console.log(`Identity groups (canonical OR shared matric, transitive): ${groups.length}`);
   console.log(`  with >1 User row (MERGE):  ${multi.length}`);
+  console.log(`    of which span >1 canonical id: ${multi.filter((g) => g.canonicals.length > 1).length}`);
   console.log(`  singletons:                ${singles.length}`);
   console.log(`Rows with NO canonical id:   ${ineligible.length}`);
   for (const r of ineligible) {
@@ -434,8 +637,8 @@ async function main() {
   console.log("");
 
   // -- 2. Build a plan per multi-row group (pure computation, no writes). ----
-  const plans = [];
-  for (const [canonical, docs] of multi) {
+  let plans = [];
+  for (const { canonical, canonicals, losingCanonicals, docs } of multi) {
     const survivor = pickSurvivor(docs, canonical);
     const losers = docs.filter((d) => d.id !== survivor.id);
 
@@ -446,8 +649,12 @@ async function main() {
       const c = classify(docs, f);
       fieldPlan.push({ field: f.name, ...c });
       if (c.status === "conflict") {
+        // The field is CLEARED regardless — conflictNames drives the audit
+        // reason string. Only PROMPTABLE names reach needsFields (CHANGE 3).
         conflictNames.push(f.name);
-        if (!needsFields.includes(f.flag)) needsFields.push(f.flag);
+        if (f.flag && PROMPTABLE.has(f.flag) && !needsFields.includes(f.flag)) {
+          needsFields.push(f.flag);
+        }
       }
     }
 
@@ -463,8 +670,18 @@ async function main() {
       conflictNames.push("userID(matric)");
     }
 
-    // Every distinct non-canonical userID whose dependent rows must move.
-    const oldIDs = [...new Set(docs.map((d) => d.userID).filter((u) => nonEmpty(u)))];
+    // Every distinct non-canonical key whose dependent rows must move. Two
+    // sources now, not one:
+    //   - stored userIDs on the group's rows (the original set), and
+    //   - CHANGE 1: every LOSING canonical id in the group. A group can now span
+    //     several canonicals, and dependent rows may already be filed under any
+    //     of them (rekey-canonical and the session callback both write the
+    //     canonical, not the stored matric). Omitting them would leave live rows
+    //     stranded under a key whose only User row is about to be deleted.
+    const oldIDs = [...new Set([
+      ...docs.map((d) => d.userID).filter((u) => nonEmpty(u)),
+      ...losingCanonicals,
+    ])];
     const sourceIDs = oldIDs.filter((u) => u !== canonical);
 
     const hash = bestHash(docs, survivor);
@@ -499,9 +716,23 @@ async function main() {
       if (hashes.size > 1) flags.push("PASSWORD_HASH_DIVERGENCE");
     }
     if (A_FORMAT.test(canonical)) flags.push("CANONICAL_LOOKS_LIKE_MATRIC");
+    // In a multi-canonical group the surviving ROW is chosen by completeness,
+    // which need not be the row whose email produced the surviving CANONICAL.
+    // Its userID is forced to the group canonical either way, so the merge is
+    // correct — but the survivor's stored email then no longer canonicalises to
+    // its own userID. That is DELIBERATE and is NOT repaired here: rewriting a
+    // person's email address is an auth-affecting change (lgd@ and danvern@ are
+    // live aliases people actually sign in with), and it is out of scope for a
+    // merge. Named so an operator can decide per row — E153366 in particular is
+    // a typo'd address that may not receive mail.
+    if (survivor.canonical !== canonical) {
+      flags.push(`SURVIVOR_EMAIL_CANON_${survivor.canonical}_NOT_${canonical}`);
+    }
 
     plans.push({
       canonical,
+      canonicals,
+      losingCanonicals,
       docs,
       survivor,
       losers,
@@ -517,8 +748,61 @@ async function main() {
       // (which had to write a matric for the login gate to be clearable), the
       // merge itself is still correct for a hash-less pair, and leaving two
       // rows under one canonical id is the very defect being removed.
-      skip: false,
+      //
+      // A CROSS-CANONICAL group DOES skip, unless --include-cross-canonical.
+      //
+      // Sign-in looks the User row up BY EMAIL, and the session derives the
+      // identity key from that same email. When a group spans one canonical id,
+      // every row carries the same address, so whichever row survives the person
+      // still signs in and still lands on their data. When it spans TWO, the
+      // losing row's address is deleted — and that address is a working login:
+      //
+      //   E1523366: KEEP e153366@u.nus.edu (a one-digit typo, more complete)
+      //             DELETE e1523366@u.nus.edu (the real address)
+      //     -> signing in with the real address finds no row at all
+      //     -> signing in with the typo yields key E153366, while the data was
+      //        just moved to E1523366, so the account looks empty
+      //
+      //   LGD / DANVERN: the losing address is a live alias people actually use.
+      //
+      // Either way the merge is data-correct and login-broken, and no survivor
+      // rule fixes it alone — the second address has to survive as a login, or
+      // a human has to choose. Three accounts are not worth blocking the other
+      // 56, so they are held out by default and reported for review.
+      skip: canonicals.length > 1 && !INCLUDE_CROSS_CANONICAL,
+      skipReason:
+        canonicals.length > 1 && !INCLUDE_CROSS_CANONICAL
+          ? `spans ${canonicals.length} canonical ids [${canonicals.join(", ")}] — deleting the losing row removes a working login. Review by hand, or re-run with --include-cross-canonical.`
+          : null,
     });
+  }
+
+  // -- 2a-bis. HOLD the skipped groups out of everything downstream. --------
+  //
+  // Removed from `plans` entirely rather than filtered at each write site: a
+  // held group must not reach the precondition gates, the backup, the flag
+  // writer or the verifier, and "remember to check p.skip" at six call sites is
+  // the kind of invariant that survives exactly one refactor.
+  const held = plans.filter((p) => p.skip);
+  plans = plans.filter((p) => !p.skip);
+
+  if (held.length) {
+    console.log(`\n--- HELD BACK (${held.length} group(s), NOT merged) ---`);
+    for (const p of held) {
+      console.log(`\n  ! canonical ${p.canonical}   (${p.docs.length} rows)`);
+      console.log(`      ${p.skipReason}`);
+      for (const d of p.docs) {
+        console.log(
+          `      _id=${d.id} canon=${d.canonical} email=${JSON.stringify(d.email)} ` +
+            `userID=${JSON.stringify(d.userID ?? null)} ` +
+            `name=${JSON.stringify(d._raw?.displayName ?? null)}`,
+        );
+      }
+    }
+    console.log(
+      `\n  These are UNTOUCHED — no field cleared, no row deleted, no dependent\n` +
+        `  reassigned. Every other group proceeds normally.\n`,
+    );
   }
 
   // -- 2b. PRECONDITION: no empty target key. --------------------------------
@@ -542,24 +826,40 @@ async function main() {
     );
   }
 
-  // -- 2c. PRECONDITION: the canonical id is not held by an outside User. ----
-  // Grouping is BY canonical, so a second holder can only be a row whose STORED
-  // userID happens to equal another identity's canonical id. Forcing the key
-  // then puts two humans on one identity — strictly worse than the duplicate.
+  // -- 2c. PRECONDITION: no group KEY is held by an outside User. ------------
+  // A second holder can only be a row whose STORED userID equals one of this
+  // group's canonical ids. Forcing the key then puts two humans on one identity
+  // — strictly worse than the duplicate.
+  //
+  // CHANGE 1 WIDENS THIS, and the widening is the load-bearing half. It now
+  // checks every LOSING canonical too, not just the surviving one: those keys
+  // are about to have their dependent rows swept onto the survivor, so an
+  // outside row sitting on one of them would have ITS bookings, posts and orders
+  // handed to a different human. Note that an outside row STORING a key which a
+  // group member also stores is not reachable here — the matric edge would have
+  // pulled it into the group — so what survives this filter is precisely the
+  // dangerous case: a stranger squatting a key nobody in the group stores.
   const outside = [];
   for (const p of plans) {
-    const holders = users.filter(
-      (u) => u.userID === p.canonical &&
-        !p.docs.some((d) => d.id === String(u._id?.$oid ?? u._id ?? "")),
-    );
-    for (const h of holders) {
-      outside.push({ canonical: p.canonical, id: String(h._id?.$oid ?? h._id ?? ""), email: h.email });
+    for (const key of [p.canonical, ...p.losingCanonicals]) {
+      const holders = users.filter(
+        (u) => u.userID === key &&
+          !p.docs.some((d) => d.id === String(u._id?.$oid ?? u._id ?? "")),
+      );
+      for (const h of holders) {
+        outside.push({
+          canonical: p.canonical,
+          key,
+          id: String(h._id?.$oid ?? h._id ?? ""),
+          email: h.email,
+        });
+      }
     }
   }
   for (const o of outside) {
     console.error(
-      `  BLOCK  canonical ${o.canonical} is ALSO the stored userID of User ${o.id} ` +
-      `(email ${JSON.stringify(o.email)}), which is not in that group`,
+      `  BLOCK  group key ${o.key} (group canonical ${o.canonical}) is ALSO the stored userID ` +
+      `of User ${o.id} (email ${JSON.stringify(o.email)}), which is not in that group`,
     );
   }
   if (outside.length) {
@@ -586,7 +886,13 @@ async function main() {
         for (const d of await docsKeyed(coll, k)) p.singletonRows[coll].push(d);
       }
     }
-    p.profileCompletionBefore = await docsKeyed("ProfileCompletion", p.canonical);
+    // Pre-image under EVERY key in the group, not just the survivor's: a losing
+    // canonical may already carry a ProfileCompletion row, and the backup is the
+    // only way back.
+    p.profileCompletionBefore = [];
+    for (const k of keys) {
+      for (const d of await docsKeyed("ProfileCompletion", k)) p.profileCompletionBefore.push(d);
+    }
 
     // Fold any ALREADY-RECORDED matric into the candidate set. A UserMatric row
     // under a loser's key is as much a claim about this human as an A-format
@@ -606,6 +912,9 @@ async function main() {
 
     p.reason =
       `merge-by-canonical: ${p.docs.length} User rows resolved to ${p.canonical}` +
+      (p.losingCanonicals.length
+        ? ` (collapsing ${p.losingCanonicals.join(", ")} via shared matric)`
+        : ``) +
       (p.conflictNames.length
         ? `; disagreed on ${p.conflictNames.join(", ")}`
         : `; no field conflicts`);
@@ -617,11 +926,9 @@ async function main() {
   // case-insensitive unique index in step 8 cannot see it as a duplicate of a
   // future clean registration for the same person.
   const toNormalize = [];
-  for (const [, docs] of groups) {
-    for (const d of docs) {
-      if (d.email !== d.normalizedEmail) {
-        toNormalize.push({ id: d.id, from: d.email, to: d.normalizedEmail });
-      }
+  for (const d of eligible) {
+    if (d.email !== d.normalizedEmail) {
+      toNormalize.push({ id: d.id, from: d.email, to: d.normalizedEmail });
     }
   }
 
@@ -637,6 +944,8 @@ async function main() {
     uncanonicalRows: ineligible.map((r) => ({ id: r.id, email: r.email, reason: r.reason })),
     groups: plans.map((p) => ({
       canonical: p.canonical,
+      canonicals: p.canonicals,
+      losingCanonicals: p.losingCanonicals,
       survivorId: p.survivor.id,
       loserIds: p.losers.map((d) => d.id),
       sourceIDs: p.sourceIDs,
@@ -667,21 +976,36 @@ async function main() {
   console.log(`--- PLAN (${plans.length} group(s) to merge) ---`);
   for (const p of plans) {
     console.log(`\n${COMMIT ? "+" : "~"} canonical ${p.canonical}   (${p.docs.length} rows -> 1)`);
+    if (p.losingCanonicals.length) {
+      console.log(
+        `      COLLAPSING CANONICALS: [${p.canonicals.join(", ")}] -> ${p.canonical}` +
+        `   (losing keys: ${p.losingCanonicals.join(", ")}; grouped via shared matric)`,
+      );
+    }
     for (const d of p.docs) {
       console.log(
         `    ${d.id === p.survivor.id ? "KEEP  " : "DELETE"} _id=${d.id} ` +
+        `canon=${d.canonical} ` +
         `userID=${JSON.stringify(d.userID)} email=${JSON.stringify(d.email)} ` +
         `hash=${d.hasHash ? "yes" : "no"} fields=${completeness(d)}/${FIELDS.length} ` +
         `created=${new Date(parseDate(d.createdAt)).toISOString()}`,
       );
     }
     for (const fp of p.fieldPlan) {
-      const mark = fp.status === "conflict" ? "CONFLICT" : fp.status === "agree" ? "agree   " : "absent  ";
+      const mark = fp.status === "conflict"
+        ? "CONFLICT"
+        : fp.status === "union" ? "UNION   " : fp.status === "agree" ? "agree   " : "absent  ";
       const shown = fp.status === "conflict"
-        ? `CLEAR -> ${JSON.stringify(p.set[fp.field] ?? null)}   (distinct: ${fp.distinct.map((x) => JSON.stringify(x)).join(" | ")})`
-        : fp.status === "agree"
-          ? `keep ${JSON.stringify(fp.value)}`
-          : `(nobody set it)`;
+        ? `CLEAR -> ${JSON.stringify(p.set[fp.field] ?? null)}   ` +
+          `(distinct: ${fp.distinct.map((x) => JSON.stringify(x)).join(" | ")})` +
+          (PROMPTABLE.has(FIELDS.find((x) => x.name === fp.field)?.flag ?? "")
+            ? `  [prompted]`
+            : `  [cleared, NOT prompted — cosmetic]`)
+        : fp.status === "union"
+          ? `MERGE -> ${JSON.stringify(fp.value)}   (from: ${fp.distinct.map((x) => JSON.stringify(x)).join(" | ")})`
+          : fp.status === "agree"
+            ? `keep ${JSON.stringify(fp.value)}`
+            : `(nobody set it)`;
       console.log(`      ${mark} ${fp.field.padEnd(15)} ${shown}`);
     }
     console.log(
@@ -707,7 +1031,9 @@ async function main() {
     console.log(
       `      ProfileCompletion: ${p.needsFields.length
         ? `FLAG needsFields=${JSON.stringify(p.needsFields)}`
-        : "not needed (no conflicts)"}`,
+        : p.conflictNames.length
+          ? `NO ROW (conflicts were cosmetic only: ${p.conflictNames.join(", ")} — cleared, not prompted)`
+          : "not needed (no conflicts)"}`,
     );
     if (p.flags.length) console.log(`      flags: ${p.flags.join(", ")}`);
   }
@@ -920,8 +1246,11 @@ async function main() {
     if (!COMMIT) continue;
 
     // Exactly one User row for this canonical id, and it carries the key.
+    // Every canonical in the group, not just the survivor's: after the merge the
+    // whole component must be ONE row, and a row whose email still canonicalises
+    // to a LOSING key is exactly the duplicate this change exists to remove.
     const rows = (await findAll(db, "User", { _id: 1, email: 1, userID: 1 }))
-      .filter((u) => canonicalUserID(typeof u.email === "string" ? u.email : "") === p.canonical);
+      .filter((u) => p.canonicals.includes(canonicalUserID(typeof u.email === "string" ? u.email : "")));
     if (rows.length !== 1) {
       failures.push(`VERIFY FAIL ${p.canonical}: ${rows.length} User row(s) remain (expected 1) — ` +
         `_ids ${rows.map((u) => String(u._id?.$oid ?? u._id)).join(", ")}`);
@@ -1079,8 +1408,19 @@ async function main() {
   // -- 10. Summary. ---------------------------------------------------------
   console.log(`\n=== SUMMARY ===`);
   console.log(`Mode:                  ${COMMIT ? "COMMIT" : "DRY RUN"}`);
-  console.log(`Canonical groups >1:   ${plans.length}`);
-  console.log(`Groups with conflicts: ${plans.filter((p) => p.needsFields.length).length}`);
+  console.log(`Merge groups (>1 row): ${plans.length}`);
+  console.log(`  spanning >1 canonical: ${plans.filter((p) => p.losingCanonicals.length).length}` +
+    (plans.some((p) => p.losingCanonicals.length)
+      ? `  [${plans.filter((p) => p.losingCanonicals.length).map((p) => `${p.canonical}<-${p.losingCanonicals.join("/")}`).join(", ")}]`
+      : ``));
+  console.log(`Groups with conflicts: ${plans.filter((p) => p.conflictNames.length).length}`);
+  console.log(`  -> prompted (flagged):  ${plans.filter((p) => p.needsFields.length).length}`);
+  console.log(`  -> cosmetic only (cleared, NO flag row): ${
+    plans.filter((p) => p.conflictNames.length && !p.needsFields.length).length}`);
+  console.log(`userCCA unions applied: ${
+    plans.filter((p) => p.fieldPlan.some((f) => f.field === "userCCA" && f.status === "union")).length}`);
+  console.log(`userCCA CONFLICTs:     ${
+    plans.filter((p) => p.fieldPlan.some((f) => f.field === "userCCA" && f.status === "conflict")).length}  (must be 0)`);
   console.log(`Users deleted:         ${COMMIT ? usersDeleted : `(dry-run: ${plans.reduce((a, p) => a + p.losers.length, 0)} planned)`}`);
   console.log(`ProfileCompletion:     ${COMMIT ? flagsWritten : `(dry-run: ${plans.filter((p) => p.needsFields.length).length} planned)`}`);
   console.log(`Emails normalized:     ${COMMIT ? emailsNormalized : `(dry-run: ${toNormalize.length} planned)`}`);
