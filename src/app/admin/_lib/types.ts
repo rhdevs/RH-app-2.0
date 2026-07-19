@@ -1,3 +1,5 @@
+import type { CanonicalUserID } from "~/lib/identity";
+
 /**
  * `listUsers` returns a UNION of two differently-shaped branches — it pages
  * `User` normally, but pages `UserRole` when a role filter is active (paging
@@ -13,15 +15,22 @@
  */
 export type AdminUserRow = {
   id: string;
-  /** The canonical E-format key. The ONLY id any mutation may submit (I-1). */
-  canonicalUserID: string;
+  /**
+   * The canonical E-format key. The ONLY id any mutation may submit (I-1).
+   *
+   * C9: `null` — not `""` — when the account has no canonical identity. The
+   * table already rendered a fallback for the falsy case and already disabled
+   * the "Manage roles" action on it (UserRoleTable :207, :235); typing it null
+   * is what stops a future edit from passing it straight into a mutation.
+   */
+  canonicalUserID: CanonicalUserID | null;
   /** DISPLAY ONLY — holds an A-format matric for ~515 rows. */
   legacyUserID: string | null;
   email: string | null;
   displayName: string | null;
   block: string | number | null;
   hasAccount: boolean;
-  /** Server-computed: canonicalUserID(email) !== "". Never guessed here. */
+  /** Server-computed: canonicalUserID(email) !== null. Never guessed here. */
   eligible: boolean;
   keyMismatch: boolean;
   /** Stored roles, with `admin` redacted for viewers without seeAdminIdentities. */

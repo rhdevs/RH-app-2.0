@@ -20,18 +20,20 @@ import {
   ADMIN_ROLE,
   BASELINE_ROLE,
   CCA_HEAD_ROLE,
-  E_FORMAT,
   FACILITY_ROLES,
   GRANTABLE_ROLES,
   JCRC_ROLE,
   assignableBy,
+  asStoredCanonicalUserID,
   canonicalUserID,
+  type CanonicalUserID,
   computeCapabilities,
   isGrantableRole,
   isEFormatUserID,
   isNusStudentEmail,
   legacyMirror,
   revocableFromOthersBy,
+  userIDSchema,
   type Capabilities,
   type GrantableRole,
 } from "../services/roles";
@@ -63,12 +65,14 @@ import {
 /* SECTION A — schemas, capability assertion, plan tokens                     */
 /* ========================================================================== */
 
-/** Roles are keyed on the canonical E-format id. Re-enforced in guard G7. */
-const userIDSchema = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .regex(E_FORMAT, "Must be an E-format NUSNET id");
+/**
+ * Roles are keyed on the canonical E-format id. Re-enforced in guard G7.
+ *
+ * Defined in `../services/roles` so the audit-log filter UI can parse with the
+ * SAME predicate instead of a hand-rolled `/^E\d{7}$/` that rejects what this
+ * accepts and then silently drops the filter (I-12, 09 §2.6). Behaviour here is
+ * unchanged at all 11 input sites.
+ */
 
 /**
  * z.enum, never z.string() — unknown strings die at the boundary.
@@ -805,8 +809,18 @@ export const adminRouter = createTRPCRouter({
           // (I-2).
           select: { id: true, email: true, displayName: true, userID: true },
         });
-        const byCanonical = new Map(
-          users.map((u) => [canonicalUserID(u.email), u]),
+        // C9: keys that canonicalize to ABSENT are dropped rather than stored
+        // under a sentinel key. Before C9 a non-NUS row entered this map at key
+        // "" — and `byCanonical.get(r.userID)` below would then MATCH it for a
+        // ""-keyed UserRole row (the I-8d red line), attributing a stranger's
+        // email and displayName to that grant on the admin surface. That is
+        // 09's S5 exactly, and it is a lookup indistinguishable from success.
+        // Unreachable while no ""-keyed row exists; the compiler found it anyway.
+        const byCanonical = new Map<string, (typeof users)[number]>(
+          users.flatMap((u) => {
+            const cid = canonicalUserID(u.email);
+            return cid === null ? [] : [[cid, u] as const];
+          }),
         );
 
         return {
@@ -814,7 +828,14 @@ export const adminRouter = createTRPCRouter({
             const u = byCanonical.get(r.userID);
             return {
               id: u?.id ?? r.id,
-              canonicalUserID: r.userID,
+              // C9: `UserRole.userID` IS the canonical role key by I-8d, but
+              // Prisma types it `string` and a ""-keyed row is exactly the red
+              // line I-8d names. Mint it through the checked entry point, so
+              // such a row arrives at the client as ABSENT — rendered as "—"
+              // with Manage disabled, identical to how the listUsers arm has
+              // always rendered a non-NUS account — instead of as a usable
+              // grant target. Not reachable today; no ""-keyed row exists.
+              canonicalUserID: asStoredCanonicalUserID(r.userID),
               legacyUserID: u?.userID ?? null,
               email: u?.email ?? null,
               displayName: u?.displayName ?? null,
@@ -856,9 +877,13 @@ export const adminRouter = createTRPCRouter({
       const nextCursor =
         users.length > limit ? (page[page.length - 1]?.id ?? null) : null;
 
+      // C9: `.filter(Boolean)` removed the absent ids at RUNTIME but not in the
+      // type, so the `in:` filter below was typed as if it could carry one. A
+      // type predicate makes the existing runtime behaviour checkable. No
+      // runtime change: null was already dropped, exactly as "" was.
       const canonicalIDs = page
         .map((u) => canonicalUserID(u.email))
-        .filter(Boolean);
+        .filter((id): id is CanonicalUserID => id !== null);
       const roleRows = await ctx.db.userRole.findMany({
         where: { userID: { in: canonicalIDs } },
       });
@@ -874,15 +899,21 @@ export const adminRouter = createTRPCRouter({
           const cid = canonicalUserID(u.email);
           return {
             id: u.id,
-            canonicalUserID: cid, // the key ALL mutations must submit
+            canonicalUserID: cid, // the key ALL mutations must submit; null => none
             legacyUserID: u.userID, // DISPLAY ONLY — may be an A-format matric
             email: u.email,
             displayName: u.displayName,
             block: u.block,
             hasAccount: true,
-            eligible: cid !== "", // false => cannot sign in under D-7
+            eligible: cid !== null, // false => cannot sign in under D-7
             keyMismatch: Boolean(u.userID && u.userID !== cid),
-            roles: redact(byID.get(cid) ?? []),
+            // C9: `byID.get(cid)` with an absent cid was the same S5 lookup as
+            // the pending-grants map above — `byID.get("")` would have rendered
+            // a ""-keyed UserRole row's roles (potentially `admin`) as THIS
+            // non-NUS user's roles in the admin table. An account with no
+            // canonical id holds no stored roles, by construction, so [] is
+            // both the safe answer and the true one.
+            roles: redact(cid === null ? [] : (byID.get(cid) ?? [])),
           };
         }),
         nextCursor,
@@ -1261,7 +1292,10 @@ export const adminRouter = createTRPCRouter({
             users
               .filter((u) => isNusStudentEmail(u.email))
               .map((u) => canonicalUserID(u.email))
-              .filter(Boolean),
+              // C9: type-only. `.filter(Boolean)` already dropped absent ids at
+              // runtime; the predicate lets the compiler see it. Note the
+              // `isNusStudentEmail` filter above already makes this total.
+              .filter((id): id is CanonicalUserID => id !== null),
           );
           const held = new Set(roleRows.map((r) => r.userID));
           const missing = [...eligible].filter((id) => !held.has(id)).sort();
@@ -1543,8 +1577,15 @@ export const adminRouter = createTRPCRouter({
           ),
         ]),
       );
-      const userByID = new Map(
-        users.map((u) => [canonicalUserID(u.email), u]),
+      // C9: same S5 hazard as listPendingGrants' map — drop absent keys instead
+      // of storing one under a sentinel. `hit.userID` (from resolveIdentifier)
+      // is a real E-format id or a canonicalized one, never absent, so this
+      // changes no reachable lookup today.
+      const userByID = new Map<string, (typeof users)[number]>(
+        users.flatMap((u) => {
+          const cid = canonicalUserID(u.email);
+          return cid === null ? [] : [[cid, u] as const];
+        }),
       );
 
       const items = await Promise.all(

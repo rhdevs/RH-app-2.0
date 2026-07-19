@@ -132,7 +132,7 @@ export const protectedProcedure = t.procedure
     // capability — posts, profile mutations, reads — for up to a month.
     //
     // Trusting the session field here is NOT an I-5 violation: `eligible` is
-    // derived by the session callback from canonicalUserID(token.email) !== "",
+    // derived by the session callback from canonicalUserID(token.email) !== null,
     // a DB-free transform of the token's own email. It is not a role and it is
     // not cached in the token.
     if (!ctx.session.user.eligible) {
@@ -145,6 +145,49 @@ export const protectedProcedure = t.procedure
       },
     });
   });
+
+/**
+ * C9 / 09 §5.2 / D-B. Structural narrowing of the ABSENT identity, once, at the
+ * boundary — so that no resolver has to remember a guard.
+ *
+ * `session.user.userID` is `CanonicalUserID | null` (auth.ts). Downstream of
+ * this middleware it is `CanonicalUserID`, non-null, and the compiler enforces
+ * that every OTHER path either guards or does not touch it. The narrowing is
+ * written back into `ctx.session.user` rather than exposed as a new `ctx.userID`
+ * deliberately: every existing resolver already reads `ctx.session.user.userID`,
+ * so narrowing in place means the invariant arrives at ~30 call sites with a
+ * zero-line diff and no site can be missed in the threading.
+ *
+ * WHY A MIDDLEWARE AND NOT A HELPER (09 §5.4): a standalone `assertIdentity()`
+ * has the exact failure mode that produced this bug class — you must remember to
+ * call it. As a procedure builder you get it by choosing the builder, a decision
+ * you are already making.
+ *
+ * ADOPTION IS DELIBERATELY NARROW (10 §C9 step 3). Only procedures that ALREADY
+ * refuse an empty identity today may adopt it; using it anywhere new is a
+ * behaviour change wearing a refactor's clothes, and it is the same flag-flip
+ * trap C5 documents. It is NOT layered onto `protectedProcedure`.
+ */
+export const identifiedProcedure = protectedProcedure.use(
+  ({ ctx, next }) => {
+    const userID = ctx.session.user.userID;
+    if (userID === null) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "NO_CANONICAL_IDENTITY",
+      });
+    }
+    return next({
+      ctx: {
+        ...ctx,
+        session: {
+          ...ctx.session,
+          user: { ...ctx.session.user, userID },
+        },
+      },
+    });
+  },
+);
 
 /**
  * Matric-gated procedure.
@@ -258,17 +301,60 @@ export const requireRoles = (...allowed: string[]) =>
  * onboarding state.
  */
 export const roleProcedure = (...allowed: string[]) =>
-  protectedProcedure.use(sanitizeErrors).use(requireRoles(...allowed));
+  protectedProcedure
+    .use(sanitizeErrors)
+    .use(requireRoles(...allowed))
+    // C9: narrow LAST, so the role check still produces INSUFFICIENT_ROLE first
+    // and no caller's error message changes. See identifiedProcedure above.
+    .use(({ ctx, next }) => {
+      const userID = ctx.session.user.userID;
+      if (userID === null) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "NO_CANONICAL_IDENTITY",
+        });
+      }
+      return next({
+        ctx: {
+          ...ctx,
+          session: {
+            ...ctx.session,
+            user: { ...ctx.session.user, userID },
+          },
+        },
+      });
+    });
 
 /** Strictly `admin`. No other role satisfies it — not even via requireRoles. */
-export const adminProcedure = protectedProcedure.use(sanitizeErrors).use(
-  t.middleware(({ ctx, next }) => {
-    if (!(ctx.session?.user?.roles ?? []).includes(ADMIN_ROLE)) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "ADMIN_REQUIRED" });
+export const adminProcedure = protectedProcedure
+  .use(sanitizeErrors)
+  .use(
+    t.middleware(({ ctx, next }) => {
+      if (!(ctx.session?.user?.roles ?? []).includes(ADMIN_ROLE)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "ADMIN_REQUIRED" });
+      }
+      return next();
+    }),
+  )
+  // C9: narrow LAST — ADMIN_REQUIRED still wins, so no message changes.
+  .use(({ ctx, next }) => {
+    const userID = ctx.session.user.userID;
+    if (userID === null) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "NO_CANONICAL_IDENTITY",
+      });
     }
-    return next();
-  }),
-);
+    return next({
+      ctx: {
+        ...ctx,
+        session: {
+          ...ctx.session,
+          user: { ...ctx.session.user, userID },
+        },
+      },
+    });
+  });
 
 /** May reach role management at all: admin or jcrc. The D-2 dashboard gate. */
 export const roleManagerProcedure = roleProcedure(JCRC_ROLE);

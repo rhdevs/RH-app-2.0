@@ -101,7 +101,7 @@ const ProfilePage: React.FC = () => {
             Try again
           </button>
         </div>
-      ) : user && !user.eligible ? (
+      ) : user && !user.hasIdentity ? (
         /* D-7: an empty canonical userID means a pre-cutover session on an
            address that is not @u.nus.edu. This is a POLICY state, not a data
            problem, so it gets its own panel — rendering the ordinary profile

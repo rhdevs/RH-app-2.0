@@ -284,9 +284,28 @@ async function nonNusReport() {
   const nonNus = [], blankEmail = [];
   for (const u of users) {
     const email = String(u.email ?? "");
-    if (canonicalUserID(email) !== "") continue;
-    // Same split as the main report (:70): a blank email also canonicalises to
-    // "", but it is a different defect and must not be counted as a person.
+    // C9 — READ THIS BEFORE CHANGING THE COMPARISON BACK.
+    //
+    // This was `canonicalUserID(email) !== ""`. When C9 moved the absent id from
+    // "" to null that form did not start throwing or start reporting a wrong
+    // number: it went VACUOUSLY TRUE. canonicalUserID never returns "" any more,
+    // so `!== ""` holds for EVERY row, the loop `continue`s on every row, and
+    // nonNus/blankEmail stay empty.
+    //
+    // The consequence is specific and bad. This mode's entire job is to FIND the
+    // non-NUS population before the D-7 cutover; §3's branch choice (and the
+    // operator's decision to proceed) hangs on this count. A silently-empty
+    // result reads as "clean bill of health — no affected users" for exactly the
+    // population the tool exists to enumerate, and nothing downstream contradicts
+    // it, because [2] and [3] both iterate `nonNus`. A wrong number would have
+    // been caught by eye; a confident zero would not.
+    //
+    // Written falsy, not `=== null`: `!id` is true for both null and "", so this
+    // gate cannot be quietly disarmed again by a future change to how absence is
+    // represented. Every absent id is an affected row here no matter its shape.
+    if (canonicalUserID(email)) continue;
+    // Same split as the main report (:70): a blank email is also an absent
+    // canonical, but it is a different defect and must not be counted as a person.
     (email.trim() ? nonNus : blankEmail).push(u);
   }
 
@@ -356,6 +375,15 @@ async function nonNusReport() {
     const live = new Set();
     for (const u of users) {
       for (const k of [canonicalUserID(u.email), String(u.userID ?? ""), legacyCanonicalUserID(u.email)]) {
+        // C9: canonicalUserID may now be null, and this set is matched against
+        // Bookings.userID values at :366 — a null must never become a member.
+        // The `if (k)` truthiness guard already handles that (null is falsy,
+        // exactly as "" was), so the behaviour here is UNCHANGED by C9 and the
+        // line is deliberately left as it is. Flagged only because the obvious
+        // "tidy-up" — hoisting to `live.add(k)` or `.filter(Boolean)`-free
+        // spreading — would admit null, and `String(null)` elsewhere would make
+        // it the string "null", a key that matches nothing and is reported as a
+        // live user. Keep the guard.
         if (k) live.add(k);
       }
     }

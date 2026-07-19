@@ -147,6 +147,29 @@ export const facilityBookingRouter = createTRPCRouter({
 
       if (!booking) throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
 
+      // 09 §2.3: this route had NO ownership check and joined publicUserSelect
+      // (telegramHandle, bio, block) for an arbitrary bookingID from a bare
+      // z.number(). Iterating the sequential id space handed every owner's
+      // Telegram handle to any signed-in user — the payload #10 removed from
+      // getBookings, reachable by a route that fix did not touch.
+      //
+      // Boolean(callerUserID) is load-bearing for the same reason it is in
+      // deleteBooking. Pre-C9 the hazard was `"" === ""` matching any
+      // ""-keyed row; C9 types the absent identity `null`, which no `string`
+      // column value can equal, so the type now proves what this conjunct
+      // asserts. RETAINED anyway: it costs nothing, it is the booking path, and
+      // it is what still holds if the field is ever re-widened to `string`.
+      // An empty id owns nothing.
+      //
+      // NOT_FOUND, not FORBIDDEN, and byte-identical to the message above: a
+      // 403 would confirm the id exists and turn the sequential id space into
+      // an enumeration oracle for how many bookings the hall has.
+      const callerUserID = ctx.session.user.userID;
+      const owns = Boolean(callerUserID) && booking.userID === callerUserID;
+      if (!owns && !(await isAdmin(ctx.db, callerUserID))) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
+      }
+
       const [user, facility, cca] = await Promise.all([
         // booking.userID holds the CANONICAL session id (E-format, or the
         // legacy uppercased email for pre-merge non-NUS rows) — not the
@@ -182,7 +205,14 @@ export const facilityBookingRouter = createTRPCRouter({
         startTime: z.number(),
         endTime: z.number(),
         facilityIDs: z.array(z.number()).optional(),
-        userId: z.string().optional(),
+        // 09 §3.1 (S2): `.min(1)` because the consumer below is
+        // `...(userId ? { userID: userId } : {})` — the correct spread
+        // conditional for an ABSENT filter and the wrong one for an EMPTY one.
+        // Without this, a hand-crafted `userId: ""` drops the condition and
+        // gets the full dump instead of the empty result it asks for. Reject it
+        // where the value enters, not where it is spent. `cursor`'s own
+        // optionality is unaffected.
+        userId: z.string().min(1).optional(),
         seeAll: z.boolean().optional(),
         limit: z.number().default(100),
         cursor: z.object({
@@ -224,7 +254,18 @@ export const facilityBookingRouter = createTRPCRouter({
           } : {}),
         },
       });
-      const userIDs = [...new Set(bookings.map((b) => b.userID))];
+      // 09 §3.1 (S5): filter the sentinel out of the JOIN, not out of each read.
+      // A ""-keyed booking must resolve to NO user, never to whichever ""-keyed
+      // User row Object.fromEntries happened to land on. `null` keys stringify
+      // to "null" in the dictionary and collide the same way (09 §1.2), so the
+      // filter is on truthiness of the key, not on `!== ""`.
+      //
+      // Downstream `userDict[booking.userID]?.displayName` then yields
+      // `undefined` — a visible blank, which 09 §0.3's ordering principle
+      // prefers to a confident false success. Note this is NOT a fix for
+      // Problem B (08 §0.1): an A-format legacy owner already renders blank
+      // here and continues to.
+      const userIDs = [...new Set(bookings.map((b) => b.userID))].filter(Boolean);
 
       const users = await ctx.db.user.findMany({
         where: {
@@ -232,13 +273,15 @@ export const facilityBookingRouter = createTRPCRouter({
         },
       });
       const userDict = Object.fromEntries(
-        users.map((u) => [
-          u.userID,
-          {
-            displayName: u.displayName,
-            telegramHandle: u.telegramHandle,
-          },
-        ]),
+        users
+          .filter((u) => Boolean(u.userID))
+          .map((u) => [
+            u.userID,
+            {
+              displayName: u.displayName,
+              telegramHandle: u.telegramHandle,
+            },
+          ]),
       );
 
       const facilities = await ctx.db.facilities.findMany({
@@ -420,6 +463,30 @@ export const facilityBookingRouter = createTRPCRouter({
         });
       }
 
+      // C9. NOT a redundant guard and NOT a cast: `evaluateBookingWithMode`
+      // already denies an absent identity with reason "NO_IDENTITY" in EVERY
+      // mode (access.ts :433) — but that denial lives inside a callee, and no
+      // type system does guard-dominance across a call boundary. So the
+      // invariant that callee enforces is restated here where the compiler can
+      // see it, immediately before `userID` is written into `Bookings.userID`.
+      //
+      // Unreachable in practice, and deliberately throws the IDENTICAL error
+      // the callee would have produced, so even the impossible path is
+      // behaviour-identical. Do NOT replace this with `identifiedProcedure`:
+      // the callee's denial also writes the `booking.denied.no_identity` audit
+      // row that 08 §2 uses to MEASURE the affected population, and narrowing
+      // at the procedure boundary would silently stop producing it.
+      if (userID === null) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: denialMessage({
+            ok: false,
+            reason: "NO_IDENTITY",
+            requiredRoles: [],
+          }),
+        });
+      }
+
       // Serialize per facility so the conflict check and the create can't
       // interleave with a competing booking (#11/#12).
       return withFacilityLock(ctx.db, input.facilityID, async () => {
@@ -535,7 +602,8 @@ export const facilityBookingRouter = createTRPCRouter({
       // tRPC surfaces as INTERNAL_SERVER_ERROR — an authorization failure must
       // not be reported to the client as a server fault.
       //
-      // 08 §1.1: same false-match guard as deleteBooking — `"" === ""` would
+      // 08 §1.1: same false-match guard as deleteBooking — pre-C9 `"" === ""`
+      // would
       // otherwise make every ""-keyed booking editable by every empty-identity
       // session. An empty id owns nothing.
       const callerUserID = ctx.session?.user?.userID;

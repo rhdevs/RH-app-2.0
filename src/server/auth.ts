@@ -14,6 +14,7 @@ import { z } from "zod";
 import { env } from "~/env";
 import { db } from "~/server/db";
 import { verifyPassword } from "~/lib/password";
+import type { CanonicalUserID } from "~/lib/identity";
 import { canonicalUserID, isNusStudentEmail, normalizeEmail } from "~/lib/identity";
 import {
   BASELINE_ROLE,
@@ -31,7 +32,7 @@ import {
  * D-7 + I-12. THE eligibility predicate for sign-in, and the only one. The
  * domain rule itself lives in ~/lib/identity — this wrapper adds nothing but
  * the break-glass allowlist, which is SIGN-IN ONLY: an allowlisted non-NUS
- * address still has canonicalUserID() === "", so it receives no stored
+ * address still has canonicalUserID() === null, so it receives no stored
  * baseline (I-8d), holds no roles and cannot book.
  *
  * Read from process.env rather than ~/env because src/env.js is outside this
@@ -93,7 +94,16 @@ declare module "next-auth" {
   interface Session extends DefaultSession {
     user: {
       id: string;
-      userID: string;
+      /**
+       * C9 / 09 §5.2 / D-B. `null` — NOT `""` — is the absent identity. The
+       * absent case is deliberately outside the `string` domain so that
+       * `where: { userID }`, `x === userID` and `dict[userID]` do not silently
+       * accept it; `tsc --noEmit` reports every such site. Runtime value is
+       * unchanged in FALSINESS, so pre-existing `if (!userID)` guards still
+       * hold. Narrow it once at the tRPC boundary with `identifiedProcedure`
+       * (trpc.ts) rather than per site.
+       */
+      userID: CanonicalUserID | null;
       // `bio` was declared here but never populated by any callback, so every
       // reader got `undefined` while the type promised `string`. The profile
       // page reads bio from the tRPC query, not the session.
@@ -116,6 +126,22 @@ declare module "next-auth" {
        * re-derives it server-side.
        */
       eligible: boolean;
+      /**
+       * D-C. The IDENTITY FACT, not the enforcement decision: `userID !== null`,
+       * i.e. this session has a canonical @u.nus.edu-derived id.
+       *
+       * It exists because `eligible` above is flag-aware (I-11) and therefore
+       * answers a different question — "is this principal admitted under the
+       * current `rbac.auth.enforcement` mode" — which is `true` for an
+       * empty-identity session in every mode except `enforce`. The two agreed
+       * once and silently stopped agreeing; overloading one word for both is
+       * what produced 09 §2.5. Every RENDER-LAYER branch that means "does this
+       * account have an identity at all" keys off THIS field (MatricGate,
+       * getCurrentUserData/profile). No procedure may authorize off it, and it
+       * must never be added to `protectedProcedure` — that is the kill switch
+       * again, one layer down.
+       */
+      hasIdentity: boolean;
       /**
        * Live role list, re-read from the database on EVERY session read
        * (invariant I-4 — never baked into the 30-day JWT).
@@ -301,18 +327,22 @@ export const authOptions = {
         // keys like "ALICE@GMAIL.COM" for non-NUS addresses.
         const userID = canonicalUserID(token.email);
         session.user.userID = userID;
+        // D-C: the identity fact, derived HERE and nowhere else (no new query —
+        // it is line 302's value, named). Deliberately NOT flag-aware: unlike
+        // `eligible` below it does not move when a kill switch moves.
+        session.user.hasIdentity = userID !== null;
         // I-11. `eligible` is the D-7 DECISION, so it follows the switch: with
         // the flag "off" nobody is marked ineligible and protectedProcedure's
         // backstop never fires, which is what keeps deploy day inert for
-        // existing non-NUS sessions. The `userID === ""` early return below is
+        // existing non-NUS sessions. The `userID === null` early return below is
         // NOT gated — it guards the ""-keyed-role hazard (I-8d), which has
         // nothing to do with D-7 and must hold in every mode.
         session.user.eligible =
-          userID !== "" || (await getAuthEnforcement(db)) !== "enforce";
+          userID !== null || (await getAuthEnforcement(db)) !== "enforce";
         session.user.email = token.email;
         session.user.name = token.name;
 
-        if (userID === "") {
+        if (userID === null) {
           // Branches on userID, NOT on `eligible`: since I-11 made `eligible`
           // flag-aware, keying this on it would let a ""-canonicalizing
           // principal fall through to the lookups below whenever the switch is

@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { db } from "~/server/db";
 import { hashPassword } from "~/lib/password";
 import { rateLimit, clientIp } from "~/lib/rateLimit";
-import { canonicalUserID, isNusStudentEmail } from "~/lib/identity";
+import {
+  canonicalUserID,
+  isNusStudentEmail,
+  normalizeEmail,
+} from "~/lib/identity";
 import { ensureBaseline } from "~/server/api/services/roles";
 
 interface registerPayload {
@@ -27,7 +31,7 @@ export async function POST(req: Request) {
     }
 
     const {
-      email,
+      email: rawEmail,
       password,
       confirmPassword,
       fullName,
@@ -36,7 +40,7 @@ export async function POST(req: Request) {
       telegramHandle,
     }: registerPayload = await req.json();
     if (
-      !email ||
+      !rawEmail ||
       !password ||
       !confirmPassword ||
       !fullName ||
@@ -49,6 +53,25 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
+
+    // 09 §2.7 / C4. ONE normalized binding from here down — the gate, the
+    // duplicate probe, the stored `email` and the userID derivation all read
+    // it, so none of them can be defeated by whitespace.
+    //
+    // This is a REGRESSION GUARD, not a fix for deployed behaviour: the
+    // shipped code gated with a case-sensitive endsWith("@u.nus.edu"), which
+    // incidentally rejected " e1234567@u.nus.edu " (it does not end with the
+    // literal). isNusStudentEmail() trims (identity.ts:41-42), so moving to
+    // the shared predicate would let the spaced form through — while the
+    // probe below folds CASE only (`mode: "insensitive"` is a collation, not
+    // a trim). It would miss the existing clean row and create a second User
+    // with the SAME userID: an account nobody can ever log into, because
+    // auth.ts parses the login form with z.string().email(), which rejects
+    // surrounding whitespace. Registration would still return 201.
+    // dedupe-users.mjs's unique index is collation strength 2 — also case,
+    // also not whitespace — so it would not catch the pair either. Hence this
+    // must land before that script is ever run (09 §4.4).
+    const email = normalizeEmail(rawEmail);
 
     // D-7 via the ONE shared predicate (I-12). This replaces an endsWith()
     // pair that was a live bug: it rejected "E1234567@U.NUS.EDU" outright
@@ -93,7 +116,8 @@ export async function POST(req: Request) {
     const hashedPassword = await hashPassword(password);
     const newUser = await db.user.create({
       data: {
-        email: email.toLowerCase(),
+        // Already lower-cased and trimmed by normalizeEmail() above.
+        email: email,
         passwordHash: hashedPassword,
         // I-1: the anchored shared derivation, not an unanchored .replace().
         // Guaranteed non-empty here — isNusStudentEmail() passed above, and

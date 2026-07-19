@@ -64,7 +64,8 @@ function Line({
 export default function SystemHealthPanel() {
   const cap = useCapabilities();
   const utils = api.useUtils();
-  const { data, isLoading } = api.admin.systemHealth.useQuery();
+  const { data, isLoading, isError, error, refetch } =
+    api.admin.systemHealth.useQuery();
 
   const [explainUser, setExplainUser] = useState("");
   const [explainFacility, setExplainFacility] = useState("");
@@ -84,10 +85,47 @@ export default function SystemHealthPanel() {
     },
   });
 
-  if (isLoading || !data) {
+  /**
+   * The old condition was `isLoading || !data`, which rendered a permanent
+   * "Loading health…" that never resolved and never admitted failure — taking
+   * the red missing-baseline tile (the one gate on the enforcement flip), the
+   * shadow-denial count and the enforcement-mode selector with it (09 §2.8).
+   * Split three ways: loading, failed, and "no data for no stated reason",
+   * which is a failure and must not be dressed as loading.
+   *
+   * `!data` and not `isError` alone: once health has loaded, a failed
+   * background refetch keeps the previous figures on screen rather than
+   * destroying a working incident-response page.
+   */
+  if (!data) {
+    if (isLoading) {
+      return (
+        <div className="rounded-xl bg-white p-6 shadow-lg text-sm text-gray-500">
+          Loading health…
+        </div>
+      );
+    }
     return (
-      <div className="rounded-xl bg-white p-6 shadow-lg text-sm text-gray-500">
-        Loading health…
+      <div className="space-y-3 rounded-xl bg-white p-6 shadow-lg">
+        <h2 className="text-lg font-semibold text-gray-900">System health</h2>
+        <Alert variant="destructive">
+          <AlertTitle>Could not load system health</AlertTitle>
+          <AlertDescription>
+            No figures are available, so nothing on this page should be read as
+            &quot;zero&quot; — including the missing-baseline count that gates
+            the enforcement flip. The enforcement-mode selector is unavailable
+            until this loads, because changing the mode without those figures is
+            exactly what the gate exists to prevent.{" "}
+            {isError
+              ? (error?.message ?? "Something went wrong.")
+              : "The server returned no data."}{" "}
+            If this started after the page had been open a while, your session
+            may have expired — reload the page and sign in again.
+          </AlertDescription>
+        </Alert>
+        <Button variant="outline" onClick={() => void refetch()}>
+          Try again
+        </Button>
       </div>
     );
   }
@@ -101,6 +139,24 @@ export default function SystemHealthPanel() {
         <h2 className="mb-4 text-lg font-semibold text-gray-900">
           System health
         </h2>
+
+        {/* Previous data is still on screen, but it is no longer current. Say
+            which of the two is true rather than letting stale figures pass as
+            fresh ones. */}
+        {isError && (
+          <Alert className="mb-4 border-amber-300 bg-amber-50">
+            <AlertDescription className="text-amber-800">
+              These figures are from the last successful refresh; the most
+              recent one failed. {error?.message ?? "Something went wrong."}{" "}
+              <button
+                onClick={() => void refetch()}
+                className="underline underline-offset-2"
+              >
+                Try again
+              </button>
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Line label="Enforcement mode" value={data.enforcementMode} />
         {/* THE one red tile, and it gates the enforcement flip. Under a stored

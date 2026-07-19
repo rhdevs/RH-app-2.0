@@ -75,7 +75,8 @@ returns `true` when `requiredRoles` is empty. In the shipping default config
 writes `userID: ""`**.
 
 Those rows are invisible to their creator, and they collide with each other in
-the `userDict` join at `facilitiesBooking.ts:215-230` — every `""`-keyed booking
+the `userDict` join at `facilitiesBooking.ts:264-281` (cited as `:215-230` here
+originally; that range was already stale) — every `""`-keyed booking
 resolves to whichever `""`-keyed user the dict happened to land on.
 
 1. Hoist the empty-userID rejection **above** the mode branch in

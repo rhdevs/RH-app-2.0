@@ -5,16 +5,23 @@ import { signOut } from "next-auth/react";
 import { ShieldAlert } from "lucide-react";
 
 /**
- * D-7 terminal state. Reached by MatricGate when `session.user.eligible` is
- * false — a JWT minted before the eligibility cutover on a non-@u.nus.edu
- * address (session.maxAge is 30 days and the signIn callback does not re-run
- * for a live token).
+ * D-7 terminal state. Reached by MatricGate when `session.user.hasIdentity` is
+ * false — the signed-in email does not canonicalize to an @u.nus.edu id. That
+ * is a non-NUS address, or a JWT minted before the eligibility cutover on one
+ * (session.maxAge is 30 days and the signIn callback does not re-run for a live
+ * token).
  *
- * Deliberately calls NO tRPC procedure. Every one of them is built on
- * protectedProcedure, which denies this session with NUS_ACCOUNT_REQUIRED, so
- * anything data-driven here would render as an opaque error. The page states
- * the requirement and offers the one action that actually resolves it: sign out
- * and sign back in with an NUS account.
+ * D-C: the gate keys off `hasIdentity`, not `eligible`. Until that change this
+ * page was effectively UNREACHABLE, because `eligible` is flag-aware (I-11) and
+ * is `true` for these sessions in every mode but `enforce`. Do not "simplify"
+ * the gate back onto `eligible`.
+ *
+ * Deliberately calls NO tRPC procedure — not even one that would succeed today.
+ * Under `enforce` every procedure is built on protectedProcedure and denies
+ * this session with NUS_ACCOUNT_REQUIRED, so anything data-driven here would
+ * render as an opaque error in exactly the mode where this page matters most.
+ * The page states the requirement and offers the one action that actually
+ * resolves it: sign out and sign back in with an NUS account.
  */
 export default function IneligibleAccountPage() {
   return (
@@ -31,8 +38,10 @@ export default function IneligibleAccountPage() {
             <span className="font-semibold text-gray-900">@u.nus.edu</span>.
           </p>
           <p className="mt-3 text-gray-600">
-            You are currently signed in with a different address, so your
-            account cannot book facilities or post.
+            You are signed in with a different address. Bookings and posts made
+            from this account cannot be linked back to you, so it can no longer
+            use the rest of the app. Sign in with your NUS student account and
+            everything works normally.
           </p>
         </div>
 

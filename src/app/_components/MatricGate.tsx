@@ -17,15 +17,28 @@ function isAllowed(pathname: string) {
  * Client-side login gate. Mounted once in the root layout (inside the session
  * provider so `useSession` works). Two distinct states, checked in this order:
  *
- *  1. INELIGIBLE (`eligible === false`) — a pre-cutover JWT on a non-@u.nus.edu
- *     address. It MUST be checked first. Such a session also has
+ *  1. NO IDENTITY (`hasIdentity === false`) — the session's email does not
+ *     canonicalize to an @u.nus.edu id: a non-NUS address, or a pre-cutover JWT
+ *     on one. It MUST be checked first.
+ *
+ *     It keys off `hasIdentity`, NOT off `eligible`, and the difference is the
+ *     whole point (D-C). `eligible` is the ENFORCEMENT DECISION — "is this
+ *     principal admitted under the current `rbac.auth.enforcement` mode" — and
+ *     I-11 made it flag-aware, so it is `true` for an empty-identity session in
+ *     every mode except `enforce`, which is not the shipping default. Gating on
+ *     it therefore applied nothing to exactly the cohort this branch exists for.
+ *     `hasIdentity` is the identity FACT and does not move when a flag moves.
+ *
+ *     Such a session also has
  *     `hasMatric === false`, so a hasMatric-first gate sends them to
  *     /onboarding/matric, where the only action calls `user.setMatric` — a
- *     protectedProcedure, which rejects them with NUS_ACCOUNT_REQUIRED at the
- *     eligibility check before the form's own guards ever run. They would type
- *     a valid matric and get an opaque error forever: worse than a clean
- *     logout. They go to /onboarding/ineligible, which explains it and offers
- *     sign-out.
+ *     protectedProcedure, which rejects them in every mode: with
+ *     NUS_ACCOUNT_REQUIRED at the eligibility check under `enforce`, and with
+ *     BAD_REQUEST "No canonical userID on session" under the default `off`
+ *     (user.ts:208 — the guard that stops a ""-keyed UserMatric row). Either
+ *     way they would type a valid matric and get an opaque error forever:
+ *     worse than a clean logout. They go to /onboarding/ineligible, which
+ *     explains it and offers sign-out.
  *  2. NO MATRIC — redirect to /onboarding/matric, but ONLY when the server says
  *     the gate is live (`matricRequired`, the `rbac.matric.enforcement` switch).
  *     UserMatric is a new, empty, un-backfilled collection, so gating on
@@ -47,7 +60,11 @@ export default function MatricGate({
   const router = useRouter();
 
   const authed = status === "authenticated";
-  const ineligible = authed && session?.user?.eligible === false;
+  // D-C. `hasIdentity`, never `eligible`: see (1) in the docstring above. This
+  // branch is NOT behind `rbac.matric.enforcement` — that switch gates the
+  // matric redirect below (`matricRequired`) and nothing else. An empty
+  // identity is not a policy question and does not vary by mode.
+  const ineligible = authed && session?.user?.hasIdentity === false;
   const needsMatric =
     authed &&
     !ineligible &&

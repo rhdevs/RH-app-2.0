@@ -18,10 +18,16 @@
  * convention of the older backfill scripts) because the task guidance names
  * APPLY=yes. Any value other than exactly "yes" is treated as a read-only run.
  *
- * Canonical identity per email group (mirrors src/server/auth.ts EXACTLY,
- * including its quirks — .replace() hits only the FIRST literal "@U.NUS.EDU"):
- *   canonical(email) = (email ?? "").toUpperCase().replace("@U.NUS.EDU", "")
+ * Canonical identity per email group comes from the SHARED derivation in
+ * scripts/remediation/lib/identity.mjs (canonicalUserID) — the same module
+ * src/lib/identity.ts mirrors and verify-identity-parity.mjs gates. No formula
+ * is restated here: a restated formula is a copy, and a copy drifts (09 §5.1).
  * The surviving User.userID is FORCED to this so it matches session.user.userID.
+ *
+ * A non-@u.nus.edu address canonicalises to "" — there is NO key this script
+ * could write for it that a session would ever produce. Such a group is refused
+ * (EMPTY_CANONICAL / NON_NUS_EMAIL), and if one ever reaches the apply loop
+ * un-refused the whole run aborts rather than writing a dead key.
  *
  * GUARANTEES (hold regardless of DB availability — logic derived from the facts,
  * not from a live connection; Atlas is flaky):
@@ -53,6 +59,8 @@ import { PrismaClient } from "@prisma/client";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { canonicalUserID, isNusStudentEmail } from "./lib/identity.mjs";
+import { abort } from "./lib/rbac.mjs";
 
 const db = new PrismaClient();
 const APPLY = process.env.APPLY === "yes";
@@ -79,10 +87,13 @@ const BACKUP_PATH = join(BACKUP_DIR, "merge-backup.json");
 // helpers
 // ---------------------------------------------------------------------------
 
-/** EXACT mirror of the auth.ts session-callback derivation, quirks included. */
-function deriveCanonical(email) {
-  return (email ?? "").toUpperCase().replace("@U.NUS.EDU", "");
-}
+// 09 §2.1/§5.1: a private `deriveCanonical()` used to live here, claiming to be
+// an "EXACT mirror of the auth.ts session-callback derivation". 9cb701b replaced
+// auth.ts's unanchored .replace() with the anchored shared derivation and this
+// copy was never updated, so for a non-NUS address it returned a truthy
+// "ALICE@GMAIL.COM" while every future session derives "". The private copy IS
+// the failure — not a missing guard — and verify-identity-parity.mjs (C3) now
+// bans one anywhere under scripts/ or src/. Use canonicalUserID, imported above.
 
 /** Normalize an Extended-JSON scalar (number | {$numberInt|$numberLong}) to Number. */
 function numify(v) {
@@ -236,7 +247,7 @@ async function main() {
   const plans = [];
   for (const g of groups) {
     const repEmail = g.docs.find((d) => nonEmpty(d.email))?.email ?? g._id;
-    const canonical = deriveCanonical(repEmail);
+    const canonical = canonicalUserID(repEmail);
     const keeper = pickKeeper(g.docs, canonical);
     const matric = pickMatric(g.docs);
     const hash = bestHash(g.docs, keeper);
@@ -246,8 +257,10 @@ async function main() {
 
     const flags = [];
     if (!nonEmpty(canonical)) flags.push("EMPTY_CANONICAL");
-    if (nonEmpty(repEmail) && !repEmail.toUpperCase().includes("@U.NUS.EDU"))
-      flags.push("NON_NUS_EMAIL");
+    // Shared predicate, not an inline .includes(): the old unanchored substring
+    // test called bob@u.nus.edu.evil.com an NUS address (the exact shape the
+    // anchored regex in lib/identity.mjs exists to reject).
+    if (!isNusStudentEmail(repEmail)) flags.push("NON_NUS_EMAIL");
     if (A_FORMAT.test(canonical)) flags.push("CANONICAL_LOOKS_LIKE_MATRIC");
     if (!hash) flags.push("NO_HASH_IN_GROUP");
     if (!matric) flags.push("NO_MATRIC");
@@ -277,9 +290,17 @@ async function main() {
     if (collision) flags.push("CANONICAL_COLLISION_OUTSIDE_GROUP");
 
     // A group is applied only if it is safe: has a hash, a non-empty canonical,
-    // and no external collision. Otherwise it is reported for manual handling.
+    // is an @u.nus.edu address at all, and has no external collision. Otherwise
+    // it is reported for manual handling.
+    //
+    // NON_NUS_EMAIL is in the skip set even though, with the shared derivation,
+    // a non-NUS group already trips EMPTY_CANONICAL. Two INDEPENDENT reasons to
+    // refuse, deliberately: 09's whole thesis is that one unstated invariant
+    // ("the empty test will catch it") is not a control. If a future derivation
+    // change ever makes the empty test miss again, this one still holds.
     const skip = flags.includes("NO_HASH_IN_GROUP") ||
       flags.includes("EMPTY_CANONICAL") ||
+      flags.includes("NON_NUS_EMAIL") ||
       flags.includes("CANONICAL_COLLISION_OUTSIDE_GROUP");
 
     // Best-of profile patch (validator-known User fields only).
@@ -381,6 +402,36 @@ async function main() {
       (p.flags.length ? `\n  flags: ${p.flags.join(", ")}` : "") +
       (p.skip ? `  *** SKIP (manual handling required) ***` : ""),
     );
+  }
+
+  // -- 4b. PRECONDITION: no empty target key (rekey-canonical.mjs:71-81). ------
+  //
+  // The skip set above should already have refused every such group. This is the
+  // backstop that does not depend on that being true. It ABORTS THE WHOLE RUN
+  // rather than skipping the group and applying the rest, because the backup
+  // written in step 3 captures User docs ONLY — not the prior userID of any
+  // dependent Bookings/Posts/Order/UserCCA/Gym row. For a group with >= 2 source
+  // IDs an applied merge is therefore unreconstructable, so a run that contains
+  // even one unsound group must not write anything at all.
+  //
+  // Runs in BOTH modes: a dry run that would have written a dead key must say so
+  // and exit non-zero, not print a clean plan.
+  const emptyTargets = plans.filter((p) => !p.skip && !nonEmpty(p.canonical));
+  for (const p of emptyTargets) {
+    console.error(
+      `  BLOCK  ${p.email}: canonical target key is ${JSON.stringify(p.canonical)} ` +
+      `(email ${JSON.stringify(p.repEmail)} is not @u.nus.edu); ` +
+      `${p.deleteIds.length} User doc(s) and every dependent row would be re-keyed onto it`,
+    );
+  }
+  if (emptyTargets.length) {
+    abort(
+      `${emptyTargets.length} group(s) have no valid target key. These are the D-7 non-NUS ` +
+      `accounts — correct the address, merge the account by hand, or accept the block. ` +
+      `There is no key this script could write that would be right. ` +
+      `Nothing was written; the backup at ${BACKUP_PATH} still describes the pre-run state.`,
+    );
+    return;
   }
 
   // -- 5. APPLY: reassign -> update keeper -> upsert matric -> delete (per group). --
@@ -511,6 +562,7 @@ async function main() {
   //       identity mismatch as a documented follow-up. --
   console.log(`\n--- SINGLETON A-FORMAT USERS (finding #9) ---`);
   let singletonSeeded = 0;
+  let nonNusSingletons = 0;
   const mismatchSamples = [];
   try {
     const all = await db.user.findMany({ select: { id: true, email: true, userID: true } });
@@ -524,7 +576,16 @@ async function main() {
     );
     console.log(`Non-duplicate A-format users to pre-seed matric: ${singletonsA.length}`);
     for (const u of singletonsA) {
-      const canonical = deriveCanonical(u.email);
+      const canonical = canonicalUserID(u.email);
+      // 09 §2.2: this block runs UNCONDITIONALLY under APPLY and its `canonical`
+      // feeds the UserMatric upsert below. UserMatric.userID is uniquely indexed
+      // (schema.prisma:431), so a ""-keyed row lands exactly once and is
+      // PERMANENT — it is precisely the row auth.ts's early return exists to
+      // never look up. A non-NUS singleton has no key worth seeding; skip it.
+      if (!nonEmpty(canonical)) {
+        nonNusSingletons++;
+        continue;
+      }
       if (u.userID !== canonical && mismatchSamples.length < 10) {
         mismatchSamples.push(
           `${u.email}: data keyed to ${u.userID}, runtime session.userID=${canonical}`,
@@ -532,7 +593,7 @@ async function main() {
       }
       if (APPLY) {
         // Seed UNDER THE CANONICAL (E-format) userID — the exact key the login
-        // gate reads (session.user.userID = deriveCanonical(email)). The matric
+        // gate reads (session.user.userID = canonicalUserID(email)). The matric
         // VALUE is their A-format userID. This un-gates them WITHOUT rewriting
         // their identity or data (the data-mis-keyed-under-A-format issue stays
         // the #9 follow-up reported below). create-only so it never clobbers a
@@ -550,6 +611,13 @@ async function main() {
         });
         singletonSeeded++;
       }
+    }
+    if (nonNusSingletons) {
+      console.log(
+        `Skipped ${nonNusSingletons} A-format singleton(s) whose email is not @u.nus.edu: ` +
+        `there is no canonical key (C9: absent is null, formerly "") and a UserMatric ` +
+        `row keyed on an absent value is permanent (09 §2.2).`,
+      );
     }
     if (mismatchSamples.length) {
       console.log(
