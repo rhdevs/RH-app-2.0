@@ -15,7 +15,13 @@ import {
 export type CommitResult = {
   lineNo: number;
   userID: string;
-  status: "ok" | "denied";
+  /**
+   * `noop` is emitted only by the CCA-head surface, where a row can succeed
+   * without changing anything (the person already headed that CCA). It is
+   * counted apart from `ok` so "12 applied" never quietly includes rows that
+   * did nothing, and it is NOT a failure.
+   */
+  status: "ok" | "noop" | "denied";
   denyReason?: string;
 };
 
@@ -37,27 +43,46 @@ export default function BulkCommitProgress({
   onViewAudit,
   onUndo,
   undoPending,
+  failureNote,
 }: {
   done: number;
   total: number;
   results: CommitResult[];
   finished: boolean;
   onViewAudit: () => void;
-  onUndo: () => void;
-  undoPending: boolean;
+  /**
+   * Optional. The CCA-head surface passes neither: its batches have no
+   * BulkRoleImport header, precisely so `undoBulkImport` — which reverses rows
+   * through the GENERIC role path — can never reach a `cca_head` grant and
+   * split the role string from its CcaHead record (CH-1). Offering a button
+   * that cannot work would be worse than not offering one.
+   */
+  onUndo?: () => void;
+  undoPending?: boolean;
+  /** Surface-specific explanation of the refusal codes above. */
+  failureNote?: React.ReactNode;
 }) {
   const failures = results.filter((r) => r.status === "denied");
-  const ok = results.length - failures.length;
+  const unchanged = results.filter((r) => r.status === "noop").length;
+  const ok = results.length - failures.length - unchanged;
 
   return (
     <div className="space-y-4">
       <div>
         <div className="mb-2 flex justify-between text-sm text-gray-600">
           <span>
-            {finished ? "Import complete" : `Applying ${done} of ${total}…`}
+            {/* Never "complete" when something failed — a refused row is not a
+                finished one, and the operator has to go and fix it. */}
+            {finished
+              ? failures.length > 0
+                ? `Finished with ${failures.length} refused`
+                : "Complete"
+              : `Applying ${done} of ${total}…`}
           </span>
           <span>
-            {ok} applied · {failures.length} refused
+            {ok} applied
+            {unchanged > 0 ? ` · ${unchanged} unchanged` : ""} ·{" "}
+            {failures.length} refused
           </span>
         </div>
         <Progress value={total === 0 ? 0 : (done / total) * 100} />
@@ -97,10 +122,14 @@ export default function BulkCommitProgress({
           {failures.length > 0 && (
             <Alert>
               <AlertDescription className="text-xs">
-                Refused rows are already recorded in the audit log with{" "}
-                <code>ok: false</code>. <code>CONFLICT_ROLES_CHANGED</code>{" "}
-                means the target&apos;s roles changed between preview and commit
-                — re-run the preview for those.
+                {failureNote ?? (
+                  <>
+                    Refused rows are already recorded in the audit log with{" "}
+                    <code>ok: false</code>. <code>CONFLICT_ROLES_CHANGED</code>{" "}
+                    means the target&apos;s roles changed between preview and
+                    commit — re-run the preview for those.
+                  </>
+                )}
               </AlertDescription>
             </Alert>
           )}
@@ -108,14 +137,16 @@ export default function BulkCommitProgress({
             <Button variant="outline" onClick={onViewAudit}>
               View in audit log
             </Button>
-            <Button
-              variant="outline"
-              onClick={onUndo}
-              disabled={undoPending}
-              className="border-amber-300 text-amber-800 hover:bg-amber-50"
-            >
-              {undoPending ? "Undoing…" : "Undo this import"}
-            </Button>
+            {onUndo && (
+              <Button
+                variant="outline"
+                onClick={onUndo}
+                disabled={undoPending}
+                className="border-amber-300 text-amber-800 hover:bg-amber-50"
+              >
+                {undoPending ? "Undoing…" : "Undo this import"}
+              </Button>
+            )}
           </div>
         </>
       )}

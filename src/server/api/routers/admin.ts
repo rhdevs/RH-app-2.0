@@ -735,8 +735,20 @@ async function assertMayManageCcaHeadOf(
   actorUserID: string,
   actorRoles: readonly string[],
   targetUserID: string,
+  /**
+   * `dryRun` and `batchId` exist for the BULK CCA-head surface and change no
+   * behaviour for the three single-user callers, which pass neither.
+   *
+   * `dryRun` mirrors assertCanMutateRoles' own dry-run exactly: identical
+   * decision, DryRunDenied instead of an audit row, so a 200-row preview of a
+   * jcrc's list containing two admins emits zero audit rows (I-15's inverse
+   * case). `batchId` stamps the denial rows a bulk commit does write, so a
+   * refused row is findable under the same batch as the applied ones.
+   */
+  opts?: { dryRun?: boolean; batchId?: string },
 ): Promise<void> {
   const deny = async (reason: string): Promise<never> => {
+    if (opts?.dryRun) throw new DryRunDenied(reason);
     await writeAudit(db, {
       actorUserID,
       actorRoles: [...actorRoles],
@@ -744,6 +756,7 @@ async function assertMayManageCcaHeadOf(
       action: "denied",
       ok: false,
       denyReason: reason,
+      batchId: opts?.batchId,
     });
     return forbid(reason);
   };
@@ -1192,6 +1205,416 @@ export const adminRouter = createTRPCRouter({
         where: input.ccaID === undefined ? {} : { ccaID: input.ccaID },
         orderBy: [{ ccaID: "asc" }, { userID: "asc" }],
       });
+    }),
+
+  /* ---- bulk CCA-head onboarding (I-14, CH-1) -------------------------- */
+
+  /**
+   * The 89 CCAs, for the picker on the bulk CCA-head surface. A query (not a
+   * mutation) because it is a small, static, read-only list — nothing here is
+   * per-user and nothing is disclosive: a CCA's name and id are public in the
+   * booking UI already.
+   */
+  listCcas: roleManagerProcedure.query(async ({ ctx }) => {
+    const c = caps(ctx.session.user.roles);
+    requireCapability(c, "manageCcaHeads");
+    return ctx.db.cCA.findMany({
+      select: { ccaID: true, ccaName: true, category: true },
+      orderBy: { ccaName: "asc" },
+    });
+  }),
+
+  /**
+   * WHY THIS EXISTS SEPARATELY FROM previewBulkImport / commitBulkChunk.
+   *
+   * I-14: `cca_head` travels no generic path. It is absent from every
+   * ASSIGNABLE_BY entry, so routing it through commitBulkChunk would not merely
+   * be inelegant — every row would be DENIED by guard G4 with
+   * USE_CCA_HEAD_ENDPOINT. The reason that guard exists is CH-1: a user holds
+   * the `cca_head` string if and only if they have at least one CcaHead row,
+   * and only a writer that maintains BOTH in one transaction can preserve that.
+   * So this pair is built on `grantCcaHead`'s exact semantics — same capability
+   * gate, same per-target guard, same I-5 re-read, same one transaction, same
+   * `ccaHead.grant` audit action — with the preview/token/chunk machinery from
+   * the generic bulk path layered on top. It adds NO new writer of either
+   * `UserRole.roles` or `CcaHead`.
+   *
+   * NO BulkRoleImport HEADER IS CREATED for these batches, deliberately.
+   * `undoBulkImport` reverses a batch by replaying its audit rows through
+   * `assertCanMutateRoles` — the generic path — which cannot express `cca_head`
+   * and would leave CcaHead rows orphaned from the role string if it ever
+   * could. Not writing a header makes the CCA batch UNREACHABLE from undo
+   * rather than merely un-clicked. Batch ownership is not lost by this: the
+   * actor is inside every rowToken's HMAC, so one manager cannot drive
+   * another's plan. The batchId is still stamped on every audit row, so
+   * /admin/audit?batchId=… shows the whole run.
+   *
+   * Dry run in the strict sense: no transaction is opened and every guard call
+   * passes dryRun, so a 200-row preview writes zero audit rows.
+   */
+  previewBulkCcaHeads: roleManagerProcedure
+    .input(
+      z.object({
+        ccaID: z.number().int(),
+        rows: z
+          .array(
+            z.object({
+              lineNo: z.number().int().min(0),
+              // A bounded plain string, not userIDSchema, for the same reason
+              // previewBulkImport uses one: zod validates the whole object, so
+              // a single typo'd identifier must not 400 the entire preview.
+              identifier: z.string().trim().min(1).max(120),
+            }),
+          )
+          .min(1)
+          .max(1000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const c = caps(ctx.session.user.roles);
+      requireCapability(c, "manageCcaHeads");
+      const actorUserID = ctx.session.user.userID;
+
+      // Same directory-disclosure reasoning as previewBulkImport: this accepts
+      // up to 1000 operator-supplied identifiers and returns each match's
+      // identity. Its own limiter key, so onboarding CCA heads does not consume
+      // the role-import preview budget or vice versa.
+      const { rateLimit } = await import("~/lib/rateLimit");
+      const rl = await rateLimit(`bulkccahead:${actorUserID}`, 20, 3600_000);
+      if (!rl.allowed) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: `RATE_LIMITED:${rl.retryAfter}`,
+        });
+      }
+
+      // The ccaID must name a CCA THAT EXISTS. `CcaHead.ccaID` is a bare Int
+      // with no referential integrity behind it, so a typo'd id would otherwise
+      // write 30 scoped rows against a CCA that is not there — they would grant
+      // the `cca_head` string, satisfy CH-1, and scope to nothing.
+      const cca = await ctx.db.cCA.findUnique({
+        where: { ccaID: input.ccaID },
+        select: { ccaID: true, ccaName: true },
+      });
+      if (!cca) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "CCA_NOT_FOUND" });
+      }
+
+      const batchId = randomUUID();
+      const expiresAt = Date.now() + PLAN_TTL_MS;
+
+      const resolved = input.rows.map((r) => ({
+        row: r,
+        hit: resolveIdentifier(r.identifier),
+      }));
+      const ids = [
+        ...new Set(resolved.map((r) => r.hit?.userID).filter(Boolean)),
+      ] as string[];
+
+      const [roleRows, users, existingHeads] = await Promise.all([
+        ctx.db.userRole.findMany({ where: { userID: { in: ids } } }),
+        ctx.db.user.findMany({
+          where: {
+            email: {
+              in: ids.map((i) => `${i.toLowerCase()}@u.nus.edu`),
+              mode: "insensitive",
+            },
+          },
+          select: { id: true, email: true, displayName: true, block: true },
+        }),
+        ctx.db.ccaHead.findMany({
+          where: { ccaID: input.ccaID, userID: { in: ids } },
+          select: { userID: true },
+        }),
+      ]);
+      const rolesByID = new Map(
+        roleRows.map((r) => [
+          r.userID,
+          (r.roles?.length ? r.roles : r.role ? [r.role] : []).filter(
+            isGrantableRole,
+          ),
+        ]),
+      );
+      // C9: absent keys dropped rather than stored under a sentinel — the same
+      // S5 lookup hazard the other preview maps document.
+      const userByID = new Map<string, (typeof users)[number]>(
+        users.flatMap((u) => {
+          const cid = canonicalUserID(u.email);
+          return cid === null ? [] : [[cid, u] as const];
+        }),
+      );
+      const alreadyHead = new Set(existingHeads.map((h) => h.userID));
+
+      const items = await Promise.all(
+        resolved.map(async ({ row, hit }) => {
+          const base = { lineNo: row.lineNo, identifier: row.identifier };
+          if (!hit) {
+            return {
+              ...base,
+              status: "denied" as const,
+              denyReason: "UNRESOLVED_IDENTIFIER",
+            };
+          }
+
+          try {
+            await assertMayManageCcaHeadOf(
+              ctx.db,
+              actorUserID,
+              // The SESSION roles are fine for the dry run: this call decides
+              // nothing and writes nothing. The commit re-reads from the DB
+              // (I-5) and is the only place the answer is acted on.
+              ctx.session.user.roles ?? [],
+              hit.userID,
+              { dryRun: true },
+            );
+          } catch (err) {
+            if (err instanceof DryRunDenied) {
+              return {
+                ...base,
+                status: "denied" as const,
+                denyReason: err.denyReason,
+                userID: hit.userID,
+              };
+            }
+            throw err;
+          }
+
+          const before = rolesByID.get(hit.userID) ?? [];
+          const u = userByID.get(hit.userID);
+          const redact = (rs: string[]) =>
+            c.seeAdminIdentities ? rs : rs.filter((r) => r !== ADMIN_ROLE);
+          return {
+            ...base,
+            status: "ok" as const,
+            userID: hit.userID,
+            via: hit.via,
+            confidence: "high" as const,
+            /** True => committing this row is a no-op, not a new headship. */
+            alreadyHead: alreadyHead.has(hit.userID),
+            // Masked on rows where the operator did not themselves supply the
+            // address, exactly as previewBulkImport does.
+            email: hit.via === "email" ? (u?.email ?? null) : null,
+            displayName: u?.displayName ?? null,
+            block: u?.block ?? null,
+            hasAccount: Boolean(u),
+            rolesBefore: redact(before),
+            rolesAfter: redact([...new Set([...before, CCA_HEAD_ROLE])]),
+            expectedBefore: before,
+            rowToken: signRow({
+              batchId,
+              actorUserID,
+              expiresAt,
+              // THE CCA IS INSIDE THE SIGNATURE. `mode` is the field
+              // commitBulkChunk re-derives from its own header precisely so a
+              // plan cannot be committed under semantics nobody reviewed; here
+              // the semantics include WHICH CCA. A plan previewed against
+              // "Basketball" therefore cannot be replayed against "Welfare" —
+              // every rowToken would fail. It also domain-separates these
+              // tokens from generic-path ones, whose mode is only "add"/"set",
+              // so neither surface can ever consume the other's plan.
+              mode: `ccaHead:${input.ccaID}`,
+              userID: hit.userID,
+              roles: [CCA_HEAD_ROLE],
+              expectedBefore: before,
+              via: hit.via,
+              confidence: "high",
+            }),
+          };
+        }),
+      );
+
+      return {
+        batchId,
+        ccaID: cca.ccaID,
+        ccaName: cca.ccaName,
+        expiresAt,
+        items,
+      };
+    }),
+
+  /**
+   * Capped at 10 rows, sized against the SAME MEASURED cost as
+   * `_lib/planClient.ts`'s CHUNK: audit timestamps from a real import put a row
+   * at roughly 2s, not the 300ms that was once estimated and that killed an
+   * 11-row import at row 7. A CCA-head row is the same shape of work — a guard
+   * read, a before read, one transaction, one audit write — so it is budgeted
+   * identically: 10 x ~2s ~= 20s, inside the `maxDuration = 60` the tRPC route
+   * now exports. Re-measure from audit timestamps, never from a per-query
+   * estimate, before raising it.
+   *
+   * GUARDS APPLY PER ROW, NEVER PER BATCH, and partial success is the expected
+   * outcome — a list containing one admin returns CANNOT_MODIFY_AN_ADMIN for
+   * that row and grants the rest.
+   */
+  commitBulkCcaHeadChunk: roleManagerProcedure
+    .input(
+      z.object({
+        batchId: z.string().uuid(),
+        ccaID: z.number().int(),
+        expiresAt: z.number().int(),
+        rows: z
+          .array(
+            z.object({
+              lineNo: z.number().int().min(0),
+              userID: z.string().trim().max(120),
+              expectedBefore: roleSchema.array().max(8),
+              via: z.string().max(16),
+              confidence: z.string().max(16),
+              rowToken: z.string().max(128),
+            }),
+          )
+          .min(1)
+          .max(10),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const c = caps(ctx.session.user.roles);
+      requireCapability(c, "manageCcaHeads");
+      const actorUserID = ctx.session.user.userID;
+      // I-5: the ACTOR's roles come from the database, not the session, so a
+      // manager demoted mid-import stops being one immediately.
+      const actorRoles = await getUserRoles(ctx.db, actorUserID);
+
+      if (input.expiresAt < Date.now()) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "PLAN_EXPIRED" });
+      }
+      // Re-validated at commit, not only at preview: the ccaID is a client
+      // input on this call too, and a CCA can be deleted between the two.
+      const cca = await ctx.db.cCA.findUnique({
+        where: { ccaID: input.ccaID },
+        select: { ccaID: true },
+      });
+      if (!cca) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "CCA_NOT_FOUND" });
+      }
+
+      const results: {
+        lineNo: number;
+        userID: string;
+        status: "ok" | "noop" | "denied";
+        denyReason?: string;
+      }[] = [];
+      let lastLineNo = -1;
+
+      for (const row of input.rows) {
+        // Re-verified against the signature the server itself produced. The
+        // ccaID is re-derived from THIS request's input, so a plan previewed
+        // for another CCA fails here rather than being applied to a CCA nobody
+        // reviewed. There is no client-supplied `mode` to trust.
+        const expectedToken = signRow({
+          batchId: input.batchId,
+          actorUserID,
+          expiresAt: input.expiresAt,
+          mode: `ccaHead:${input.ccaID}`,
+          userID: row.userID,
+          roles: [CCA_HEAD_ROLE],
+          expectedBefore: row.expectedBefore,
+          via: row.via,
+          confidence: row.confidence,
+        });
+        if (!tokenMatches(expectedToken, row.rowToken)) {
+          results.push({
+            lineNo: row.lineNo,
+            userID: row.userID,
+            status: "denied",
+            denyReason: "PLAN_TOKEN_INVALID",
+          });
+          continue;
+        }
+        if (row.confidence !== "high") {
+          results.push({
+            lineNo: row.lineNo,
+            userID: row.userID,
+            status: "denied",
+            denyReason: "LOW_CONFIDENCE_NOT_CONFIRMED",
+          });
+          continue;
+        }
+
+        try {
+          // The same target guard grantCcaHead uses, on the same live actor
+          // roles. It audits its own denial (on ctx.db, outside any tx — I-15)
+          // and stamps the batch, then throws.
+          await assertMayManageCcaHeadOf(
+            ctx.db,
+            actorUserID,
+            actorRoles,
+            row.userID,
+            { batchId: input.batchId },
+          );
+
+          // There is no CONFLICT_ROLES_CHANGED check here and that is
+          // deliberate, not an omission. The generic path needs one because its
+          // write is a SET: a role gained between preview and commit would be
+          // silently removed. This write is purely ADDITIVE and idempotent, so
+          // drift cannot cost the target anything. The one drift that IS
+          // security-relevant — the target acquiring `admin` — is caught by the
+          // guard above, which re-reads the target's roles right now.
+          const before = await getUserRoles(ctx.db, row.userID);
+          const existing = await ctx.db.ccaHead.findUnique({
+            where: {
+              userID_ccaID: { userID: row.userID, ccaID: input.ccaID },
+            },
+            select: { id: true },
+          });
+
+          // CH-1, byte for byte the body of grantCcaHead: the scoped CcaHead
+          // row and the `cca_head` string are written in ONE transaction, by
+          // writeCcaHeadString, which is the only writer of that string. Do not
+          // hoist either half out of the transaction.
+          const after = await ctx.db.$transaction(async (tx) => {
+            await tx.ccaHead.upsert({
+              where: {
+                userID_ccaID: { userID: row.userID, ccaID: input.ccaID },
+              },
+              create: {
+                userID: row.userID,
+                ccaID: input.ccaID,
+                grantedBy: actorUserID,
+              },
+              update: { grantedBy: actorUserID },
+            });
+            return writeCcaHeadString(tx, row.userID, true, actorUserID);
+          });
+
+          await writeAudit(ctx.db, {
+            actorUserID,
+            actorRoles,
+            targetUserID: row.userID,
+            targetCcaID: input.ccaID,
+            action: "ccaHead.grant",
+            rolesBefore: before,
+            rolesAfter: after,
+            batchId: input.batchId,
+          });
+          results.push({
+            lineNo: row.lineNo,
+            userID: row.userID,
+            // Reported honestly: the row was applied either way (the upsert is
+            // idempotent), but the operator asked what CHANGED.
+            status: existing ? "noop" : "ok",
+          });
+        } catch (err) {
+          // A per-row denial is data, not an exception — one refused row must
+          // not abort the other nine. The guard has already written its audit
+          // row on ctx.db, so nothing is lost here.
+          if (err instanceof TRPCError) {
+            results.push({
+              lineNo: row.lineNo,
+              userID: row.userID,
+              status: "denied",
+              denyReason: err.message,
+            });
+          } else {
+            throw err;
+          }
+        }
+        lastLineNo = row.lineNo;
+      }
+
+      // Returned so a chunk killed by the platform timeout resumes from here
+      // rather than being retried blind.
+      return { batchId: input.batchId, lastLineNo, results };
     }),
 
   /* ---- triage, health, flags ----------------------------------------- */
