@@ -445,15 +445,21 @@ element is a *safety warning* derived from the same empty array as the all-clear
 Listed so they are not lost, explicitly **not** carrying the confidence of §2. Each
 needs a reproduction before it becomes a finding.
 
-- `facilitiesBooking.ts:227-242`, consumed at `:310` — the `userDict` **S5 collapse is
-  still live**. `7a27304` fixed the `userTeleHandle` ternary at `:320-323` and left the
+- ~~`facilitiesBooking.ts:229-242`, consumed at `:310`~~ — the `userDict` **S5 collapse**.
+  (Line citation corrected: this was written as `:215-230`/`:227-242`, both stale; the
+  join was at `:229-242` when C6 was written and is at `:264-281`, consumed at `:349`,
+  after it.) `7a27304` fixed the `userTeleHandle` ternary at `:320-323` and left the
   dictionary and the `displayName` read one line above untouched: every `""`-keyed
-  booking still renders with a stranger's `displayName`. Two class members were stacked
-  in one expression and one was fixed. **Highest-priority item in this subsection.**
-- `facilitiesBooking.ts:215` — `getBookings`' `userId` filter vanishes on `""` (S2,
-  server-side). Held closed *today* by two client files (`enabled: hasIdentity`); a
-  hand-crafted request with `userId: ""` gets the dump. The correct server behaviour for
-  an empty `userId` is an empty result, not an omitted filter.
+  booking still rendered with a stranger's `displayName`. Two class members were stacked
+  in one expression and one was fixed. **FIXED in C6** — the key set is now
+  `.filter(Boolean)`-ed before the JOIN.
+- ~~`facilitiesBooking.ts:215`~~ — `getBookings`' `userId` filter vanishes on `""` (S2,
+  server-side). (Line citation corrected: the input schema was at `:204`, its
+  spread-conditional consumer at `:235`; post-C6 the schema line is `:210`.) Held closed
+  *then* by two client files (`enabled: hasIdentity`); a hand-crafted request with
+  `userId: ""` got the dump. The correct server behaviour for an empty `userId` is an
+  empty result, not an omitted filter. **FIXED in C6** — `z.string().min(1).optional()`
+  rejects it at the input schema.
 - `facilitiesBooking.ts:381, 410-415, 448-462` — `facilityID: -1` (or any nonexistent
   int) is written and returned as success; the row is unreachable through every UI
   picker, renders titleless in others' calendars, and takes the `facility:-1` advisory

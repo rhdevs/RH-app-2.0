@@ -419,7 +419,8 @@ export async function evaluateBookingWithMode(
   // identity check while canBookLegacy allows an empty requirement, so without
   // this the default shipping config writes `Bookings.userID: ""`. Those rows
   // are invisible to their creator and collide with each other in the userDict
-  // join (facilitiesBooking.ts:215-230).
+  // join (getBookings' userDict, facilitiesBooking.ts:264-281 — the `:215-230`
+  // this comment used to cite has been stale since well before C6).
   //
   // This one denial is NOT shadowed in `permissive`. Permissive exists to
   // shadow the ROLE rollout — to learn who WOULD be denied by D-1 before anyone

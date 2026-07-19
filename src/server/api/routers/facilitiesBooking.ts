@@ -201,7 +201,14 @@ export const facilityBookingRouter = createTRPCRouter({
         startTime: z.number(),
         endTime: z.number(),
         facilityIDs: z.array(z.number()).optional(),
-        userId: z.string().optional(),
+        // 09 §3.1 (S2): `.min(1)` because the consumer below is
+        // `...(userId ? { userID: userId } : {})` — the correct spread
+        // conditional for an ABSENT filter and the wrong one for an EMPTY one.
+        // Without this, a hand-crafted `userId: ""` drops the condition and
+        // gets the full dump instead of the empty result it asks for. Reject it
+        // where the value enters, not where it is spent. `cursor`'s own
+        // optionality is unaffected.
+        userId: z.string().min(1).optional(),
         seeAll: z.boolean().optional(),
         limit: z.number().default(100),
         cursor: z.object({
@@ -243,7 +250,18 @@ export const facilityBookingRouter = createTRPCRouter({
           } : {}),
         },
       });
-      const userIDs = [...new Set(bookings.map((b) => b.userID))];
+      // 09 §3.1 (S5): filter the sentinel out of the JOIN, not out of each read.
+      // A ""-keyed booking must resolve to NO user, never to whichever ""-keyed
+      // User row Object.fromEntries happened to land on. `null` keys stringify
+      // to "null" in the dictionary and collide the same way (09 §1.2), so the
+      // filter is on truthiness of the key, not on `!== ""`.
+      //
+      // Downstream `userDict[booking.userID]?.displayName` then yields
+      // `undefined` — a visible blank, which 09 §0.3's ordering principle
+      // prefers to a confident false success. Note this is NOT a fix for
+      // Problem B (08 §0.1): an A-format legacy owner already renders blank
+      // here and continues to.
+      const userIDs = [...new Set(bookings.map((b) => b.userID))].filter(Boolean);
 
       const users = await ctx.db.user.findMany({
         where: {
@@ -251,13 +269,15 @@ export const facilityBookingRouter = createTRPCRouter({
         },
       });
       const userDict = Object.fromEntries(
-        users.map((u) => [
-          u.userID,
-          {
-            displayName: u.displayName,
-            telegramHandle: u.telegramHandle,
-          },
-        ]),
+        users
+          .filter((u) => Boolean(u.userID))
+          .map((u) => [
+            u.userID,
+            {
+              displayName: u.displayName,
+              telegramHandle: u.telegramHandle,
+            },
+          ]),
       );
 
       const facilities = await ctx.db.facilities.findMany({

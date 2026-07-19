@@ -165,6 +165,21 @@ export const userRouter = createTRPCRouter({
   // matricProcedure) so a still-gated user can render the onboarding page.
   getMatricStatus: protectedProcedure.query(async ({ ctx }) => {
     const userID = ctx.session.user.userID;
+    // 09 §2.4 (S6): the unguarded twin of the two guarded siblings in this file
+    // (getProfile above, setMatric below). An empty canonical userID must not be
+    // used as a lookup key — `findUnique({ where: { userID: "" } })` would match
+    // a ""-keyed UserMatric row and report a stranger's matric as the caller's.
+    // Latent only because no such row exists yet: its producer is
+    // merge-accounts.mjs (09 §2.2), an unrun script. A ""-keyed row that cannot
+    // exist YET is a latent finding, not a non-finding.
+    //
+    // Same shape as the success return, so no client branch sees a new field.
+    if (!userID) {
+      return {
+        hasMatric: false,
+        matric: null,
+      };
+    }
     const record = await ctx.db.userMatric.findUnique({ where: { userID } });
     return {
       hasMatric: Boolean(record?.matric),
