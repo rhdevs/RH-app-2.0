@@ -215,6 +215,29 @@ if (surface(ts) !== surface(mjs)) {
 // reported line number is computed from the match offset.
 const DERIVATION = /\.toUpperCase\(\)\s*\.replace\(\s*["'`]@U\.NUS\.EDU/gi;
 
+/**
+ * C9 FOLLOW-UP — the class the parity check structurally cannot reach.
+ *
+ * This gate compares the two identity MODULES. It says nothing about their
+ * CONSUMERS, and moving the absent id from "" to null turned a whole class of
+ * consumer bug from loud into silent: a test written as `=== ""` does not start
+ * throwing against null, it starts matching NOTHING. Two real instances shipped
+ * in that state, and both were safety checks that fail toward "all clear":
+ *
+ *   rekey-canonical.mjs  the abort-on-empty-target precondition. Never fires,
+ *                        so the run reaches the $set and writes `userID: null`
+ *                        across four collections under --commit.
+ *   rbac-doctor.mjs:287  the non-NUS detector. Reports a clean bill of health
+ *                        for exactly the population it exists to find.
+ *
+ * So: a canonical id may never be compared against a string literal. Test it
+ * for truthiness (`!id`), or against `null` explicitly. Truthiness is preferred
+ * at a gate that REFUSES to write — a precondition whose job is rejecting a
+ * dead key should not depend on knowing which dead key is currently in fashion.
+ */
+const LITERAL_COMPARE =
+  /canonicalUserID\s*\([^)]*\)\s*(?:===|!==|==|!=)\s*["'`]|["'`]\s*(?:===|!==|==|!=)\s*canonicalUserID\s*\(/gi;
+
 // One entry. Every addition is a decision, not a fix.
 const ALLOWLIST = new Set([
   "scripts/remediation/lib/rbac.mjs", // legacyCanonicalUserID, deliberately frozen
@@ -254,13 +277,30 @@ for (const { root, exts } of SCAN) {
     if (ALLOWLIST.has(rel)) continue;
     scanned++;
     const src = readFileSync(file, "utf8");
-    DERIVATION.lastIndex = 0; // /g/ is stateful; reset per file
-    for (let m = DERIVATION.exec(src); m; m = DERIVATION.exec(src)) {
-      // I-16: name the file:line and show the source. A bare count teaches
-      // nothing and the next author re-adds the copy.
-      const line = src.slice(0, m.index).split("\n").length;
-      const text = src.split(/\r?\n/)[line - 1] ?? m[0];
-      violations.push(`${rel}:${line}: ${text.trim()}`);
+    for (const [rx, label] of [
+      [DERIVATION, "private derivation"],
+      [LITERAL_COMPARE, "canonical id compared to a string literal"],
+    ]) {
+      rx.lastIndex = 0; // /g/ is stateful; reset per file per pattern
+      for (let m = rx.exec(src); m; m = rx.exec(src)) {
+        // I-16: name the file:line and show the source. A bare count teaches
+        // nothing and the next author re-adds the copy.
+        const line = src.slice(0, m.index).split("\n").length;
+        const text = src.split(/\r?\n/)[line - 1] ?? m[0];
+
+        // Skip prose. Both patterns exist to be WRITTEN ABOUT — the paragraph
+        // above this one names `=== ""` four times, and the two fixed sites
+        // each carry a comment quoting the form they used to have. A gate that
+        // fires on its own rationale gets switched off within a week, and then
+        // it is not protecting anything. Cheap prefix test rather than a real
+        // parser: it accepts a trailing `// x === ""`, which is a false
+        // negative nobody reaches for, in exchange for zero false positives on
+        // the comment blocks this codebase is full of.
+        const t = text.trim();
+        if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) continue;
+
+        violations.push(`${rel}:${line}: [${label}] ${t}`);
+      }
     }
   }
 }
@@ -280,10 +320,19 @@ if (failures.length) {
 }
 
 if (violations.length) {
-  console.error(`\nFAIL  ${violations.length} PRIVATE IDENTITY DERIVATION(S):\n`);
+  console.error(`\nFAIL  ${violations.length} IDENTITY-HANDLING VIOLATION(S):\n`);
   for (const v of violations) console.error(`  ${v}`);
   console.error(
-    "\nWHY THIS FAILS. A canonical userID may be derived in exactly ONE place:\n" +
+    "\nWHY A LITERAL COMPARE FAILS. The absent canonical id is `null`, not \"\".\n" +
+      "A test written as `=== \"\"` does not break loudly against null — it stops\n" +
+      "matching anything, so the branch it guards silently never runs. Both real\n" +
+      "instances of this were safety checks that then failed toward 'all clear':\n" +
+      "rekey-canonical.mjs's abort-on-empty-target (which would have written\n" +
+      "`userID: null` across four collections under --commit) and rbac-doctor's\n" +
+      "non-NUS detector (which would have reported a clean bill of health for the\n" +
+      "exact population it exists to find). Use `!id`, or compare to null.\n\n" +
+      "WHY A PRIVATE DERIVATION FAILS. A canonical userID may be derived in\n" +
+      "exactly ONE place:\n" +
       "  src/lib/identity.ts  (and its mirror scripts/remediation/lib/identity.mjs)\n" +
       "Import canonicalUserID from there. Do not re-implement it.\n\n" +
       "This is not style. A private copy silently outlives the derivation it\n" +
