@@ -19,6 +19,23 @@ import { getUserRoles } from "../services/access";
 const MATRIC_REGEX = MATRIC_RE;
 
 /* -------------------------------------------------------------------------- */
+/* CCA display types — see the long note on `getMyCCAs` below                  */
+/* -------------------------------------------------------------------------- */
+
+/** One CCA as the profile page renders it. `ccaName`/`category` are null only
+ *  when no `CCA` row matches the id — real drift, surfaced rather than hidden. */
+export type ProfileCCA = {
+  ccaID: number;
+  ccaName: string | null;
+  category: string | null;
+  isHead: boolean;
+};
+
+/** The shape `user.findRaw` yields under our projection. Untyped BSON: every
+ *  field is `unknown` and is narrowed at the use site, never trusted. */
+type RawUserCcaDoc = { userCCA?: unknown; userID?: unknown };
+
+/* -------------------------------------------------------------------------- */
 /* D-5: how a cleared optional String is persisted                             */
 /* -------------------------------------------------------------------------- */
 
@@ -204,6 +221,153 @@ export const userRouter = createTRPCRouter({
       roles: roles as string[], // DISPLAY ONLY (I-5)
       hasIdentity: true, // D-C — reached only when `userID` is non-empty
     };
+  }),
+
+  /**
+   * The caller's own CCAs, for display on /profile.
+   *
+   * A SIBLING QUERY rather than an extension of getCurrentUserData, on purpose:
+   *
+   *  - getCurrentUserData's `select` is a security control with a comment
+   *    explaining why (#9 passwordHash, I-2 Prisma-throws-on-missing-required).
+   *    Source A lives in a field that is NOT in the Prisma `User` model at all
+   *    (see below), so folding it in would mean either editing
+   *    prisma/schema.prisma — a schema change this read-only feature must not
+   *    make to a $jsonSchema-guarded collection — or bolting a raw read onto
+   *    the one procedure whose whole point is a narrow, auditable typed select.
+   *  - This read is four collections wide and is pure decoration. The profile
+   *    shell, the identity panel and the error state must not wait on it or
+   *    fail with it; a separate query key gives it its own loading state.
+   *
+   * ============================ THE TWO SOURCES ============================
+   * CCA membership is recorded in TWO places and NEITHER is complete. Measured
+   * against production over the 116 users with any CCA data at all:
+   *
+   *     65  both sources agree exactly
+   *     37  ONLY in the embedded User.userCCA array
+   *      6  ONLY in the UserCCA collection
+   *      8  present in both, but the two sets DIFFER
+   *
+   * So this returns the UNION. Reading either source alone hides real
+   * memberships for ~43 people. Reconciling or repairing the two is a separate
+   * MIGRATION decision and is deliberately NOT attempted here — this procedure
+   * only displays, it never writes, and it never picks a winner.
+   *
+   * Source A — `User.userCCA`, an embedded Int[] on the caller's own row.
+   *   Read with `findRaw` because the field is absent from `model User` in
+   *   schema.prisma and `User` carries the $jsonSchema doc comment, so adding
+   *   it is not a free change. The projection is explicit and lists exactly two
+   *   keys, which means this path structurally cannot reach passwordHash — the
+   *   same property the typed select above is buying, obtained the same way.
+   *
+   * Source B — the `UserCCA` collection, whose `userID` is MIXED-KEY. 07 §0.3
+   *   census: 100% A-format matric before the account merge, canonical E-format
+   *   only on the rows the merge reassigned. So a lookup by the canonical id
+   *   ALONE misses most rows. We match on BOTH the caller's canonical userID
+   *   and their stored `User.userID` — which itself holds an A-format matric on
+   *   many rows (I-1 / 08 Problem B). Both keys come from the caller's own
+   *   session and their own document; neither is client-supplied, so widening
+   *   the key set widens no authorization surface.
+   *
+   * Headships — `CcaHead`, canonical-keyed and reliable (invariant CH-1,
+   *   written only by the CCA endpoints). Looked up by the canonical id only;
+   *   mixing the legacy key in here would import Source B's ambiguity into the
+   *   one collection that does not have it. A head of a CCA they are not a
+   *   member of is surfaced as a CCA anyway rather than dropped.
+   */
+  getMyCCAs: protectedProcedure.query(async ({ ctx }) => {
+    const userID = ctx.session.user.userID; // canonical E-format key (I-1)
+
+    // Same guard as getProfileCompletion / getMatricStatus: keyed on the
+    // canonical userID being FALSY, never on `session.user.eligible`, which is
+    // flag-aware (I-11) and is true with an absent userID whenever the auth
+    // kill switch sits at its default "off". Returns the success SHAPE, and
+    // does not query — `where: { userID: "" }` would match a ""-keyed row and
+    // report a stranger's CCAs as the caller's.
+    if (!userID) return { ccas: [] as ProfileCCA[] };
+
+    /* ---- Source A: the embedded array, plus the legacy lookup key ---- */
+    const rawDocs = (await ctx.db.user.findRaw({
+      filter: { _id: { $oid: ctx.session.user.id } },
+      options: { projection: { userCCA: 1, userID: 1, _id: 0 } },
+    })) as unknown as RawUserCcaDoc[];
+
+    const doc = Array.isArray(rawDocs) ? rawDocs[0] : undefined;
+
+    // Defensive at every step: this is untyped BSON. A non-array userCCA, or an
+    // array holding a string or a float, is legacy data we would rather skip
+    // than throw on — a profile page must not 500 because one row is odd.
+    const embedded = Array.isArray(doc?.userCCA)
+      ? doc.userCCA.filter((v): v is number => Number.isInteger(v))
+      : [];
+
+    // The stored column, NOT used as the display identity (I-1 forbids letting
+    // it override the session-derived canonical id) — only as a second lookup
+    // key for the legacy-keyed rows in Source B.
+    const storedUserID =
+      typeof doc?.userID === "string" && doc.userID.length > 0
+        ? doc.userID
+        : null;
+
+    const membershipKeys = [
+      ...new Set([userID as string, storedUserID]),
+    ].filter((k): k is string => Boolean(k));
+
+    /* ---- Source B + headships ---- */
+    const [collectionRows, headRows] = await Promise.all([
+      ctx.db.userCCA.findMany({
+        where: { userID: { in: membershipKeys } },
+        select: { ccaID: true },
+      }),
+      ctx.db.ccaHead.findMany({
+        where: { userID },
+        select: { ccaID: true },
+      }),
+    ]);
+
+    const headIDs = new Set(headRows.map((r) => r.ccaID));
+
+    // THE UNION. Heads are folded in too, so a headship without a matching
+    // membership row still surfaces rather than vanishing.
+    const ccaIDs = [
+      ...new Set([
+        ...embedded,
+        ...collectionRows.map((r) => r.ccaID),
+        ...headIDs,
+      ]),
+    ];
+
+    if (ccaIDs.length === 0) return { ccas: [] as ProfileCCA[] };
+
+    /* ---- Names ---- */
+    const named = await ctx.db.cCA.findMany({
+      where: { ccaID: { in: ccaIDs } },
+      select: { ccaID: true, ccaName: true, category: true },
+    });
+    const byID = new Map(named.map((c) => [c.ccaID, c]));
+
+    // A ccaID with no CCA row is REAL DRIFT and is shown as unknown rather than
+    // filtered away — hiding it would hide the only evidence it exists. This is
+    // the one place a ccaID is allowed to reach the UI.
+    const ccas: ProfileCCA[] = ccaIDs.map((ccaID) => {
+      const row = byID.get(ccaID);
+      return {
+        ccaID,
+        ccaName: row?.ccaName ?? null,
+        category: row?.category ?? null,
+        isHead: headIDs.has(ccaID),
+      };
+    });
+
+    // Sorted server-side so the list does not reshuffle between renders when
+    // the union's insertion order changes. Unknowns last.
+    ccas.sort(
+      (a, b) =>
+        (a.category ?? "￿").localeCompare(b.category ?? "￿") ||
+        (a.ccaName ?? "￿").localeCompare(b.ccaName ?? "￿"),
+    );
+
+    return { ccas };
   }),
 
   updateUserData: protectedProcedure

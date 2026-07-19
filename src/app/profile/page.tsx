@@ -11,6 +11,7 @@ import {
   Eye,
   EyeOff,
   AlertTriangle,
+  Users,
 } from "lucide-react";
 import { format } from "date-fns";
 import Toast from "../_components/Toast";
@@ -19,6 +20,7 @@ import { api } from "~/trpc/react";
 import Loading from "../_components/Loading";
 import EditProfileModal from "../_components/EditProfileModal";
 import { RoleBadges } from "../_components/RoleBadges";
+import { CcaBadges } from "../_components/CcaBadges";
 
 /** Mask a matric as A•••••••X — first and last character only. The matric is an
  *  identity credential, so the default render must not be the full value. */
@@ -40,6 +42,13 @@ const ProfilePage: React.FC = () => {
     error,
     refetch,
   } = api.user.getCurrentUserData.useQuery();
+
+  // A SEPARATE query, so the profile shell never waits on it and a CCA read
+  // that fails cannot take the page down — the card below just stays quiet.
+  // Not refetched by handleEditSuccess: nothing in the edit modal writes CCA
+  // data, and this whole feature is read-only.
+  const { data: ccaData, isLoading: ccaLoading } =
+    api.user.getMyCCAs.useQuery();
 
   // The message comes FROM the modal: it is the only thing that knows which of
   // the two writes actually landed, so a fixed string here would report a
@@ -232,6 +241,23 @@ const ProfilePage: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="rounded-xl bg-white p-6 shadow-lg">
+                  <h2 className="mb-6 flex items-center text-xl font-semibold text-gray-900">
+                    <Users className="mr-2 h-5 w-5 text-blue-600" />
+                    My CCAs
+                  </h2>
+
+                  {/* Not rendered during load: an empty list mid-fetch is
+                      indistinguishable from genuinely no CCAs and would flash
+                      the empty state on every page view — the same reasoning
+                      the role badges above are built on. */}
+                  {ccaLoading ? (
+                    <p className="text-sm text-gray-400">Loading…</p>
+                  ) : (
+                    <CcaBadges ccas={ccaData?.ccas ?? []} />
+                  )}
                 </div>
               </div>
 
