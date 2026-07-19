@@ -86,9 +86,53 @@ export async function findAll(db, collection, projection = {}) {
     });
     const batch = res?.cursor?.firstBatch ?? [];
     out.push(...batch);
-    if (batch.length < PAGE) break;
-    after = batch[batch.length - 1]?._id;
-    if (!after) break; // defensive: _id projected away despite the guard above
+
+    // STOP ONLY ON AN EMPTY PAGE. Not on a short one.
+    //
+    // A short page has TWO causes and they are indistinguishable in the reply:
+    // the collection is exhausted, or the server capped the batch at the 16MB
+    // BSON limit. `User` rows carry base64 profilePictureUrl blobs, so a
+    // full-projection read caps at ~64 documents out of 1242 — and the earlier
+    // `batch.length < PAGE` break treated that as "done" and returned 5% of the
+    // collection with no error. merge-by-canonical then found 1 duplicate group
+    // instead of 66 and called it a complete plan.
+    //
+    // Paging until empty is correct under BOTH causes: the `_id > after` cursor
+    // advances regardless of why the page was short, so a truncated page simply
+    // means the next iteration picks up where it stopped. One extra round trip
+    // at the end is the entire cost.
+    if (batch.length === 0) break;
+
+    const last = batch[batch.length - 1]?._id;
+    if (!last) break; // defensive: _id projected away despite the guard above
+    after = last;
+  }
+
+  // SELF-VERIFY against an independent $count. This is not belt-and-braces; it
+  // is the only check that would have caught EITHER of the two truncation bugs
+  // this function has already shipped:
+  //   - no batchSize      -> 101 of 1242 (server default first batch)
+  //   - break on short page -> 64 of 1242 (16MB cap on base64-bearing rows)
+  // Both returned a confident prefix, and every caller — censuses, merge plans,
+  // migration gates — reported that prefix as the whole population.
+  //
+  // A paged read that silently returns a subset is the sentinel-as-value class
+  // one layer up (09 §0): a partial RESULT spent as a complete one. Throwing is
+  // correct rather than harsh — the callers are migrations, and a migration
+  // planned against 5% of the data is worse than one that refuses to start.
+  const check = await db.$runCommandRaw({
+    aggregate: collection,
+    pipeline: [{ $count: "n" }],
+    cursor: {},
+  });
+  const expected = check?.cursor?.firstBatch?.[0]?.n;
+  const n = typeof expected === "object" ? numify(expected) : expected;
+  if (typeof n === "number" && out.length !== n) {
+    throw new Error(
+      `findAll("${collection}") read ${out.length} document(s) but $count says ${n}. ` +
+        `Refusing to return a partial result — every caller treats this as the whole ` +
+        `collection. Do not "fix" this by relaxing the check.`,
+    );
   }
   return out;
 }
