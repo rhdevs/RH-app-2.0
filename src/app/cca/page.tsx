@@ -4,17 +4,21 @@ import { auth } from "~/server/auth";
 import { db } from "~/server/db";
 import { getUserRoles } from "~/server/api/services/access";
 import { computeCapabilities } from "~/server/api/services/roles";
-import CcaIndex from "./_components/CcaIndex";
+import CcaEmptyState from "./_components/CcaEmptyState";
 
 export const dynamic = "force-dynamic";
 
 /**
- * A SERVER component, because the single-CCA passthrough is a redirect().
- * Doing it client-side with router.replace() would stream and paint the index
- * first, so a head of one CCA would see a pointless one-item list flash past on
- * every visit.
+ * The entry point, and normally just a doorway.
+ *
+ * ANY headship redirects straight into that CCA's dashboard — not only when
+ * there is exactly one, as before. The sidebar switcher now handles moving
+ * between CCAs, so an intermediate "pick one" list is a click that buys nothing.
+ *
+ * A SERVER component, because that redirect must happen before render: a client
+ * router.replace() would paint this page first and flash it away on every visit.
  */
-export default async function CcaIndexPage() {
+export default async function CcaEntryPage() {
   const session = await auth();
   // The layout already established this; repeating it is cheap and keeps this
   // page correct if it is ever reached another way.
@@ -26,20 +30,21 @@ export default async function CcaIndexPage() {
   } catch {
     redirect("/");
   }
-  const capabilities = computeCapabilities(roles);
 
   const heads = await db.ccaHead.findMany({
     where: { userID: session.user.userID },
     select: { ccaID: true },
+    orderBy: { ccaID: "asc" }, // deterministic landing CCA
   });
 
-  // THE PASSTHROUGH. Note `!capabilities.viewAnyCcaRoster`: an admin or jcrc who
-  // happens to head exactly one CCA must NOT be teleported into it — they have
-  // /admin/ccas for browsing and would otherwise be unable to reach their own
-  // index at all.
-  if (!capabilities.viewAnyCcaRoster && heads.length === 1) {
-    redirect(`/cca/${heads[0]!.ccaID}`);
-  }
+  if (heads.length > 0) redirect(`/cca/${heads[0]!.ccaID}`);
 
-  return <CcaIndex />;
+  // No headships. Reached by a manager who heads nothing, or by CH-1 drift —
+  // a stale `cca_head` string whose CcaHead rows are gone. Both land somewhere
+  // calm and honest rather than on an error.
+  return (
+    <CcaEmptyState
+      canBrowseAll={computeCapabilities(roles).viewAnyCcaRoster}
+    />
+  );
 }

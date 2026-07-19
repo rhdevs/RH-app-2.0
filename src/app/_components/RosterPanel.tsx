@@ -12,7 +12,18 @@ import RosterDriftNote from "./RosterDriftNote";
  * page would be a second place to keep in step while buying no protection
  * (I-7). This component renders the denial the procedure returns.
  */
-export default function RosterPanel({ ccaID }: { ccaID: number }) {
+export default function RosterPanel({
+  ccaID,
+  /**
+   * The CCA dashboard renders its own persistent heading in the shell, so the
+   * member-list section would otherwise show the name twice. /admin/ccas has no
+   * such heading and still needs it — hence a prop rather than deleting it.
+   */
+  hideHeader = false,
+}: {
+  ccaID: number;
+  hideHeader?: boolean;
+}) {
   const { data, isPending, error } = api.cca.getRoster.useQuery(
     { ccaID },
     {
@@ -61,17 +72,19 @@ export default function RosterPanel({ ccaID }: { ccaID: number }) {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold text-gray-900">
-          {cca.ccaName ?? `Unknown CCA (#${cca.ccaID})`}
-        </h1>
-        <p className="mt-1 text-sm text-gray-500">
-          {cca.category ?? "Uncategorised"}
-          {via === "manageCcaHeads" && (
-            <span className="ml-2 text-gray-400">· viewing as JCRC</span>
-          )}
-        </p>
-      </header>
+      {!hideHeader && (
+        <header>
+          <h1 className="text-2xl font-semibold text-gray-900">
+            {cca.ccaName ?? `Unknown CCA (#${cca.ccaID})`}
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            {cca.category ?? "Uncategorised"}
+            {via === "manageCcaHeads" && (
+              <span className="ml-2 text-gray-400">· viewing as JCRC</span>
+            )}
+          </p>
+        </header>
+      )}
 
       {/* The CCA record itself is missing — the CcaBadges amber idiom, applied
           to the whole page rather than one row. */}

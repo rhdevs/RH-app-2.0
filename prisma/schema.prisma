@@ -417,6 +417,44 @@ model CcaHead {
   @@index([ccaID], map: "ccaID")
 }
 
+/// CCA attributes that CANNOT live on `CCA` itself.
+///
+/// `CCA` carries a DB-level $jsonSchema validator that declares only
+/// {category, ccaID, ccaName}. A write adding `description` is REJECTED by Mongo
+/// AT WRITE TIME — and it does not throw: $runCommandRaw returns
+/// `ok: 1` with `writeErrors[0].code === 121`, and `prisma db push` gives no
+/// warning at all. The validator's body has never been dumped in this repo, so
+/// it cannot even be inspected. Same pattern, same reason, as
+/// ProfileCompletion / UserMatric / UserRole vs the validator-guarded User.
+///
+/// DO NOT "simplify" this by moving these fields onto CCA. That change looks
+/// clean, type-checks, pushes without complaint, and then silently drops every
+/// write in production.
+///
+/// I-2: every scalar is NULLABLE. A required non-list scalar would mean any row
+/// written by another process without it breaks Prisma deserialization for every
+/// subsequent reader.
+///
+/// Keyed on the ccaID BUSINESS key (like FacilityAccess.facilityID), not the
+/// CCA document's ObjectId — reconcile-ccas.mjs renames CCAs in place precisely
+/// to preserve ccaID, so it is the stable join key.
+///
+/// WRITTEN BY CCA HEADS, not only admins: the first head-initiated write in the
+/// app. Authorisation is per-ccaID via assertHeadsCca (services/ccaScope.ts),
+/// never a role check — `cca_head` is scope-free and answers "heads something",
+/// never "heads this".
+///
+/// Phase 2 adds `logoUrl String?` / `bannerUrl String?` here; nullable and
+/// additive, so no migration risk. That is why this collection is worth creating
+/// now even for a single field.
+model CcaProfile {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  ccaID       Int       @unique(map: "ccaID")
+  description String?
+  updatedAt   DateTime?
+  updatedBy   String?
+}
+
 /// Matric number stored as an ATTRIBUTE (not identity), kept out of the
 /// validator-guarded User collection (same pattern as UserRole/FacilityAccess:
 /// the User $jsonSchema validator has no `matric` property, so writing it onto

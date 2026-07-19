@@ -57,9 +57,11 @@ export default async function CcaLayout({
       {/* Must match the nav link's `name` in header.tsx — isActive() compares
           currentPage to link.name before falling back to the pathname. */}
       <Header currentPage="My CCAs" />
-      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-        {children}
-      </main>
+      {/* FULL WIDTH, unlike /admin's max-w-7xl. The dashboard is a sidebar plus
+          a content column; capping it would strand the sidebar in the middle of
+          the viewport on a wide screen. Padding only — the shell inside owns the
+          two-column grid. */}
+      <main className="px-4 py-6 sm:px-6 lg:px-8">{children}</main>
     </div>
   );
 }
