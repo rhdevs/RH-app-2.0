@@ -6,9 +6,18 @@ import { getUserRoles } from "~/server/api/services/access";
 import { computeCapabilities } from "~/server/api/services/roles";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
+import { writeAudit } from "~/server/api/routers/admin";
+import { ccaProfileInput } from "~/lib/schemas/cca";
 
 /**
- * CCA-head-facing reads. READ-ONLY — every write lives in admin.* or ccaAdmin.*.
+ * CCA-head-facing procedures, scoped per-CCA rather than per-role.
+ *
+ * NO LONGER READ-ONLY. `updateProfile` is the FIRST write in this application
+ * that a non-admin can make: a CCA head editing their own CCA's description.
+ * That raises the stakes on the guard below — assertHeadsCca used to protect
+ * only read privacy, and now protects data integrity too. Admin-scoped CCA
+ * writes (create/rename, heads, members) still live in ccaAdmin.*, and the
+ * validator-guarded `CCA` collection is never written from here.
  *
  * THE ONE RULE IN THIS FILE: every procedure that takes a ccaID FROM THE CLIENT
  * MUST call assertHeadsCca before touching CCA-scoped data. The procedure
@@ -132,5 +141,94 @@ export const ccaRouter = createTRPCRouter({
       const scope = await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
       const roster = await resolveRoster(ctx.db, input.ccaID);
       return { ...roster, via: scope.via };
+    }),
+
+  /**
+   * The CCA's editable profile. Separate from getRoster because the details
+   * page needs none of the roster's expensive resolution, and the overview
+   * needs the roster without waiting on this.
+   */
+  getProfile: identifiedProcedure
+    .input(z.object({ ccaID: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+
+      const row = await ctx.db.ccaProfile.findUnique({
+        where: { ccaID: input.ccaID },
+        select: { description: true, updatedAt: true, updatedBy: true },
+      });
+
+      // No row is the normal state for a CCA nobody has described yet — an
+      // empty profile, not an error.
+      return {
+        description: row?.description ?? "",
+        updatedAt: row?.updatedAt ?? null,
+        updatedBy: row?.updatedBy ?? null,
+      };
+    }),
+
+  /**
+   * THE FIRST WRITE A NON-ADMIN CAN MAKE IN THIS APP.
+   *
+   * Writes CcaProfile — never `CCA`, which is $jsonSchema-guarded and would
+   * reject an undeclared `description` silently at write time (code 121, ok:1).
+   * See the model's doc comment in prisma/schema.prisma.
+   *
+   * `ccaName` and `category` are deliberately NOT accepted here: they live on
+   * CCA and are renamed only by admins via ccaAdmin.rename. ccaProfileInput
+   * documents that constraint and zod strips anything else the client sends.
+   */
+  updateProfile: identifiedProcedure
+    .input(ccaProfileInput)
+    .mutation(async ({ ctx, input }) => {
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const scope = await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+
+      // The CCA must exist. Without this a head whose CCA was renamed away
+      // could write a profile row pointing at nothing, which would then be
+      // invisible everywhere and impossible to clean up from the UI.
+      const cca = await ctx.db.cCA.findUnique({
+        where: { ccaID: input.ccaID },
+        select: { ccaID: true },
+      });
+      if (!cca) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_CCA" });
+      }
+
+      const before = await ctx.db.ccaProfile.findUnique({
+        where: { ccaID: input.ccaID },
+        select: { description: true },
+      });
+
+      const saved = await ctx.db.ccaProfile.upsert({
+        where: { ccaID: input.ccaID },
+        create: {
+          ccaID: input.ccaID,
+          description: input.description,
+          updatedAt: new Date(),
+          updatedBy: userID,
+        },
+        update: {
+          description: input.description,
+          updatedAt: new Date(),
+          updatedBy: userID,
+        },
+        select: { description: true, updatedAt: true, updatedBy: true },
+      });
+
+      // Audited on ctx.db, outside any transaction (I-15). `via` records
+      // whether this was the CCA's own head or a manager acting over the top.
+      await writeAudit(ctx.db, {
+        actorUserID: userID,
+        actorRoles: roles,
+        targetCcaID: input.ccaID,
+        action: "ccaProfile.update",
+        reason: `${scope.via}: description ${before?.description ? "updated" : "set"} (${input.description.length} chars)`,
+      });
+
+      return saved;
     }),
 });

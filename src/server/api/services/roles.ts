@@ -118,6 +118,10 @@ export const AUDIT_ACTIONS = [
   "cca.rename",
   "ccaMember.add",
   "ccaMember.remove",
+  // Written by CCA HEADS, not admins — the only action in this list whose actor
+  // may hold no management capability at all. Authorised per-ccaID by
+  // assertHeadsCca, so the audit row's targetCcaID is the scope that was proven.
+  "ccaProfile.update",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
