@@ -54,7 +54,9 @@ export default async function CcaLayout({
 
   return (
     <div className="mb-14 min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <Header currentPage="CCA" />
+      {/* Must match the nav link's `name` in header.tsx — isActive() compares
+          currentPage to link.name before falling back to the pathname. */}
+      <Header currentPage="My CCAs" />
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
         {children}
       </main>

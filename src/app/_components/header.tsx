@@ -7,6 +7,7 @@ import {
   Home,
   Calendar,
   User,
+  Users,
   LogOut,
   UserCircle,
   ShieldCheck,
@@ -44,10 +45,26 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
   const roles = session?.user?.roles ?? [];
   const canReachAdmin = roles.includes("admin") || roles.includes("jcrc");
 
+  /**
+   * Same sanctioned exception as canReachAdmin above, for the same reason.
+   *
+   * Gated on `cca_head` ONLY, deliberately — NOT on the reachCcaDashboard
+   * capability, which also admits admin/jcrc. /cca answers "the CCAs YOU head",
+   * so a manager who heads nothing would get a link to a permanently empty
+   * page; they have the CCAs tab in /admin instead. An admin who genuinely
+   * heads a CCA holds `cca_head` and sees this link like anyone else.
+   *
+   * Without this the page is unreachable for its actual audience: /cca is a
+   * top-level route, and the /admin tab row it would otherwise live in is
+   * closed to a plain CCA head.
+   */
+  const isCcaHead = roles.includes("cca_head");
+
   const navLinks = [
     { name: "Home", href: "/", icon: Home },
     { name: "My Bookings", href: "/bookings", icon: Calendar },
     // { name: "Facilities", href: "/facilities", icon: Box },
+    ...(isCcaHead ? [{ name: "My CCAs", href: "/cca", icon: Users }] : []),
     ...(canReachAdmin
       ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }]
       : []),
