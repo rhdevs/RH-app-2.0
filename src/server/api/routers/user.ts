@@ -388,6 +388,17 @@ export const userRouter = createTRPCRouter({
       // Matric goes through writeMatric — THE matric writer — so this path
       // inherits its keying and cannot drift from `setMatric`.
       if (input.matric !== undefined && outstanding.includes("matric")) {
+        // Same duplicate guard as setMatric. This path was deliberately exempt
+        // at first — hard-failing here can strand someone in a post-merge form
+        // they cannot clear — but that reasoning only holds if the form is the
+        // ONLY way out, and it is not: the value is rejected, the flag stays
+        // outstanding, and the person can correct the number or reach the JCRC.
+        // Leaving it exempt meant this path could still mint the exact
+        // collision self-service refuses, which is the impersonation primitive
+        // the guard exists to close (matric resolves identities in the bulk
+        // import). A stranded user is recoverable; a silently duplicated matric
+        // is not noticed until it resolves to the wrong person.
+        await assertMatricUnclaimed(ctx.db, userID, input.matric);
         await writeMatric(ctx.db, userID, input.matric);
         resolved.push("matric");
       }
