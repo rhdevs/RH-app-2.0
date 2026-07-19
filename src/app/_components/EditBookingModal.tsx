@@ -127,7 +127,7 @@ const EditBookingModal: React.FC<EditBookingModalProps> = ({
         <div className="relative w-full max-w-2xl rounded-xl bg-white shadow-xl">
           <div className="flex items-center justify-between border-b p-4">
             <h2 className="text-lg font-semibold">Edit Booking</h2>
-            <button onClick={onClose} className="hover:bg-gray-100 rounded p-1">
+            <button onClick={onClose} className="rounded p-1 hover:bg-gray-100">
               <X className="h-5 w-5 text-gray-500" />
             </button>
           </div>
@@ -158,7 +158,7 @@ const EditBookingModal: React.FC<EditBookingModalProps> = ({
                         onClick={() =>
                           handleDateChange(type as "start" | "end", "prev")
                         }
-                        className="hover:bg-gray-200 rounded p-1"
+                        className="rounded p-1 hover:bg-gray-200"
                       >
                         <ChevronLeft className="h-4 w-4" />
                       </button>
@@ -169,7 +169,7 @@ const EditBookingModal: React.FC<EditBookingModalProps> = ({
                         onClick={() =>
                           handleDateChange(type as "start" | "end", "next")
                         }
-                        className="hover:bg-gray-200 rounded p-1"
+                        className="rounded p-1 hover:bg-gray-200"
                       >
                         <ChevronRight className="h-4 w-4" />
                       </button>
@@ -226,7 +226,7 @@ const EditBookingModal: React.FC<EditBookingModalProps> = ({
               <button
                 onClick={handleSubmit}
                 disabled={!eventName.trim() || updateBooking.isPending}
-                className="rounded-lg bg-emerald-600 px-6 py-2 text-white hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className="rounded-lg bg-emerald-600 px-6 py-2 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 {updateBooking.isPending ? "Updating..." : "Update Booking"}
               </button>

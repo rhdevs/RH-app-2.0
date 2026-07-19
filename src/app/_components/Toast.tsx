@@ -22,7 +22,7 @@ const Toast: React.FC<ToastProps> = ({ content, type, show, onClose }) => {
 
   return ReactDOM.createPortal(
     <div
-      className="z-[999] fixed bottom-5 right-5 flex w-full max-w-xs items-center space-x-4 rounded-lg bg-white p-4 text-gray-500 shadow-sm dark:divide-gray-700 dark:bg-gray-800 dark:text-gray-400"
+      className="fixed bottom-5 right-5 z-[999] flex w-full max-w-xs items-center space-x-4 rounded-lg bg-white p-4 text-gray-500 shadow-sm dark:divide-gray-700 dark:bg-gray-800 dark:text-gray-400"
       role="alert"
     >
       <div
@@ -52,7 +52,7 @@ const Toast: React.FC<ToastProps> = ({ content, type, show, onClose }) => {
           </svg>
         )}
       </div>
-      <div className="ms-3 text-sm font-normal flex-grow">{content}</div>
+      <div className="ms-3 flex-grow text-sm font-normal">{content}</div>
       <button
         type="button"
         onClick={onClose}

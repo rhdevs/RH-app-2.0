@@ -40,26 +40,29 @@ const RequestResetForm = () => {
     }
     try {
       setIsLoading(true);
-      const res = await fetch(
-        "/api/reset-password/request-verification-code",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email }),
-        },
-      );
+      const res = await fetch("/api/reset-password/request-verification-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
       setIsLoading(false);
       if (res.ok) {
         setSent(true);
         setCooldown(60);
-        showToast("If that account exists, a reset link is on its way.", "success");
+        showToast(
+          "If that account exists, a reset link is on its way.",
+          "success",
+        );
       } else {
         const data = (await res.json()) as { error?: string };
         showToast(data.error ?? "Something went wrong.", "danger");
       }
     } catch {
       setIsLoading(false);
-      showToast("There is something wrong with the app! Please contact RHDevs!", "danger");
+      showToast(
+        "There is something wrong with the app! Please contact RHDevs!",
+        "danger",
+      );
     }
   };
 
@@ -78,7 +81,8 @@ const RequestResetForm = () => {
               Forgot Password?
             </h1>
             <p className="text-gray-600">
-              Enter your RHApp email and we&apos;ll send a secure reset link to it.
+              Enter your RHApp email and we&apos;ll send a secure reset link to
+              it.
             </p>
           </div>
 
@@ -214,7 +218,9 @@ const SetNewPasswordForm = ({ token }: { token: string }) => {
             <h1 className="mb-2 text-3xl font-bold text-gray-900">
               Reset Your Password
             </h1>
-            <p className="text-gray-600">Choose a new password for your account.</p>
+            <p className="text-gray-600">
+              Choose a new password for your account.
+            </p>
           </div>
 
           <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">

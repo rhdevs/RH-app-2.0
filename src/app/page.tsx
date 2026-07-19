@@ -3,7 +3,6 @@ import Calendar_v2 from "./_components/Calender_v2";
 import Header from "./_components/header";
 
 export default async function Home() {
-
   return (
     <HydrateClient>
       <Header currentPage={"Home"} />

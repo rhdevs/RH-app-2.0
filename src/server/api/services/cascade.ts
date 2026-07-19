@@ -13,7 +13,10 @@ import type { PrismaClient } from "@prisma/client";
  * relations with `onDelete: Cascade` — see scripts/remediation/README.md.
  */
 
-export async function deleteFacilityCascade(db: PrismaClient, facilityID: number) {
+export async function deleteFacilityCascade(
+  db: PrismaClient,
+  facilityID: number,
+) {
   return db.$transaction(async (tx) => {
     await tx.bookings.deleteMany({ where: { facilityID } });
     await tx.crowd.deleteMany({ where: { facilityID } });
@@ -43,7 +46,10 @@ export async function deleteUserCascade(db: PrismaClient, userID: string) {
   });
 }
 
-export async function deleteSupperGroupCascade(db: PrismaClient, supperGroupId: number) {
+export async function deleteSupperGroupCascade(
+  db: PrismaClient,
+  supperGroupId: number,
+) {
   return db.$transaction(async (tx) => {
     await tx.order.deleteMany({ where: { supperGroupId } });
     return tx.supperGroup.delete({ where: { supperGroupId } });
