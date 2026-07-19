@@ -31,19 +31,28 @@ export function computeAfter(
 }
 
 /**
- * 25, and the sizing is stated so it can be re-derived rather than cargo-culted:
- * each row costs roughly 5 Atlas round-trips (role read, guard read, the
- * transaction, the audit write) at ~60ms ≈ 300ms, so 25 rows ≈ 7.5s against
- * Vercel's default ceiling. v1's 100-row chunk is ~30s and times out.
+ * 10, sized against MEASURED cost rather than an estimate.
  *
- * The server caps commitBulkChunk's `rows` at 25 independently; this constant
- * must not exceed that or every chunk 400s at the zod boundary.
+ * The previous value was 25, derived from "5 Atlas round-trips at ~60ms ≈
+ * 300ms per row". Production says otherwise: audit timestamps from a real
+ * import are ~2s apart, so a row costs roughly 2s, not 0.3s — about 7x the
+ * assumption. At 25 rows that is ~50s.
  *
- * `src/app/api/trpc/[trpc]/route.ts` should also export `maxDuration = 60` and
- * the figure re-measured against a real 500-row import before the JCRC
- * onboarding (03 §10.5). That file was out of scope for this change.
+ * The damage was not theoretical. An 11-row JCRC import ran twice and landed
+ * exactly 7 rows both times: the function hit Vercel's DEFAULT ceiling
+ * (maxDuration was never exported from the tRPC route, which planClient itself
+ * flagged as out of scope) and was killed mid-loop at ~14s. The 7 committed
+ * rows were audited correctly; the last 4 left no trace anywhere, because the
+ * request that would have written them never returned. BulkRoleImport.finishedAt
+ * stayed null — the one signal that the run had been cut short.
+ *
+ * 10 rows x ~2s ≈ 20s, comfortably inside the 60s the route now declares, and
+ * still inside the 25-row cap `commitBulkChunk` enforces at the zod boundary.
+ * Re-measure both this and maxDuration against a real 500-row import before
+ * the full JCRC onboarding (03 §10.5) — and re-measure from audit timestamps,
+ * not from a per-query estimate.
  */
-export const CHUNK = 25;
+export const CHUNK = 10;
 
 export function chunk<T>(rows: readonly T[], size = CHUNK): T[][] {
   const out: T[][] = [];
