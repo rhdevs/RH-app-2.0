@@ -66,8 +66,22 @@ export async function findAll(db, collection, projection = {}) {
       projection: proj,
       sort: { _id: 1 },
       limit: PAGE,
-      // No getMore is ever issued, so a truncated firstBatch cannot silently
-      // end the walk: the page is short only when the collection is exhausted.
+      // batchSize IS REQUIRED, and omitting it is not a tuning mistake — it is a
+      // correctness bug that fails toward "I read everything".
+      //
+      // MongoDB's default first batch is 101 DOCUMENTS. `limit` does not raise
+      // it. With singleBatch:true the server returns that one default-sized
+      // batch and closes the cursor, reporting id 0 — indistinguishable from a
+      // genuinely exhausted collection. The first version of this function
+      // omitted batchSize, so `findAll("User")` returned exactly 101 rows out of
+      // 1242 and every caller reported a confident, wrong census: user counts,
+      // collision counts, non-NUS lists, missing-passwordHash counts, all
+      // computed over 8% of the data with no error anywhere.
+      //
+      // With batchSize == limit the batch is bounded by the limit rather than by
+      // the default, so a short page means exhausted — which is what the break
+      // below assumes.
+      batchSize: PAGE,
       singleBatch: true,
     });
     const batch = res?.cursor?.firstBatch ?? [];
