@@ -68,11 +68,30 @@ async function main() {
     return;
   }
 
-  // --- precondition 1: no empty target key -------------------------------
-  const toEmpty = moves.filter((m) => m.newKey === "");
+  // --- precondition 1: no absent target key ------------------------------
+  //
+  // C9 — THE HIGHEST-CONSEQUENCE SITE IN THIS SWEEP.
+  //
+  // This was `m.newKey === ""`. With the absent id moved from "" to null that
+  // test matches NOTHING: `toEmpty` is empty, this block never fires, the abort
+  // below never runs, and the run proceeds to :127 —
+  //     { q: { userID: oldKey }, u: { $set: { userID: m.newKey } }, multi: true }
+  // — which under --commit writes `userID: null` over every UserMatric, UserRole,
+  // Bookings and UserCCA row belonging to a non-NUS account. That is worse than
+  // the "" it was written to prevent: null is not merely a key no login can
+  // produce, it collides ALL such users onto one non-string key, and the backup
+  // at :111 records the move list rather than the pre-image, so unpicking which
+  // rows belonged to whom afterwards means reading the JSON by hand.
+  //
+  // `!m.newKey` and not `m.newKey === null`: the falsy form blocks null AND ""
+  // AND undefined, so this gate stays armed regardless of how absence is spelled
+  // next. A precondition whose whole purpose is refusing to write a dead key
+  // must not itself depend on knowing which dead key is currently in fashion.
+  const toEmpty = moves.filter((m) => !m.newKey);
   for (const m of toEmpty) {
-    console.error(`  BLOCK  ${m.coll}: ${m.docs.length} row(s) under ${m.oldKey} would re-key to "" ` +
-      `(email ${JSON.stringify(m.email)} is not @u.nus.edu)`);
+    // I-16: name the collection, the key and the email, not just a count.
+    console.error(`  BLOCK  ${m.coll}: ${m.docs.length} row(s) under ${m.oldKey} would re-key to ` +
+      `${JSON.stringify(m.newKey)} (email ${JSON.stringify(m.email)} is not @u.nus.edu)`);
   }
   if (toEmpty.length) {
     return abort(`${toEmpty.length} group(s) have no valid target key. These are the D-7 non-NUS ` +

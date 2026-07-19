@@ -48,8 +48,27 @@ export function isNusStudentEmail(email) {
 }
 
 /**
- * Returns "" for anything that is not a valid @u.nus.edu address, so
- * `canonicalUserID(e) !== ""` is exactly equivalent to `isNusStudentEmail(e)`.
+ * Returns null for anything that is not a valid @u.nus.edu address, so
+ * `canonicalUserID(e) !== null` is exactly equivalent to `isNusStudentEmail(e)`.
+ *
+ * C9 CHANGED THIS FROM "" TO null, mirroring src/lib/identity.ts. The absent
+ * identity has left the `string` domain on purpose: "" is an in-band member of
+ * the value domain that `where: {userID}`, `a === b`, `dict[k]` and
+ * `k ?? fallback` all accept silently, and null is out-of-band.
+ *
+ * WHAT THAT COSTS ON THIS SIDE. The .ts half gets strictNullChecks to sweep
+ * every consumer; .mjs gets NOTHING — no brand, no compiler, no `tsc --noEmit`.
+ * So any test of the form `canonicalUserID(e) === ""` / `!== ""` in a script is
+ * now VACUOUS rather than wrong-but-loud: `!== ""` is true for every input and
+ * `=== ""` is true for none, which silently inverts eligibility checks and
+ * disarms abort-on-empty-target gates. Prefer the falsy form (`!id`) or an
+ * explicit `== null`; both survive either representation. Every such site in
+ * scripts/ was swept when this landed — see the C9 comments in rbac-doctor.mjs,
+ * rekey-canonical.mjs and inventory-rbac.mjs.
+ *
+ * RUNTIME BEHAVIOUR IS OTHERWISE UNCHANGED: both "" and null are falsy, so any
+ * pre-existing `if (!userID)` guard keeps working identically. merge-accounts'
+ * `nonEmpty()` already returned false for null, so its consumers were safe.
  *
  * The localpart is NOT required to be E-format: `g.s_samuel@u.nus.edu` is a
  * real account here and canonicalises to "G.S_SAMUEL". Never gate eligibility
@@ -57,7 +76,7 @@ export function isNusStudentEmail(email) {
  */
 export function canonicalUserID(email) {
   const m = NUS_STUDENT_EMAIL.exec(normalizeEmail(email).toUpperCase());
-  return m ? m[1] : "";
+  return m ? m[1] : null;
 }
 
 /**
@@ -69,6 +88,36 @@ export function canonicalUserID(email) {
  */
 export function isCanonicalResidentID(userID) {
   return typeof userID === "string" && userID.length > 0 && !userID.includes("@");
+}
+
+/**
+ * C9. The ONE checked entry point for an id READ BACK FROM STORAGE rather than
+ * derived here — e.g. a `UserRole.userID` straight out of Mongo.
+ *
+ * WHY THIS EXISTS IN THE .mjs AT ALL. The obvious argument against mirroring it
+ * is that the TS version's whole point is the CanonicalUserID brand, and brands
+ * are erased at runtime, so a plain-JS copy "means nothing". That argument is
+ * half right and lands on the wrong conclusion. The function does two things:
+ * it brands (compile-time, TS-only, genuinely meaningless here) and it RETURNS
+ * null FOR ANYTHING FAILING THE SHAPE TEST, INCLUDING "" (runtime, and the
+ * load-bearing half). A ""-keyed UserRole row — the I-8d red line — must enter
+ * a migration script as ABSENT rather than as a usable key, and that hazard is
+ * strictly WORSE in .mjs, where no type system is watching. rbac-doctor.mjs:115
+ * already hand-rolls this exact shape test on a stored userID; this is the
+ * shared name for it.
+ *
+ * So the export-surface mismatch is resolved by IMPLEMENTING, not by exempting.
+ * Exempting would have meant teaching verify-identity-parity.mjs a per-symbol
+ * allowlist — a hole in the one check that catches a function existing on one
+ * side and not the other, punched open for a symbol that turns out to have real
+ * runtime behaviour worth mirroring. Implementing keeps the surface check
+ * absolute and costs eight lines.
+ *
+ * Carries NO provenance evidence — read isCanonicalResidentID's note. Never use
+ * it to launder a caller-supplied id into a key.
+ */
+export function asStoredCanonicalUserID(id) {
+  return isCanonicalResidentID(id) ? id : null;
 }
 
 /** @deprecated Alias — 05-verification.md §5 still names it this. */

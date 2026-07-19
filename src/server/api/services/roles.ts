@@ -18,10 +18,12 @@ import { canonicalUserID, isCanonicalResidentID } from "~/lib/identity";
  */
 
 export {
+  asStoredCanonicalUserID,
   canonicalUserID,
   isNusStudentEmail,
   normalizeEmail,
 } from "~/lib/identity";
+export type { CanonicalUserID } from "~/lib/identity";
 
 /**
  * Single source of truth for role identifiers.

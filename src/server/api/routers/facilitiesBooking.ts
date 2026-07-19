@@ -154,7 +154,11 @@ export const facilityBookingRouter = createTRPCRouter({
       // getBookings, reachable by a route that fix did not touch.
       //
       // Boolean(callerUserID) is load-bearing for the same reason it is in
-      // deleteBooking: "" === "" is a FALSE MATCH against any ""-keyed row.
+      // deleteBooking. Pre-C9 the hazard was `"" === ""` matching any
+      // ""-keyed row; C9 types the absent identity `null`, which no `string`
+      // column value can equal, so the type now proves what this conjunct
+      // asserts. RETAINED anyway: it costs nothing, it is the booking path, and
+      // it is what still holds if the field is ever re-widened to `string`.
       // An empty id owns nothing.
       //
       // NOT_FOUND, not FORBIDDEN, and byte-identical to the message above: a
@@ -459,6 +463,30 @@ export const facilityBookingRouter = createTRPCRouter({
         });
       }
 
+      // C9. NOT a redundant guard and NOT a cast: `evaluateBookingWithMode`
+      // already denies an absent identity with reason "NO_IDENTITY" in EVERY
+      // mode (access.ts :433) — but that denial lives inside a callee, and no
+      // type system does guard-dominance across a call boundary. So the
+      // invariant that callee enforces is restated here where the compiler can
+      // see it, immediately before `userID` is written into `Bookings.userID`.
+      //
+      // Unreachable in practice, and deliberately throws the IDENTICAL error
+      // the callee would have produced, so even the impossible path is
+      // behaviour-identical. Do NOT replace this with `identifiedProcedure`:
+      // the callee's denial also writes the `booking.denied.no_identity` audit
+      // row that 08 §2 uses to MEASURE the affected population, and narrowing
+      // at the procedure boundary would silently stop producing it.
+      if (userID === null) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: denialMessage({
+            ok: false,
+            reason: "NO_IDENTITY",
+            requiredRoles: [],
+          }),
+        });
+      }
+
       // Serialize per facility so the conflict check and the create can't
       // interleave with a competing booking (#11/#12).
       return withFacilityLock(ctx.db, input.facilityID, async () => {
@@ -574,7 +602,8 @@ export const facilityBookingRouter = createTRPCRouter({
       // tRPC surfaces as INTERNAL_SERVER_ERROR — an authorization failure must
       // not be reported to the client as a server fault.
       //
-      // 08 §1.1: same false-match guard as deleteBooking — `"" === ""` would
+      // 08 §1.1: same false-match guard as deleteBooking — pre-C9 `"" === ""`
+      // would
       // otherwise make every ""-keyed booking editable by every empty-identity
       // session. An empty id owns nothing.
       const callerUserID = ctx.session?.user?.userID;

@@ -47,13 +47,37 @@ export function isNusStudentEmail(email: string | null | undefined): boolean {
 }
 
 /**
- * Returns "" for anything that is not a valid @u.nus.edu address.
+ * A canonical, non-empty identity key derived from an @u.nus.edu address.
+ *
+ * The brand exists so the ABSENT identity can leave the `string` domain
+ * entirely (09 §5.2, D-B). Before C9 absence was `""` — an in-band member of
+ * the value domain, which `where: {userID}`, `a === b`, `dict[k]` and
+ * `k ?? fallback` all accept silently (09 §0.1, condition 2). `null` is
+ * out-of-band and `strictNullChecks` reports every site that spends it, so
+ * `tsc --noEmit` IS the sweep, permanently.
+ *
+ * The brand itself prevents RE-widening (an arbitrary string being passed
+ * where a canonical key is expected); the `| null` is what prevents emptiness.
+ * Both are needed — see 09 §5.4's "branding alone" row.
+ *
+ * Erased at runtime: a CanonicalUserID is exactly the string it wraps, so no
+ * serialized shape changes and nothing needs the brand back after JSON.parse.
+ */
+export type CanonicalUserID = string & { readonly __brand: "CanonicalUserID" };
+
+/**
+ * Returns null for anything that is not a valid @u.nus.edu address.
  *
  * This is a BEHAVIOUR CHANGE from src/server/auth.ts:135-137, which used an
  * unanchored .replace() with no .trim() and returned e.g. "ALICE@GMAIL.COM" —
- * a garbage-but-truthy string that was then usable as a role key. Returning ""
- * makes `canonicalUserID(e) !== ""` exactly equivalent to
+ * a garbage-but-truthy string that was then usable as a role key. Returning an
+ * absent value makes `canonicalUserID(e) !== null` exactly equivalent to
  * `isNusStudentEmail(e)`, so the sign-in gate and the role key cannot disagree.
+ *
+ * RUNTIME BEHAVIOUR IS UNCHANGED from the `""` era: both `""` and `null` are
+ * falsy, so every pre-existing `if (!userID)` guard keeps working identically.
+ * Only the TYPE moved. `scripts/remediation/lib/identity.mjs` mirrors this and
+ * `verify-identity-parity.mjs` gates the pair.
  *
  * NOTE: the localpart is NOT required to be E-format. `g.s_samuel@u.nus.edu`
  * exists in this database and canonicalises to "G.S_SAMUEL". Never gate
@@ -64,9 +88,11 @@ export function isNusStudentEmail(email: string | null | undefined): boolean {
  * E-format test here withholds the baseline permanently rather than
  * mis-deriving it once.
  */
-export function canonicalUserID(email: string | null | undefined): string {
+export function canonicalUserID(
+  email: string | null | undefined,
+): CanonicalUserID | null {
   const m = NUS_STUDENT_EMAIL.exec(normalizeEmail(email).toUpperCase());
-  return m ? m[1]! : "";
+  return m ? (m[1]! as CanonicalUserID) : null;
 }
 
 /**
@@ -96,6 +122,28 @@ export function isCanonicalResidentID(
   userID: string | null | undefined,
 ): boolean {
   return typeof userID === "string" && userID.length > 0 && !userID.includes("@");
+}
+
+/**
+ * C9. The ONE checked entry point into the branded domain for an id that was
+ * read back from storage rather than derived here — e.g. `UserRole.userID`,
+ * which Prisma types `string` because Mongo has no brand.
+ *
+ * It is a RUNTIME CHECK, not a cast: it applies the same shape test
+ * `isCanonicalResidentID` documents above, and returns `null` — the absent
+ * value — for anything that fails, including `""`. That is the whole point: a
+ * `""`-keyed `UserRole` row (the I-8d red line) enters the app as ABSENT rather
+ * than as a usable key, which is what stops it being spent.
+ *
+ * It carries NO provenance evidence — read `isCanonicalResidentID`'s note.
+ * Never use it to launder a CLIENT-supplied id into `CanonicalUserID`; the
+ * brand would then assert something the value has not earned, which is the
+ * re-widening it exists to prevent.
+ */
+export function asStoredCanonicalUserID(
+  id: string | null | undefined,
+): CanonicalUserID | null {
+  return isCanonicalResidentID(id) ? (id as CanonicalUserID) : null;
 }
 
 /** @deprecated Alias of isCanonicalResidentID — see the note above. */

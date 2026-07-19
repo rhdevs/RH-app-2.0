@@ -71,7 +71,15 @@ export default function ManageRolesDialog({
   const { data: session } = useSession();
   const utils = api.useUtils();
 
-  const isSelf = target.canonicalUserID === session?.user?.userID;
+  // C9 surfaced this WITHOUT an error, which is why it is called out: both
+  // sides are now `CanonicalUserID | null`, so two absent identities compare
+  // EQUAL and an operator with no canonical id would be told every identity-less
+  // target is themselves — firing the self-demotion interstitial on a stranger.
+  // Identical latent bug pre-C9 (`"" === ""`), invisible because both were
+  // `string`. `Boolean(...) &&` is the same shape access.ts:241 uses.
+  const isSelf =
+    Boolean(target.canonicalUserID) &&
+    target.canonicalUserID === session?.user?.userID;
   const storedGrantable = target.roles.filter(isGrantableRole);
   const holdsBaseline = target.roles.includes(BASELINE_ROLE);
   const anomaly = isMissingBaseline(target);
@@ -100,11 +108,25 @@ export default function ManageRolesDialog({
 
   const submit = () => {
     setFormError(null);
+    // C9. The compiler refused `userID: target.canonicalUserID` here, and it was
+    // right to: this dialog submits the GRANT TARGET, and an absent identity
+    // submitted as one is 09's whole class — a write keyed to nothing. The
+    // table already disables Manage for such a row (UserRoleTable :235), so
+    // this is unreachable through the UI and no operator's experience changes;
+    // but that guard is a render decision, and the write deserves its own.
+    // Server-side `userIDSchema.min(1)` was and remains the real backstop.
+    const targetUserID = target.canonicalUserID;
+    if (targetUserID === null) {
+      setFormError(
+        "This account has no canonical NUSNET id, so roles cannot be keyed to it.",
+      );
+      return;
+    }
     setRoles.mutate({
       // canonicalUserID, NEVER legacyUserID — the latter holds an A-format
       // matric for ~515 rows and a grant keyed on it creates a row no session
       // will ever match (I-1).
-      userID: target.canonicalUserID,
+      userID: targetUserID,
       roles: selected as ("admin" | "jcrc" | "cca_head")[],
       reason: reason.trim() || undefined,
     });

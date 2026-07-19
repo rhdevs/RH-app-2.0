@@ -419,7 +419,7 @@ async function main() {
   const emptyTargets = plans.filter((p) => !p.skip && !nonEmpty(p.canonical));
   for (const p of emptyTargets) {
     console.error(
-      `  BLOCK  ${p.email}: canonical target key is "" ` +
+      `  BLOCK  ${p.email}: canonical target key is ${JSON.stringify(p.canonical)} ` +
       `(email ${JSON.stringify(p.repEmail)} is not @u.nus.edu); ` +
       `${p.deleteIds.length} User doc(s) and every dependent row would be re-keyed onto it`,
     );
@@ -615,7 +615,8 @@ async function main() {
     if (nonNusSingletons) {
       console.log(
         `Skipped ${nonNusSingletons} A-format singleton(s) whose email is not @u.nus.edu: ` +
-        `canonical key is "" and a ""-keyed UserMatric row is permanent (09 §2.2).`,
+        `there is no canonical key (C9: absent is null, formerly "") and a UserMatric ` +
+        `row keyed on an absent value is permanent (09 §2.2).`,
       );
     }
     if (mismatchSamples.length) {

@@ -77,7 +77,13 @@ async function step1() {
 
   report.admin = { email: ADMIN_EMAIL, canonical, found: !!hit, legacyUserID: hit?.userID ?? null };
 
-  if (canonical === "") {
+  // C9: was `canonical === ""`, which is now true for no input at all — a
+  // non-NUS --admin-email would have fallen through to the `!== EXPECTED_ADMIN_ID`
+  // branch below and been reported as "derived null but D-4 says E1633673",
+  // sending the operator to correct D-4 or paste the derived value into
+  // ADMIN_USER_ID. The real fault is that the address cannot sign in at all.
+  // Falsy form so it holds for null and "" alike.
+  if (!canonical) {
     console.error(`  ! STOP: ${ADMIN_EMAIL} is not an @u.nus.edu address. Under D-7 this account`);
     console.error(`    cannot sign in AT ALL, and it can never hold a stored resident baseline`);
     console.error(`    (I-8d). Resolve this before any seeding.`);
@@ -212,7 +218,11 @@ async function step4(users) {
 
   console.log(`\n  ${"collection".padEnd(12)} ${"oldKey".padEnd(20)} -> newKey            rows`);
   for (const o of orphans) {
-    console.error(`  ORPHAN ${o.collection.padEnd(12)} ${String(o.oldKey).padEnd(20)} -> ${String(o.newKey || '""').padEnd(18)} ${o.count}`);
+    // C9: `o.newKey || '""'` printed a literal "" for what is now null, i.e. it
+    // named a target key the derivation can no longer produce. Report-only (this
+    // audit writes nothing), but an operator reads this table to decide whether
+    // to run rekey-canonical.mjs, so it must not describe the wrong hazard.
+    console.error(`  ORPHAN ${o.collection.padEnd(12)} ${String(o.oldKey).padEnd(20)} -> ${(o.newKey ?? "(no valid target)").padEnd(18)} ${o.count}`);
     // Name the actual documents, not a count (I-16). For Bookings that means
     // the bookingIDs, because those are what a user will phone up about.
     if (o.collection === "Bookings") {

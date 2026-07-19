@@ -62,19 +62,23 @@ const FIXTURES = [
   ["g.s_samuel@u.nus.edu", "G.S_SAMUEL", true],
   ["a-b_c.d%e@u.nus.edu", "A-B_C.D%E", true],
   // Adversarial / out-of-domain — all reject.
-  ["bob@u.nus.edu.evil.com", "", false], // unanchored .replace() accepted this
-  ["bob@evil.com@u.nus.edu", "", false],
-  ["bob@sub.u.nus.edu", "", false],
-  ["bob@nus.edu.sg", "", false], // staff: allowlist only, never the domain
-  ["bob@nus.edu", "", false],
-  ["bob@gmail.com", "", false],
-  ["e1234567+x@u.nus.edu", "", false], // duplicate-account vector
-  ["u.nus.edu", "", false],
-  ["@u.nus.edu", "", false], // empty localpart
-  ["", "", false],
-  ["   ", "", false],
-  [null, "", false],
-  [undefined, "", false],
+  // C9: the absent id is `null`, NOT "". It left the string domain on purpose
+  // (09 §5.2, D-B) so that a `where: {userID}` / `dict[k]` / `a === b` cannot
+  // accept it in-band. Written longhand here for the same reason the whole
+  // fixture list is: so a regression to "" in BOTH implementations still fails.
+  ["bob@u.nus.edu.evil.com", null, false], // unanchored .replace() accepted this
+  ["bob@evil.com@u.nus.edu", null, false],
+  ["bob@sub.u.nus.edu", null, false],
+  ["bob@nus.edu.sg", null, false], // staff: allowlist only, never the domain
+  ["bob@nus.edu", null, false],
+  ["bob@gmail.com", null, false],
+  ["e1234567+x@u.nus.edu", null, false], // duplicate-account vector
+  ["u.nus.edu", null, false],
+  ["@u.nus.edu", null, false], // empty localpart
+  ["", null, false],
+  ["   ", null, false],
+  [null, null, false],
+  [undefined, null, false],
 ];
 
 /** isCanonicalResidentID is a shape test on an ID, not on an email. */
@@ -137,12 +141,16 @@ for (const [input, expectedID, expectedNus] of FIXTURES) {
     (input ?? "").trim().toLowerCase(),
   );
 
-  // 00-overview.md §2.4: `canonicalUserID(e) !== ""` is EXACTLY equivalent to
+  // 00-overview.md §2.4: `canonicalUserID(e) !== null` is EXACTLY equivalent to
   // `isNusStudentEmail(e)`. If these ever come apart, the sign-in gate and the
   // role key disagree and an account can pass one while being keyed by the
   // other. Asserted per fixture, in both implementations.
+  //
+  // C9: the comparand is `null`, not "". Left as `!== ""` this assertion would
+  // have gone VACUOUS — true for every input — and silently stopped testing
+  // anything, which is the same failure mode as rbac-doctor.mjs:287.
   for (const [name, mod] of [["ts", ts], ["mjs", mjs]]) {
-    if ((mod.canonicalUserID(input) !== "") !== mod.isNusStudentEmail(input)) {
+    if ((mod.canonicalUserID(input) !== null) !== mod.isNusStudentEmail(input)) {
       failures.push(`GATE/KEY DISAGREE (${name}) on ${i}`);
     }
   }
@@ -162,6 +170,21 @@ for (const [input, expected] of ID_FIXTURES) {
     ts.isResidentEligible(input),
     mjs.isResidentEligible(input),
     expected,
+  );
+  // C9. asStoredCanonicalUserID is mirrored into the .mjs (see the long note on
+  // it there), so it gets compared BY VALUE and not merely by name. The brand is
+  // erased at runtime, which means the only thing left to check is exactly the
+  // thing that matters: it passes a well-shaped stored id through and turns
+  // everything else — "" above all — into the absent value.
+  //
+  // `expected ? input : null` is derived rather than longhand, but it is derived
+  // from the longhand `expected` column one line up, so the truth about each
+  // fixture is still stated by hand exactly once.
+  check(
+    `asStoredCanonicalUserID(${i})`,
+    ts.asStoredCanonicalUserID(input),
+    mjs.asStoredCanonicalUserID(input),
+    expected ? input : null,
   );
 }
 
@@ -246,7 +269,7 @@ for (const { root, exts } of SCAN) {
 // report
 // ---------------------------------------------------------------------------
 
-const cases = FIXTURES.length * 3 + ID_FIXTURES.length * 2;
+const cases = FIXTURES.length * 3 + ID_FIXTURES.length * 3;
 
 if (failures.length) {
   console.error(failures.join("\n"));
