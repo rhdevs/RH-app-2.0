@@ -29,7 +29,7 @@
 > them, and §4's damage assessment is contingency planning for a scenario that
 > did not occur. There is no disclosure question arising from those two leaks.
 >
-> **This does NOT clear §2.2 (`getBooking`).** That finding predates all of this
+> **This does NOT clear §2.3 (`getBooking`).** That finding predates all of this
 > work — `publicUserSelect` including `telegramHandle` is present at `f25b08c`,
 > the currently-deployed commit — so it *is* live in production right now, and it
 > is reachable by any authenticated user, with no dependency on an empty
@@ -559,15 +559,20 @@ the working tree bypasses git entirely. There is **no positive evidence** of one
 no `vercel` dep or script in `package.json`; no `.next/` build output. But the repo cannot
 prove this negative.
 
-> ### The one check only a human can run — highest-priority action in this document
+> ### SUPERSEDED — this check is no longer needed
 >
-> **Vercel dashboard → Deployments.** Confirm the newest Production deployment is the one
-> built from `f25b08c` (Jul 17), and that **no deployment is dated 2026-07-19.**
+> This box asked for a Vercel dashboard check. **It has been answered from git instead,
+> which is a stronger signal than the dashboard**: `git log origin/main..main` shows every
+> commit of this work is local-only and `origin/main` remains `f25b08c` (2026-07-17).
+> Vercel builds from the remote, so unpushed code cannot have been deployed by any
+> mechanism. The dashboard could only have confirmed what the remote already proves.
 >
-> Until then the conclusion is *"almost certainly never shipped"*, not *"proven never
-> shipped"*. **If it confirms, §4.2–§4.5 become contingency planning, not incident
-> response** — there is no production damage, no disclosure question, and the only live
-> item is `merge-accounts.mjs` (§2.1), whose damage is entirely prospective.
+> **§4.2–§4.5 are therefore contingency planning, not incident response.** No production
+> damage from LEAK 1 or LEAK 2, and no disclosure question. See the head of this document.
+>
+> The two items that remain live are unaffected by this: §2.3 `getBooking` (deployed at
+> `f25b08c`, predates this work) and §2.1 `merge-accounts.mjs` (unrun, damage entirely
+> prospective).
 
 ### 4.2 The discriminator, and its one hole
 
@@ -797,8 +802,8 @@ false confidence.
 
 | | Step | Depends on | Effort | Reversible |
 |---|---|---|---|---|
-| **P0** | **Vercel dashboard → Deployments**: confirm nothing dated 2026-07-19 (§4.1) | nothing | minutes | read-only |
-| **P0** | If any doubt: **pull Vercel + Atlas request logs now** (§4.5) — retention is the only running clock | above | minutes | read-only |
+| ~~P0~~ | ~~Vercel dashboard check~~ — **DONE, from git**: `origin/main` is `f25b08c`, all of this work is unpushed, so it was never built. §4.1 | — | done | n/a |
+| **P0** | §2.3 `getBooking` ownership check — **the only finding live in production.** See `10-remediation.md` C1 | nothing | ~1h | yes |
 | **P0** | **Freeze `merge-accounts.mjs`.** Do not run it under `APPLY=yes` until §2.1+§2.2 are fixed and Q6 has been read | nothing | zero | n/a |
 | **P0** | Run Q6 **before** anyone runs that script — the only *future* damage in the set, and the only still-open recoverability window | freeze | minutes | read-only |
 | **P1** | **Extend `verify-identity-parity.mjs` into a private-derivation ban**; fix `merge-accounts.mjs:84` to import the shared `canonicalUserID`; adopt `rekey-canonical.mjs:74-83`'s abort-on-empty-target; update `README.md:76` | nothing | ~1h | yes |
@@ -823,9 +828,9 @@ precisely because one tempting "fix" here would flip it by accident.
 
 ## Done when
 
-- [ ] **Vercel Deployments list checked**; the "never deployed" conclusion is either
-      confirmed and **recorded here with a date**, or contradicted and this document is
-      re-opened as incident response.
+- [x] **Deployment question settled** (2026-07-19, from git): `origin/main` is `f25b08c`
+      and all of this work is unpushed, so LEAK 1 and LEAK 2 never shipped. No disclosure
+      question. Supersedes the Vercel-dashboard check this document originally called for.
 - [ ] `merge-accounts.mjs` imports the shared `canonicalUserID`, aborts on an empty target
       key, and **no private identity derivation exists** anywhere under `scripts/` or `src/`
       except the one allowlisted `legacyCanonicalUserID` (`lib/rbac.mjs:164`).
