@@ -12,31 +12,33 @@ import { Badge } from "~/components/ui/badge";
  * Red for admin is intentional: the highest privilege should look alarming in a
  * list of 515 rows.
  */
-const ROLE_STYLES: Record<string, { label: string; cls: string; title?: string }> =
-  {
-    admin: {
-      label: "Admin",
-      cls: "bg-red-100 text-red-800 border-red-300 hover:bg-red-100",
-    },
-    jcrc: {
-      label: "JCRC",
-      cls: "bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-100",
-    },
-    cca_head: {
-      label: "CCA Head",
-      cls: "bg-blue-100 text-blue-800 border-blue-300 hover:bg-blue-100",
-    },
-    // D-1 / I-8: STORED, auto-granted at account creation to every verified
-    // @u.nus.edu identity and self-healed at session read (I-8a/I-8b). Never
-    // granted or revoked through this UI (I-8e). Rendered muted so it reads as
-    // a fact about the account, not as a grant somebody made.
-    resident: {
-      label: "Resident",
-      cls: "bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-100",
-      title:
-        "Automatic for every verified NUS account. Cannot be granted or removed here.",
-    },
-  };
+const ROLE_STYLES: Record<
+  string,
+  { label: string; cls: string; title?: string }
+> = {
+  admin: {
+    label: "Admin",
+    cls: "bg-red-100 text-red-800 border-red-300 hover:bg-red-100",
+  },
+  jcrc: {
+    label: "JCRC",
+    cls: "bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-100",
+  },
+  cca_head: {
+    label: "CCA Head",
+    cls: "bg-blue-100 text-blue-800 border-blue-300 hover:bg-blue-100",
+  },
+  // D-1 / I-8: STORED, auto-granted at account creation to every verified
+  // @u.nus.edu identity and self-healed at session read (I-8a/I-8b). Never
+  // granted or revoked through this UI (I-8e). Rendered muted so it reads as
+  // a fact about the account, not as a grant somebody made.
+  resident: {
+    label: "Resident",
+    cls: "bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-100",
+    title:
+      "Automatic for every verified NUS account. Cannot be granted or removed here.",
+  },
+};
 
 export default function RoleBadge({ role }: { role: string }) {
   // Unknown roles render neutrally rather than vanishing: a role written by a

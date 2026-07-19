@@ -64,9 +64,8 @@ function RowLine({ r }: { r: Row }) {
         </Badge>
       </TableCell>
       <TableCell className="font-mono text-xs">
-        {r.targetUserID ?? (r.targetFacilityID != null
-          ? `facility ${r.targetFacilityID}`
-          : "—")}
+        {r.targetUserID ??
+          (r.targetFacilityID != null ? `facility ${r.targetFacilityID}` : "—")}
       </TableCell>
       <TableCell className="text-xs text-gray-500">
         {(r.rolesBefore ?? []).join(", ") || "—"} →{" "}
@@ -138,10 +137,7 @@ export default function AuditLogTable({
     },
   );
 
-  const rows = useMemo(
-    () => data?.pages.flatMap((p) => p.items) ?? [],
-    [data],
-  );
+  const rows = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
 
   /**
    * Batch grouping is the headline feature of this page. A 500-person import is
@@ -211,13 +207,15 @@ export default function AuditLogTable({
       )}
 
       {batches.length > 0 && (
-        <Accordion type="multiple" className="rounded-xl bg-white px-4 shadow-lg">
+        <Accordion
+          type="multiple"
+          className="rounded-xl bg-white px-4 shadow-lg"
+        >
           {batches.map((b) => (
             <AccordionItem key={b.batchId} value={b.batchId}>
               <AccordionTrigger className="text-sm">
                 Bulk operation · {b.rows.length} rows · by{" "}
-                {b.rows[0]?.actorUserID} ·{" "}
-                {b.rows[0] ? when(b.rows[0].at) : ""}
+                {b.rows[0]?.actorUserID} · {b.rows[0] ? when(b.rows[0].at) : ""}
               </AccordionTrigger>
               <AccordionContent>
                 <div className="overflow-x-auto">

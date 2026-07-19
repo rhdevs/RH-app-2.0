@@ -121,7 +121,9 @@ export function canonicalUserID(
 export function isCanonicalResidentID(
   userID: string | null | undefined,
 ): boolean {
-  return typeof userID === "string" && userID.length > 0 && !userID.includes("@");
+  return (
+    typeof userID === "string" && userID.length > 0 && !userID.includes("@")
+  );
 }
 
 /**

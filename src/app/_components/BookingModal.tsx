@@ -174,115 +174,117 @@ const BookingModal: React.FC<BookingModalProps> = ({
               </button>
             </div>
           ) : (
-          <div className="space-y-4 p-4">
-            <div className="grid grid-cols-2 gap-4">
-              {["start", "end"].map((type) => {
-                const date = type === "start" ? startDate : endDate;
-                return (
-                  <div key={type}>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">
-                      <CalendarIcon className="mr-1 inline h-4 w-4" />
-                      {type === "start" ? "Start Date" : "End Date"}
-                    </label>
-                    <div className="flex items-center justify-between rounded-lg bg-gray-100 p-2">
-                      <button
-                        onClick={() =>
-                          handleDateChange(type as "start" | "end", "prev")
-                        }
-                      >
-                        {" "}
-                        <ChevronLeft className="h-4 w-4" />{" "}
-                      </button>
-                      <span>{format(date, "eeee, MMM d yyyy")}</span>
-                      <button
-                        onClick={() =>
-                          handleDateChange(type as "start" | "end", "next")
-                        }
-                      >
-                        {" "}
-                        <ChevronRight className="h-4 w-4" />{" "}
-                      </button>
+            <div className="space-y-4 p-4">
+              <div className="grid grid-cols-2 gap-4">
+                {["start", "end"].map((type) => {
+                  const date = type === "start" ? startDate : endDate;
+                  return (
+                    <div key={type}>
+                      <label className="mb-1 block text-sm font-medium text-gray-700">
+                        <CalendarIcon className="mr-1 inline h-4 w-4" />
+                        {type === "start" ? "Start Date" : "End Date"}
+                      </label>
+                      <div className="flex items-center justify-between rounded-lg bg-gray-100 p-2">
+                        <button
+                          onClick={() =>
+                            handleDateChange(type as "start" | "end", "prev")
+                          }
+                        >
+                          {" "}
+                          <ChevronLeft className="h-4 w-4" />{" "}
+                        </button>
+                        <span>{format(date, "eeee, MMM d yyyy")}</span>
+                        <button
+                          onClick={() =>
+                            handleDateChange(type as "start" | "end", "next")
+                          }
+                        >
+                          {" "}
+                          <ChevronRight className="h-4 w-4" />{" "}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                <MapPin className="mr-1 inline h-4 w-4" /> Facility
-              </label>
-              <select
-                value={selectedFacility}
-                onChange={(e) => setSelectedFacility(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 p-3"
-              >
-                <option value="">Select a facility</option>
-                {/* Facility access is enforced server-side (#23); no
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  <MapPin className="mr-1 inline h-4 w-4" /> Facility
+                </label>
+                <select
+                  value={selectedFacility}
+                  onChange={(e) => setSelectedFacility(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 p-3"
+                >
+                  <option value="">Select a facility</option>
+                  {/* Facility access is enforced server-side (#23); no
                     hardcoded employee-ID allowlist here anymore. */}
-                {[...facilities]
-                  .sort((a, b) => a.facilityName.localeCompare(b.facilityName))
-                  .map((f) => (
-                    <option key={f.facilityID} value={f.facilityName}>
-                      {f.facilityName} - {f.facilityLocation}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            {selectedFacility === "Dance Studio" && (
-              <p className="text-sm text-red-600">
-                Note: Dance Studio cannot be booked in this app. To book the
-                Dance Studio, please approach the Dance CCA Exco.
-              </p>
-            )}
+                  {[...facilities]
+                    .sort((a, b) =>
+                      a.facilityName.localeCompare(b.facilityName),
+                    )
+                    .map((f) => (
+                      <option key={f.facilityID} value={f.facilityName}>
+                        {f.facilityName} - {f.facilityLocation}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              {selectedFacility === "Dance Studio" && (
+                <p className="text-sm text-red-600">
+                  Note: Dance Studio cannot be booked in this app. To book the
+                  Dance Studio, please approach the Dance CCA Exco.
+                </p>
+              )}
 
-            <div className="grid grid-cols-2 gap-10">
-              {["Start Time", "End Time"].map((label, idx) => (
-                <div key={label} className="">
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    <Clock className="mr-1 inline h-4 w-4" /> {label}
-                  </label>
-                  <input
-                    type="time"
-                    value={idx === 0 ? startTime : endTime}
-                    onChange={(e) =>
-                      idx === 0
-                        ? setStartTime(e.target.value)
-                        : setEndTime(e.target.value)
-                    }
-                    className="w-4/5 rounded-lg border border-gray-300 p-3"
-                  />
-                </div>
-              ))}
-            </div>
+              <div className="grid grid-cols-2 gap-10">
+                {["Start Time", "End Time"].map((label, idx) => (
+                  <div key={label} className="">
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      <Clock className="mr-1 inline h-4 w-4" /> {label}
+                    </label>
+                    <input
+                      type="time"
+                      value={idx === 0 ? startTime : endTime}
+                      onChange={(e) =>
+                        idx === 0
+                          ? setStartTime(e.target.value)
+                          : setEndTime(e.target.value)
+                      }
+                      className="w-4/5 rounded-lg border border-gray-300 p-3"
+                    />
+                  </div>
+                ))}
+              </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                <User className="mr-1 inline h-4 w-4" /> Event Name
-              </label>
-              <input
-                type="text"
-                value={eventName}
-                onChange={(e) => setEventName(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 p-3"
-                placeholder="Your event name"
-              />
-            </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  <User className="mr-1 inline h-4 w-4" /> Event Name
+                </label>
+                <input
+                  type="text"
+                  value={eventName}
+                  onChange={(e) => setEventName(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 p-3"
+                  placeholder="Your event name"
+                />
+              </div>
 
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={handleSubmit}
-                disabled={
-                  !selectedFacility ||
-                  !eventName ||
-                  selectedFacility === "Dance Studio"
-                }
-                className="rounded-lg bg-emerald-600 px-6 py-2 text-white hover:bg-emerald-700 disabled:bg-gray-300"
-              >
-                Confirm Booking
-              </button>
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={handleSubmit}
+                  disabled={
+                    !selectedFacility ||
+                    !eventName ||
+                    selectedFacility === "Dance Studio"
+                  }
+                  className="rounded-lg bg-emerald-600 px-6 py-2 text-white hover:bg-emerald-700 disabled:bg-gray-300"
+                >
+                  Confirm Booking
+                </button>
+              </div>
             </div>
-          </div>
           )}
         </div>
       </div>

@@ -60,7 +60,8 @@ export async function getEnforcementMode(
 ): Promise<EnforcementMode> {
   const fallback = (process.env.RBAC_BOOKING_ENFORCEMENT ??
     "off") as EnforcementMode;
-  if (flagCache && Date.now() - flagCache.at < FLAG_TTL_MS) return flagCache.mode;
+  if (flagCache && Date.now() - flagCache.at < FLAG_TTL_MS)
+    return flagCache.mode;
   try {
     const row = await db.systemFlag.findUnique({ where: { key: FLAG_KEY } });
     const mode = (MODES as readonly string[]).includes(row?.value ?? "")
@@ -317,10 +318,12 @@ function canBookLegacy(
 }
 
 /** Raw (un-defaulted) requirement, for the legacy path and the bulk map. */
-function rawRequired(row: {
-  requiredRoles?: string[] | null;
-  requiredRole?: string | null;
-} | null): string[] {
+function rawRequired(
+  row: {
+    requiredRoles?: string[] | null;
+    requiredRole?: string | null;
+  } | null,
+): string[] {
   if (row?.requiredRoles?.length) return row.requiredRoles;
   if (row?.requiredRole) return [row.requiredRole];
   return [];
@@ -368,7 +371,8 @@ export async function evaluateBooking(
   ]);
 
   if (canBookWithRoles(roles, required)) return { ok: true };
-  if (!userID) return { ok: false, reason: "NOT_ELIGIBLE", requiredRoles: required };
+  if (!userID)
+    return { ok: false, reason: "NOT_ELIGIBLE", requiredRoles: required };
 
   if (!roles.includes(BASELINE_ROLE)) {
     // REPAIR-ON-DENY (I-8b, second site). The session callback already tried
@@ -388,7 +392,11 @@ export async function evaluateBooking(
     // general write outage is not a DIFFERENTIAL lockout. What is genuinely
     // worse than the derived design is a PARTIAL failure — writes succeeding
     // elsewhere but failing on UserRole.
-    if (email && isCanonicalResidentID(userID) && (await ensureBaseline(db, email))) {
+    if (
+      email &&
+      isCanonicalResidentID(userID) &&
+      (await ensureBaseline(db, email))
+    ) {
       const repaired = await getUserRoles(db, userID);
       if (canBookWithRoles(repaired, required)) return { ok: true };
       if (repaired.includes(BASELINE_ROLE)) {
@@ -556,7 +564,10 @@ export async function getBookableFacilityMap(
     out.set(f.facilityID, {
       // The picker must agree with the enforcement point, kill switch included,
       // or a room renders enabled and fails at submit (or vice versa).
-      canBook: mode === "off" ? canBookLegacy(roles, raw) : canBookWithRoles(roles, required),
+      canBook:
+        mode === "off"
+          ? canBookLegacy(roles, raw)
+          : canBookWithRoles(roles, required),
       // Always the DEFAULTED set: this is what the UI tells the user is needed,
       // and "nothing is required" is not a state that exists under D-1.
       requiredRoles: required,

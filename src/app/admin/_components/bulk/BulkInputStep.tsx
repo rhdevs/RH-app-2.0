@@ -11,11 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Textarea } from "~/components/ui/textarea";
 
 import { useCapabilities } from "../AdminCapabilityContext";
-import {
-  guessColumnKind,
-  parseCsv,
-  type CsvColumnKind,
-} from "../../_lib/csv";
+import { guessColumnKind, parseCsv, type CsvColumnKind } from "../../_lib/csv";
 import { splitPasted } from "../../_lib/planClient";
 import CsvColumnMapper from "./CsvColumnMapper";
 
@@ -47,7 +43,8 @@ export default function BulkInputStep({
         .slice(1)
         .map((r, i) => ({
           lineNo: i + 2,
-          identifier: (identifierCol >= 0 ? r[identifierCol] : "")?.trim() ?? "",
+          identifier:
+            (identifierCol >= 0 ? r[identifierCol] : "")?.trim() ?? "",
           roles: selectedRoles,
         }))
         .filter((r) => r.identifier !== "")

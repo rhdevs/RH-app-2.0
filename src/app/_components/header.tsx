@@ -82,7 +82,10 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       // Handle mobile menu click outside
-      if (isMobileMenuOpen && !(event.target as HTMLElement).closest(".mobile-menu-container")) {
+      if (
+        isMobileMenuOpen &&
+        !(event.target as HTMLElement).closest(".mobile-menu-container")
+      ) {
         setIsMobileMenuOpen(false);
       }
 

@@ -20,7 +20,9 @@ export default function RootError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error(JSON.stringify({ evt: "app_render_error", digest: error.digest }));
+    console.error(
+      JSON.stringify({ evt: "app_render_error", digest: error.digest }),
+    );
   }, [error]);
 
   return (

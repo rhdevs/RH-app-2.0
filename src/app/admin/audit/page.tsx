@@ -33,8 +33,7 @@ const TRIAGE = [
   },
   {
     code: "NOT_RESIDENT (ineligible)",
-    cause:
-      "Canonical userID retains an @, i.e. not a verified NUS address.",
+    cause: "Canonical userID retains an @, i.e. not a verified NUS address.",
     fix: "Check the health panel. The account needs its email corrected or merged. The baseline is correctly absent — this is not a bug.",
   },
   {
@@ -63,9 +62,7 @@ const TRIAGE = [
 
 function AuditPageInner() {
   const params = useSearchParams();
-  return (
-    <AuditLogTable initialBatchId={params.get("batchId") ?? undefined} />
-  );
+  return <AuditLogTable initialBatchId={params.get("batchId") ?? undefined} />;
 }
 
 export default function AdminAuditPage() {
@@ -78,11 +75,17 @@ export default function AdminAuditPage() {
         </p>
       </div>
 
-      <Suspense fallback={<div className="text-sm text-gray-500">Loading…</div>}>
+      <Suspense
+        fallback={<div className="text-sm text-gray-500">Loading…</div>}
+      >
         <AuditPageInner />
       </Suspense>
 
-      <Accordion type="single" collapsible className="rounded-xl bg-white px-4 shadow-lg">
+      <Accordion
+        type="single"
+        collapsible
+        className="rounded-xl bg-white px-4 shadow-lg"
+      >
         <AccordionItem value="triage">
           <AccordionTrigger className="text-sm">
             Denial triage — why someone says &quot;I can&apos;t book&quot;

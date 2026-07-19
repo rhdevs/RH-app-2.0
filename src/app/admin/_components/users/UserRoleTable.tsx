@@ -189,14 +189,11 @@ export default function UserRoleTable() {
               // (it pages UserRole and has no email to canonicalise), so the
               // anomaly marker would be a guess there. Suppress rather than
               // guess — see _lib/anomalies.ts.
-              const anomaly =
-                roleFilter === "all" && isMissingBaseline(u);
+              const anomaly = roleFilter === "all" && isMissingBaseline(u);
               return (
                 <TableRow key={`${u.id}-${u.canonicalUserID}`}>
                   <TableCell className="font-medium text-gray-900">
-                    {u.displayName ?? (
-                      <span className="text-gray-400">—</span>
-                    )}
+                    {u.displayName ?? <span className="text-gray-400">—</span>}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
@@ -264,10 +261,7 @@ export default function UserRoleTable() {
       )}
 
       {target && (
-        <ManageRolesDialog
-          target={target}
-          onClose={() => setTarget(null)}
-        />
+        <ManageRolesDialog target={target} onClose={() => setTarget(null)} />
       )}
     </>
   );

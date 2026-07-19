@@ -136,7 +136,10 @@ export const protectedProcedure = t.procedure
     // a DB-free transform of the token's own email. It is not a role and it is
     // not cached in the token.
     if (!ctx.session.user.eligible) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "NUS_ACCOUNT_REQUIRED" });
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "NUS_ACCOUNT_REQUIRED",
+      });
     }
     return next({
       ctx: {
@@ -168,26 +171,24 @@ export const protectedProcedure = t.procedure
  * behaviour change wearing a refactor's clothes, and it is the same flag-flip
  * trap C5 documents. It is NOT layered onto `protectedProcedure`.
  */
-export const identifiedProcedure = protectedProcedure.use(
-  ({ ctx, next }) => {
-    const userID = ctx.session.user.userID;
-    if (userID === null) {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: "NO_CANONICAL_IDENTITY",
-      });
-    }
-    return next({
-      ctx: {
-        ...ctx,
-        session: {
-          ...ctx.session,
-          user: { ...ctx.session.user, userID },
-        },
-      },
+export const identifiedProcedure = protectedProcedure.use(({ ctx, next }) => {
+  const userID = ctx.session.user.userID;
+  if (userID === null) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "NO_CANONICAL_IDENTITY",
     });
-  },
-);
+  }
+  return next({
+    ctx: {
+      ...ctx,
+      session: {
+        ...ctx.session,
+        user: { ...ctx.session.user, userID },
+      },
+    },
+  });
+});
 
 /**
  * Matric-gated procedure.
@@ -289,7 +290,10 @@ export const requireRoles = (...allowed: string[]) =>
   t.middleware(({ ctx, next }) => {
     if (!ctx.session?.user) throw new TRPCError({ code: "UNAUTHORIZED" });
     const roles = ctx.session.user.roles ?? [];
-    if (!roles.includes(ADMIN_ROLE) && !allowed.some((r) => roles.includes(r))) {
+    if (
+      !roles.includes(ADMIN_ROLE) &&
+      !allowed.some((r) => roles.includes(r))
+    ) {
       throw new TRPCError({ code: "FORBIDDEN", message: "INSUFFICIENT_ROLE" });
     }
     return next();

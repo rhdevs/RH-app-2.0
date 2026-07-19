@@ -145,7 +145,11 @@ export const facilityBookingRouter = createTRPCRouter({
         where: { bookingID: input },
       });
 
-      if (!booking) throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
+      if (!booking)
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Booking not found",
+        });
 
       // 09 §2.3: this route had NO ownership check and joined publicUserSelect
       // (telegramHandle, bio, block) for an arbitrary bookingID from a bare
@@ -167,7 +171,10 @@ export const facilityBookingRouter = createTRPCRouter({
       const callerUserID = ctx.session.user.userID;
       const owns = Boolean(callerUserID) && booking.userID === callerUserID;
       if (!owns && !(await isAdmin(ctx.db, callerUserID))) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Booking not found",
+        });
       }
 
       const [user, facility, cca] = await Promise.all([
@@ -215,21 +222,25 @@ export const facilityBookingRouter = createTRPCRouter({
         userId: z.string().min(1).optional(),
         seeAll: z.boolean().optional(),
         limit: z.number().default(100),
-        cursor: z.object({
-          startTime: z.number(),
-          id: z.string(),
-        }).optional(),
+        cursor: z
+          .object({
+            startTime: z.number(),
+            id: z.string(),
+          })
+          .optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
-      const { startTime, endTime, facilityIDs, userId, seeAll, limit, cursor } = input;
+      const { startTime, endTime, facilityIDs, userId, seeAll, limit, cursor } =
+        input;
       const callerUserID = ctx.session.user.userID;
       // `seeAll` (full-table dump) is admin-only (#10).
       // I-6: was `getUserRole(...) === ADMIN_ROLE`, i.e. a positional roles[0]
       // read. roles[0] is $addToSet insertion order, so a user holding
       // ["jcrc","admin"] silently lost admin here and was denied their own
       // capability. isAdmin() tests membership over the whole set.
-      const canSeeAll = Boolean(seeAll) && (await isAdmin(ctx.db, callerUserID));
+      const canSeeAll =
+        Boolean(seeAll) && (await isAdmin(ctx.db, callerUserID));
       const timeFilter = canSeeAll
         ? {}
         : {
@@ -243,15 +254,17 @@ export const facilityBookingRouter = createTRPCRouter({
             ? { facilityID: { in: facilityIDs } }
             : {}),
           ...(userId ? { userID: userId } : {}),
-          ...(cursor ? {
-            OR: [
-              { startTime: { lt: cursor.startTime } },
-              {
-                startTime: cursor.startTime,
-                id: { gt: cursor.id },
-              },
-            ],
-          } : {}),
+          ...(cursor
+            ? {
+                OR: [
+                  { startTime: { lt: cursor.startTime } },
+                  {
+                    startTime: cursor.startTime,
+                    id: { gt: cursor.id },
+                  },
+                ],
+              }
+            : {}),
         },
       });
       // 09 §3.1 (S5): filter the sentinel out of the JOIN, not out of each read.
@@ -265,7 +278,9 @@ export const facilityBookingRouter = createTRPCRouter({
       // prefers to a confident false success. Note this is NOT a fix for
       // Problem B (08 §0.1): an A-format legacy owner already renders blank
       // here and continues to.
-      const userIDs = [...new Set(bookings.map((b) => b.userID))].filter(Boolean);
+      const userIDs = [...new Set(bookings.map((b) => b.userID))].filter(
+        Boolean,
+      );
 
       const users = await ctx.db.user.findMany({
         where: {
@@ -290,10 +305,10 @@ export const facilityBookingRouter = createTRPCRouter({
           facilityName: true,
         },
       });
-      
+
       // Create facility dictionary for O(1) lookups
       const facilityDict = Object.fromEntries(
-        facilities.map((f) => [f.facilityID, f.facilityName])
+        facilities.map((f) => [f.facilityID, f.facilityName]),
       );
       const ONE_DAY = 86400; // seconds in a day
 
@@ -337,12 +352,14 @@ export const facilityBookingRouter = createTRPCRouter({
         return b.id.localeCompare(a.id);
       });
 
-      const nextCursor = processedBookings.length === limit && processedBookings.length > 0
-        ? {
-            startTime: processedBookings[processedBookings.length - 1]!.startTime,
-            id: processedBookings[processedBookings.length - 1]!.id,
-          }
-        : undefined;
+      const nextCursor =
+        processedBookings.length === limit && processedBookings.length > 0
+          ? {
+              startTime:
+                processedBookings[processedBookings.length - 1]!.startTime,
+              id: processedBookings[processedBookings.length - 1]!.id,
+            }
+          : undefined;
 
       return {
         bookings: processedBookings.map((booking) => ({
@@ -384,32 +401,32 @@ export const facilityBookingRouter = createTRPCRouter({
         endTime: { gte: currentTime },
       },
     });
-      const bookingsWithDetails = await Promise.all(
-        bookings.map(async (booking) => {
-          const [user, facility, cca] = await Promise.all([
-            ctx.db.user.findFirst({
-              where: { userID: booking.userID },
-              select: { displayName: true },
-            }),
-            ctx.db.facilities.findFirst({
-              where: { facilityID: booking.facilityID },
-              select: { facilityName: true },
-            }),
-            ctx.db.cCA.findFirst({
-              where: { ccaID: booking.ccaID },
-              select: { ccaName: true },
-            }),
-          ]);
-          return {
-            ...booking,
-            displayName: user?.displayName,
-            facilityName: facility?.facilityName,
-            ccaName: cca?.ccaName,
-          };
-        }),
-      );
-      return bookingsWithDetails.sort((a, b) => a.startTime - b.startTime);
-    }),
+    const bookingsWithDetails = await Promise.all(
+      bookings.map(async (booking) => {
+        const [user, facility, cca] = await Promise.all([
+          ctx.db.user.findFirst({
+            where: { userID: booking.userID },
+            select: { displayName: true },
+          }),
+          ctx.db.facilities.findFirst({
+            where: { facilityID: booking.facilityID },
+            select: { facilityName: true },
+          }),
+          ctx.db.cCA.findFirst({
+            where: { ccaID: booking.ccaID },
+            select: { ccaName: true },
+          }),
+        ]);
+        return {
+          ...booking,
+          displayName: user?.displayName,
+          facilityName: facility?.facilityName,
+          ccaName: cca?.ccaName,
+        };
+      }),
+    );
+    return bookingsWithDetails.sort((a, b) => a.startTime - b.startTime);
+  }),
 
   // Gated: a user without a matric on file cannot create bookings, even via a
   // hand-crafted API call that bypasses the client MatricGate (#login-gate).
@@ -541,7 +558,10 @@ export const facilityBookingRouter = createTRPCRouter({
         where: { id: input.id },
       });
       if (!existing) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Booking not found",
+        });
       }
 
       // I-6, second and final call site — converted in the SAME commit as the

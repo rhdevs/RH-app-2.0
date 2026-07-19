@@ -26,10 +26,7 @@ export function computeAfter(
 ): string[] {
   if (mode === "add") return [...new Set([...before, ...requested])];
   return [
-    ...new Set([
-      ...requested,
-      ...STICKY.filter((r) => before.includes(r)),
-    ]),
+    ...new Set([...requested, ...STICKY.filter((r) => before.includes(r))]),
   ];
 }
 

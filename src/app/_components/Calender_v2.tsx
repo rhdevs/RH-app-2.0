@@ -171,9 +171,9 @@ const Calendar_v2: React.FC = () => {
   const processedBookings = useMemo(() => {
     if (!bookingsInMonth) return [];
 
-    const bookings = Array.isArray(bookingsInMonth) 
-      ? bookingsInMonth 
-      : bookingsInMonth?.bookings ?? [];
+    const bookings = Array.isArray(bookingsInMonth)
+      ? bookingsInMonth
+      : (bookingsInMonth?.bookings ?? []);
     return bookings.map((booking: Booking) => {
       const start = booking.start ? new Date(booking.start) : new Date();
       const end = booking.end ? new Date(booking.end) : new Date();
@@ -269,7 +269,7 @@ const Calendar_v2: React.FC = () => {
       case "Comm Hall (Back)":
         return "bg-emerald-100 text-emerald-800 border-emerald-800";
       case "SCRC Room":
-        return "bg-teal-200 text-teal-800 border-teal-800"
+        return "bg-teal-200 text-teal-800 border-teal-800";
       default:
         return "bg-gray-100 text-gray-800";
     }
@@ -440,7 +440,8 @@ const Calendar_v2: React.FC = () => {
             : 'All Bookings (Click "See My Bookings" to view your bookings by date.)'}
         </div>
         <div className="text-xs text-gray-500">
-          Note: To see all your bookings in one place, navigate to &quot;My Bookings&quot; tab.
+          Note: To see all your bookings in one place, navigate to &quot;My
+          Bookings&quot; tab.
         </div>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-7">

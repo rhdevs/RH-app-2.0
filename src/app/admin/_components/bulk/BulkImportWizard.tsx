@@ -32,9 +32,9 @@ export default function BulkImportWizard({
    * change the signed tuple and self-inflict a token mismatch on exactly the
    * viewers the redaction is protecting others from.
    */
-  const [requestedByLine, setRequestedByLine] = useState<
-    Map<number, string[]>
-  >(new Map());
+  const [requestedByLine, setRequestedByLine] = useState<Map<number, string[]>>(
+    new Map(),
+  );
   const [step, setStep] = useState<"input" | "review" | "commit">("input");
   const [results, setResults] = useState<CommitResult[]>([]);
   const [done, setDone] = useState(0);

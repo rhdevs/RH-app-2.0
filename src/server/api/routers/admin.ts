@@ -515,7 +515,8 @@ export async function applyRoleChange(opts: {
     reason,
     batchId,
   } = opts;
-  const losingAdmin = before.includes(ADMIN_ROLE) && !after.includes(ADMIN_ROLE);
+  const losingAdmin =
+    before.includes(ADMIN_ROLE) && !after.includes(ADMIN_ROLE);
 
   // I-8c, ASSERTED rather than assumed. `removed` comes from
   // assertCanMutateRoles, where it is `before.filter(...)` over a
@@ -1067,12 +1068,7 @@ export const adminRouter = createTRPCRouter({
         const remaining = await tx.ccaHead.count({
           where: { userID: input.userID },
         });
-        return writeCcaHeadString(
-          tx,
-          input.userID,
-          remaining > 0,
-          actorUserID,
-        );
+        return writeCcaHeadString(tx, input.userID, remaining > 0, actorUserID);
       });
 
       await writeAudit(ctx.db, {
@@ -1400,7 +1396,9 @@ export const adminRouter = createTRPCRouter({
       return {
         items: page,
         nextCursor:
-          rows.length > input.limit ? (page[page.length - 1]?.id ?? null) : null,
+          rows.length > input.limit
+            ? (page[page.length - 1]?.id ?? null)
+            : null,
       };
     }),
 
@@ -1448,7 +1446,10 @@ export const adminRouter = createTRPCRouter({
         where: { facilityID: input.facilityID },
       });
       if (!facility) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Facility not found" });
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Facility not found",
+        });
       }
 
       const existing = await ctx.db.facilityAccess.findUnique({
@@ -2131,7 +2132,12 @@ export const adminRouter = createTRPCRouter({
             denyReason,
             batchId: input.batchId,
           });
-          results.push({ identifier: row.identifier, status: "denied", denyReason, userID });
+          results.push({
+            identifier: row.identifier,
+            status: "denied",
+            denyReason,
+            userID,
+          });
         };
 
         const hit = resolveIdentifier(row.identifier);
@@ -2150,7 +2156,11 @@ export const adminRouter = createTRPCRouter({
           continue;
         }
         if (row.roles.includes(ADMIN_ROLE)) {
-          if (!c.seeAdminIdentities || !input.reason || input.expiresInDays > 14) {
+          if (
+            !c.seeAdminIdentities ||
+            !input.reason ||
+            input.expiresInDays > 14
+          ) {
             await deny("ADMIN_PENDING_GRANT_RESTRICTED", hit.userID);
             continue;
           }

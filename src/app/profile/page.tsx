@@ -113,11 +113,11 @@ const ProfilePage: React.FC = () => {
             This account cannot be used to book facilities
           </h1>
           <p className="max-w-md text-sm text-gray-600">
-            Raffles Hall accounts must be NUS student accounts
-            (<span className="font-medium">@u.nus.edu</span>). You are signed in
-            as <span className="font-medium">{user.email}</span>. Please sign out
-            and sign in again with your NUS student account, or contact the JCRC
-            if you believe this is a mistake.
+            Raffles Hall accounts must be NUS student accounts (
+            <span className="font-medium">@u.nus.edu</span>). You are signed in
+            as <span className="font-medium">{user.email}</span>. Please sign
+            out and sign in again with your NUS student account, or contact the
+            JCRC if you believe this is a mistake.
           </p>
           <button
             onClick={() => void signOut({ callbackUrl: "/login" })}

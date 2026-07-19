@@ -83,7 +83,9 @@ function bucketOf(
   seen: Set<string>,
 ): Bucket {
   if (item.status === "denied") {
-    return item.denyReason === "UNRESOLVED_IDENTIFIER" ? "unresolved" : "denied";
+    return item.denyReason === "UNRESOLVED_IDENTIFIER"
+      ? "unresolved"
+      : "denied";
   }
   if (seen.has(item.userID)) return "duplicate";
   if (!item.hasAccount) return "pending";
@@ -215,7 +217,9 @@ export default function BulkPreviewTable({
                                           address — resolving an E-id must not
                                           become an email harvest. */}
                                       {item.email ?? item.userID}
-                                      {item.block ? ` · Block ${item.block}` : ""}
+                                      {item.block
+                                        ? ` · Block ${item.block}`
+                                        : ""}
                                     </p>
                                   </div>
                                 ) : (
@@ -281,9 +285,9 @@ export default function BulkPreviewTable({
                 Apply to {selected.length} users?
               </AlertDialogTitle>
               <AlertDialogDescription>
-                {skipped} rows will be skipped. Each row is guarded
-                individually on the server, so some may still be refused —
-                those are reported per row and do not stop the rest.
+                {skipped} rows will be skipped. Each row is guarded individually
+                on the server, so some may still be refused — those are reported
+                per row and do not stop the rest.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

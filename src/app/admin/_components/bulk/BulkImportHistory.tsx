@@ -152,8 +152,8 @@ export default function BulkImportHistory() {
                 Users whose roles changed since the import will be left alone
                 (reported as DIVERGED_SINCE_IMPORT) rather than reverted. Each
                 row runs the same guards as a single role change, so some may be
-                refused. The Resident baseline survives the reversal — the
-                write cannot express its removal.
+                refused. The Resident baseline survives the reversal — the write
+                cannot express its removal.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

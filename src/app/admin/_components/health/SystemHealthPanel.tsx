@@ -100,7 +100,7 @@ export default function SystemHealthPanel() {
   if (!data) {
     if (isLoading) {
       return (
-        <div className="rounded-xl bg-white p-6 shadow-lg text-sm text-gray-500">
+        <div className="rounded-xl bg-white p-6 text-sm text-gray-500 shadow-lg">
           Loading health…
         </div>
       );
@@ -308,8 +308,7 @@ export default function SystemHealthPanel() {
             <Button
               variant="outline"
               disabled={
-                !/^E\d{7}$/.test(explainUser) ||
-                !/^\d+$/.test(explainFacility)
+                !/^E\d{7}$/.test(explainUser) || !/^\d+$/.test(explainFacility)
               }
               onClick={() =>
                 setExplainArgs({

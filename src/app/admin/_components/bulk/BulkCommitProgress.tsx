@@ -79,7 +79,9 @@ export default function BulkCommitProgress({
                   <TableCell className="text-xs text-gray-400">
                     {f.lineNo}
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{f.userID}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {f.userID}
+                  </TableCell>
                   <TableCell className="text-xs text-red-600">
                     {f.denyReason}
                   </TableCell>
@@ -96,9 +98,9 @@ export default function BulkCommitProgress({
             <Alert>
               <AlertDescription className="text-xs">
                 Refused rows are already recorded in the audit log with{" "}
-                <code>ok: false</code>. <code>CONFLICT_ROLES_CHANGED</code> means
-                the target&apos;s roles changed between preview and commit —
-                re-run the preview for those.
+                <code>ok: false</code>. <code>CONFLICT_ROLES_CHANGED</code>{" "}
+                means the target&apos;s roles changed between preview and commit
+                — re-run the preview for those.
               </AlertDescription>
             </Alert>
           )}

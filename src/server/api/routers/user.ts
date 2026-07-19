@@ -117,7 +117,8 @@ export const userRouter = createTRPCRouter({
       },
     });
 
-    if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+    if (!user)
+      throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
 
     // D-7: session.user.userID is derived from the email and is EMPTY for an
     // account that is not on @u.nus.edu. Before D-7 that was an odd edge case;

@@ -22,7 +22,11 @@ interface registerPayload {
 export async function POST(req: Request) {
   try {
     // Throttle account creation per IP (#5).
-    const limit = await rateLimit(`register:${clientIp(req)}`, 10, 60 * 60 * 1000);
+    const limit = await rateLimit(
+      `register:${clientIp(req)}`,
+      10,
+      60 * 60 * 1000,
+    );
     if (!limit.allowed) {
       return NextResponse.json(
         { error: "Too many attempts. Please try again later." },

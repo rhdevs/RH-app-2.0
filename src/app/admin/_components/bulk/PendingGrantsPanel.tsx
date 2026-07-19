@@ -36,9 +36,7 @@ function ExpiryBadge({ expiresAt }: { expiresAt: Date }) {
         : "border-emerald-300 bg-emerald-100 text-emerald-800";
   return (
     <Badge variant="outline" className={cls} title={format(expiresAt, "PPpp")}>
-      {ms <= 0
-        ? "Expired"
-        : `in ${formatDistanceToNow(expiresAt)}`}
+      {ms <= 0 ? "Expired" : `in ${formatDistanceToNow(expiresAt)}`}
     </Badge>
   );
 }
@@ -94,9 +92,7 @@ export default function PendingGrantsPanel() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-gray-900">
-          Deferred grants
-        </h2>
+        <h2 className="text-lg font-semibold text-gray-900">Deferred grants</h2>
         {/* The keying rule is enforced server-side; stating it here is what
             stops an operator wasting a roster on identifiers that cannot work.
             A matric is self-asserted and a display name is neither unique nor

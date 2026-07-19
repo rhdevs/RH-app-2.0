@@ -182,17 +182,19 @@ export const ASSIGNABLE_BY: Record<string, readonly GrantableRole[]> =
  * answer different questions and will diverge again if a role is ever made
  * grant-but-not-revoke. `resident` is absent here too (I-8e).
  */
-export const REVOCABLE_FROM_OTHERS_BY: Record<string, readonly GrantableRole[]> =
-  Object.assign(
-    Object.create(null) as Record<string, readonly GrantableRole[]>,
-    {
-      admin: ["admin", "jcrc"] as const,
-      jcrc: [] as const,
-      cca_head: [] as const,
-      resident: [] as const,
-      user: [] as const,
-    },
-  );
+export const REVOCABLE_FROM_OTHERS_BY: Record<
+  string,
+  readonly GrantableRole[]
+> = Object.assign(
+  Object.create(null) as Record<string, readonly GrantableRole[]>,
+  {
+    admin: ["admin", "jcrc"] as const,
+    jcrc: [] as const,
+    cca_head: [] as const,
+    resident: [] as const,
+    user: [] as const,
+  },
+);
 
 export function isRole(v: string): v is Role {
   return (ROLES as readonly string[]).includes(v);
@@ -424,7 +426,11 @@ export async function ensureBaseline(
 
       breakerFailure();
       console.error(
-        JSON.stringify({ evt: "baseline_repair_failed", userID, writeErrors: errs }),
+        JSON.stringify({
+          evt: "baseline_repair_failed",
+          userID,
+          writeErrors: errs,
+        }),
       );
       return false;
     } catch (err) {
@@ -433,7 +439,11 @@ export async function ensureBaseline(
       if (attempt === 0) continue;
       breakerFailure();
       console.error(
-        JSON.stringify({ evt: "baseline_repair_failed", userID, err: String(err) }),
+        JSON.stringify({
+          evt: "baseline_repair_failed",
+          userID,
+          err: String(err),
+        }),
       );
       return false;
     }
@@ -574,7 +584,11 @@ export async function redeemPendingGrants(
     // Property 1. Contained: the row and the absent stamp both survive, so the
     // next session read retries.
     console.error(
-      JSON.stringify({ evt: "pending_redeem_failed", userID, err: String(err) }),
+      JSON.stringify({
+        evt: "pending_redeem_failed",
+        userID,
+        err: String(err),
+      }),
     );
   }
 }

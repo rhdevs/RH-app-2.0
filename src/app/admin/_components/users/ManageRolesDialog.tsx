@@ -87,9 +87,10 @@ export default function ManageRolesDialog({
   const [selected, setSelected] = useState<string[]>(storedGrantable);
   const [reason, setReason] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<null | { title: string; body: string }>(
-    null,
-  );
+  const [confirm, setConfirm] = useState<null | {
+    title: string;
+    body: string;
+  }>(null);
 
   const editable = (role: string) =>
     cap.assignableRoles.includes(role as never) ||

@@ -15,7 +15,11 @@ import { env } from "~/env";
 import { db } from "~/server/db";
 import { verifyPassword } from "~/lib/password";
 import type { CanonicalUserID } from "~/lib/identity";
-import { canonicalUserID, isNusStudentEmail, normalizeEmail } from "~/lib/identity";
+import {
+  canonicalUserID,
+  isNusStudentEmail,
+  normalizeEmail,
+} from "~/lib/identity";
 import {
   BASELINE_ROLE,
   ADMIN_ROLE,
@@ -62,7 +66,9 @@ function passesDomainRule(rawEmail: string | null | undefined): boolean {
  * did before D-7 shipped. See getAuthEnforcement for why this is a row and not
  * an env var.
  */
-async function maySignIn(rawEmail: string | null | undefined): Promise<boolean> {
+async function maySignIn(
+  rawEmail: string | null | undefined,
+): Promise<boolean> {
   const email = normalizeEmail(rawEmail);
   if (!email) return false;
   if (passesDomainRule(email)) return true;
@@ -337,8 +343,8 @@ export const authOptions = {
       // and under D-1 a successful sign-in confers booking capability.
       if (
         account?.type === "oauth" &&
-        (profile as { email_verified?: boolean } | undefined)?.email_verified !==
-          true
+        (profile as { email_verified?: boolean } | undefined)
+          ?.email_verified !== true
       ) {
         return false;
       }
