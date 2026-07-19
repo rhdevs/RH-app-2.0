@@ -39,7 +39,31 @@ function isAllowed(pathname: string) {
  *     way they would type a valid matric and get an opaque error forever:
  *     worse than a clean logout. They go to /onboarding/ineligible, which
  *     explains it and offers sign-out.
- *  2. NO MATRIC — redirect to /onboarding/matric, but ONLY when the server says
+ *  2. INCOMPLETE PROFILE (`profileNeedsFields` non-empty) — a duplicate account
+ *     was merged into this one and some details disagreed, so they were cleared
+ *     and must be re-entered. Redirect to /onboarding/complete-profile.
+ *
+ *     It sits ABOVE the matric branch, not below, and the order is load-bearing
+ *     in both directions:
+ *
+ *     - A merged user whose matric was cleared has `hasMatric === false` too, so
+ *       a matric-first ladder would send them to /onboarding/matric. That page
+ *       writes UserMatric and nothing else — it does not know ProfileCompletion
+ *       exists — so it would clear `hasMatric`, leave "matric" sitting in
+ *       `needsFields`, and drop the user straight back here on the next render.
+ *       /onboarding/complete-profile writes through the SAME writer and clears
+ *       the flag, so it is a strict superset for exactly this cohort.
+ *     - The matric branch is behind `matricRequired`, which defaults to OFF.
+ *       Ordering the flag-gated branch first would mean a flagged user is not
+ *       prompted at all while that switch is off — the prompt would be silently
+ *       coupled to an unrelated kill switch.
+ *
+ *     Unlike the matric branch this has NO kill switch, and does not need one:
+ *     it is self-limiting. It fires only for accounts that have a row in a
+ *     collection whose sole producer is the merge script, so "off" is already
+ *     the state of every account that script never touched. There is nothing
+ *     for a flag to protect against.
+ *  3. NO MATRIC — redirect to /onboarding/matric, but ONLY when the server says
  *     the gate is live (`matricRequired`, the `rbac.matric.enforcement` switch).
  *     UserMatric is a new, empty, un-backfilled collection, so gating on
  *     hasMatric alone would bounce every existing user to onboarding and render
@@ -65,17 +89,28 @@ export default function MatricGate({
   // matric redirect below (`matricRequired`) and nothing else. An empty
   // identity is not a policy question and does not vary by mode.
   const ineligible = authed && session?.user?.hasIdentity === false;
+  // Post-merge completion. `?? []` matters: a session cookie minted before this
+  // field existed has no `profileNeedsFields` at all, and `undefined.length`
+  // would throw inside the root layout — i.e. a blank app for every logged-in
+  // user until their JWT rolled over. Absent means "not flagged".
+  const needsProfileCompletion =
+    authed &&
+    !ineligible &&
+    (session?.user?.profileNeedsFields ?? []).length > 0;
   const needsMatric =
     authed &&
     !ineligible &&
+    !needsProfileCompletion &&
     session?.user?.matricRequired === true &&
     session?.user?.hasMatric === false;
 
   const redirectTo = ineligible
     ? "/onboarding/ineligible"
-    : needsMatric
-      ? "/onboarding/matric"
-      : null;
+    : needsProfileCompletion
+      ? "/onboarding/complete-profile"
+      : needsMatric
+        ? "/onboarding/matric"
+        : null;
   const blocked = redirectTo !== null && !isAllowed(pathname);
 
   useEffect(() => {

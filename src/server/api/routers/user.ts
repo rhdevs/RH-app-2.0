@@ -1,13 +1,22 @@
 import { protectedProcedure, createTRPCRouter } from "~/server/api/trpc";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { updateProfileInput } from "~/lib/schemas/profile";
+import {
+  updateProfileInput,
+  completeProfileInput,
+  isProfileCompletionField,
+  MATRIC_RE,
+  type ProfileCompletionField,
+} from "~/lib/schemas/profile";
+import type { PrismaClient } from "@prisma/client";
 import { getUserRoles } from "../services/access";
 
-// Matric number: "A" + 7 digits + an uppercase letter, e.g. A0234567X. This is
-// the single shared validator used by both the save mutation and the client
-// onboarding form so they can never disagree on what is accepted.
-const MATRIC_REGEX = /^A\d{7}[A-Z]$/;
+// Matric number: "A" + 7 digits + an uppercase letter, e.g. A0234567X. The
+// regex itself now lives in ~/lib/schemas/profile beside the other shared
+// validators, because the completion form needs the runtime VALUE and a
+// `"use client"` component must not value-import from the server tree. Aliased
+// rather than renamed at the call sites so this file reads as it did.
+const MATRIC_REGEX = MATRIC_RE;
 
 /* -------------------------------------------------------------------------- */
 /* D-5: how a cleared optional String is persisted                             */
@@ -54,6 +63,35 @@ type ClearableString = string | null | { unset: true };
 function clearable(value: string): ClearableString {
   if (value !== "") return value;
   return CLEAR_MODE === "unset" ? { unset: true } : null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* THE matric writer                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The ONE path that writes UserMatric. `setMatric` (the matric onboarding page)
+ * and `completeProfile` (the post-merge form) both go through here, so there is
+ * exactly one place that decides how a matric is keyed and persisted.
+ *
+ * Extracted rather than copied: a second upsert would be a second chance to key
+ * it on `session.user.id` (the Mongo _id) instead of the canonical `userID`,
+ * which is the mis-keying that produced the duplicate rows this whole feature
+ * exists to clean up after. The `userID` parameter is typed non-null, so the
+ * ""-key hazard (I-8d) cannot reach this function without a caller's guard
+ * having run first — callers guard, this function assumes.
+ */
+async function writeMatric(
+  db: PrismaClient,
+  userID: string,
+  matric: string,
+): Promise<string> {
+  const record = await db.userMatric.upsert({
+    where: { userID },
+    create: { userID, matric },
+    update: { matric },
+  });
+  return record.matric;
 }
 
 export const userRouter = createTRPCRouter({
@@ -216,12 +254,136 @@ export const userRouter = createTRPCRouter({
         });
       }
 
-      const record = await ctx.db.userMatric.upsert({
+      return { matric: await writeMatric(ctx.db, userID, input.matric) };
+    }),
+
+  /* ------------------------------------------------------------------------ */
+  /* Post-merge profile completion                                             */
+  /* ------------------------------------------------------------------------ */
+
+  /**
+   * What this account still has to re-supply after a duplicate-account merge.
+   *
+   * protectedProcedure, NOT identifiedProcedure: a flagged user must be able to
+   * render the form that clears their own flag, so this may not be a dead end —
+   * the same reasoning as `getMatricStatus` above. It guards on `userID` being
+   * falsy instead, and NEVER on `session.user.eligible`: `eligible` is
+   * flag-aware (I-11) and is TRUE with an empty userID whenever the auth kill
+   * switch sits at its default "off", so an eligible-keyed guard here would
+   * silently do nothing in the only mode that ships.
+   *
+   * The empty-identity branch returns the SAME SHAPE as the success branch, so
+   * no client branch sees a new field, and it does not query — `findUnique({
+   * where: { userID: "" } })` would match a ""-keyed row and report a
+   * stranger's outstanding fields as the caller's.
+   */
+  getProfileCompletion: protectedProcedure.query(async ({ ctx }) => {
+    const userID = ctx.session.user.userID;
+    if (!userID) return { needsFields: [] as ProfileCompletionField[] };
+
+    const row = await ctx.db.profileCompletion.findUnique({
+      where: { userID },
+    });
+
+    // A resolved row is history, not a live prompt — same rule the session
+    // callback applies, so the gate and this page cannot disagree.
+    if (!row || row.resolvedAt != null) {
+      return { needsFields: [] as ProfileCompletionField[] };
+    }
+
+    // Filtered against the closed vocabulary, so an unrecognised entry written
+    // by a future script renders as nothing rather than as an unlabelled input.
+    return {
+      needsFields: row.needsFields.filter(isProfileCompletionField),
+    };
+  }),
+
+  /**
+   * Supply the values the merge could not reconcile.
+   *
+   * AUTHORIZATION: the row is located by the CALLER'S OWN canonical id, taken
+   * from the session and never from the input — there is no id parameter to
+   * tamper with, so a user can only ever resolve their own flag. As above, the
+   * guard keys off `userID` being falsy and never off `eligible`.
+   *
+   * The submitted fields are intersected with the STORED `needsFields` before
+   * anything is written, so a hand-crafted call cannot use this procedure to
+   * set a matric it was never asked for — it would be a second, unguarded
+   * matric writer if it did.
+   */
+  completeProfile: protectedProcedure
+    .input(completeProfileInput)
+    .mutation(async ({ ctx, input }) => {
+      const userID = ctx.session.user.userID;
+      if (!userID) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "No canonical userID on session.",
+        });
+      }
+
+      const row = await ctx.db.profileCompletion.findUnique({
         where: { userID },
-        create: { userID, matric: input.matric },
-        update: { matric: input.matric },
+      });
+      if (!row || row.resolvedAt != null) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "There is nothing left to confirm on this account.",
+        });
+      }
+
+      const outstanding = row.needsFields.filter(isProfileCompletionField);
+      const resolved: ProfileCompletionField[] = [];
+
+      // Matric goes through writeMatric — THE matric writer — so this path
+      // inherits its keying and cannot drift from `setMatric`.
+      if (input.matric !== undefined && outstanding.includes("matric")) {
+        await writeMatric(ctx.db, userID, input.matric);
+        resolved.push("matric");
+      }
+
+      if (
+        input.telegramHandle !== undefined &&
+        outstanding.includes("telegramHandle")
+      ) {
+        // Targets ctx.session.user.id, never a client-supplied id — the same
+        // rule updateUserData follows. `clearable` is not used: the input
+        // schema already refuses "", so this is always a literal set.
+        await ctx.db.user.update({
+          where: { id: ctx.session.user.id },
+          data: { telegramHandle: input.telegramHandle },
+          select: { id: true },
+        });
+        resolved.push("telegramHandle");
+      }
+
+      if (resolved.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Nothing to save.",
+        });
+      }
+
+      // Drop what we just wrote. Filtering the STORED array (rather than
+      // writing back the `outstanding` we computed) preserves any entry outside
+      // the known vocabulary instead of silently discarding it, so a value this
+      // deploy does not understand survives for one that does.
+      const remaining = row.needsFields.filter(
+        (f) => !(resolved as string[]).includes(f),
+      );
+
+      await ctx.db.profileCompletion.update({
+        where: { userID },
+        data: {
+          needsFields: remaining,
+          // Stamped only once the list actually empties — a partial save leaves
+          // the row live and the user still prompted for the rest. This is also
+          // what makes the whole feature inert afterwards: the session callback
+          // reads a resolved row as [].
+          ...(remaining.length === 0 ? { resolvedAt: new Date() } : {}),
+        },
       });
 
-      return { matric: record.matric };
+      return { resolved, remaining };
     }),
 });

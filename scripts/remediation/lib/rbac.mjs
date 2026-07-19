@@ -35,15 +35,46 @@ export function numify(v) {
  * firstBatch silently backfills a prefix of the population and reports success.
  */
 export async function findAll(db, collection, projection = {}) {
-  const raw = (cmd) => db.$runCommandRaw(cmd);
+  // RANGE-PAGED over _id, NOT a server-side cursor.
+  //
+  // This used `find` followed by `getMore` on the returned cursor id. That is
+  // the natural shape and it FAILS against a replica set: Prisma's
+  // $runCommandRaw does not pin a connection or carry a session, so the
+  // `getMore` can be routed to a different node than the `find` that opened the
+  // cursor — which does not have it. The result is
+  //   Error 43 (CursorNotFound): cursor id ... not found
+  // partway through, i.e. exactly the truncated read the pagination was added
+  // to prevent, but louder. Observed against Atlas on the very first inventory
+  // run over ~515 User rows.
+  //
+  // Each page below is an INDEPENDENT `find`, so it does not matter which node
+  // serves it. Ordering on _id gives a stable, gap-free walk without `skip`,
+  // whose cost grows with the offset. `_id` is forced into the projection: a
+  // caller that projects it away would otherwise silently loop on page one
+  // forever.
+  const PAGE = 1000;
+  const proj =
+    projection && Object.keys(projection).length ? { ...projection, _id: 1 } : {};
   const out = [];
-  let res = await raw({ find: collection, filter: {}, projection, batchSize: 1000 });
-  out.push(...(res?.cursor?.firstBatch ?? []));
-  let id = res?.cursor?.id;
-  while (id && String(numify(id)) !== "0" && String(id) !== "0") {
-    res = await raw({ getMore: id, collection, batchSize: 1000 });
-    out.push(...(res?.cursor?.nextBatch ?? []));
-    id = res?.cursor?.id;
+  let after = null;
+
+  for (;;) {
+    const filter = after ? { _id: { $gt: after } } : {};
+    const res = await db.$runCommandRaw({
+      find: collection,
+      filter,
+      projection: proj,
+      sort: { _id: 1 },
+      limit: PAGE,
+      // No getMore is ever issued, so a truncated firstBatch cannot silently
+      // end the walk: the page is short only when the collection is exhausted.
+      singleBatch: true,
+    });
+    const batch = res?.cursor?.firstBatch ?? [];
+    out.push(...batch);
+    if (batch.length < PAGE) break;
+    after = batch[batch.length - 1]?._id;
+    if (!after) break; // defensive: _id projected away despite the guard above
   }
   return out;
 }
@@ -77,15 +108,41 @@ export async function countWhere(db, collection, filter) {
 export async function aggregateAll(db, collection, pipeline) {
   const raw = (cmd) => db.$runCommandRaw(cmd);
   const rows = [];
-  let res = await raw({ aggregate: collection, pipeline, cursor: { batchSize: 1000 } });
-  if (numify(res?.ok) !== 1) return { ok: false, errmsg: String(res?.errmsg ?? "(no errmsg)"), rows };
+
+  // A pipeline is arbitrary, so this cannot be range-paged the way findAll is
+  // (there may be no _id in the output at all). Instead ask for one large batch
+  // so no getMore is needed at these data sizes, and treat any remaining cursor
+  // as a READ FAILURE rather than paging into the same replica-set hazard.
+  //
+  // Why: $runCommandRaw carries no session and pins no connection, so a getMore
+  // can be routed to a node that never had the cursor — Error 43
+  // (CursorNotFound), thrown, mid-walk. See findAll above, where it fired on
+  // the first real inventory run. A truncated census is the one answer this
+  // helper must never invent, so if a batch ever does overflow, callers get
+  // ok:false and surface "unreadable" instead of a confident prefix.
+  const BATCH = 100000;
+  let res;
+  try {
+    res = await raw({ aggregate: collection, pipeline, cursor: { batchSize: BATCH } });
+  } catch (e) {
+    return { ok: false, errmsg: `aggregate threw: ${String(e?.message ?? e)}`, rows };
+  }
+  if (numify(res?.ok) !== 1) {
+    return { ok: false, errmsg: String(res?.errmsg ?? "(no errmsg)"), rows };
+  }
   rows.push(...(res?.cursor?.firstBatch ?? []));
-  let id = res?.cursor?.id;
-  while (id && String(numify(id)) !== "0" && String(id) !== "0") {
-    res = await raw({ getMore: id, collection, batchSize: 1000 });
-    if (numify(res?.ok) !== 1) return { ok: false, errmsg: String(res?.errmsg ?? "(no errmsg)"), rows };
-    rows.push(...(res?.cursor?.nextBatch ?? []));
-    id = res?.cursor?.id;
+
+  const id = res?.cursor?.id;
+  if (id && String(numify(id)) !== "0" && String(id) !== "0") {
+    return {
+      ok: false,
+      errmsg:
+        `result exceeded a single batch of ${BATCH} on "${collection}". Paging ` +
+        `would need a getMore, which is unreliable here (see the note above). ` +
+        `Narrow the pipeline or add a $limit, then re-run — do NOT treat the ` +
+        `${rows.length} row(s) already read as the whole answer.`,
+      rows,
+    };
   }
   return { ok: true, errmsg: null, rows };
 }

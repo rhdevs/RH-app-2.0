@@ -437,6 +437,48 @@ model UserMatric {
   @@index([matric], map: "matric")
 }
 
+/// Profile fields that could NOT be merged and must be re-collected from the
+/// user at their next login (#16 canonical-merge). Written by
+/// scripts/remediation/merge-by-canonical.mjs; read by the login-gate UI.
+///
+/// WHY A SEPARATE COLLECTION AND NOT A FLAG ON `User`. Identical reason to
+/// UserRole / UserMatric / FacilityAccess: the `User` collection carries a
+/// DB-level `$jsonSchema` validator that does not declare a `needsFields`
+/// property, so a write adding one is REJECTED by Mongo at write time — it does
+/// not throw at `prisma db push`, it throws the first time a user is saved.
+/// New identity/profile ATTRIBUTES therefore live in their own, unvalidated,
+/// collections.
+///
+/// Keyed by the CANONICAL userID (I-1) — the value the session callback derives
+/// from the email — so the gate reads it by `session.user.userID` with no join.
+///
+/// I-2 is respected even though this collection is new and empty: every scalar
+/// is nullable and `needsFields` is a LIST with a default. A required non-list
+/// scalar here would mean any row written by another process without it (a
+/// hand-fix in mongosh, a partial restore) breaks deserialization for the read
+/// that runs on every authenticated request.
+///
+/// LIFECYCLE. A row is created with `flaggedAt` set and `resolvedAt` null. The
+/// login gate prompts for each name in `needsFields`, writes the answers to
+/// their real homes (UserMatric.matric, User.telegramHandle, ...), removes the
+/// name from `needsFields`, and sets `resolvedAt` once the list is empty. The
+/// migration NEVER writes `resolvedAt` — see the $setOnInsert in the script.
+///
+/// `needsFields` vocabulary (the migration emits only these):
+///   "matric" | "telegramHandle" | "displayName" | "bio" | "block" |
+///   "modules" | "profilePicture"
+model ProfileCompletion {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  /// CANONICAL userID (I-1), never a stored A-format matric.
+  userID      String    @unique
+  needsFields String[]  @default([])
+  /// Human-readable provenance, e.g. "merge-by-canonical: 2 rows disagreed on
+  /// userID(matric), telegramHandle".
+  reason      String?
+  flaggedAt   DateTime?
+  resolvedAt  DateTime?
+}
+
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
 model Posts {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
@@ -517,7 +559,14 @@ model User {
   id             String          @id @default(auto()) @map("_id") @db.ObjectId
   email          String
   userID         String?
-  passwordHash   String
+  /// I-2. OPTIONAL because the inventory found a real row with no
+  /// `passwordHash` (census.missingPasswordHash = 1, 2026-07-19). Prisma 6's
+  /// Mongo connector throws when deserializing a document missing a REQUIRED
+  /// non-list scalar, and the session callback reads `User` on every
+  /// authenticated request — so leaving this required means that one account
+  /// takes down every request it makes, with no kill switch reaching it.
+  /// A Google/adapter-created row legitimately has no password.
+  passwordHash   String?
   displayName    String?
   createdAt      DateTime?       @default(now())
   Session        Session[]

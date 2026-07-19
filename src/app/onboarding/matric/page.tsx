@@ -6,10 +6,10 @@ import { useSession, signOut } from "next-auth/react";
 import { IdCard } from "lucide-react";
 import Toast from "../../_components/Toast";
 import { api } from "~/trpc/react";
-
-// Same validator the server (user.setMatric) uses — kept identical so the
-// client never accepts something the server rejects.
-const MATRIC_REGEX = /^A\d{7}[A-Z]$/;
+// The same validator the server (user.setMatric) uses, now IMPORTED rather than
+// re-typed, so "kept identical" is enforced by the module system instead of by
+// whoever edits one of the two copies next.
+import { MATRIC_RE as MATRIC_REGEX } from "~/lib/schemas/profile";
 
 export default function MatricOnboardingPage() {
   const router = useRouter();

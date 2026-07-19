@@ -80,3 +80,86 @@ export const updateProfileInput = z.object({
 });
 
 export type UpdateProfileInput = z.input<typeof updateProfileInput>;
+
+/* -------------------------------------------------------------------------- */
+/* Post-merge profile completion                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The closed vocabulary of `ProfileCompletion.needsFields`. It lives here, next
+ * to the validators, because the merge script writes these strings, the tRPC
+ * router reads them and the onboarding form renders them — three parties that
+ * must agree on the spelling forever.
+ *
+ * Anything the merge script writes that is NOT in this list is IGNORED by both
+ * the form and the mutation rather than rendered as an unlabelled input or
+ * written blind to `User`. That is deliberate: `needsFields` is data, and
+ * treating it as a list of column names to write would make a bad row in this
+ * collection into an arbitrary-field write primitive on the user's profile.
+ */
+export const PROFILE_COMPLETION_FIELDS = ["matric", "telegramHandle"] as const;
+
+export type ProfileCompletionField = (typeof PROFILE_COMPLETION_FIELDS)[number];
+
+export function isProfileCompletionField(
+  value: string,
+): value is ProfileCompletionField {
+  return (PROFILE_COMPLETION_FIELDS as readonly string[]).includes(value);
+}
+
+/**
+ * Matric: "A" + 7 digits + an uppercase letter, e.g. A0234567X. Hoisted out of
+ * `user.ts` / the matric onboarding page so all three sites share ONE regex.
+ */
+export const MATRIC_RE = /^A\d{7}[A-Z]$/;
+
+/**
+ * Per-field copy for the completion form. Kept beside the vocabulary so adding
+ * a field to `PROFILE_COMPLETION_FIELDS` without labelling it is a type error
+ * rather than a blank form row.
+ */
+export const PROFILE_COMPLETION_COPY: Record<
+  ProfileCompletionField,
+  { label: string; help: string; placeholder: string }
+> = {
+  matric: {
+    label: "Matriculation number",
+    help: "The one on your student card — a letter, seven digits and a letter.",
+    placeholder: "A0234567X",
+  },
+  telegramHandle: {
+    label: "Telegram handle",
+    help: "How people reach you about a booking. 5–32 letters, digits or underscores.",
+    placeholder: "your_handle",
+  },
+};
+
+/**
+ * The submit payload. Every field is optional so the form can send only what it
+ * asked for; the server independently intersects this with the stored
+ * `needsFields` and ignores anything the user was not actually asked for, so a
+ * hand-crafted call cannot use this to set a matric it was never prompted for.
+ *
+ * `telegramHandle` REUSES the shape from `updateProfileInput` above rather than
+ * restating it — same trimming, same "@" stripping, same rule — with the one
+ * difference that "" is refused here. "" means "clear it" on the profile edit
+ * page, but this form exists precisely to obtain a value, and accepting a blank
+ * would resolve the flag while leaving the field as empty as the merge left it.
+ */
+export const completeProfileInput = z.object({
+  matric: z
+    .string()
+    .trim()
+    .transform((v) => v.toUpperCase())
+    .refine((v) => MATRIC_RE.test(v), {
+      message:
+        "Matric must be in the format A0234567X (A + 7 digits + a letter).",
+    })
+    .optional(),
+
+  telegramHandle: updateProfileInput.shape.telegramHandle
+    .refine((v) => v !== "", { message: "Enter your Telegram handle." })
+    .optional(),
+});
+
+export type CompleteProfileInput = z.input<typeof completeProfileInput>;

@@ -148,6 +148,133 @@ The 713 NUSNET-only users have no A-format account anywhere, so they get no
 `BookingLogs` (audit history) is **counted per userID but not reassigned** — an
 explicit out-of-scope follow-up printed under `AUDIT-ONLY`.
 
+## Step: merge by CANONICAL id (#16) — `merge-by-canonical.mjs`
+
+The successor to `merge-accounts.mjs` for the residual duplicate class. Read that
+script first — this one follows its idiom (grouping, `byRecent`, `reassignRaw`,
+backup-before-write, `inspectWriteReply`, abort-on-empty-target) and differs in
+three ways only.
+
+**1. It groups by `canonicalUserID(email)`, not by the lowercased email string.**
+A lowercased-string key folds case but not whitespace, which is why
+`"e0425010@u.nus.edu "` has survived every previous dedupe pass. The canonical id
+is the value the session callback derives, so every address a session would
+resolve to one identity lands in one group.
+
+**2. Per-field conflict detection.** Each mergeable field is classified across
+the group:
+
+| field | compared as | absent when | on conflict |
+|---|---|---|---|
+| `displayName` | trim + collapse whitespace + case-insensitive | blank | clear `""`, flag `displayName` |
+| `bio` | trim only (case/interior text are content) | blank | clear `""`, flag `bio` |
+| `telegramHandle` | trim + strip leading `@` + lowercase | blank | clear `""`, flag `telegramHandle` |
+| `block` | exact int | `null` | clear `null`, flag `block` |
+| `modules` | set-equality, order-insensitive | `[]` | clear `[]`, flag `modules` |
+| `userCCA` | set-equality, order-insensitive | `[]` | clear `[]`, flag `modules` |
+| `imageKey` | verbatim after trim | blank | clear `""`, flag `profilePicture` |
+
+Absent-vs-present is **not** a conflict: the present value wins and nothing is
+flagged. That distinction is what keeps `modules` (`[]` vs `["HY2262","PR2202"]`)
+out of the flag list.
+
+**Never cleared:** `userID` is the ownership key every dependent row is keyed on
+— it is forced to the canonical id. `passwordHash` is never cleared either;
+clearing it would lock the user out of the account they must log into to answer
+the prompt. `email` is normalized. `createdAt` takes the earliest value.
+
+**3. The matric.** `userID` holding two different A-format matrics is the case
+that matters. The matric lives in `UserMatric`, not on `User`, so the resolution
+is: write **no** `UserMatric` row, delete any existing one for that canonical id,
+and flag `matric`. The login gate then prompts and `setMatric` validates the
+format. Picking one of two values a check digit apart would silently assign a
+real person the wrong student number.
+
+Conflicts are recorded in the new **`ProfileCompletion`** collection, keyed by the
+canonical userID:
+
+```prisma
+model ProfileCompletion {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  userID      String    @unique       // CANONICAL id (I-1)
+  needsFields String[]  @default([])  // e.g. ["matric","telegramHandle"]
+  reason      String?
+  flaggedAt   DateTime?
+  resolvedAt  DateTime?
+}
+```
+
+A separate collection for the same reason as `UserRole` / `UserMatric`: the
+`User` collection's DB-level `$jsonSchema` has no such property and would reject
+the write. The migration never writes `resolvedAt`, so a re-run cannot un-resolve
+a prompt the user already answered.
+
+**Survivor selection** (deterministic, total): `userID` already canonical → has a
+`passwordHash` → most complete (most non-absent mergeable fields) → most recently
+created → lowest `_id`. Completeness sits above recency because the live
+duplicate pair was created minutes apart, so "most recent" is a coin flip; field
+count is a real signal about which account was lived in. The choice cannot change
+any merged field value — conflict detection runs over the whole group — it only
+decides which `_id`, and therefore which `Session`/`Account`/`Authenticator` rows,
+survives.
+
+### Run order
+
+```bash
+npx prisma db push                                          # create ProfileCompletion + its unique index
+node scripts/remediation/merge-by-canonical.mjs             # DRY RUN — review the full change set
+# ...review: per-group AGREE/ABSENT/CONFLICT per field, the matric decision,
+#    reassignment counts, the ProfileCompletion flags, and the email
+#    normalization list...
+node scripts/remediation/merge-by-canonical.mjs --commit    # apply
+```
+
+`APPLY=yes` is accepted as a synonym for `--commit` (`isCommit()` in `lib/rbac.mjs`).
+Deploy the ProfileCompletion prompt UI **before** committing, so flagged users can
+clear it. A JSON backup of every affected `User`, `UserRole`, `UserMatric` and
+`ProfileCompletion` document plus all dependent-row counts is written to
+`backups/merge-by-canonical-<stamp>.json` before the first write; the run aborts
+if it cannot be written.
+
+Apply ordering per group is crash-safe: dependents reassigned → `UserRole` merged
+by value → `UserMatric` resolved → `ProfileCompletion` flag written → survivor
+`$set` → losers deleted **last**. A crash therefore leaves an over-flagged
+account, never a merged-but-unflagged one. `UserRole`/`UserMatric` are merged by
+value rather than by `updateMany` because their `userID` is uniquely indexed — a
+blind move would be a duplicate-key `writeError`, which `$runCommandRaw` reports
+in the reply rather than throwing.
+
+### Preventing recurrence
+
+Three layers, weakest to strongest.
+
+1. **Normalize at every write path.** `api/register/route.ts` already applies
+   `normalizeEmail()`. The OAuth path did not: `PrismaAdapter.createUser` writes
+   `profile.email` verbatim, so a `profile()` override was added to the Google
+   provider in `src/server/auth.ts` to route it through the same normalizer.
+   Step 6g of the migration normalizes every stored address, including the
+   trailing-space singleton.
+2. **`email_unique_ci`** — unique index on `User.email`, collation strength 2.
+   Catches case-only duplicates. Sufficient only *because* layer 1 guarantees
+   stored addresses carry no whitespace; a collation folds case and nothing else.
+3. **`userID_unique`** — unique partial index on `User.userID` (string-typed
+   values only). This is the one that actually catches the class, because
+   `userID` is derived from the email: two rows meaning one human collide on it
+   however their raw addresses are spelled. It is created **conditionally**: the
+   script first checks for existing shared `userID` values and skips the index,
+   naming every offender, if any exist. That check must stay — ~515 legacy
+   singletons still carry an A-format matric in `userID` (finding #9, deliberately
+   not rewritten), and forcing an index that cannot build would be an outage.
+
+**What this does not catch:** a person with two genuinely different `@u.nus.edu`
+addresses; unicode-homograph domains (the anchored ASCII regex rejects them
+outright, so such a row has no canonical id and is reported as `UNCANONICAL`
+rather than merged); plus-addressed variants (also rejected, same outcome); and
+writes made outside this app — the droplet Python backends and any `mongosh`
+session. For those, layers 2 and 3 are the only defence, and layer 3 only holds
+once it has actually been created. Rows with no canonical id are listed by
+`_id` and email in the dry run and are never merged or re-keyed.
+
 ## Step 3 — Money as integer cents (#18)
 
 Preview first, then apply. **Confirm the dollars→cents assumption** in the

@@ -121,6 +121,22 @@ declare module "next-auth" {
        */
       matricRequired: boolean;
       /**
+       * Fields an account-merge could not reconcile automatically and which the
+       * user must re-supply — e.g. `["matric", "telegramHandle"]`. Empty for
+       * everybody who was never merged, which is everybody but a handful of
+       * accounts.
+       *
+       * A LIVE read (I-4) of the `ProfileCompletion` collection, exactly like
+       * `matric`/`roles` above and for the same reason: the user clears the
+       * prompt by filling the form, and a value baked into the 30-day JWT would
+       * keep prompting them until the token expired. It lives in its own
+       * collection rather than on `User` because `User` carries a DB-level
+       * `$jsonSchema` validator that rejects unknown fields.
+       *
+       * Already-resolved rows read as `[]` — see the session callback.
+       */
+      profileNeedsFields: string[];
+      /**
        * D-7. False only for a pre-cutover JWT on an ineligible address, or a
        * blank/malformed stored email. RENDER-ONLY — protectedProcedure
        * re-derives it server-side.
@@ -175,6 +191,35 @@ export const authOptions = {
           GoogleProvider({
             clientId: env.GOOGLE_CLIENT_ID,
             clientSecret: env.GOOGLE_CLIENT_SECRET,
+            /**
+             * RECURRENCE GUARD for the duplicate-identity class (#16).
+             *
+             * The registration route already normalizes (api/register/route.ts:74).
+             * This is the OTHER write path into `User`, and it does not go
+             * through any of our code: PrismaAdapter.createUser writes
+             * `profile.email` VERBATIM into a brand-new row. So a provider
+             * profile whose email differs from the stored one by case or
+             * surrounding whitespace creates a SECOND User for a person who
+             * already has one — the same defect merge-by-canonical.mjs exists
+             * to clean up, re-created from the other side.
+             *
+             * `email_unique_ci` does not close this: it is a collation, which
+             * folds case and NOT whitespace (that is exactly why the live row
+             * "e0425010@u.nus.edu " survived every previous dedupe). The only
+             * place whitespace can be removed is before the write, here.
+             *
+             * Overriding profile() means restating the default mapping; these
+             * four fields ARE the next-auth Google default, changed only in
+             * that `email` passes through the shared normalizer (I-12).
+             */
+            profile(profile) {
+              return {
+                id: profile.sub,
+                name: profile.name,
+                email: normalizeEmail(profile.email),
+                image: profile.picture,
+              };
+            },
           }),
         ]
       : []),
@@ -366,6 +411,13 @@ export const authOptions = {
           // the ineligibility page before it ever consults hasMatric — but it
           // must be a boolean, and "false" is the non-blocking value.
           session.user.matricRequired = false;
+          // Likewise irrelevant here — the gate routes an empty identity to the
+          // ineligibility page before it consults this — but it must be an
+          // array, and empty is the non-blocking value. It is also the only
+          // correct value: ProfileCompletion is keyed by CANONICAL id (I-1), so
+          // there is nothing to look up on this branch, and looking it up with
+          // "" would be the ""-keyed-row hazard of I-8d one collection over.
+          session.user.profileNeedsFields = [];
           session.user.roles = [];
           session.user.isAdmin = false;
           return session;
@@ -386,15 +438,36 @@ export const authOptions = {
         // shares access.ts's 15s per-lambda flag cache, so it issues a query at
         // most once per instance per 15s, and it never throws (it degrades to
         // "off" = no gate).
-        const [record, roleRow, matricRequired] = await Promise.all([
-          db.userMatric.findUnique({ where: { userID } }),
-          db.userRole.findUnique({ where: { userID } }),
-          isMatricRequired(db),
-        ]);
+        //
+        // The fourth read joins the SAME round trip, so it costs latency only
+        // if it is the slowest of the four, and it is a single indexed
+        // findUnique on `userID @unique`. Its `.catch` is not decoration: rule 1
+        // above says this callback must never throw, and an un-caught rejection
+        // inside Promise.all rejects the whole thing and force-logs-out the
+        // user. The two lookups beside it predate that rule; a NEW promise here
+        // must not widen the blast radius, so a ProfileCompletion fault degrades
+        // to "not flagged" (no prompt) rather than to "logged out".
+        const [record, roleRow, matricRequired, completionRow] =
+          await Promise.all([
+            db.userMatric.findUnique({ where: { userID } }),
+            db.userRole.findUnique({ where: { userID } }),
+            isMatricRequired(db),
+            db.profileCompletion
+              .findUnique({ where: { userID } })
+              .catch(() => null),
+          ]);
 
         session.user.matric = record?.matric ?? null;
         session.user.hasMatric = Boolean(record?.matric);
         session.user.matricRequired = matricRequired;
+        // No row (every unmerged user) => []. A row whose `resolvedAt` is set is
+        // history, not a live prompt, and reads as [] too, so a user who has
+        // already filled the form is never re-prompted even though the row is
+        // kept for the audit trail.
+        session.user.profileNeedsFields =
+          completionRow && completionRow.resolvedAt == null
+            ? (completionRow.needsFields ?? [])
+            : [];
 
         // Legacy-tolerant read for the D-6 dual-write window. Removing this
         // fallback belongs to doc 06 — dropping it early silently demotes any
