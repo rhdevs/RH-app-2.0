@@ -147,6 +147,25 @@ export const facilityBookingRouter = createTRPCRouter({
 
       if (!booking) throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
 
+      // 09 §2.3: this route had NO ownership check and joined publicUserSelect
+      // (telegramHandle, bio, block) for an arbitrary bookingID from a bare
+      // z.number(). Iterating the sequential id space handed every owner's
+      // Telegram handle to any signed-in user — the payload #10 removed from
+      // getBookings, reachable by a route that fix did not touch.
+      //
+      // Boolean(callerUserID) is load-bearing for the same reason it is in
+      // deleteBooking: "" === "" is a FALSE MATCH against any ""-keyed row.
+      // An empty id owns nothing.
+      //
+      // NOT_FOUND, not FORBIDDEN, and byte-identical to the message above: a
+      // 403 would confirm the id exists and turn the sequential id space into
+      // an enumeration oracle for how many bookings the hall has.
+      const callerUserID = ctx.session.user.userID;
+      const owns = Boolean(callerUserID) && booking.userID === callerUserID;
+      if (!owns && !(await isAdmin(ctx.db, callerUserID))) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Booking not found" });
+      }
+
       const [user, facility, cca] = await Promise.all([
         // booking.userID holds the CANONICAL session id (E-format, or the
         // legacy uppercased email for pre-merge non-NUS rows) — not the
