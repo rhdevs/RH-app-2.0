@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Pencil } from "lucide-react";
+import {
+  LayoutDashboard,
+  Users,
+  Pencil,
+  ClipboardList,
+  CalendarClock,
+} from "lucide-react";
 
 import { api } from "~/trpc/react";
 import CcaSwitcher from "./CcaSwitcher";
@@ -16,6 +22,8 @@ import CcaSwitcher from "./CcaSwitcher";
  */
 const SECTIONS = [
   { slug: "", label: "Overview", icon: LayoutDashboard },
+  { slug: "applications", label: "Applications", icon: ClipboardList },
+  { slug: "interviews", label: "Interview slots", icon: CalendarClock },
   { slug: "members", label: "View member list", icon: Users },
   { slug: "details", label: "CCA details", icon: Pencil },
 ] as const;

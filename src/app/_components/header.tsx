@@ -8,6 +8,7 @@ import {
   Calendar,
   User,
   Users,
+  LayoutGrid,
   LogOut,
   UserCircle,
   ShieldCheck,
@@ -64,6 +65,10 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     { name: "Home", href: "/", icon: Home },
     { name: "My Bookings", href: "/bookings", icon: Calendar },
     // { name: "Facilities", href: "/facilities", icon: Box },
+    // Resident-facing CCA browse + applications. Shown to everyone signed in;
+    // the page itself is inert until cca.applications.enabled is on, so this is
+    // a link to a "not open yet" state at worst, never a broken route.
+    { name: "CCAs", href: "/ccas", icon: LayoutGrid },
     ...(isCcaHead ? [{ name: "My CCAs", href: "/cca", icon: Users }] : []),
     ...(canReachAdmin
       ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }]

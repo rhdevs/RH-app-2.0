@@ -242,6 +242,10 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
       );
 
       return {
+        // ...app carries the APPLICANT's own `notes` string. The interview
+        // notes are a separate array under `interviewNotes` so the two never
+        // collide (an earlier version overwrote `notes` and lost the applicant
+        // text).
         ...app,
         applicant: people.get(app.userID) ?? {
           displayName: null,
@@ -249,7 +253,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           matric: null,
         },
         slot,
-        notes: notes.map((n) => ({
+        interviewNotes: notes.map((n) => ({
           id: n.id,
           body: n.body,
           createdAt: n.createdAt,
