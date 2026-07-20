@@ -7,6 +7,7 @@ import {
   Users,
   Pencil,
   ClipboardList,
+  ClipboardCheck,
   CalendarClock,
 } from "lucide-react";
 
@@ -24,6 +25,7 @@ const SECTIONS = [
   { slug: "", label: "Overview", icon: LayoutDashboard },
   { slug: "applications", label: "Applications", icon: ClipboardList },
   { slug: "interviews", label: "Interview slots", icon: CalendarClock },
+  { slug: "sessions", label: "Interviews", icon: ClipboardCheck },
   { slug: "members", label: "View member list", icon: Users },
   { slug: "details", label: "CCA details", icon: Pencil },
 ] as const;

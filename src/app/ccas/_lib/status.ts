@@ -26,8 +26,26 @@ const STATUS_CLASS: Record<ApplicationStatus, string> = {
   withdrawn: "bg-gray-100 text-gray-600 ring-gray-500/20",
 };
 
+/**
+ * RESIDENT-facing wording. The applicant sees their application from their own
+ * side, so a couple of states read differently than the head's operational
+ * labels: a booked interview is "Waiting for interview" (it hasn't happened
+ * yet), and once the head marks it done the application is "Application
+ * processing" (under review). Every other state matches STATUS_LABEL.
+ */
+const RESIDENT_STATUS_LABEL: Record<ApplicationStatus, string> = {
+  ...STATUS_LABEL,
+  interview_scheduled: "Waiting for interview",
+  interviewed: "Application processing",
+};
+
 export function statusLabel(status: string | null | undefined): string {
   return STATUS_LABEL[(status ?? "") as ApplicationStatus] ?? "Unknown";
+}
+
+/** Resident-facing label — use on the /ccas surfaces, not the head dashboard. */
+export function residentStatusLabel(status: string | null | undefined): string {
+  return RESIDENT_STATUS_LABEL[(status ?? "") as ApplicationStatus] ?? "Unknown";
 }
 
 /** Tailwind classes for a `ring-1` pill of the given status. */

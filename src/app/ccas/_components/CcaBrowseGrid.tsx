@@ -6,7 +6,7 @@ import Image from "next/image";
 import { Search } from "lucide-react";
 
 import { api } from "~/trpc/react";
-import { statusBadgeClass, statusLabel } from "../_lib/status";
+import { statusBadgeClass, residentStatusLabel } from "../_lib/status";
 
 /**
  * The /ccas grid. Each card shows the caller's own standing against that CCA —
@@ -130,7 +130,7 @@ export default function CcaBrowseGrid() {
                         c.applicationStatus,
                       )}`}
                     >
-                      {statusLabel(c.applicationStatus)}
+                      {residentStatusLabel(c.applicationStatus)}
                     </span>
                   ) : (
                     <span className="text-xs font-medium text-emerald-700">

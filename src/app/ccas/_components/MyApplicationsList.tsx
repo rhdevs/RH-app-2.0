@@ -6,7 +6,7 @@ import { CalendarClock, ChevronRight, MapPin } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
-import { formatSlot, statusBadgeClass, statusLabel } from "../_lib/status";
+import { formatSlot, statusBadgeClass, residentStatusLabel } from "../_lib/status";
 import SlotPicker from "./SlotPicker";
 
 type MyApp =
@@ -98,7 +98,7 @@ function MyApplicationRow({ app }: { app: MyApp }) {
             app.status,
           )}`}
         >
-          {statusLabel(app.status)}
+          {residentStatusLabel(app.status)}
         </span>
       </div>
 
