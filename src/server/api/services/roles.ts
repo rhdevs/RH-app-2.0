@@ -122,6 +122,21 @@ export const AUDIT_ACTIONS = [
   // may hold no management capability at all. Authorised per-ccaID by
   // assertHeadsCca, so the audit row's targetCcaID is the scope that was proven.
   "ccaProfile.update",
+  // CCA membership APPLICATIONS (cca.applications.enabled switch). The submit /
+  // withdraw / bookSlot / cancelSlot actions are RESIDENT-authored (actor is the
+  // applicant themselves, holding no management capability); the interview-slot,
+  // note, accept and reject actions are HEAD-authored and authorised per-ccaID by
+  // assertHeadsCca. `ccaApplication.accept` is paired with a `ccaMember.add` row
+  // for the UserCCA write it performs, so the roster change stays attributable.
+  "ccaApplication.submit",
+  "ccaApplication.withdraw",
+  "ccaApplication.bookSlot",
+  "ccaApplication.cancelSlot",
+  "ccaApplication.accept",
+  "ccaApplication.reject",
+  "ccaInterviewSlot.open",
+  "ccaInterviewSlot.cancel",
+  "ccaInterviewNote.add",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

@@ -5,6 +5,8 @@ import { userRouter } from "./routers/user";
 import { adminRouter } from "./routers/admin";
 import { ccaRouter } from "./routers/cca";
 import { ccaAdminRouter } from "./routers/ccaAdmin";
+import { ccaApplicationsRouter } from "./routers/ccaApplications";
+import { ccaApplicationsHeadRouter } from "./routers/ccaApplicationsHead";
 
 /**
  * This is the primary router for your server.
@@ -20,6 +22,10 @@ export const appRouter = createTRPCRouter({
   cca: ccaRouter,
   /** Admin-only CCA management, behind the cca.management.enabled switch. */
   ccaAdmin: ccaAdminRouter,
+  /** Resident-facing CCA applications, behind the cca.applications.enabled switch. */
+  ccaApplications: ccaApplicationsRouter,
+  /** CCA-head review/interview/decide, object-scoped by assertHeadsCca. */
+  ccaApplicationsHead: ccaApplicationsHeadRouter,
 });
 
 // export type definition of API

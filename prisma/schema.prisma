@@ -464,6 +464,96 @@ model CcaProfile {
   updatedBy   String?
 }
 
+/// A resident's application to JOIN a CCA. New, unvalidated collection — the
+/// SAME reasoning as CcaProfile/UserRole/UserMatric: application state cannot
+/// live on the $jsonSchema-guarded `UserCCA` (which declares only {ccaID,
+/// userID} and rejects any other field at write time, code 121, silently), so
+/// it gets its own collection here. Acceptance ultimately writes a `UserCCA`
+/// row — this is the workflow that governs WHEN.
+///
+/// I-2: every non-list scalar is nullable and `status` carries a default, so a
+/// row written by another process (a hand-fix, a partial restore) without them
+/// cannot break the reads that run on the resident dashboard.
+///
+/// `userID` is the CANONICAL applicant id (canonicalUserID(email) =
+/// session.user.userID), the same key UserCCA/CcaHead/UserMatric use — NEVER
+/// User.userID (legacy A-format matrics live there, invariant I-1).
+///
+/// `status` vocabulary (enforced in code, see src/lib/schemas/ccaApplication.ts):
+///   submitted | interview_scheduled | interviewed | accepted | rejected |
+///   withdrawn. Only accepted/rejected/withdrawn are TERMINAL — a non-terminal
+///   row is the "open application" a duplicate-apply check refuses.
+model CcaApplication {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  /// Human/stable id from the Counter collection ("ccaApplicationID").
+  applicationID   Int       @unique(map: "applicationID")
+  ccaID           Int
+  userID          String
+  /// The applicant's self-supplied free text. Trim+max only (schema), never
+  /// sanitized — React escapes it on render (same reasoning as CcaProfile.description).
+  notes           String?
+  status          String?   @default("submitted")
+  /// The slotID the resident booked, null until they book. Points at
+  /// CcaInterviewSlot.slotID, not its ObjectId.
+  interviewSlotID Int?
+  decidedAt       DateTime?
+  decidedBy       String?
+  decisionReason  String?
+  withdrawnAt     DateTime?
+  createdAt       DateTime? @default(now())
+  updatedAt       DateTime?
+
+  /// The head's review queue for one CCA, filtered by status.
+  @@index([ccaID, status], map: "cca_status")
+  /// The resident's own "my applications" list.
+  @@index([userID], map: "applicant")
+  /// The duplicate-open-application check (one non-terminal row per person+CCA).
+  @@index([ccaID, userID], map: "cca_applicant")
+}
+
+/// An interview slot a CCA head opens from their availability; a resident then
+/// CLAIMS one. New, unvalidated collection. Modelled on `Bookings`: times are
+/// UNIX epoch SECONDS (Int), not DateTime, and overlap is a range query, not a
+/// DB constraint (Mongo cannot express an overlapping-range unique index).
+///
+/// A slot's lifecycle: created with bookedByUserID = null (open) → a resident's
+/// bookSlot sets bookedByUserID + bookedApplicationID under an advisory lock
+/// (withCcaLock) so two residents cannot claim the same slot. canceledAt marks
+/// a slot the head withdrew; a booked slot is reverted (application → submitted)
+/// before it is canceled, never hard-deleted out from under a resident.
+model CcaInterviewSlot {
+  id                  String    @id @default(auto()) @map("_id") @db.ObjectId
+  slotID              Int       @unique(map: "slotID")
+  ccaID               Int
+  startTime           Int?
+  endTime             Int?
+  location            String?
+  createdBy           String?
+  bookedByUserID      String?
+  bookedApplicationID Int?
+  bookedAt            DateTime?
+  canceledAt          DateTime?
+  createdAt           DateTime? @default(now())
+
+  @@index([ccaID, startTime, endTime], map: "cca_time")
+  @@index([bookedByUserID], map: "booked_by")
+}
+
+/// Append-only interview notes a head records against an application — multiple
+/// per application, multiple co-heads. New, unvalidated collection. Kept
+/// separate from CcaApplication (rather than a single `headNotes` string) so
+/// notes accumulate with authorship + timestamps and never overwrite.
+model CcaInterviewNote {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  applicationID Int
+  ccaID         Int
+  authorUserID  String?
+  body          String?
+  createdAt     DateTime? @default(now())
+
+  @@index([applicationID], map: "application")
+}
+
 /// Matric number stored as an ATTRIBUTE (not identity), kept out of the
 /// validator-guarded User collection (same pattern as UserRole/FacilityAccess:
 /// the User $jsonSchema validator has no `matric` property, so writing it onto
@@ -602,6 +692,18 @@ model SupperGroup {
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+///
+/// ⚠️ `prisma db push` DROPS the production `email_unique_ci` index. That index
+/// is a case-insensitive (collation strength 2) UNIQUE index on `email` — the
+/// guard against duplicate accounts, created by scripts/remediation/
+/// dedupe-users.mjs (also merge-accounts.mjs / merge-by-canonical.mjs). Prisma
+/// cannot represent a collation index in this schema, so every `db push` sees
+/// it as "not in schema" and removes it WITHOUT needing --accept-data-loss.
+/// AFTER ANY `db push`, recreate it:
+///   db.$runCommandRaw({ createIndexes: "User", indexes: [{ key: { email: 1 },
+///     name: "email_unique_ci", unique: true,
+///     collation: { locale: "en", strength: 2 } }] })
+/// (re-run dedupe-users.mjs, or the one-liner above). Verify with listIndexes.
 model User {
   id             String          @id @default(auto()) @map("_id") @db.ObjectId
   email          String
