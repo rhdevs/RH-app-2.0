@@ -64,50 +64,64 @@ export default function CcaOverview({ ccaID }: { ccaID: number }) {
 
   return (
     <div className="space-y-6">
-      {/* Banner. `unoptimized` because these are already downscaled to
-          1600×400 WebP on upload — running them back through the image
-          optimizer would spend transformations to save almost nothing. */}
-      {p?.bannerUrl && (
-        <div className="relative h-36 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 sm:h-48">
-          <Image
-            src={p.bannerUrl}
-            alt=""
-            fill
-            className="object-cover"
-            sizes="100vw"
-            unoptimized
-            priority
-          />
-        </div>
-      )}
-
-      {(p?.logoUrl ?? p?.description) && (
-        <section className="flex items-start gap-4 rounded-lg border border-gray-200 bg-white p-5">
-          {p?.logoUrl && (
-            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-gray-200 bg-gray-50">
+      {/* Banner + overlapping logo + description as one unit, so the logo can
+          straddle the seam between the banner and the card below it. */}
+      {(p?.bannerUrl ?? p?.logoUrl ?? p?.description) && (
+        <div>
+          {/* Banner. `unoptimized` because these are already downscaled to
+              1600×400 WebP on upload — running them back through the image
+              optimizer would spend transformations to save almost nothing.
+              object-cover stretches the image to fill the whole banner. */}
+          {p?.bannerUrl && (
+            <div className="relative h-48 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 sm:h-64">
               <Image
-                src={p.logoUrl}
+                src={p.bannerUrl}
                 alt=""
                 fill
-                className="object-contain"
-                sizes="64px"
+                className="object-cover"
+                sizes="100vw"
                 unoptimized
+                priority
               />
             </div>
           )}
-          {p?.description ? (
-            // whitespace-pre-wrap preserves the line breaks a head typed.
-            // React escapes the content, which is what makes rendering
-            // user-authored prose safe without a sanitizer.
-            <p className="min-w-0 whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-              {p.description}
-            </p>
-          ) : (
-            <p className="text-sm italic text-gray-400">
-              No description yet.
-            </p>
+
+          {(p?.logoUrl ?? p?.description) && (
+            <div className="relative">
+              {/* Logo sits half over the banner, half over the card: anchored
+                  to the card's top edge (which meets the banner's bottom edge)
+                  and pulled up by half its own height. */}
+              {p?.logoUrl && (
+                <div className="absolute left-6 top-0 z-10 h-24 w-24 -translate-y-1/2 overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm">
+                  <Image
+                    src={p.logoUrl}
+                    alt=""
+                    fill
+                    className="object-contain"
+                    sizes="96px"
+                    unoptimized
+                  />
+                </div>
+              )}
+              {/* pl-36 clears the logo column; items-center centres the
+                  description vertically beside it. */}
+              <section className="flex min-h-[5rem] items-center rounded-lg border border-gray-200 bg-white p-5 pl-36">
+                {p?.description ? (
+                  // whitespace-pre-wrap preserves the line breaks a head typed.
+                  // React escapes the content, which is what makes rendering
+                  // user-authored prose safe without a sanitizer.
+                  <p className="min-w-0 whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                    {p.description}
+                  </p>
+                ) : (
+                  <p className="text-sm italic text-gray-400">
+                    No description yet.
+                  </p>
+                )}
+              </section>
+            </div>
           )}
-        </section>
+        </div>
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
