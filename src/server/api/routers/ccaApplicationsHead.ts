@@ -276,8 +276,14 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
       await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
 
-      const slots = await ctx.db.ccaInterviewSlot.findMany({
-        where: { ccaID: input.ccaID, canceledAt: null },
+      // NOTE: do NOT filter `canceledAt: null` in the query. A slot created
+      // before this field was written explicitly has canceledAt ABSENT, and
+      // Prisma+Mongo's `{ canceledAt: null }` matches a stored null but NOT an
+      // absent field — so that filter silently hides every open slot. Prisma
+      // deserializes an absent optional scalar as null, so filtering in JS on
+      // `s.canceledAt === null` catches both the absent and the null case.
+      const all = await ctx.db.ccaInterviewSlot.findMany({
+        where: { ccaID: input.ccaID },
         select: {
           slotID: true,
           startTime: true,
@@ -285,9 +291,11 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           location: true,
           bookedByUserID: true,
           bookedApplicationID: true,
+          canceledAt: true,
         },
         orderBy: { startTime: "asc" },
       });
+      const slots = all.filter((s) => s.canceledAt === null);
 
       const booked = slots
         .map((s) => s.bookedByUserID)
@@ -327,10 +335,16 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "SLOT_IN_PAST" });
       }
 
-      const existing = await ctx.db.ccaInterviewSlot.findMany({
-        where: { ccaID: input.ccaID, canceledAt: null },
-        select: { startTime: true, endTime: true },
-      });
+      // Same null-vs-absent caveat as listSlots: filter canceled slots in JS,
+      // not with `canceledAt: null` (which would miss absent-field slots and so
+      // skip them in the overlap check, letting a new slot overlap an existing
+      // open one).
+      const existing = (
+        await ctx.db.ccaInterviewSlot.findMany({
+          where: { ccaID: input.ccaID },
+          select: { startTime: true, endTime: true, canceledAt: true },
+        })
+      ).filter((e) => e.canceledAt === null);
 
       // Against existing slots and against slots earlier in this same batch.
       const accepted: { startTime: number; endTime: number }[] = [];
@@ -364,6 +378,14 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             location: s.location ?? null,
             createdBy: userID,
             createdAt: new Date(),
+            // Write these explicitly as null (not left absent) so the
+            // `bookedByUserID: null` / `canceledAt: null` filters other queries
+            // use actually match — Prisma+Mongo's null filter does not match an
+            // absent field. See the note in listSlots.
+            bookedByUserID: null,
+            bookedApplicationID: null,
+            bookedAt: null,
+            canceledAt: null,
           },
         });
         created.push(slotID);
