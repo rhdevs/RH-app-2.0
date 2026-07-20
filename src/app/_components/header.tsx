@@ -9,6 +9,7 @@ import {
   User,
   Users,
   LayoutGrid,
+  ClipboardList,
   LogOut,
   UserCircle,
   ShieldCheck,
@@ -93,6 +94,11 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
 
   const handleProfile = () => {
     router.push("/profile");
+    setIsProfileDropdownOpen(false);
+  };
+
+  const handleMyApplications = () => {
+    router.push("/ccas/applications");
     setIsProfileDropdownOpen(false);
   };
 
@@ -197,6 +203,17 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                           Profile
                         </button>
 
+                        <button
+                          onClick={handleMyApplications}
+                          className="flex w-full items-center px-4 py-2 text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
+                        >
+                          <ClipboardList
+                            size={16}
+                            className="mr-3 text-gray-400"
+                          />
+                          My applications
+                        </button>
+
                         <hr className="border-gray-100" />
 
                         <button
@@ -260,6 +277,13 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                     >
                       <UserCircle size={18} />
                       <span>Profile</span>
+                    </button>
+                    <button
+                      onClick={handleMyApplications}
+                      className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
+                    >
+                      <ClipboardList size={18} />
+                      <span>My applications</span>
                     </button>
                     <button
                       onClick={handleLogout}
