@@ -286,7 +286,10 @@ export const ccaApplicationsRouter = createTRPCRouter({
    * caller heads this CCA — plus the create run INSIDE withCcaLock so two
    * concurrent applies cannot both pass the "no open application" check.
    */
-  apply: identifiedProcedure
+  // NB: named `submitApplication`, not `apply` — tRPC reserves `apply` as a
+  // router key (it collides with Function.prototype.apply) and the build fails
+  // with "Reserved words used in router({}) call: apply".
+  submitApplication: identifiedProcedure
     .use(requireMatric)
     .input(applyInput)
     .mutation(async ({ ctx, input }) => {

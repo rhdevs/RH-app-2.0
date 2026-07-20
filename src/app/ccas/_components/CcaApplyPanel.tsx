@@ -51,7 +51,7 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
     ]);
   };
 
-  const apply = api.ccaApplications.apply.useMutation({
+  const apply = api.ccaApplications.submitApplication.useMutation({
     onSuccess: async () => {
       setShowApply(false);
       setNotes("");
