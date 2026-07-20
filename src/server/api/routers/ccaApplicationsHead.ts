@@ -335,72 +335,86 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "SLOT_IN_PAST" });
       }
 
-      // Same null-vs-absent caveat as listSlots: filter canceled slots in JS,
-      // not with `canceledAt: null` (which would miss absent-field slots and so
-      // skip them in the overlap check, letting a new slot overlap an existing
-      // open one).
-      const existing = (
-        await ctx.db.ccaInterviewSlot.findMany({
-          where: { ccaID: input.ccaID },
-          select: { startTime: true, endTime: true, canceledAt: true },
-        })
-      ).filter((e) => e.canceledAt === null);
+      // Serialize per-CCA so two concurrent "open" requests (a double-click, or
+      // two heads at once) cannot both pass the duplicate/overlap check and then
+      // both insert the same slots — the check-then-create must be atomic. Same
+      // lock the booking and decide paths use.
+      return withCcaLock(ctx.db, input.ccaID, async () => {
+        // Existing NON-canceled slots. canceledAt is filtered in JS, not the
+        // query: `canceledAt: null` misses absent-field slots (Prisma+Mongo), so
+        // a DB filter would let the check skip them. See the note in listSlots.
+        const existing = (
+          await ctx.db.ccaInterviewSlot.findMany({
+            where: { ccaID: input.ccaID },
+            select: { startTime: true, endTime: true, canceledAt: true },
+          })
+        ).filter((e) => e.canceledAt === null);
 
-      // Against existing slots and against slots earlier in this same batch.
-      const accepted: { startTime: number; endTime: number }[] = [];
-      for (const s of input.slots) {
-        const clash =
-          existing.some(
-            (e) =>
-              e.startTime !== null &&
-              e.endTime !== null &&
+        const sameTime = (
+          a: { startTime: number | null; endTime: number | null },
+          b: { startTime: number; endTime: number },
+        ) => a.startTime === b.startTime && a.endTime === b.endTime;
+
+        // Validate every incoming slot against the existing ones AND against the
+        // slots earlier in this same batch. An exact DUPLICATE (identical
+        // start+end) is reported distinctly from a partial OVERLAP so the head
+        // gets a clear "already opened" message.
+        const accepted: { startTime: number; endTime: number }[] = [];
+        for (const s of input.slots) {
+          if (existing.some((e) => sameTime(e, s)) || accepted.some((e) => sameTime(e, s))) {
+            throw new TRPCError({ code: "CONFLICT", message: "DUPLICATE_SLOT" });
+          }
+          const clash =
+            existing.some(
+              (e) =>
+                e.startTime !== null &&
+                e.endTime !== null &&
+                overlaps(s.startTime, s.endTime, e.startTime, e.endTime),
+            ) ||
+            accepted.some((e) =>
               overlaps(s.startTime, s.endTime, e.startTime, e.endTime),
-          ) ||
-          accepted.some((e) =>
-            overlaps(s.startTime, s.endTime, e.startTime, e.endTime),
-          );
-        if (clash) {
-          throw new TRPCError({ code: "CONFLICT", message: "SLOT_OVERLAP" });
+            );
+          if (clash) {
+            throw new TRPCError({ code: "CONFLICT", message: "SLOT_OVERLAP" });
+          }
+          accepted.push({ startTime: s.startTime, endTime: s.endTime });
         }
-        accepted.push({ startTime: s.startTime, endTime: s.endTime });
-      }
 
-      const batchId = randomUUID();
-      const created: number[] = [];
-      for (const s of input.slots) {
-        const slotID = await nextCounter(ctx.db, SLOT_COUNTER_KEY);
-        await ctx.db.ccaInterviewSlot.create({
-          data: {
-            slotID,
-            ccaID: input.ccaID,
-            startTime: s.startTime,
-            endTime: s.endTime,
-            location: s.location ?? null,
-            createdBy: userID,
-            createdAt: new Date(),
-            // Write these explicitly as null (not left absent) so the
-            // `bookedByUserID: null` / `canceledAt: null` filters other queries
-            // use actually match — Prisma+Mongo's null filter does not match an
-            // absent field. See the note in listSlots.
-            bookedByUserID: null,
-            bookedApplicationID: null,
-            bookedAt: null,
-            canceledAt: null,
-          },
+        const batchId = randomUUID();
+        const created: number[] = [];
+        for (const s of input.slots) {
+          const slotID = await nextCounter(ctx.db, SLOT_COUNTER_KEY);
+          await ctx.db.ccaInterviewSlot.create({
+            data: {
+              slotID,
+              ccaID: input.ccaID,
+              startTime: s.startTime,
+              endTime: s.endTime,
+              location: s.location ?? null,
+              createdBy: userID,
+              createdAt: new Date(),
+              // Explicit nulls (not absent) so other queries' null filters match
+              // — Prisma+Mongo's null filter does not match an absent field.
+              bookedByUserID: null,
+              bookedApplicationID: null,
+              bookedAt: null,
+              canceledAt: null,
+            },
+          });
+          created.push(slotID);
+        }
+
+        await writeAudit(ctx.db, {
+          actorUserID: userID,
+          actorRoles: roles,
+          targetCcaID: input.ccaID,
+          action: "ccaInterviewSlot.open",
+          batchId,
+          reason: `${scope.via}: opened ${created.length} slot(s)`,
         });
-        created.push(slotID);
-      }
 
-      await writeAudit(ctx.db, {
-        actorUserID: userID,
-        actorRoles: roles,
-        targetCcaID: input.ccaID,
-        action: "ccaInterviewSlot.open",
-        batchId,
-        reason: `${scope.via}: opened ${created.length} slot(s)`,
+        return { ccaID: input.ccaID, opened: created.length, slotIDs: created };
       });
-
-      return { ccaID: input.ccaID, opened: created.length, slotIDs: created };
     }),
 
   /**

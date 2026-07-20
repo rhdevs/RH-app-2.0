@@ -54,13 +54,6 @@ function fmtTime(epoch: number | null): string {
     minute: "2-digit",
   });
 }
-function fmtDateHeading(epoch: number): string {
-  return new Date(epoch * 1000).toLocaleDateString(undefined, {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
-}
 function overlaps(aS: number, aE: number, bS: number, bE: number): boolean {
   return aS < bE && bS < aE;
 }
@@ -182,13 +175,15 @@ function SlotGenerator({
   const overCap = creatable.length > MAX_SLOTS_PER_OPEN;
 
   const serverError = create.error
-    ? create.error.message === "SLOT_OVERLAP"
-      ? "One of these overlaps a slot that was just taken. Refresh and regenerate."
-      : create.error.message === "SLOT_IN_PAST"
-        ? "Some of these are in the past."
-        : create.error.message === "NOT_A_HEAD_OF_THIS_CCA"
-          ? "You're no longer a head of this CCA."
-          : "Those didn't open. Try again."
+    ? create.error.message === "DUPLICATE_SLOT"
+      ? "One of these is identical to a slot you've already opened."
+      : create.error.message === "SLOT_OVERLAP"
+        ? "One of these overlaps a slot that was just taken. Refresh and regenerate."
+        : create.error.message === "SLOT_IN_PAST"
+          ? "Some of these are in the past."
+          : create.error.message === "NOT_A_HEAD_OF_THIS_CCA"
+            ? "You're no longer a head of this CCA."
+            : "Those didn't open. Try again."
     : null;
 
   const submit = () => {
@@ -399,12 +394,22 @@ function SlotGenerator({
 
 /* ----------------------------- schedule view ------------------------------- */
 
-function ScheduleView({ ccaID, slots }: { ccaID: number; slots: Slot[] }) {
-  const bookedCount = slots.filter((s) => s.bookedByUserID !== null).length;
-  const openCount = slots.length - bookedCount;
+/** Compact day-tab label, e.g. "Mon 21 Jul". */
+function fmtDayTab(epoch: number): string {
+  return new Date(epoch * 1000).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+}
 
-  // Group by local calendar day.
-  const groups = useMemo(() => {
+/**
+ * A day view: pick a day, see that day's slots laid out as cards. Booked slots
+ * are solid green and name who took them; free slots are plain white. This reads
+ * far more like a schedule than one long flat list.
+ */
+function ScheduleView({ ccaID, slots }: { ccaID: number; slots: Slot[] }) {
+  const days = useMemo(() => {
     const byDay = new Map<string, Slot[]>();
     for (const s of slots) {
       const key = s.startTime !== null ? toDateInput(s.startTime) : "—";
@@ -412,8 +417,13 @@ function ScheduleView({ ccaID, slots }: { ccaID: number; slots: Slot[] }) {
       arr.push(s);
       byDay.set(key, arr);
     }
+    for (const arr of byDay.values()) {
+      arr.sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+    }
     return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [slots]);
+
+  const [selected, setSelected] = useState<string | null>(null);
 
   if (slots.length === 0) {
     return (
@@ -423,33 +433,69 @@ function ScheduleView({ ccaID, slots }: { ccaID: number; slots: Slot[] }) {
     );
   }
 
+  const todayKey = toDateInput(Math.floor(Date.now() / 1000));
+  const defaultDay =
+    days.find(([k]) => k >= todayKey)?.[0] ?? days[0]?.[0] ?? null;
+  const current = days.find(([k]) => k === (selected ?? defaultDay)) ?? days[0]!;
+  const daySlots = current[1];
+  const booked = daySlots.filter((s) => s.bookedByUserID !== null).length;
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 text-xs">
-        <Stat label="Total" value={slots.length} tone="gray" />
-        <Stat label="Open" value={openCount} tone="sky" />
-        <Stat label="Booked" value={bookedCount} tone="emerald" />
+    <div className="space-y-3">
+      {/* Day picker */}
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
+        {days.map(([key, ds]) => {
+          const active = key === current[0];
+          const b = ds.filter((s) => s.bookedByUserID !== null).length;
+          return (
+            <button
+              key={key}
+              onClick={() => setSelected(key)}
+              className={`shrink-0 rounded-lg border px-3 py-1.5 text-left text-xs transition-colors ${
+                active
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-800"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"
+              }`}
+            >
+              <span className="block font-semibold">
+                {ds[0]?.startTime != null
+                  ? fmtDayTab(ds[0].startTime)
+                  : "Undated"}
+              </span>
+              <span className={active ? "text-emerald-600" : "text-gray-400"}>
+                {ds.length} slot{ds.length === 1 ? "" : "s"}
+                {b > 0 ? ` · ${b} booked` : ""}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      {groups.map(([day, daySlots]) => (
-        <div key={day}>
-          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">
-            {daySlots[0]?.startTime != null
-              ? fmtDateHeading(daySlots[0].startTime)
-              : "Undated"}
-          </p>
-          <ul className="space-y-2">
-            {daySlots.map((s) => (
-              <SlotRow key={s.slotID} ccaID={ccaID} slot={s} />
-            ))}
-          </ul>
-        </div>
-      ))}
+      {/* Legend */}
+      <div className="flex items-center gap-4 text-xs text-gray-500">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded bg-emerald-600" /> Booked
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded border border-gray-300 bg-white" />{" "}
+          Free
+        </span>
+        <span className="ml-auto tabular-nums">
+          {daySlots.length - booked} free · {booked} booked
+        </span>
+      </div>
+
+      {/* Slots for the selected day */}
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {daySlots.map((s) => (
+          <SlotCard key={s.slotID} ccaID={ccaID} slot={s} />
+        ))}
+      </div>
     </div>
   );
 }
 
-function SlotRow({ ccaID, slot }: { ccaID: number; slot: Slot }) {
+function SlotCard({ ccaID, slot }: { ccaID: number; slot: Slot }) {
   const utils = api.useUtils();
   const [editing, setEditing] = useState(false);
   const booked = slot.bookedByUserID !== null;
@@ -461,7 +507,7 @@ function SlotRow({ ccaID, slot }: { ccaID: number; slot: Slot }) {
 
   if (editing) {
     return (
-      <li className="rounded-lg border border-emerald-300 bg-white p-3">
+      <div className="rounded-lg border border-emerald-300 bg-white p-3 sm:col-span-2 lg:col-span-3">
         <SlotEditForm
           ccaID={ccaID}
           slot={slot}
@@ -471,44 +517,54 @@ function SlotRow({ ccaID, slot }: { ccaID: number; slot: Slot }) {
           }}
           onCancel={() => setEditing(false)}
         />
-      </li>
+      </div>
     );
   }
 
   return (
-    <li className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-gray-800">
-          {fmtTime(slot.startTime)} – {fmtTime(slot.endTime)}
+    <div
+      className={`relative rounded-lg border p-3 ${
+        booked
+          ? "border-emerald-600 bg-emerald-600 text-white"
+          : "border-gray-200 bg-white"
+      }`}
+    >
+      <p
+        className={`text-sm font-semibold tabular-nums ${
+          booked ? "text-white" : "text-gray-800"
+        }`}
+      >
+        {fmtTime(slot.startTime)} – {fmtTime(slot.endTime)}
+      </p>
+      {slot.location && (
+        <p
+          className={`mt-0.5 inline-flex items-center gap-1 text-xs ${
+            booked ? "text-emerald-50" : "text-gray-500"
+          }`}
+        >
+          <MapPin className="h-3 w-3" />
+          {slot.location}
         </p>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
-          {slot.location && (
-            <span className="inline-flex items-center gap-1 text-gray-500">
-              <MapPin className="h-3 w-3" />
-              {slot.location}
-            </span>
-          )}
-          {booked ? (
-            <span className="font-medium text-emerald-700">
-              Booked ·{" "}
-              {slot.bookedBy?.displayName ??
-                slot.bookedBy?.email ??
-                "an applicant"}
-            </span>
-          ) : (
-            <span className="text-gray-400">Open</span>
-          )}
-        </p>
-      </div>
+      )}
+      <p
+        className={`mt-1 truncate text-xs ${
+          booked ? "text-emerald-50" : "text-gray-400"
+        }`}
+      >
+        {booked
+          ? (slot.bookedBy?.displayName ?? slot.bookedBy?.email ?? "Booked")
+          : "Free"}
+      </p>
 
-      <div className="flex shrink-0 items-center gap-1">
+      {/* Actions — always visible so they work on touch too. */}
+      <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
         {!booked && (
           <button
             onClick={() => setEditing(true)}
             aria-label="Edit slot"
-            className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
           >
-            <Pencil className="h-4 w-4" />
+            <Pencil className="h-3.5 w-3.5" />
           </button>
         )}
         <button
@@ -525,12 +581,16 @@ function SlotRow({ ccaID, slot }: { ccaID: number; slot: Slot }) {
           }}
           disabled={cancel.isPending}
           aria-label="Cancel slot"
-          className="rounded-md p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+          className={`rounded p-1 disabled:opacity-50 ${
+            booked
+              ? "text-emerald-100 hover:bg-emerald-700 hover:text-white"
+              : "text-gray-400 hover:bg-red-50 hover:text-red-600"
+          }`}
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
-    </li>
+    </div>
   );
 }
 
@@ -646,27 +706,5 @@ function Field({
       <span className="font-medium text-gray-700">{label}</span>
       {children}
     </label>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "gray" | "sky" | "emerald";
-}) {
-  const cls = {
-    gray: "bg-gray-100 text-gray-700",
-    sky: "bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20",
-    emerald: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20",
-  }[tone];
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${cls}`}>
-      <span className="tabular-nums">{value}</span>
-      {label}
-    </span>
   );
 }
