@@ -164,7 +164,7 @@ export const ccaApplicationsRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_CCA" });
       }
 
-      const [profile, membership, apps, openSlotCount] = await Promise.all([
+      const [profile, membership, apps, futureSlots] = await Promise.all([
         ctx.db.ccaProfile.findUnique({
           where: { ccaID: input.ccaID },
           select: { description: true, logoUrl: true, bannerUrl: true },
@@ -184,16 +184,20 @@ export const ccaApplicationsRouter = createTRPCRouter({
           },
           orderBy: { applicationID: "desc" },
         }),
-        ctx.db.ccaInterviewSlot.count({
-          where: {
-            ccaID: input.ccaID,
-            bookedByUserID: null,
-            canceledAt: null,
-            endTime: { gt: now },
-          },
+        // Fetch future slots and count the open ones in JS — a `bookedByUserID:
+        // null` / `canceledAt: null` filter would miss slots where those fields
+        // are ABSENT (Prisma+Mongo's null filter only matches a stored null),
+        // which is every freshly-opened slot. See the note in
+        // ccaApplicationsHead.listSlots.
+        ctx.db.ccaInterviewSlot.findMany({
+          where: { ccaID: input.ccaID, endTime: { gt: now } },
+          select: { bookedByUserID: true, canceledAt: true },
         }),
       ]);
 
+      const openSlotCount = futureSlots.filter(
+        (s) => s.bookedByUserID === null && s.canceledAt === null,
+      ).length;
       const latest = apps[0] ?? null;
       const hasOpenApplication =
         latest !== null && !isTerminalStatus(latest.status);
@@ -399,21 +403,29 @@ export const ccaApplicationsRouter = createTRPCRouter({
         });
       }
 
-      const slots = await ctx.db.ccaInterviewSlot.findMany({
-        where: {
-          ccaID: input.ccaID,
-          bookedByUserID: null,
-          canceledAt: null,
-          endTime: { gt: now },
-        },
+      // Open + future slots. `bookedByUserID`/`canceledAt` are filtered in JS,
+      // not the query: their null filter would miss slots where the field is
+      // ABSENT (every freshly-opened one). See ccaApplicationsHead.listSlots.
+      const candidates = await ctx.db.ccaInterviewSlot.findMany({
+        where: { ccaID: input.ccaID, endTime: { gt: now } },
         select: {
           slotID: true,
           startTime: true,
           endTime: true,
           location: true,
+          bookedByUserID: true,
+          canceledAt: true,
         },
         orderBy: { startTime: "asc" },
       });
+      const slots = candidates
+        .filter((s) => s.bookedByUserID === null && s.canceledAt === null)
+        .map((s) => ({
+          slotID: s.slotID,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          location: s.location,
+        }));
 
       return { slots, mySlotID: live.interviewSlotID };
     }),
