@@ -9,7 +9,12 @@ import {
   isCcaManagementEnabled,
 } from "~/server/api/services/ccaScope";
 import { writeAudit } from "~/server/api/routers/admin";
-import { canonicalUserID, isCanonicalResidentID } from "~/lib/identity";
+import {
+  membershipKeysFor,
+  removeCcaMember,
+  removeMemberTargetSchema,
+} from "~/server/api/services/ccaMembers";
+import { isCanonicalResidentID } from "~/lib/identity";
 
 /**
  * CCA MANAGEMENT — admin only, and additionally behind the
@@ -59,25 +64,6 @@ function requireManageCcas(roles: readonly string[]): void {
       message: "CAPABILITY_REQUIRED:manageCcas",
     });
   }
-}
-
-/**
- * Every membership key that resolves to one person.
- *
- * REMOVAL MUST USE ALL OF THEM. UserCCA.userID is mixed-format: a person can
- * hold a legacy A-format row AND a canonical row for the same CCA. Deleting
- * only the canonical one "removes" them while their legacy row keeps them on
- * the roster — a bug that looks like the delete silently failed.
- */
-function membershipKeysFor(u: {
-  email: string;
-  userID: string | null;
-}): string[] {
-  const keys = new Set<string>();
-  const cid = canonicalUserID(u.email);
-  if (cid) keys.add(cid);
-  if (u.userID && u.userID.length > 0) keys.add(u.userID);
-  return [...keys];
 }
 
 export const ccaAdminRouter = createTRPCRouter({
@@ -336,75 +322,26 @@ export const ccaAdminRouter = createTRPCRouter({
    * from the roster), and the key set is recomputed here.
    */
   removeMember: adminProcedure
-    .input(
-      z.object({
-        ccaID: ccaIDSchema,
-        target: z.discriminatedUnion("kind", [
-          // A resolved roster entry: the User.id the roster deduped on.
-          z.object({ kind: z.literal("user"), userObjectId: z.string().min(1) }),
-          // An UNRESOLVED roster entry — a membership key matching no User row.
-          // Removable so the amber rows can actually be cleaned up.
-          z.object({ kind: z.literal("key"), key: z.string().trim().min(1) }),
-        ]),
-      }),
-    )
+    .input(z.object({ ccaID: ccaIDSchema, target: removeMemberTargetSchema }))
     .mutation(async ({ ctx, input }) => {
       await assertCcaManagementEnabled(ctx.db);
       const actorUserID = ctx.session.user.userID;
       const roles = await getUserRoles(ctx.db, actorUserID); // I-5
       requireManageCcas(roles);
 
-      let keys: string[];
-      let userObjectId: string | null = null;
-      let label: string;
-
-      if (input.target.kind === "user") {
-        const u = await ctx.db.user.findUnique({
-          where: { id: input.target.userObjectId },
-          select: { id: true, email: true, userID: true },
-        });
-        if (!u) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_USER" });
-        }
-        keys = membershipKeysFor(u);
-        userObjectId = u.id;
-        label = u.email;
-      } else {
-        keys = [input.target.key];
-        label = input.target.key;
-        // An unresolved key matches no User row by definition, so there is no
-        // embedded array to clean — (3) does not apply on this branch.
-      }
-
-      const removed = await ctx.db.userCCA.deleteMany({
-        where: { ccaID: input.ccaID, userID: { in: keys } },
-      });
-
-      // (3) the embedded array. Not declared in `model User`, so Prisma cannot
-      // express this — it has to be a raw command.
-      if (userObjectId) {
-        await ctx.db.$runCommandRaw({
-          update: "User",
-          updates: [
-            {
-              q: { _id: { $oid: userObjectId } },
-              u: { $pull: { userCCA: input.ccaID } },
-            },
-          ],
-        });
-      }
+      const result = await removeCcaMember(ctx.db, input.ccaID, input.target);
 
       await writeAudit(ctx.db, {
         actorUserID,
         actorRoles: roles,
         targetCcaID: input.ccaID,
-        targetUserID: keys[0],
+        targetUserID: result.targetKey,
         action: "ccaMember.remove",
-        reason: `${label} — ${removed.count} membership row(s)${
-          userObjectId ? " + embedded array" : ""
+        reason: `admin: ${result.label} — ${result.removedRows} membership row(s)${
+          result.touchedEmbedded ? " + embedded array" : ""
         }`,
       });
 
-      return { ccaID: input.ccaID, removedRows: removed.count };
+      return { ccaID: input.ccaID, removedRows: result.removedRows };
     }),
 });

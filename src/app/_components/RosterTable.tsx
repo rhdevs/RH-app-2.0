@@ -1,5 +1,7 @@
 "use client";
 
+import { Trash2 } from "lucide-react";
+
 import {
   Table,
   TableBody,
@@ -8,6 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { Button } from "~/components/ui/button";
 import type { RosterEntry } from "~/server/api/services/ccaRoster";
 
 /**
@@ -56,7 +59,41 @@ function unresolvedCopy(entry: Extract<RosterEntry, { kind: "unresolved" }>) {
       };
 }
 
-function EntryRow({ entry }: { entry: RosterEntry }) {
+/** A remove control, shown only when the table is given an `onRemove`. */
+function RemoveCell({
+  entry,
+  onRemove,
+  busy,
+}: {
+  entry: RosterEntry;
+  onRemove: (entry: RosterEntry) => void;
+  busy: boolean;
+}) {
+  return (
+    <TableCell className="text-right">
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={busy}
+        aria-label="Remove member"
+        onClick={() => onRemove(entry)}
+        className="text-gray-400 hover:text-red-600"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </TableCell>
+  );
+}
+
+function EntryRow({
+  entry,
+  onRemove,
+  busy,
+}: {
+  entry: RosterEntry;
+  onRemove?: (entry: RosterEntry) => void;
+  busy: boolean;
+}) {
   const duplicate = entry.userCcaRowCount > 1;
 
   if (entry.kind === "unresolved") {
@@ -75,6 +112,7 @@ function EntryRow({ entry }: { entry: RosterEntry }) {
         <TableCell className="text-right">
           <RoleLabel isHead={entry.isHead} />
         </TableCell>
+        {onRemove && <RemoveCell entry={entry} onRemove={onRemove} busy={busy} />}
       </TableRow>
     );
   }
@@ -98,6 +136,7 @@ function EntryRow({ entry }: { entry: RosterEntry }) {
       <TableCell className="text-right">
         <RoleLabel isHead={entry.isHead} />
       </TableCell>
+      {onRemove && <RemoveCell entry={entry} onRemove={onRemove} busy={busy} />}
     </TableRow>
   );
 }
@@ -106,10 +145,21 @@ export default function RosterTable({
   title,
   entries,
   emptyCopy,
+  /**
+   * When provided, each row gets a remove control. Passed ONLY to the members
+   * table on a head's own dashboard — the heads table and the read-only
+   * /admin/ccas viewer leave it undefined, so the extra column and the write
+   * affordance never appear there. Removal is still authorised server-side by
+   * assertHeadsCca regardless; this only decides whether to draw the button.
+   */
+  onRemove,
+  removingBusy = false,
 }: {
   title: string;
   entries: RosterEntry[];
   emptyCopy: string;
+  onRemove?: (entry: RosterEntry) => void;
+  removingBusy?: boolean;
 }) {
   return (
     <section>
@@ -132,11 +182,21 @@ export default function RosterTable({
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead className="text-right">Role</TableHead>
+                {onRemove && (
+                  <TableHead className="text-right">
+                    <span className="sr-only">Remove</span>
+                  </TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
               {entries.map((e) => (
-                <EntryRow key={e.kind === "resolved" ? e.userId : e.key} entry={e} />
+                <EntryRow
+                  key={e.kind === "resolved" ? e.userId : e.key}
+                  entry={e}
+                  onRemove={onRemove}
+                  busy={removingBusy}
+                />
               ))}
             </TableBody>
           </Table>

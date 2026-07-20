@@ -1,8 +1,33 @@
 "use client";
 
+import { useState } from "react";
+
 import { api } from "~/trpc/react";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
+import type { RosterEntry } from "~/server/api/services/ccaRoster";
 import RosterTable from "./RosterTable";
 import RosterDriftNote from "./RosterDriftNote";
+
+/** How a roster entry maps to a removeMember target. */
+function removalTarget(entry: RosterEntry) {
+  return entry.kind === "resolved"
+    ? ({ kind: "user", userObjectId: entry.userId } as const)
+    : ({ kind: "key", key: entry.key } as const);
+}
+
+function entryLabel(entry: RosterEntry): string {
+  return entry.kind === "resolved"
+    ? (entry.displayName ?? entry.email)
+    : `this unmatched record (${entry.key})`;
+}
 
 /**
  * The roster for one CCA. Rendered by /cca/[ccaID] and by /admin/ccas.
@@ -20,10 +45,22 @@ export default function RosterPanel({
    * such heading and still needs it — hence a prop rather than deleting it.
    */
   hideHeader = false,
+  /**
+   * Enables the per-member remove control. Set ONLY by a head's own member-list
+   * section (/cca/[ccaID]/members); the /admin/ccas viewer stays read-only, and
+   * admins manage membership from /admin/manage-ccas. The server guard
+   * (assertHeadsCca on cca.removeMember) is the real boundary — this flag only
+   * decides whether the button is drawn.
+   */
+  manageMembers = false,
 }: {
   ccaID: number;
   hideHeader?: boolean;
+  manageMembers?: boolean;
 }) {
+  const utils = api.useUtils();
+  const [pending, setPending] = useState<RosterEntry | null>(null);
+
   const { data, isPending, error } = api.cca.getRoster.useQuery(
     { ccaID },
     {
@@ -32,6 +69,13 @@ export default function RosterPanel({
       retry: false,
     },
   );
+
+  const remove = api.cca.removeMember.useMutation({
+    onSuccess: async () => {
+      setPending(null);
+      await utils.cca.getRoster.invalidate({ ccaID });
+    },
+  });
 
   if (isPending) {
     return (
@@ -97,6 +141,10 @@ export default function RosterPanel({
 
       <RosterDriftNote drift={drift} />
 
+      {/* Heads are NEVER removable here — headship is managed through
+          grant/revoke/transfer, which keep the CcaHead row and the cca_head
+          string in step (CH-1). So the members table gets onRemove and the
+          heads table never does. */}
       <RosterTable
         title="Heads"
         entries={heads}
@@ -106,7 +154,61 @@ export default function RosterPanel({
         title="Members"
         entries={members}
         emptyCopy="No members are listed for this CCA yet."
+        onRemove={manageMembers ? (e) => setPending(e) : undefined}
+        removingBusy={remove.isPending}
       />
+
+      <AlertDialog
+        open={pending !== null}
+        onOpenChange={(open) => {
+          if (!open && !remove.isPending) {
+            setPending(null);
+            remove.reset();
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this member?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pending && (
+                <>
+                  {entryLabel(pending)} will be removed from this CCA. There is
+                  no way to add members back yet, so they&rsquo;d need to rejoin
+                  through the sign-up system.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {remove.error && (
+            <p className="text-sm text-red-600">
+              {remove.error.message === "NOT_A_HEAD_OF_THIS_CCA"
+                ? "You're no longer a head of this CCA."
+                : "That didn't work. Try again."}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={remove.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            {/* Not AlertDialogAction: that closes the dialog on click, which
+                would dismiss it before the mutation resolves and hide any
+                error. A plain button keeps it open until onSuccess closes it. */}
+            <button
+              type="button"
+              disabled={remove.isPending || pending === null}
+              onClick={() => {
+                if (pending) {
+                  remove.mutate({ ccaID, target: removalTarget(pending) });
+                }
+              }}
+              className="inline-flex h-10 items-center justify-center rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:pointer-events-none disabled:opacity-50"
+            >
+              {remove.isPending ? "Removing…" : "Remove member"}
+            </button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
