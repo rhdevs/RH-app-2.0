@@ -6,6 +6,7 @@ import { getUserRoles } from "~/server/api/services/access";
 import { computeCapabilities } from "~/server/api/services/roles";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
+import { del } from "@vercel/blob";
 import { writeAudit } from "~/server/api/routers/admin";
 import { ccaProfileInput } from "~/lib/schemas/cca";
 
@@ -157,13 +158,21 @@ export const ccaRouter = createTRPCRouter({
 
       const row = await ctx.db.ccaProfile.findUnique({
         where: { ccaID: input.ccaID },
-        select: { description: true, updatedAt: true, updatedBy: true },
+        select: {
+          description: true,
+          logoUrl: true,
+          bannerUrl: true,
+          updatedAt: true,
+          updatedBy: true,
+        },
       });
 
       // No row is the normal state for a CCA nobody has described yet — an
       // empty profile, not an error.
       return {
         description: row?.description ?? "",
+        logoUrl: row?.logoUrl ?? null,
+        bannerUrl: row?.bannerUrl ?? null,
         updatedAt: row?.updatedAt ?? null,
         updatedBy: row?.updatedBy ?? null,
       };
@@ -200,7 +209,7 @@ export const ccaRouter = createTRPCRouter({
 
       const before = await ctx.db.ccaProfile.findUnique({
         where: { ccaID: input.ccaID },
-        select: { description: true },
+        select: { description: true, logoUrl: true, bannerUrl: true },
       });
 
       const saved = await ctx.db.ccaProfile.upsert({
@@ -208,16 +217,64 @@ export const ccaRouter = createTRPCRouter({
         create: {
           ccaID: input.ccaID,
           description: input.description,
+          logoUrl: input.logoUrl,
+          bannerUrl: input.bannerUrl,
           updatedAt: new Date(),
           updatedBy: userID,
         },
         update: {
           description: input.description,
+          logoUrl: input.logoUrl,
+          bannerUrl: input.bannerUrl,
           updatedAt: new Date(),
           updatedBy: userID,
         },
-        select: { description: true, updatedAt: true, updatedBy: true },
+        select: {
+          description: true,
+          logoUrl: true,
+          bannerUrl: true,
+          updatedAt: true,
+          updatedBy: true,
+        },
       });
+
+      /**
+       * Delete blobs this save replaced, so a CCA that re-uploads its logo ten
+       * times doesn't leave nine paying tenants in the store. `del()` is free
+       * per Vercel's pricing docs.
+       *
+       * AFTER the upsert and deliberately non-fatal: an orphaned blob costs
+       * fractions of a cent, while a delete failure that rolled back the save
+       * would lose the user's edit. Logged rather than swallowed so a
+       * persistent failure is visible.
+       *
+       * The input URLs are already proven to be ours and this CCA's by
+       * ccaProfileInput's superRefine, and `before` came from our own row —
+       * so nothing here can be pointed at another CCA's blob.
+       */
+      const replaced = [
+        before?.logoUrl && before.logoUrl !== saved.logoUrl
+          ? before.logoUrl
+          : null,
+        before?.bannerUrl && before.bannerUrl !== saved.bannerUrl
+          ? before.bannerUrl
+          : null,
+      ].filter((u): u is string => u !== null);
+
+      if (replaced.length > 0) {
+        try {
+          await del(replaced);
+        } catch (err) {
+          console.error(
+            JSON.stringify({
+              evt: "cca_blob_delete_failed",
+              ccaID: input.ccaID,
+              urls: replaced,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        }
+      }
 
       // Audited on ctx.db, outside any transaction (I-15). `via` records
       // whether this was the CCA's own head or a manager acting over the top.
@@ -226,7 +283,18 @@ export const ccaRouter = createTRPCRouter({
         actorRoles: roles,
         targetCcaID: input.ccaID,
         action: "ccaProfile.update",
-        reason: `${scope.via}: description ${before?.description ? "updated" : "set"} (${input.description.length} chars)`,
+        reason: [
+          scope.via,
+          `description ${input.description.length} chars`,
+          before?.logoUrl !== saved.logoUrl
+            ? `logo ${saved.logoUrl ? "set" : "removed"}`
+            : null,
+          before?.bannerUrl !== saved.bannerUrl
+            ? `banner ${saved.bannerUrl ? "set" : "removed"}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("; "),
       });
 
       return saved;

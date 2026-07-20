@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 
 import { api } from "~/trpc/react";
 import RosterDriftNote from "~/app/_components/RosterDriftNote";
@@ -22,6 +23,7 @@ import StatTile from "./StatTile";
 export default function CcaOverview({ ccaID }: { ccaID: number }) {
   const roster = api.cca.getRoster.useQuery({ ccaID }, { retry: false });
   const mine = api.cca.listMine.useQuery(undefined, { retry: false });
+  const profile = api.cca.getProfile.useQuery({ ccaID }, { retry: false });
 
   if (roster.error) {
     if (roster.error.message === "NOT_A_HEAD_OF_THIS_CCA") {
@@ -53,8 +55,56 @@ export default function CcaOverview({ ccaID }: { ccaID: number }) {
   const data = roster.data;
   const membership = mine.data?.ccas.find((c) => c.ccaID === ccaID) ?? null;
 
+  const p = profile.data;
+
   return (
     <div className="space-y-6">
+      {/* Banner. `unoptimized` because these are already downscaled to
+          1600×400 WebP on upload — running them back through the image
+          optimizer would spend transformations to save almost nothing. */}
+      {p?.bannerUrl && (
+        <div className="relative h-36 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 sm:h-48">
+          <Image
+            src={p.bannerUrl}
+            alt=""
+            fill
+            className="object-cover"
+            sizes="100vw"
+            unoptimized
+            priority
+          />
+        </div>
+      )}
+
+      {(p?.logoUrl ?? p?.description) && (
+        <section className="flex items-start gap-4 rounded-lg border border-gray-200 bg-white p-5">
+          {p?.logoUrl && (
+            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-gray-200 bg-gray-50">
+              <Image
+                src={p.logoUrl}
+                alt=""
+                fill
+                className="object-contain"
+                sizes="64px"
+                unoptimized
+              />
+            </div>
+          )}
+          {p?.description ? (
+            // whitespace-pre-wrap preserves the line breaks a head typed.
+            // React escapes the content, which is what makes rendering
+            // user-authored prose safe without a sanitizer.
+            <p className="min-w-0 whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+              {p.description}
+            </p>
+          ) : (
+            <p className="text-sm italic text-gray-400">
+              No description yet.
+            </p>
+          )}
+        </section>
+      )}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile
           label="Heads"
