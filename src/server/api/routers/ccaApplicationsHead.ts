@@ -19,6 +19,7 @@ import {
   cancelSlotInput,
   ccaTargetInput,
   decisionInput,
+  editSlotInput,
   headApplicationInput,
   isTerminalStatus,
   listApplicationsInput,
@@ -378,6 +379,81 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
       });
 
       return { ccaID: input.ccaID, opened: created.length, slotIDs: created };
+    }),
+
+  /**
+   * Edit an OPEN slot's time and/or location. A BOOKED slot is refused — moving
+   * a slot out from under an applicant who already claimed it would silently
+   * change their interview time; the head must cancel it (which reverts the
+   * applicant) and open a new one instead.
+   */
+  updateSlot: identifiedProcedure
+    .input(editSlotInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertApplicationsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const scope = await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+
+      return withCcaLock(ctx.db, input.ccaID, async () => {
+        const slot = await ctx.db.ccaInterviewSlot.findUnique({
+          where: { slotID: input.slotID },
+          select: {
+            slotID: true,
+            ccaID: true,
+            canceledAt: true,
+            bookedByUserID: true,
+          },
+        });
+        if (!slot || slot.ccaID !== input.ccaID || slot.canceledAt !== null) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_SLOT" });
+        }
+        if (slot.bookedByUserID !== null) {
+          throw new TRPCError({ code: "CONFLICT", message: "SLOT_BOOKED" });
+        }
+        const now = Math.floor(Date.now() / 1000);
+        if (input.endTime <= now) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "SLOT_IN_PAST" });
+        }
+
+        // Overlap against every OTHER non-canceled slot for this CCA.
+        const others = await ctx.db.ccaInterviewSlot.findMany({
+          where: {
+            ccaID: input.ccaID,
+            canceledAt: null,
+            slotID: { not: input.slotID },
+          },
+          select: { startTime: true, endTime: true },
+        });
+        const clash = others.some(
+          (o) =>
+            o.startTime !== null &&
+            o.endTime !== null &&
+            overlaps(input.startTime, input.endTime, o.startTime, o.endTime),
+        );
+        if (clash) {
+          throw new TRPCError({ code: "CONFLICT", message: "SLOT_OVERLAP" });
+        }
+
+        await ctx.db.ccaInterviewSlot.update({
+          where: { slotID: input.slotID },
+          data: {
+            startTime: input.startTime,
+            endTime: input.endTime,
+            location: input.location ?? null,
+          },
+        });
+
+        await writeAudit(ctx.db, {
+          actorUserID: userID,
+          actorRoles: roles,
+          targetCcaID: input.ccaID,
+          action: "ccaInterviewSlot.edit",
+          reason: `${scope.via}: edited slot #${input.slotID}`,
+        });
+
+        return { slotID: input.slotID };
+      });
     }),
 
   /**

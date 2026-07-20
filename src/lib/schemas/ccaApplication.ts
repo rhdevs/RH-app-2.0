@@ -120,6 +120,21 @@ export type OpenSlotsInput = z.input<typeof openSlotsInput>;
 export const cancelSlotInput = z.object({ ccaID, slotID });
 export type CancelSlotInput = z.input<typeof cancelSlotInput>;
 
+/** Edit an OPEN slot's time/location. A booked slot is refused server-side. */
+export const editSlotInput = z
+  .object({
+    ccaID,
+    slotID,
+    startTime: epochSeconds,
+    endTime: epochSeconds,
+    location: z.string().trim().max(INTERVIEW_LOCATION_MAX).optional(),
+  })
+  .refine((s) => s.endTime > s.startTime, {
+    message: "END_BEFORE_START",
+    path: ["endTime"],
+  });
+export type EditSlotInput = z.input<typeof editSlotInput>;
+
 /** View / act on one application within a CCA the caller heads. */
 export const headApplicationInput = z.object({ ccaID, applicationID });
 export type HeadApplicationInput = z.input<typeof headApplicationInput>;
