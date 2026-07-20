@@ -12,7 +12,7 @@ import {
   APPLICATION_NOTES_MAX,
   isTerminalStatus,
 } from "~/lib/schemas/ccaApplication";
-import { statusBadgeClass, statusLabel } from "../_lib/status";
+import { statusBadgeClass, residentStatusLabel } from "../_lib/status";
 import SlotPicker from "./SlotPicker";
 
 /** Friendly copy for the machine-readable error tokens the procedures throw. */
@@ -172,7 +172,7 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
                   app.status,
                 )}`}
               >
-                {statusLabel(app.status)}
+                {residentStatusLabel(app.status)}
               </span>
               {app.status === "rejected" && (
                 <span className="text-sm text-gray-500">
@@ -296,7 +296,7 @@ function ApplicationInProgress({
               app.status,
             )}`}
           >
-            {statusLabel(app.status)}
+            {residentStatusLabel(app.status)}
           </span>
           <p className="mt-2 text-sm text-gray-600">
             {app.status === "submitted" &&
