@@ -135,6 +135,7 @@ export const AUDIT_ACTIONS = [
   "ccaApplication.accept",
   "ccaApplication.reject",
   "ccaInterviewSlot.open",
+  "ccaInterviewSlot.edit",
   "ccaInterviewSlot.cancel",
   "ccaInterviewNote.add",
 ] as const;
