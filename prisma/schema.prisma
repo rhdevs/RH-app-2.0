@@ -692,6 +692,18 @@ model SupperGroup {
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
+///
+/// ⚠️ `prisma db push` DROPS the production `email_unique_ci` index. That index
+/// is a case-insensitive (collation strength 2) UNIQUE index on `email` — the
+/// guard against duplicate accounts, created by scripts/remediation/
+/// dedupe-users.mjs (also merge-accounts.mjs / merge-by-canonical.mjs). Prisma
+/// cannot represent a collation index in this schema, so every `db push` sees
+/// it as "not in schema" and removes it WITHOUT needing --accept-data-loss.
+/// AFTER ANY `db push`, recreate it:
+///   db.$runCommandRaw({ createIndexes: "User", indexes: [{ key: { email: 1 },
+///     name: "email_unique_ci", unique: true,
+///     collation: { locale: "en", strength: 2 } }] })
+/// (re-run dedupe-users.mjs, or the one-liner above). Verify with listIndexes.
 model User {
   id             String          @id @default(auto()) @map("_id") @db.ObjectId
   email          String
