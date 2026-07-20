@@ -14,11 +14,13 @@ import HeadCandidateInput from "~/app/_components/HeadCandidateInput";
  */
 export default function CcaHeadsManager({ ccaID }: { ccaID: number }) {
   const utils = api.useUtils();
-  const heads = api.admin.listCcaHeads.useQuery({ ccaID }, { retry: false });
+  // listHeads (not admin.listCcaHeads) so each head shows a NAME, not a bare
+  // NUSNET id — while still returning the canonical userID that Remove needs.
+  const heads = api.cca.listHeads.useQuery({ ccaID }, { retry: false });
 
   const refresh = async () => {
     await Promise.all([
-      utils.admin.listCcaHeads.invalidate({ ccaID }),
+      utils.cca.listHeads.invalidate({ ccaID }),
       utils.cca.getRoster.invalidate({ ccaID }),
     ]);
   };
@@ -26,7 +28,7 @@ export default function CcaHeadsManager({ ccaID }: { ccaID: number }) {
   const grant = api.admin.grantCcaHead.useMutation({ onSuccess: refresh });
   const revoke = api.admin.revokeCcaHead.useMutation({ onSuccess: refresh });
 
-  const rows = heads.data ?? [];
+  const rows = heads.data?.heads ?? [];
   const error = grant.error?.message ?? revoke.error?.message ?? null;
 
   return (
@@ -56,14 +58,22 @@ export default function CcaHeadsManager({ ccaID }: { ccaID: number }) {
               key={h.userID}
               className="flex items-center justify-between gap-3 px-3 py-2"
             >
-              <span className="font-mono text-sm text-gray-900">
-                {h.userID}
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium text-gray-900">
+                  {h.displayName ?? h.email ?? h.userID}
+                </span>
+                {/* Always show the NUSNET id underneath — it's the thing being
+                    written to CcaHead, and worth confirming even when a name
+                    resolved. When nothing resolved, this is the only label. */}
+                <span className="block truncate font-mono text-xs text-gray-400">
+                  {h.email ? `${h.email} · ${h.userID}` : h.userID}
+                </span>
               </span>
               <Button
                 variant="ghost"
                 size="sm"
                 disabled={revoke.isPending}
-                className="text-gray-400 hover:text-red-600"
+                className="shrink-0 text-gray-400 hover:text-red-600"
                 onClick={() => revoke.mutate({ ccaID, userID: h.userID })}
               >
                 Remove

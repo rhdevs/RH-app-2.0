@@ -404,6 +404,70 @@ export const ccaRouter = createTRPCRouter({
    * Never guesses. A matric matching more than one account is AMBIGUOUS and
    * refused — matric is self-asserted and UserMatric.matric is not unique.
    */
+  /**
+   * The CCA's heads WITH resolved names, for the admin heads manager.
+   *
+   * admin.listCcaHeads returns raw CcaHead rows — just the canonical userID — so
+   * a manager sees "E1714044", not a person. This resolves each head's name the
+   * same way the roster does (there is no reverse canonical→User query, so guess
+   * the email and also match the stored key), while still returning the
+   * authoritative CcaHead.userID that Remove needs.
+   *
+   * Guarded by assertHeadsCca, so it works for a manager (manageCcaHeads) on any
+   * CCA and for a head on their own — the same gate as the rest of this router.
+   */
+  listHeads: identifiedProcedure
+    .input(z.object({ ccaID: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+
+      const heads = await ctx.db.ccaHead.findMany({
+        where: { ccaID: input.ccaID },
+        select: { userID: true, grantedAt: true },
+        orderBy: { userID: "asc" },
+      });
+      if (heads.length === 0) return { heads: [] };
+
+      const keys = heads.map((h) => h.userID);
+      const guessedEmails = keys.map((k) => `${k.toLowerCase()}@u.nus.edu`);
+
+      const [byEmail, byStored] = await Promise.all([
+        ctx.db.user.findMany({
+          where: { email: { in: guessedEmails, mode: "insensitive" } },
+          // Never a bare read: passwordHash must not leave the server (I-2).
+          select: { email: true, displayName: true, userID: true },
+        }),
+        ctx.db.user.findMany({
+          where: { userID: { in: keys } },
+          select: { email: true, displayName: true, userID: true },
+        }),
+      ]);
+
+      // key → display, canonicalising the email-matched rows and dropping nulls
+      // so a non-NUS row can't land under a "" key (the listUsers guard).
+      const byKey = new Map<string, { displayName: string | null; email: string | null }>();
+      for (const u of byEmail) {
+        const cid = canonicalUserID(u.email);
+        if (cid) byKey.set(cid, { displayName: u.displayName, email: u.email });
+      }
+      for (const u of byStored) {
+        if (u.userID && !byKey.has(u.userID)) {
+          byKey.set(u.userID, { displayName: u.displayName, email: u.email });
+        }
+      }
+
+      return {
+        heads: heads.map((h) => ({
+          userID: h.userID,
+          displayName: byKey.get(h.userID)?.displayName ?? null,
+          email: byKey.get(h.userID)?.email ?? null,
+          grantedAt: h.grantedAt,
+        })),
+      };
+    }),
+
   resolveHeadCandidate: identifiedProcedure
     .input(
       z.object({
