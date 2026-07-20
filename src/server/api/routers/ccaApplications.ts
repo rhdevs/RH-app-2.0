@@ -9,6 +9,7 @@ import {
 } from "~/server/api/trpc";
 import { writeAudit } from "~/server/api/routers/admin";
 import { membershipKeysFor } from "~/server/api/services/ccaMembers";
+import { canonicalUserID } from "~/lib/identity";
 import {
   APPLICATION_COUNTER_KEY,
   assertApplicationsEnabled,
@@ -76,6 +77,61 @@ async function releaseSlotIfMine(
     where: { slotID, bookedByUserID: userID },
     data: { bookedByUserID: null, bookedApplicationID: null, bookedAt: null },
   });
+}
+
+export type HeadContact = {
+  userID: string;
+  displayName: string | null;
+  telegramHandle: string | null;
+};
+
+/**
+ * Resolve a CCA's head userIDs to display name + Telegram, so a member viewing
+ * their CCA can see who runs it and how to reach them. Same guess-email +
+ * stored-key approach as cca.listHeads; selects fields explicitly (never a bare
+ * User read — I-2). This is the ONLY head info exposed to a non-head: name and
+ * Telegram, both already shown publicly on that person's bookings/profile.
+ */
+async function resolveHeadContacts(
+  db: PrismaClient,
+  userIDs: readonly string[],
+): Promise<HeadContact[]> {
+  const keys = [...new Set(userIDs)];
+  if (keys.length === 0) return [];
+  const guessed = keys.map((k) => `${k.toLowerCase()}@u.nus.edu`);
+  const select = {
+    email: true,
+    displayName: true,
+    telegramHandle: true,
+    userID: true,
+  } as const;
+  const [byEmail, byStored] = await Promise.all([
+    db.user.findMany({
+      where: { email: { in: guessed, mode: "insensitive" } },
+      select,
+    }),
+    db.user.findMany({ where: { userID: { in: keys } }, select }),
+  ]);
+  const byKey = new Map<
+    string,
+    { displayName: string | null; telegramHandle: string | null }
+  >();
+  for (const u of byEmail) {
+    const cid = canonicalUserID(u.email);
+    if (cid && !byKey.has(cid)) {
+      byKey.set(cid, { displayName: u.displayName, telegramHandle: u.telegramHandle });
+    }
+  }
+  for (const u of byStored) {
+    if (u.userID && !byKey.has(u.userID)) {
+      byKey.set(u.userID, { displayName: u.displayName, telegramHandle: u.telegramHandle });
+    }
+  }
+  return keys.map((k) => ({
+    userID: k,
+    displayName: byKey.get(k)?.displayName ?? null,
+    telegramHandle: byKey.get(k)?.telegramHandle ?? null,
+  }));
 }
 
 export const ccaApplicationsRouter = createTRPCRouter({
@@ -164,7 +220,8 @@ export const ccaApplicationsRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_CCA" });
       }
 
-      const [profile, membership, apps, futureSlots] = await Promise.all([
+      const [profile, membership, apps, futureSlots, headRows, memberRows] =
+        await Promise.all([
         ctx.db.ccaProfile.findUnique({
           where: { ccaID: input.ccaID },
           select: { description: true, logoUrl: true, bannerUrl: true },
@@ -193,6 +250,16 @@ export const ccaApplicationsRouter = createTRPCRouter({
           where: { ccaID: input.ccaID, endTime: { gt: now } },
           select: { bookedByUserID: true, canceledAt: true },
         }),
+        ctx.db.ccaHead.findMany({
+          where: { ccaID: input.ccaID },
+          select: { userID: true },
+        }),
+        // Row count, not distinct people (UserCCA is mixed-key); labelled
+        // "members" in the UI, close enough for a member's overview.
+        ctx.db.userCCA.findMany({
+          where: { ccaID: input.ccaID },
+          select: { id: true },
+        }),
       ]);
 
       const openSlotCount = futureSlots.filter(
@@ -202,6 +269,10 @@ export const ccaApplicationsRouter = createTRPCRouter({
       const hasOpenApplication =
         latest !== null && !isTerminalStatus(latest.status);
       const isMember = membership !== null;
+      const heads = await resolveHeadContacts(
+        ctx.db,
+        headRows.map((h) => h.userID),
+      );
 
       return {
         ccaID: cca.ccaID,
@@ -216,8 +287,67 @@ export const ccaApplicationsRouter = createTRPCRouter({
         // just drives the default affordance.
         canApply: !isMember && !hasOpenApplication,
         openSlotCount,
+        heads,
+        memberCount: memberRows.length,
       };
     }),
+
+  /**
+   * The CCAs the caller is a MEMBER of — the resident's read-only "My CCAs"
+   * dashboard. Membership only (heads/managers use /cca); a CCA the caller both
+   * belongs to and heads is flagged `isHead` so the UI can link across.
+   *
+   * NOT a management surface: it returns display data only, and every write path
+   * this router exposes is scoped to the caller's own applications.
+   */
+  myMemberships: identifiedProcedure.query(async ({ ctx }) => {
+    await assertApplicationsEnabled(ctx.db);
+    const userID = ctx.session.user.userID;
+    const keys = membershipKeysFor({
+      email: ctx.session.user.email ?? "",
+      userID,
+    });
+
+    const memberships = await ctx.db.userCCA.findMany({
+      where: { userID: { in: keys } },
+      select: { ccaID: true },
+    });
+    const ccaIDs = [...new Set(memberships.map((m) => m.ccaID))];
+    if (ccaIDs.length === 0) return { ccas: [] };
+
+    const [ccas, profiles, headRows] = await Promise.all([
+      ctx.db.cCA.findMany({
+        where: { ccaID: { in: ccaIDs } },
+        select: { ccaID: true, ccaName: true, category: true },
+      }),
+      ctx.db.ccaProfile.findMany({
+        where: { ccaID: { in: ccaIDs } },
+        select: { ccaID: true, description: true, logoUrl: true },
+      }),
+      ctx.db.ccaHead.findMany({
+        where: { ccaID: { in: ccaIDs }, userID },
+        select: { ccaID: true },
+      }),
+    ]);
+
+    const profileByID = new Map(profiles.map((p) => [p.ccaID, p]));
+    const iHead = new Set(headRows.map((h) => h.ccaID));
+
+    const rows = ccas.map((c) => ({
+      ccaID: c.ccaID,
+      ccaName: c.ccaName,
+      category: c.category,
+      description: profileByID.get(c.ccaID)?.description ?? null,
+      logoUrl: profileByID.get(c.ccaID)?.logoUrl ?? null,
+      isHead: iHead.has(c.ccaID),
+    }));
+    rows.sort(
+      (a, b) =>
+        (a.category ?? "￿").localeCompare(b.category ?? "￿") ||
+        a.ccaName.localeCompare(b.ccaName),
+    );
+    return { ccas: rows };
+  }),
 
   /**
    * The caller's applications across all CCAs, with the CCA name and — for a
