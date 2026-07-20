@@ -8,6 +8,10 @@ import { assertHeadsCca } from "~/server/api/services/ccaScope";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
 import { del } from "@vercel/blob";
 import { writeAudit } from "~/server/api/routers/admin";
+import {
+  removeCcaMember,
+  removeMemberTargetSchema,
+} from "~/server/api/services/ccaMembers";
 import { ccaProfileInput } from "~/lib/schemas/cca";
 
 /**
@@ -298,5 +302,50 @@ export const ccaRouter = createTRPCRouter({
       });
 
       return saved;
+    }),
+
+  /**
+   * Remove a member from a CCA a head is responsible for.
+   *
+   * The head-facing sibling of `ccaAdmin.removeMember`. Both wrap the SAME
+   * `removeCcaMember` service, so the three-target delete (canonical UserCCA,
+   * legacy-key UserCCA, embedded array) cannot diverge between them.
+   *
+   * There is intentionally NO addMember here: joining a CCA will run through the
+   * application-management system, not a head typing a userID. Removal is the
+   * only membership write a head gets in this phase.
+   *
+   * NO KILL SWITCH, unlike the admin surface. `cca.management.enabled` gates the
+   * admin CRUD tab (create/rename/heads/members) as one unit; a head pruning
+   * their own roster is a distinct, self-scoped, audited action and is the
+   * feature, not part of that surface. The safety here is the client
+   * confirmation plus the per-CCA guard, not a global flag.
+   *
+   * Only MEMBERS are removable — heads never reach this path. The roster splits
+   * on `isHead`, so a co-head (even one who also holds membership rows) sits in
+   * the heads list and never appears as a removable member row. Headship is
+   * managed only through grant/revoke/transfer, which maintain CH-1.
+   */
+  removeMember: identifiedProcedure
+    .input(z.object({ ccaID: z.number().int().positive(), target: removeMemberTargetSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const scope = await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+
+      const result = await removeCcaMember(ctx.db, input.ccaID, input.target);
+
+      await writeAudit(ctx.db, {
+        actorUserID: userID,
+        actorRoles: roles,
+        targetCcaID: input.ccaID,
+        targetUserID: result.targetKey,
+        action: "ccaMember.remove",
+        reason: `${scope.via}: ${result.label} — ${result.removedRows} membership row(s)${
+          result.touchedEmbedded ? " + embedded array" : ""
+        }`,
+      });
+
+      return { ccaID: input.ccaID, removedRows: result.removedRows };
     }),
 });
