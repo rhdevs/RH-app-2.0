@@ -45,33 +45,60 @@ import { canonicalUserID } from "~/lib/identity";
  */
 
 /**
- * Resolve canonical applicant ids to a human: displayName, email, matric. Same
- * approach as cca.listHeads (there is no reverse canonical→User query, so guess
- * the email AND match the stored key), plus the matric from UserMatric.
+ * Everything the head surfaces know about an applicant. Resolved from User +
+ * UserMatric; any field can be null for an unresolved/partial account (rendered
+ * as "—" in the UI, never dropped).
+ */
+export type Applicant = {
+  displayName: string | null;
+  email: string | null;
+  matric: string | null;
+  telegramHandle: string | null;
+  block: number | null;
+  bio: string | null;
+};
+
+const EMPTY_APPLICANT: Applicant = {
+  displayName: null,
+  email: null,
+  matric: null,
+  telegramHandle: null,
+  block: null,
+  bio: null,
+};
+
+/**
+ * Resolve canonical applicant ids to their profile details. Same approach as
+ * cca.listHeads (no reverse canonical→User query, so guess the email AND match
+ * the stored key), plus the matric from UserMatric. Selects profile fields
+ * EXPLICITLY — never a bare User read (passwordHash must not leave the server,
+ * and a Google-adapter row missing it throws on deserialization, I-2).
  */
 async function resolveApplicants(
   db: PrismaClient,
   userIDs: readonly string[],
-): Promise<
-  Map<string, { displayName: string | null; email: string | null; matric: string | null }>
-> {
+): Promise<Map<string, Applicant>> {
   const keys = [...new Set(userIDs)];
-  const out = new Map<
-    string,
-    { displayName: string | null; email: string | null; matric: string | null }
-  >();
+  const out = new Map<string, Applicant>();
   if (keys.length === 0) return out;
 
   const guessedEmails = keys.map((k) => `${k.toLowerCase()}@u.nus.edu`);
+  const profileSelect = {
+    email: true,
+    displayName: true,
+    userID: true,
+    telegramHandle: true,
+    block: true,
+    bio: true,
+  } as const;
   const [byEmail, byStored, matrics] = await Promise.all([
     db.user.findMany({
       where: { email: { in: guessedEmails, mode: "insensitive" } },
-      // Never a bare read: passwordHash must not leave the server (I-2).
-      select: { email: true, displayName: true, userID: true },
+      select: profileSelect,
     }),
     db.user.findMany({
       where: { userID: { in: keys } },
-      select: { email: true, displayName: true, userID: true },
+      select: profileSelect,
     }),
     db.userMatric.findMany({
       where: { userID: { in: keys } },
@@ -80,25 +107,30 @@ async function resolveApplicants(
   ]);
 
   const matricByKey = new Map(matrics.map((m) => [m.userID, m.matric]));
-  const set = (
-    key: string,
-    v: { displayName: string | null; email: string | null },
-  ) => {
+  type Row = (typeof byEmail)[number];
+  const set = (key: string, u: Row) => {
     if (!out.has(key)) {
-      out.set(key, { ...v, matric: matricByKey.get(key) ?? null });
+      out.set(key, {
+        displayName: u.displayName,
+        email: u.email,
+        matric: matricByKey.get(key) ?? null,
+        telegramHandle: u.telegramHandle,
+        block: u.block,
+        bio: u.bio,
+      });
     }
   };
   for (const u of byEmail) {
     const cid = canonicalUserID(u.email);
-    if (cid) set(cid, { displayName: u.displayName, email: u.email });
+    if (cid) set(cid, u);
   }
   for (const u of byStored) {
-    if (u.userID) set(u.userID, { displayName: u.displayName, email: u.email });
+    if (u.userID) set(u.userID, u);
   }
   // Ensure every requested key is present, even if unresolved (amber in the UI).
   for (const k of keys) {
     if (!out.has(k)) {
-      out.set(k, { displayName: null, email: null, matric: matricByKey.get(k) ?? null });
+      out.set(k, { ...EMPTY_APPLICANT, matric: matricByKey.get(k) ?? null });
     }
   }
   return out;
@@ -166,11 +198,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           createdAt: a.createdAt,
           decidedAt: a.decidedAt,
           decisionReason: a.decisionReason,
-          applicant: people.get(a.userID) ?? {
-            displayName: null,
-            email: null,
-            matric: null,
-          },
+          applicant: people.get(a.userID) ?? EMPTY_APPLICANT,
           slot:
             a.interviewSlotID !== null
               ? (slots.get(a.interviewSlotID) ?? null)
@@ -248,11 +276,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         // collide (an earlier version overwrote `notes` and lost the applicant
         // text).
         ...app,
-        applicant: people.get(app.userID) ?? {
-          displayName: null,
-          email: null,
-          matric: null,
-        },
+        applicant: people.get(app.userID) ?? EMPTY_APPLICANT,
         slot,
         interviewNotes: notes.map((n) => ({
           id: n.id,
@@ -307,11 +331,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           ...s,
           bookedBy:
             s.bookedByUserID !== null
-              ? (people.get(s.bookedByUserID) ?? {
-                  displayName: null,
-                  email: null,
-                  matric: null,
-                })
+              ? (people.get(s.bookedByUserID) ?? EMPTY_APPLICANT)
               : null,
         })),
       };
