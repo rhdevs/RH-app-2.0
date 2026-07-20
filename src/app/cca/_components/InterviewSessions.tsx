@@ -7,16 +7,25 @@ import { api, type RouterOutputs } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { addNoteInput, INTERVIEW_NOTE_MAX } from "~/lib/schemas/ccaApplication";
 import { formatSlot } from "~/app/ccas/_lib/status";
+import ApplicantDetails from "./ApplicantDetails";
 
 type AppRow =
   RouterOutputs["ccaApplicationsHead"]["listApplications"]["applications"][number];
 
+/** Local calendar-day key (YYYY-MM-DD) for an epoch-seconds time. */
+function dayKey(epoch: number): string {
+  const d = new Date(epoch * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /**
- * The "Interviews" tab — the head's run-sheet for booked interviews, distinct
- * from "Interview slots" (which is about opening availability). It answers "how
- * do I mark an interview as done": each booked interview has a Mark done button
- * that moves it to Interviewed; from there it's reviewed/decided in the
- * Applications tab. Notes can be added here, during the interview.
+ * The "Interviews" tab — the head's run-sheet, distinct from "Interview slots"
+ * (availability). Today's interviews sit at the top, then everything else still
+ * to be interviewed, then the ones already done at the bottom. Each row's Mark
+ * done button moves it to Interviewed; accept/reject happens on the Applications
+ * tab. Expanding a row shows the applicant's full details, the notes they sent,
+ * and the interview notes (which can be added here, during the interview).
  */
 export default function InterviewSessions({ ccaID }: { ccaID: number }) {
   const list = api.ccaApplicationsHead.listApplications.useQuery(
@@ -44,11 +53,18 @@ export default function InterviewSessions({ ccaID }: { ccaID: number }) {
   const byTime = (a: AppRow, b: AppRow) =>
     (a.slot?.startTime ?? Number.MAX_SAFE_INTEGER) -
     (b.slot?.startTime ?? Number.MAX_SAFE_INTEGER);
+
   const apps = list.data.applications;
   const scheduled = apps
     .filter((a) => a.status === "interview_scheduled")
     .sort(byTime);
   const completed = apps.filter((a) => a.status === "interviewed").sort(byTime);
+
+  const today = dayKey(Math.floor(Date.now() / 1000));
+  const isToday = (a: AppRow) =>
+    a.slot?.startTime != null && dayKey(a.slot.startTime) === today;
+  const todays = scheduled.filter(isToday);
+  const upcoming = scheduled.filter((a) => !isToday(a));
 
   if (scheduled.length === 0 && completed.length === 0) {
     return (
@@ -57,8 +73,9 @@ export default function InterviewSessions({ ccaID }: { ccaID: number }) {
           No interviews booked yet
         </p>
         <p className="mx-auto mt-1 max-w-sm text-sm text-gray-500">
-          Open availability under <span className="font-medium">Interview
-          slots</span>; once residents book, their interviews show up here.
+          Open availability under{" "}
+          <span className="font-medium">Interview slots</span>; once residents
+          book, their interviews show up here.
         </p>
       </div>
     );
@@ -66,22 +83,34 @@ export default function InterviewSessions({ ccaID }: { ccaID: number }) {
 
   return (
     <div className="space-y-6">
-      <Section
-        title="To interview"
-        subtitle="Booked interviews. Mark each done once you've met the applicant."
-        rows={scheduled}
-        ccaID={ccaID}
-        markable
-        emptyText="Nothing booked right now."
-      />
-      <Section
-        title="Interviewed"
-        subtitle="Done — review and accept or reject from the Applications tab."
-        rows={completed}
-        ccaID={ccaID}
-        markable={false}
-        emptyText="No completed interviews yet."
-      />
+      {todays.length > 0 && (
+        <Section
+          title="Today"
+          subtitle="Interviews happening today."
+          rows={todays}
+          ccaID={ccaID}
+          markable
+          highlight
+        />
+      )}
+      {upcoming.length > 0 && (
+        <Section
+          title="To be interviewed"
+          subtitle="Booked — mark each done once you've met the applicant."
+          rows={upcoming}
+          ccaID={ccaID}
+          markable
+        />
+      )}
+      {completed.length > 0 && (
+        <Section
+          title="Already interviewed"
+          subtitle="Done — review and accept or reject on the Applications tab."
+          rows={completed}
+          ccaID={ccaID}
+          markable={false}
+        />
+      )}
     </div>
   );
 }
@@ -92,38 +121,42 @@ function Section({
   rows,
   ccaID,
   markable,
-  emptyText,
+  highlight = false,
 }: {
   title: string;
   subtitle: string;
   rows: AppRow[];
   ccaID: number;
   markable: boolean;
-  emptyText: string;
+  highlight?: boolean;
 }) {
   return (
-    <section>
+    <section
+      className={
+        highlight ? "rounded-lg border border-emerald-200 bg-emerald-50/40 p-3" : ""
+      }
+    >
       <div className="mb-2 flex items-baseline gap-2">
-        <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+        <h2
+          className={`text-sm font-semibold ${
+            highlight ? "text-emerald-800" : "text-gray-900"
+          }`}
+        >
+          {title}
+        </h2>
         <span className="text-xs text-gray-400">{rows.length}</span>
       </div>
       <p className="mb-2 text-xs text-gray-500">{subtitle}</p>
-      {rows.length === 0 ? (
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-400">
-          {emptyText}
-        </p>
-      ) : (
-        <ul className="space-y-2">
-          {rows.map((a) => (
-            <SessionRow
-              key={a.applicationID}
-              ccaID={ccaID}
-              app={a}
-              markable={markable}
-            />
-          ))}
-        </ul>
-      )}
+      <ul className="space-y-2">
+        {rows.map((a) => (
+          <SessionRow
+            key={a.applicationID}
+            ccaID={ccaID}
+            app={a}
+            markable={markable}
+          />
+        ))}
+      </ul>
     </section>
   );
 }
@@ -150,7 +183,7 @@ function SessionRow({
     app.userID;
 
   return (
-    <li className="rounded-lg border border-gray-200 bg-white">
+    <li className="overflow-hidden rounded-lg border border-gray-200 bg-white">
       <div className="flex items-center gap-3 p-3">
         <button
           onClick={() => setOpen((o) => !o)}
@@ -158,7 +191,9 @@ function SessionRow({
           className="flex min-w-0 flex-1 items-center gap-3 text-left"
         >
           <span className="shrink-0 rounded-md bg-gray-50 px-2 py-1 text-xs font-medium tabular-nums text-gray-700">
-            {app.slot ? formatSlot(app.slot.startTime, app.slot.endTime) : "No time"}
+            {app.slot
+              ? formatSlot(app.slot.startTime, app.slot.endTime)
+              : "No time"}
           </span>
           <span className="min-w-0">
             <span className="block truncate text-sm font-medium text-gray-900">
@@ -185,27 +220,14 @@ function SessionRow({
           </Button>
         )}
       </div>
-      {open && (
-        <SessionDetail
-          ccaID={ccaID}
-          applicationID={app.applicationID}
-          applicantNotes={app.notes}
-        />
-      )}
+      {open && <SessionDetail ccaID={ccaID} app={app} />}
     </li>
   );
 }
 
-function SessionDetail({
-  ccaID,
-  applicationID,
-  applicantNotes,
-}: {
-  ccaID: number;
-  applicationID: number;
-  applicantNotes: string | null;
-}) {
+function SessionDetail({ ccaID, app }: { ccaID: number; app: AppRow }) {
   const utils = api.useUtils();
+  const applicationID = app.applicationID;
   const detail = api.ccaApplicationsHead.getApplication.useQuery(
     { ccaID, applicationID },
     { retry: false },
@@ -222,18 +244,19 @@ function SessionDetail({
   });
 
   return (
-    <div className="space-y-3 border-t border-gray-100 p-3">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
-          Applicant&rsquo;s notes
-        </p>
-        <p className="mt-1 whitespace-pre-line text-sm text-gray-700">
-          {applicantNotes?.trim() ? applicantNotes : "— none —"}
-        </p>
+    <div className="space-y-3 border-t border-gray-100 bg-gray-50/50 p-3">
+      {/* Full details + the notes they sent with the application */}
+      <div className="rounded-lg border border-gray-200 bg-white p-3">
+        <ApplicantDetails
+          applicant={app.applicant}
+          userID={app.userID}
+          notes={app.notes}
+        />
       </div>
 
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+      {/* Interview notes + add */}
+      <div className="rounded-lg border border-gray-200 bg-white p-3">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">
           Interview notes
         </p>
         {detail.isPending ? (
@@ -243,12 +266,9 @@ function SessionDetail({
         ) : detail.data.interviewNotes.length === 0 ? (
           <p className="mt-1 text-sm text-gray-400">No interview notes yet.</p>
         ) : (
-          <ul className="mt-1 space-y-2">
+          <ul className="mt-1.5 space-y-2">
             {detail.data.interviewNotes.map((n) => (
-              <li
-                key={n.id}
-                className="rounded-md bg-gray-50 px-3 py-2 text-sm"
-              >
+              <li key={n.id} className="rounded-md bg-gray-50 px-3 py-2 text-sm">
                 <p className="whitespace-pre-line text-gray-700">{n.body}</p>
                 <p className="mt-1 text-xs text-gray-400">
                   {n.authorName ?? "Head"}
@@ -260,37 +280,37 @@ function SessionDetail({
             ))}
           </ul>
         )}
-      </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const parsed = addNoteInput.safeParse({
-            ccaID,
-            applicationID,
-            body: note,
-          });
-          if (!parsed.success) return;
-          addNote.mutate(parsed.data);
-        }}
-        className="space-y-2"
-      >
-        <textarea
-          value={note}
-          maxLength={INTERVIEW_NOTE_MAX}
-          rows={2}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder="Add an interview note…"
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-        />
-        <Button
-          type="submit"
-          variant="outline"
-          disabled={addNote.isPending || note.trim().length === 0}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const parsed = addNoteInput.safeParse({
+              ccaID,
+              applicationID,
+              body: note,
+            });
+            if (!parsed.success) return;
+            addNote.mutate(parsed.data);
+          }}
+          className="mt-3 space-y-2"
         >
-          {addNote.isPending ? "Adding…" : "Add note"}
-        </Button>
-      </form>
+          <textarea
+            value={note}
+            maxLength={INTERVIEW_NOTE_MAX}
+            rows={2}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Add an interview note…"
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          />
+          <Button
+            type="submit"
+            variant="outline"
+            disabled={addNote.isPending || note.trim().length === 0}
+          >
+            {addNote.isPending ? "Adding…" : "Add note"}
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }
