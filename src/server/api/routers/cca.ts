@@ -6,6 +6,8 @@ import { getUserRoles } from "~/server/api/services/access";
 import { computeCapabilities } from "~/server/api/services/roles";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
+import { randomUUID } from "node:crypto";
+
 import { del } from "@vercel/blob";
 import { writeAudit } from "~/server/api/routers/admin";
 import {
@@ -305,7 +307,11 @@ export const ccaRouter = createTRPCRouter({
     }),
 
   /**
-   * Remove a member from a CCA a head is responsible for.
+   * Remove one or more members from a CCA a head is responsible for.
+   *
+   * BATCH, not single: `targets` is 1..N, so removing one member and removing
+   * fifty go through the same path — the roster has "a lot of members" and
+   * pruning them one round-trip at a time is the thing this avoids.
    *
    * The head-facing sibling of `ccaAdmin.removeMember`. Both wrap the SAME
    * `removeCcaMember` service, so the three-target delete (canonical UserCCA,
@@ -326,26 +332,58 @@ export const ccaRouter = createTRPCRouter({
    * the heads list and never appears as a removable member row. Headship is
    * managed only through grant/revoke/transfer, which maintain CH-1.
    */
-  removeMember: identifiedProcedure
-    .input(z.object({ ccaID: z.number().int().positive(), target: removeMemberTargetSchema }))
+  removeMembers: identifiedProcedure
+    .input(
+      z.object({
+        ccaID: z.number().int().positive(),
+        // Capped so one request cannot ask for an unbounded number of
+        // collection scans (UserCCA has no ccaID index yet). 200 comfortably
+        // exceeds any real CCA's roster; the UI can chunk if that ever changes.
+        targets: z.array(removeMemberTargetSchema).min(1).max(200),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const userID = ctx.session.user.userID;
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      // ONE authorisation check for the whole batch — the scope is the CCA, not
+      // the individual member.
       const scope = await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
 
-      const result = await removeCcaMember(ctx.db, input.ccaID, input.target);
+      // One batchId ties every row of this removal together in the audit log,
+      // exactly as transferCcaHead groups its two halves — so a bulk prune is
+      // one reviewable event, while each member is still an individually
+      // attributable row.
+      const batchId = randomUUID();
 
-      await writeAudit(ctx.db, {
-        actorUserID: userID,
-        actorRoles: roles,
-        targetCcaID: input.ccaID,
-        targetUserID: result.targetKey,
-        action: "ccaMember.remove",
-        reason: `${scope.via}: ${result.label} — ${result.removedRows} membership row(s)${
-          result.touchedEmbedded ? " + embedded array" : ""
-        }`,
-      });
+      let removedMembers = 0;
+      let removedRows = 0;
+      let failed = 0;
 
-      return { ccaID: input.ccaID, removedRows: result.removedRows };
+      // Per-target and independent, NOT one transaction: each removeCcaMember
+      // is idempotent, and one bad target (e.g. a User doc deleted mid-flight)
+      // must not roll back the members already removed. Failures are counted
+      // and surfaced, never silent.
+      for (const target of input.targets) {
+        try {
+          const result = await removeCcaMember(ctx.db, input.ccaID, target);
+          removedMembers += 1;
+          removedRows += result.removedRows;
+          await writeAudit(ctx.db, {
+            actorUserID: userID,
+            actorRoles: roles,
+            targetCcaID: input.ccaID,
+            targetUserID: result.targetKey,
+            action: "ccaMember.remove",
+            batchId,
+            reason: `${scope.via} (bulk): ${result.label} — ${result.removedRows} membership row(s)${
+              result.touchedEmbedded ? " + embedded array" : ""
+            }`,
+          });
+        } catch {
+          failed += 1;
+        }
+      }
+
+      return { ccaID: input.ccaID, removedMembers, removedRows, failed };
     }),
 });
