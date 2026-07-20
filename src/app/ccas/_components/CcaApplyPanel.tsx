@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowLeft, CalendarClock } from "lucide-react";
+import { ArrowLeft, CalendarClock, Send, Users } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
@@ -140,6 +140,52 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
           </p>
         )}
       </div>
+
+      {/* Who runs it + how big it is */}
+      {(d.heads.length > 0 || d.memberCount > 0) && (
+        <Card>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                Run by
+              </p>
+              {d.heads.length === 0 ? (
+                <p className="mt-1 text-sm text-gray-400">—</p>
+              ) : (
+                <ul className="mt-1 space-y-1">
+                  {d.heads.map((h) => (
+                    <li
+                      key={h.userID}
+                      className="flex flex-wrap items-center gap-x-2 text-sm text-gray-800"
+                    >
+                      <span>{h.displayName ?? h.userID}</span>
+                      {h.telegramHandle && (
+                        <a
+                          href={`https://t.me/${h.telegramHandle}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-emerald-700 hover:underline"
+                        >
+                          <Send className="h-3 w-3" />@{h.telegramHandle}
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="text-right">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                Members
+              </p>
+              <p className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-gray-800">
+                <Users className="h-4 w-4 text-gray-400" />
+                {d.memberCount}
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Application state */}
       {d.isMember ? (

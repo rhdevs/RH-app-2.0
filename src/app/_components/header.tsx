@@ -102,6 +102,11 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     setIsProfileDropdownOpen(false);
   };
 
+  const handleMyCcas = () => {
+    router.push("/ccas/my");
+    setIsProfileDropdownOpen(false);
+  };
+
   const handleLogout = async () => {
     await signOut();
     setIsProfileDropdownOpen(false);
@@ -204,6 +209,14 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                         </button>
 
                         <button
+                          onClick={handleMyCcas}
+                          className="flex w-full items-center px-4 py-2 text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
+                        >
+                          <Users size={16} className="mr-3 text-gray-400" />
+                          My CCAs
+                        </button>
+
+                        <button
                           onClick={handleMyApplications}
                           className="flex w-full items-center px-4 py-2 text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
                         >
@@ -277,6 +290,13 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                     >
                       <UserCircle size={18} />
                       <span>Profile</span>
+                    </button>
+                    <button
+                      onClick={handleMyCcas}
+                      className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
+                    >
+                      <Users size={18} />
+                      <span>My CCAs</span>
                     </button>
                     <button
                       onClick={handleMyApplications}
