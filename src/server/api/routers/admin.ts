@@ -726,6 +726,68 @@ async function writeCcaHeadString(
 }
 
 /**
+ * OVERWRITE a CCA's head set to exactly `newHeadUserIDs`.
+ *
+ * The primitive behind head-initiated handover (`cca.handoverHeads`). It reuses
+ * `writeCcaHeadString` above — the SOLE writer of the `cca_head` string — so
+ * CH-1 (`holds "cca_head"` iff `has >= 1 CcaHead row`) cannot drift, exactly as
+ * grantCcaHead / revokeCcaHead / transferCcaHead maintain it.
+ *
+ * BOUNDED AUTHORITY. It touches only the `cca_head` string and `CcaHead` rows
+ * for this one ccaID; every other stored role is carried through verbatim by
+ * writeCcaHeadString. So a caller can neither escalate nor strip
+ * admin/jcrc/resident from anyone — which is why the head path that calls this
+ * needs no admin-target guard (assertMayManageCcaHeadOf): the escalation that
+ * guard prevents is not expressible here.
+ *
+ * GRANT-BEFORE-REVOKE, like transferCcaHead: a crash mid-way must leave a CCA
+ * with EXTRA heads, never ZERO. The caller is responsible for refusing an empty
+ * `newHeadUserIDs` (a headless CCA is the unrecoverable state).
+ *
+ * Callers audit the returned diff under one batchId; this function writes no
+ * audit row of its own.
+ */
+export async function setCcaHeads(
+  db: PrismaClient,
+  ccaID: number,
+  newHeadUserIDs: readonly string[],
+  actorUserID: string,
+): Promise<{ granted: string[]; revoked: string[]; batchId: string }> {
+  const desiredSet = new Set(newHeadUserIDs);
+  const batchId = randomUUID();
+
+  const current = await db.ccaHead.findMany({
+    where: { ccaID },
+    select: { userID: true },
+  });
+  const currentSet = new Set(current.map((r) => r.userID));
+
+  const toGrant = [...desiredSet].filter((u) => !currentSet.has(u));
+  const toRevoke = [...currentSet].filter((u) => !desiredSet.has(u));
+
+  await db.$transaction(async (tx) => {
+    // Grants first — see the ordering note above.
+    for (const userID of toGrant) {
+      await tx.ccaHead.upsert({
+        where: { userID_ccaID: { userID, ccaID } },
+        create: { userID, ccaID, grantedBy: actorUserID },
+        update: { grantedBy: actorUserID },
+      });
+      await writeCcaHeadString(tx, userID, true, actorUserID);
+    }
+    for (const userID of toRevoke) {
+      await tx.ccaHead.deleteMany({ where: { userID, ccaID } });
+      // CH-1: the string goes only when the LAST scope goes. A head of two CCAs
+      // handed out of one keeps the role.
+      const remaining = await tx.ccaHead.count({ where: { userID } });
+      await writeCcaHeadString(tx, userID, remaining > 0, actorUserID);
+    }
+  });
+
+  return { granted: toGrant, revoked: toRevoke, batchId };
+}
+
+/**
  * G3 for the CCA path. The generic guards are not reachable from here, so the
  * target guard is re-stated: a jcrc must not be able to reach an admin's role
  * document through the CCA endpoints either.

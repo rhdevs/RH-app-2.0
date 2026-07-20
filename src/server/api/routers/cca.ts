@@ -3,18 +3,24 @@ import { TRPCError } from "@trpc/server";
 
 import { createTRPCRouter, identifiedProcedure } from "~/server/api/trpc";
 import { getUserRoles } from "~/server/api/services/access";
-import { computeCapabilities } from "~/server/api/services/roles";
+import { computeCapabilities, isEFormatUserID } from "~/server/api/services/roles";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
 import { randomUUID } from "node:crypto";
 
 import { del } from "@vercel/blob";
-import { writeAudit } from "~/server/api/routers/admin";
+import { setCcaHeads, writeAudit } from "~/server/api/routers/admin";
 import {
   removeCcaMember,
   removeMemberTargetSchema,
 } from "~/server/api/services/ccaMembers";
-import { ccaProfileInput } from "~/lib/schemas/cca";
+import {
+  ccaProfileInput,
+  handoverHeadsInput,
+  type HeadCandidateResult,
+} from "~/lib/schemas/cca";
+import { MATRIC_RE } from "~/lib/schemas/profile";
+import { canonicalUserID } from "~/lib/identity";
 
 /**
  * CCA-head-facing procedures, scoped per-CCA rather than per-role.
@@ -385,5 +391,168 @@ export const ccaRouter = createTRPCRouter({
       }
 
       return { ccaID: input.ccaID, removedMembers, removedRows, failed };
+    }),
+
+  /**
+   * Resolve a typed identifier (email / NUSNET id / matric) to an account, for
+   * the handover and admin add-head previews.
+   *
+   * Guarded by assertHeadsCca so it is NOT an open directory oracle: only a head
+   * of this CCA (or a manager) can resolve identities through it. The name/email
+   * it returns is what the human eyeballs before committing a headship change.
+   *
+   * Never guesses. A matric matching more than one account is AMBIGUOUS and
+   * refused — matric is self-asserted and UserMatric.matric is not unique.
+   */
+  resolveHeadCandidate: identifiedProcedure
+    .input(
+      z.object({
+        ccaID: z.number().int().positive(),
+        identifier: z.string().trim().min(1).max(120),
+      }),
+    )
+    .query(async ({ ctx, input }): Promise<HeadCandidateResult> => {
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+
+      const raw = input.identifier.trim();
+
+      // Resolve to a canonical userID by tier. Matric is the only tier that can
+      // be AMBIGUOUS, because it is looked up in a non-unique collection.
+      let candidateID: string | null = null;
+      if (raw.includes("@")) {
+        candidateID = canonicalUserID(raw); // email → canonical, or null
+      } else if (isEFormatUserID(raw.toUpperCase())) {
+        candidateID = raw.toUpperCase(); // NUSNET id is already canonical
+      } else if (MATRIC_RE.test(raw.toUpperCase())) {
+        const rows = await ctx.db.userMatric.findMany({
+          where: { matric: raw.toUpperCase() },
+          select: { userID: true },
+        });
+        if (rows.length > 1) return { status: "AMBIGUOUS" };
+        candidateID = rows[0]?.userID ?? null;
+      }
+
+      if (candidateID === null) return { status: "NOT_FOUND" };
+
+      // Must have signed in: a UserRole row is written at account creation and
+      // topped up every session, so "has a row" is a reliable proxy for "has
+      // logged in at least once" (mirrors transferCcaHead's H3 successor gate).
+      const hasSignedIn = await ctx.db.userRole.findUnique({
+        where: { userID: candidateID },
+        select: { userID: true },
+      });
+      if (!hasSignedIn) return { status: "NOT_SIGNED_IN", userID: candidateID };
+
+      // Best-effort display. There is no reverse canonical→User query, so guess
+      // the email like admin.listUsers does, and fall back to the stored key.
+      const user = await ctx.db.user.findFirst({
+        where: {
+          OR: [
+            {
+              email: {
+                equals: `${candidateID.toLowerCase()}@u.nus.edu`,
+                mode: "insensitive",
+              },
+            },
+            { userID: candidateID },
+          ],
+        },
+        // Never a bare read: passwordHash must not leave the server, and a
+        // Google-adapter row lacking it throws on deserialization (I-2).
+        select: { displayName: true, email: true },
+      });
+
+      return {
+        status: "FOUND",
+        userID: candidateID,
+        displayName: user?.displayName ?? null,
+        email: user?.email ?? null,
+      };
+    }),
+
+  /**
+   * HAND OVER — overwrite this CCA's head set to exactly `newHeadUserIDs`.
+   *
+   * The first head-INITIATED change to headship (07-cca-future.md §6.6 deferred
+   * this until an object-scoped guard existed; assertHeadsCca is that guard). A
+   * head who omits themselves stops being a head — that is the point of handing
+   * over; to stay, they include themselves.
+   *
+   * setCcaHeads is the write primitive and shares writeCcaHeadString with
+   * grant/revoke/transfer, so CH-1 holds and no other role is touched — which is
+   * why this head-facing path needs no admin-target guard (see setCcaHeads).
+   */
+  handoverHeads: identifiedProcedure
+    .input(handoverHeadsInput)
+    .mutation(async ({ ctx, input }) => {
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const scope = await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+
+      const desired = [...new Set(input.newHeadUserIDs)];
+      // Belt-and-braces: the schema already enforces >= 1, but overwriting to
+      // zero heads is the one unrecoverable state, so refuse it explicitly too.
+      if (desired.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "NO_HEADS_LEFT" });
+      }
+
+      // Every incoming head must have signed in — re-checked server-side, never
+      // trusting the client's preview. A userID with no UserRole row cannot be
+      // made a head (else a CCA is handed to someone who may never appear).
+      const rows = await ctx.db.userRole.findMany({
+        where: { userID: { in: desired } },
+        select: { userID: true },
+      });
+      const signedIn = new Set(rows.map((r) => r.userID));
+      const missing = desired.filter((u) => !signedIn.has(u));
+      if (missing.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "SUCCESSOR_HAS_NOT_SIGNED_IN",
+        });
+      }
+
+      const { granted, revoked, batchId } = await setCcaHeads(
+        ctx.db,
+        input.ccaID,
+        desired,
+        userID,
+      );
+
+      // One audit row per change, all under the batchId — a handover reads as a
+      // single event while each grant/revoke stays individually attributable.
+      for (const target of granted) {
+        await writeAudit(ctx.db, {
+          actorUserID: userID,
+          actorRoles: roles,
+          targetUserID: target,
+          targetCcaID: input.ccaID,
+          action: "ccaHead.grant",
+          batchId,
+          reason: `${scope.via} (handover)`,
+        });
+      }
+      for (const target of revoked) {
+        await writeAudit(ctx.db, {
+          actorUserID: userID,
+          actorRoles: roles,
+          targetUserID: target,
+          targetCcaID: input.ccaID,
+          action: "ccaHead.revoke",
+          batchId,
+          reason: `${scope.via} (handover)`,
+        });
+      }
+
+      return {
+        ccaID: input.ccaID,
+        granted: granted.length,
+        revoked: revoked.length,
+        // The initiator lost their headship unless they kept themselves — the
+        // UI uses this to warn that /cca is about to close for them.
+        selfRemoved: revoked.includes(userID),
+      };
     }),
 });

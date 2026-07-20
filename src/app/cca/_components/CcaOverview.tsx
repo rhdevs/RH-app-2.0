@@ -3,9 +3,13 @@
 import Link from "next/link";
 import Image from "next/image";
 
+import { useState } from "react";
+
 import { api } from "~/trpc/react";
+import { Button } from "~/components/ui/button";
 import RosterDriftNote from "~/app/_components/RosterDriftNote";
 import StatTile from "./StatTile";
+import CcaHandoverDialog from "./CcaHandoverDialog";
 
 /**
  * The dashboard landing section: how many heads, how many members, who the
@@ -24,6 +28,7 @@ export default function CcaOverview({ ccaID }: { ccaID: number }) {
   const roster = api.cca.getRoster.useQuery({ ccaID }, { retry: false });
   const mine = api.cca.listMine.useQuery(undefined, { retry: false });
   const profile = api.cca.getProfile.useQuery({ ccaID }, { retry: false });
+  const [handoverOpen, setHandoverOpen] = useState(false);
 
   if (roster.error) {
     if (roster.error.message === "NOT_A_HEAD_OF_THIS_CCA") {
@@ -124,9 +129,20 @@ export default function CcaOverview({ ccaID }: { ccaID: number }) {
 
       {/* Co-heads. Already resolved by the roster query — no extra call. */}
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
-          Heads
-        </h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+            Heads
+          </h2>
+          {data && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setHandoverOpen(true)}
+            >
+              Hand over
+            </Button>
+          )}
+        </div>
         {loading ? (
           <div className="h-20 animate-pulse rounded-lg bg-gray-200" />
         ) : data && data.heads.length > 0 ? (
@@ -199,6 +215,15 @@ export default function CcaOverview({ ccaID }: { ccaID: number }) {
           .
         </p>
       </section>
+
+      {data && (
+        <CcaHandoverDialog
+          ccaID={ccaID}
+          currentHeads={data.heads}
+          open={handoverOpen}
+          onOpenChange={setHandoverOpen}
+        />
+      )}
     </div>
   );
 }

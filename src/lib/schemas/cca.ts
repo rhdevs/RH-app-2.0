@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { isCanonicalResidentID } from "~/lib/identity";
+
 /**
  * Shared CCA-profile validation. Deliberately NOT under `src/server/`: the
  * client mirrors this validation with a real `safeParse`, so it needs the
@@ -9,6 +11,51 @@ import { z } from "zod";
  */
 
 export const CCA_DESCRIPTION_MAX = 1000;
+
+/* -------------------------------------------------------------------------- */
+/* Head assignment / handover                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A canonical userID as produced by canonicalUserID(email).
+ *
+ * DO NOT constrain this to /^E\d{7}$/. Non-E-format @u.nus.edu localparts are
+ * REAL in this database — `g.s_samuel@u.nus.edu` canonicalises to "G.S_SAMUEL".
+ * Reintroducing the regex re-opens lockout mode L-27. (Mirrors the local schema
+ * in ccaAdmin.ts; kept here because both the admin and head head-assignment
+ * flows need it.)
+ */
+export const canonicalUserIDSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .refine(isCanonicalResidentID, "not a canonical @u.nus.edu userID");
+
+/** Upper bound on heads set in one handover — a soft sanity cap, not policy. */
+export const MAX_HEADS_PER_HANDOVER = 20;
+
+export const handoverHeadsInput = z.object({
+  ccaID: z.number().int().positive(),
+  // >= 1 is the real rule: overwriting to zero heads is the unrecoverable
+  // headless state, refused here and again server-side (NO_HEADS_LEFT).
+  newHeadUserIDs: z
+    .array(canonicalUserIDSchema)
+    .min(1)
+    .max(MAX_HEADS_PER_HANDOVER),
+});
+
+export type HandoverHeadsInput = z.input<typeof handoverHeadsInput>;
+
+/**
+ * The shape `resolveHeadCandidate` returns. A discriminated union the UI renders
+ * without interpreting error strings — FOUND carries the human the head must
+ * eyeball before confirming.
+ */
+export type HeadCandidateResult =
+  | { status: "FOUND"; userID: string; displayName: string | null; email: string | null }
+  | { status: "NOT_FOUND" }
+  | { status: "AMBIGUOUS" } // a matric matched more than one account
+  | { status: "NOT_SIGNED_IN"; userID: string }; // resolves, but never logged in
 
 /* -------------------------------------------------------------------------- */
 /* Image uploads                                                               */
