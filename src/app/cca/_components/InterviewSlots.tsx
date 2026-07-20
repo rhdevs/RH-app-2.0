@@ -1,22 +1,72 @@
 "use client";
 
-import { useState } from "react";
-import { MapPin, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  CalendarClock,
+  Check,
+  MapPin,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 
-import { api } from "~/trpc/react";
+import { api, type RouterOutputs } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import {
+  editSlotInput,
   INTERVIEW_LOCATION_MAX,
+  MAX_SLOTS_PER_OPEN,
   slotDraftSchema,
 } from "~/lib/schemas/ccaApplication";
-import { formatSlot } from "~/app/ccas/_lib/status";
 
-/**
- * A CCA head opens interview slots from their availability and sees who booked
- * each. Times are entered as local wall-clock (a date + start/end time) and
- * converted to epoch seconds the same way BookingModal does — the app is
- * single-hall, so there is no timezone to carry.
- */
+type Slot = RouterOutputs["ccaApplicationsHead"]["listSlots"]["slots"][number];
+
+const DURATION_PRESETS = [10, 15, 20, 30, 45, 60];
+
+/* ------------------------------- time helpers ------------------------------ */
+
+/** Local date (YYYY-MM-DD) + "HH:MM" → epoch seconds, built from local parts so
+ *  there is no UTC off-by-one. */
+function toEpoch(dateStr: string, hhmm: string): number | null {
+  if (!dateStr || !hhmm) return null;
+  const [Y, M, D] = dateStr.split("-").map(Number);
+  const [h, m] = hhmm.split(":").map(Number);
+  if ([Y, M, D, h, m].some((n) => n === undefined || Number.isNaN(n))) {
+    return null;
+  }
+  return Math.floor(new Date(Y!, M! - 1, D!, h!, m!, 0, 0).getTime() / 1000);
+}
+function toDateInput(epoch: number): string {
+  const d = new Date(epoch * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function toTimeInput(epoch: number): string {
+  const d = new Date(epoch * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function fmtTime(epoch: number | null): string {
+  if (epoch === null) return "—";
+  return new Date(epoch * 1000).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+function fmtDateHeading(epoch: number): string {
+  return new Date(epoch * 1000).toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+}
+function overlaps(aS: number, aE: number, bS: number, bE: number): boolean {
+  return aS < bE && bS < aE;
+}
+
+/* ================================ component ================================= */
+
 export default function InterviewSlots({ ccaID }: { ccaID: number }) {
   const utils = api.useUtils();
   const list = api.ccaApplicationsHead.listSlots.useQuery(
@@ -24,199 +74,599 @@ export default function InterviewSlots({ ccaID }: { ccaID: number }) {
     { retry: false },
   );
 
-  const [date, setDate] = useState("");
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [location, setLocation] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const refresh = () => utils.ccaApplicationsHead.listSlots.invalidate({ ccaID });
-
-  const open = api.ccaApplicationsHead.openSlots.useMutation({
-    onSuccess: async () => {
-      setStart("");
-      setEnd("");
-      setLocation("");
-      setFormError(null);
-      await refresh();
-    },
-  });
-  const cancel = api.ccaApplicationsHead.cancelSlot.useMutation({
-    onSuccess: refresh,
-  });
-
-  /** Local date + "HH:MM" → epoch seconds, mirroring BookingModal. */
-  const toEpoch = (d: string, t: string): number | null => {
-    if (!d || !t) return null;
-    const [h, m] = t.split(":").map(Number);
-    const dt = new Date(d);
-    if (Number.isNaN(dt.getTime()) || h === undefined || m === undefined) {
-      return null;
-    }
-    dt.setHours(h, m, 0, 0);
-    return Math.floor(dt.getTime() / 1000);
-  };
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const startTime = toEpoch(date, start);
-    const endTime = toEpoch(date, end);
-    if (startTime === null || endTime === null) {
-      setFormError("Pick a date, a start time and an end time.");
-      return;
-    }
-    const parsed = slotDraftSchema.safeParse({
-      startTime,
-      endTime,
-      location: location.trim() || undefined,
-    });
-    if (!parsed.success) {
-      setFormError(
-        parsed.error.issues[0]?.message === "END_BEFORE_START"
-          ? "The end time has to be after the start time."
-          : "That slot isn't valid.",
-      );
-      return;
-    }
-    if (endTime <= Math.floor(Date.now() / 1000)) {
-      setFormError("That slot is in the past.");
-      return;
-    }
-    setFormError(null);
-    open.mutate({ ccaID, slots: [parsed.data] });
-  };
-
-  const serverError = open.error
-    ? open.error.message === "SLOT_OVERLAP"
-      ? "That overlaps a slot you've already opened."
-      : open.error.message === "SLOT_IN_PAST"
-        ? "That slot is in the past."
-        : open.error.message === "NOT_A_HEAD_OF_THIS_CCA"
-          ? "You're no longer a head of this CCA."
-          : "That didn't open. Try again."
-    : null;
+  const existing = useMemo(
+    () =>
+      (list.data?.slots ?? [])
+        .filter((s) => s.startTime !== null && s.endTime !== null)
+        .map((s) => ({ startTime: s.startTime!, endTime: s.endTime! })),
+    [list.data],
+  );
 
   return (
-    <div className="space-y-5">
-      {/* Open a slot */}
-      <form
-        onSubmit={submit}
-        className="space-y-3 rounded-lg border border-gray-200 bg-white p-5"
-      >
-        <p className="text-sm font-medium text-gray-900">Open an interview slot</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="space-y-1 text-sm">
-            <span className="font-medium text-gray-700">Date</span>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="font-medium text-gray-700">Location</span>
-            <input
-              type="text"
-              value={location}
-              maxLength={INTERVIEW_LOCATION_MAX}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="e.g. JCRC Room (optional)"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="font-medium text-gray-700">Start</span>
-            <input
-              type="time"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="font-medium text-gray-700">End</span>
-            <input
-              type="time"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
-          </label>
-        </div>
-        {(formError ?? serverError) && (
-          <p className="text-sm text-red-600">{formError ?? serverError}</p>
-        )}
-        <Button type="submit" disabled={open.isPending}>
-          {open.isPending ? "Opening…" : "Open slot"}
-        </Button>
-      </form>
+    <div className="space-y-6">
+      <SlotGenerator
+        ccaID={ccaID}
+        existing={existing}
+        onCreated={() => utils.ccaApplicationsHead.listSlots.invalidate({ ccaID })}
+      />
 
-      {/* Existing slots */}
-      <div>
-        <p className="mb-2 text-sm font-medium text-gray-900">Open slots</p>
+      <section>
+        <h2 className="mb-2 text-sm font-semibold text-gray-900">Schedule</h2>
         {list.isPending ? (
-          <div className="h-24 animate-pulse rounded-lg bg-gray-200" />
+          <div className="h-32 animate-pulse rounded-lg bg-gray-200" />
         ) : list.error ? (
           <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-800">
             {list.error.message === "NOT_A_HEAD_OF_THIS_CCA"
               ? "You can only manage slots for CCAs you head."
               : "These couldn't be loaded."}
           </p>
-        ) : list.data.slots.length === 0 ? (
-          <p className="rounded-lg border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">
-            No slots open yet. Add one above.
-          </p>
         ) : (
-          <ul className="space-y-2">
-            {list.data.slots.map((s) => (
-              <li
-                key={s.slotID}
-                className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3"
+          <ScheduleView ccaID={ccaID} slots={list.data.slots} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+/* ------------------------------- generator --------------------------------- */
+
+function SlotGenerator({
+  ccaID,
+  existing,
+  onCreated,
+}: {
+  ccaID: number;
+  existing: { startTime: number; endTime: number }[];
+  onCreated: () => Promise<unknown>;
+}) {
+  const [date, setDate] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [duration, setDuration] = useState(15);
+  const [gap, setGap] = useState(0);
+  const [location, setLocation] = useState("");
+  const [removed, setRemoved] = useState<Set<number>>(new Set());
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const create = api.ccaApplicationsHead.openSlots.useMutation({
+    onSuccess: async () => {
+      setRemoved(new Set());
+      setFrom("");
+      setTo("");
+      setFormError(null);
+      await onCreated();
+    },
+  });
+
+  // Build the candidate slots from the range + duration, then annotate each with
+  // whether it collides with an already-open slot (client-side, so the head sees
+  // conflicts before submitting rather than getting a whole-batch rejection).
+  const candidates = useMemo(() => {
+    const startEpoch = toEpoch(date, from);
+    const endEpoch = toEpoch(date, to);
+    if (startEpoch === null || endEpoch === null || duration <= 0) return [];
+    if (endEpoch <= startEpoch) return [];
+    const durSec = duration * 60;
+    const gapSec = Math.max(0, gap) * 60;
+    const now = Math.floor(Date.now() / 1000);
+
+    const out: {
+      index: number;
+      startTime: number;
+      endTime: number;
+      conflict: boolean;
+      past: boolean;
+    }[] = [];
+    let cursor = startEpoch;
+    let index = 0;
+    // Hard stop well above MAX_SLOTS_PER_OPEN so a silly range can't spin.
+    while (cursor + durSec <= endEpoch && index < 500) {
+      const s = cursor;
+      const e = cursor + durSec;
+      out.push({
+        index,
+        startTime: s,
+        endTime: e,
+        conflict: existing.some((x) => overlaps(s, e, x.startTime, x.endTime)),
+        past: e <= now,
+      });
+      cursor = e + gapSec;
+      index += 1;
+    }
+    return out;
+  }, [date, from, to, duration, gap, existing]);
+
+  const creatable = candidates.filter(
+    (c) => !c.conflict && !c.past && !removed.has(c.index),
+  );
+  const overCap = creatable.length > MAX_SLOTS_PER_OPEN;
+
+  const serverError = create.error
+    ? create.error.message === "SLOT_OVERLAP"
+      ? "One of these overlaps a slot that was just taken. Refresh and regenerate."
+      : create.error.message === "SLOT_IN_PAST"
+        ? "Some of these are in the past."
+        : create.error.message === "NOT_A_HEAD_OF_THIS_CCA"
+          ? "You're no longer a head of this CCA."
+          : "Those didn't open. Try again."
+    : null;
+
+  const submit = () => {
+    if (creatable.length === 0) return;
+    if (overCap) {
+      setFormError(
+        `That's ${creatable.length} slots — open at most ${MAX_SLOTS_PER_OPEN} at a time. Narrow the range or lengthen each interview.`,
+      );
+      return;
+    }
+    // Validate each against the shared schema before sending.
+    const slots = creatable.map((c) => ({
+      startTime: c.startTime,
+      endTime: c.endTime,
+      location: location.trim() || undefined,
+    }));
+    for (const s of slots) {
+      if (!slotDraftSchema.safeParse(s).success) {
+        setFormError("One of the generated slots isn't valid.");
+        return;
+      }
+    }
+    setFormError(null);
+    create.mutate({ ccaID, slots });
+  };
+
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-5">
+      <h2 className="text-sm font-semibold text-gray-900">
+        Generate interview slots
+      </h2>
+      <p className="mt-0.5 text-sm text-gray-500">
+        Pick a window and how long each interview runs — we&rsquo;ll lay out the
+        slots for you.
+      </p>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Field label="Date">
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className={inputCls}
+          />
+        </Field>
+        <Field label="From">
+          <input
+            type="time"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className={inputCls}
+          />
+        </Field>
+        <Field label="To">
+          <input
+            type="time"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className={inputCls}
+          />
+        </Field>
+        <Field label="Location">
+          <input
+            type="text"
+            value={location}
+            maxLength={INTERVIEW_LOCATION_MAX}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="e.g. JCRC Room (optional)"
+            className={inputCls}
+          />
+        </Field>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-end gap-4">
+        <div>
+          <p className="mb-1 text-sm font-medium text-gray-700">
+            Minutes per interview
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {DURATION_PRESETS.map((d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setDuration(d)}
+                className={`rounded-md px-2.5 py-1 text-sm font-medium transition-colors ${
+                  duration === d
+                    ? "bg-emerald-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                }`}
               >
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-800">
-                    {formatSlot(s.startTime, s.endTime)}
-                  </p>
-                  <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-gray-500">
-                    {s.location && (
-                      <span className="inline-flex items-center gap-1">
-                        <MapPin className="h-3 w-3" />
-                        {s.location}
-                      </span>
-                    )}
-                    {s.bookedBy ? (
-                      <span className="text-emerald-700">
-                        Booked by {s.bookedBy.displayName ?? s.bookedBy.email ?? "an applicant"}
-                      </span>
-                    ) : (
-                      <span>Open</span>
-                    )}
-                  </p>
-                </div>
-                <button
-                  onClick={() => {
-                    if (
-                      s.bookedByUserID &&
-                      !window.confirm(
-                        "This slot is booked. Cancelling it will send that applicant back to schedule again. Continue?",
-                      )
-                    ) {
-                      return;
+                {d}
+              </button>
+            ))}
+            <input
+              type="number"
+              min={1}
+              max={480}
+              value={duration}
+              onChange={(e) => setDuration(Number(e.target.value) || 0)}
+              aria-label="Custom minutes per interview"
+              className="w-16 rounded-md border border-gray-300 px-2 py-1 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">
+            Gap between (min)
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={120}
+            value={gap}
+            onChange={(e) => setGap(Number(e.target.value) || 0)}
+            className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          />
+        </div>
+      </div>
+
+      {/* Preview */}
+      {candidates.length > 0 && (
+        <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-medium text-gray-700">
+              {creatable.length} slot{creatable.length === 1 ? "" : "s"} to
+              open{" "}
+              <span className="font-normal text-gray-400">
+                ({fmtTime(candidates[0]!.startTime)}–
+                {fmtTime(candidates[candidates.length - 1]!.endTime)})
+              </span>
+            </p>
+            {overCap && (
+              <span className="text-xs font-medium text-amber-700">
+                Over the {MAX_SLOTS_PER_OPEN}-slot limit
+              </span>
+            )}
+          </div>
+          <ul className="flex flex-wrap gap-1.5">
+            {candidates.map((c) => {
+              const excluded = c.conflict || c.past || removed.has(c.index);
+              return (
+                <li key={c.index}>
+                  <button
+                    type="button"
+                    disabled={c.conflict || c.past}
+                    onClick={() =>
+                      setRemoved((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(c.index)) next.delete(c.index);
+                        else next.add(c.index);
+                        return next;
+                      })
                     }
-                    cancel.mutate({ ccaID, slotID: s.slotID });
-                  }}
-                  disabled={cancel.isPending}
-                  aria-label="Cancel slot"
-                  className="shrink-0 rounded-md p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </li>
+                    title={
+                      c.conflict
+                        ? "Overlaps a slot you've already opened"
+                        : c.past
+                          ? "In the past"
+                          : removed.has(c.index)
+                            ? "Click to include"
+                            : "Click to exclude"
+                    }
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                      c.conflict || c.past
+                        ? "cursor-not-allowed bg-gray-100 text-gray-400 line-through"
+                        : excluded
+                          ? "bg-white text-gray-400 ring-1 ring-inset ring-gray-200 line-through"
+                          : "bg-emerald-600 text-white hover:bg-emerald-700"
+                    }`}
+                  >
+                    {fmtTime(c.startTime)}
+                    {!excluded && <Check className="h-3 w-3" />}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {candidates.some((c) => c.conflict) && (
+            <p className="mt-2 text-xs text-gray-500">
+              Struck-through times overlap slots you&rsquo;ve already opened and
+              are skipped.
+            </p>
+          )}
+        </div>
+      )}
+
+      {(formError ?? serverError) && (
+        <p className="mt-3 text-sm text-red-600">{formError ?? serverError}</p>
+      )}
+
+      <div className="mt-4">
+        <Button
+          onClick={submit}
+          disabled={creatable.length === 0 || overCap || create.isPending}
+          className="inline-flex items-center gap-1.5"
+        >
+          <Plus className="h-4 w-4" />
+          {create.isPending
+            ? "Opening…"
+            : creatable.length > 0
+              ? `Open ${creatable.length} slot${creatable.length === 1 ? "" : "s"}`
+              : "Open slots"}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/* ----------------------------- schedule view ------------------------------- */
+
+function ScheduleView({ ccaID, slots }: { ccaID: number; slots: Slot[] }) {
+  const bookedCount = slots.filter((s) => s.bookedByUserID !== null).length;
+  const openCount = slots.length - bookedCount;
+
+  // Group by local calendar day.
+  const groups = useMemo(() => {
+    const byDay = new Map<string, Slot[]>();
+    for (const s of slots) {
+      const key = s.startTime !== null ? toDateInput(s.startTime) : "—";
+      const arr = byDay.get(key) ?? [];
+      arr.push(s);
+      byDay.set(key, arr);
+    }
+    return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [slots]);
+
+  if (slots.length === 0) {
+    return (
+      <p className="rounded-lg border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500">
+        No slots yet. Generate some above.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 text-xs">
+        <Stat label="Total" value={slots.length} tone="gray" />
+        <Stat label="Open" value={openCount} tone="sky" />
+        <Stat label="Booked" value={bookedCount} tone="emerald" />
+      </div>
+
+      {groups.map(([day, daySlots]) => (
+        <div key={day}>
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            {daySlots[0]?.startTime != null
+              ? fmtDateHeading(daySlots[0].startTime)
+              : "Undated"}
+          </p>
+          <ul className="space-y-2">
+            {daySlots.map((s) => (
+              <SlotRow key={s.slotID} ccaID={ccaID} slot={s} />
             ))}
           </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SlotRow({ ccaID, slot }: { ccaID: number; slot: Slot }) {
+  const utils = api.useUtils();
+  const [editing, setEditing] = useState(false);
+  const booked = slot.bookedByUserID !== null;
+
+  const refresh = () => utils.ccaApplicationsHead.listSlots.invalidate({ ccaID });
+  const cancel = api.ccaApplicationsHead.cancelSlot.useMutation({
+    onSuccess: refresh,
+  });
+
+  if (editing) {
+    return (
+      <li className="rounded-lg border border-emerald-300 bg-white p-3">
+        <SlotEditForm
+          ccaID={ccaID}
+          slot={slot}
+          onDone={async () => {
+            setEditing(false);
+            await refresh();
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-gray-800">
+          {fmtTime(slot.startTime)} – {fmtTime(slot.endTime)}
+        </p>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+          {slot.location && (
+            <span className="inline-flex items-center gap-1 text-gray-500">
+              <MapPin className="h-3 w-3" />
+              {slot.location}
+            </span>
+          )}
+          {booked ? (
+            <span className="font-medium text-emerald-700">
+              Booked ·{" "}
+              {slot.bookedBy?.displayName ??
+                slot.bookedBy?.email ??
+                "an applicant"}
+            </span>
+          ) : (
+            <span className="text-gray-400">Open</span>
+          )}
+        </p>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        {!booked && (
+          <button
+            onClick={() => setEditing(true)}
+            aria-label="Edit slot"
+            className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
         )}
+        <button
+          onClick={() => {
+            if (
+              booked &&
+              !window.confirm(
+                "This slot is booked. Cancelling sends that applicant back to reschedule. Continue?",
+              )
+            ) {
+              return;
+            }
+            cancel.mutate({ ccaID, slotID: slot.slotID });
+          }}
+          disabled={cancel.isPending}
+          aria-label="Cancel slot"
+          className="rounded-md p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function SlotEditForm({
+  ccaID,
+  slot,
+  onDone,
+  onCancel,
+}: {
+  ccaID: number;
+  slot: Slot;
+  onDone: () => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [date, setDate] = useState(
+    slot.startTime !== null ? toDateInput(slot.startTime) : "",
+  );
+  const [from, setFrom] = useState(
+    slot.startTime !== null ? toTimeInput(slot.startTime) : "",
+  );
+  const [to, setTo] = useState(
+    slot.endTime !== null ? toTimeInput(slot.endTime) : "",
+  );
+  const [location, setLocation] = useState(slot.location ?? "");
+  const [err, setErr] = useState<string | null>(null);
+
+  const update = api.ccaApplicationsHead.updateSlot.useMutation({
+    onSuccess: onDone,
+  });
+
+  const save = () => {
+    const startTime = toEpoch(date, from);
+    const endTime = toEpoch(date, to);
+    if (startTime === null || endTime === null) {
+      setErr("Pick a date, start and end.");
+      return;
+    }
+    const parsed = editSlotInput.safeParse({
+      ccaID,
+      slotID: slot.slotID,
+      startTime,
+      endTime,
+      location: location.trim() || undefined,
+    });
+    if (!parsed.success) {
+      setErr(
+        parsed.error.issues[0]?.message === "END_BEFORE_START"
+          ? "End has to be after start."
+          : "That isn't valid.",
+      );
+      return;
+    }
+    setErr(null);
+    update.mutate(parsed.data);
+  };
+
+  const serverErr = update.error
+    ? update.error.message === "SLOT_OVERLAP"
+      ? "That overlaps another slot."
+      : update.error.message === "SLOT_IN_PAST"
+        ? "That's in the past."
+        : update.error.message === "SLOT_BOOKED"
+          ? "This slot was just booked — cancel it instead."
+          : "That didn't save."
+    : null;
+
+  return (
+    <div className="space-y-2">
+      <div className="grid gap-2 sm:grid-cols-4">
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+        <input type="time" value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls} />
+        <input type="time" value={to} onChange={(e) => setTo(e.target.value)} className={inputCls} />
+        <input
+          type="text"
+          value={location}
+          maxLength={INTERVIEW_LOCATION_MAX}
+          onChange={(e) => setLocation(e.target.value)}
+          placeholder="Location"
+          className={inputCls}
+        />
+      </div>
+      {(err ?? serverErr) && <p className="text-sm text-red-600">{err ?? serverErr}</p>}
+      <div className="flex items-center gap-2">
+        <Button onClick={save} disabled={update.isPending} className="inline-flex items-center gap-1.5">
+          <Check className="h-4 w-4" />
+          {update.isPending ? "Saving…" : "Save"}
+        </Button>
+        <button
+          onClick={onCancel}
+          className="inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-800"
+        >
+          <X className="h-4 w-4" /> Cancel
+        </button>
       </div>
     </div>
+  );
+}
+
+/* -------------------------------- bits ------------------------------------- */
+
+const inputCls =
+  "w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500";
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="space-y-1 text-sm">
+      <span className="font-medium text-gray-700">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "gray" | "sky" | "emerald";
+}) {
+  const cls = {
+    gray: "bg-gray-100 text-gray-700",
+    sky: "bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20",
+    emerald: "bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20",
+  }[tone];
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${cls}`}>
+      <span className="tabular-nums">{value}</span>
+      {label}
+    </span>
   );
 }
