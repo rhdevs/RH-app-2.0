@@ -1,7 +1,5 @@
 "use client";
 
-import { Trash2 } from "lucide-react";
-
 import {
   Table,
   TableBody,
@@ -10,7 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import type { RosterEntry } from "~/server/api/services/ccaRoster";
 
 /**
@@ -27,6 +25,25 @@ import type { RosterEntry } from "~/server/api/services/ccaRoster";
  * NOT filtered out: 07-cca-future.md §3 names the client-side .filter() as the
  * anti-pattern that hides the problem it is hiding from.
  */
+
+/**
+ * Stable identity for a roster entry, namespaced so a resolved User.id can
+ * never collide with an unresolved membership key. Exported so the selection
+ * state in RosterPanel and the checkboxes here agree on exactly one key per row.
+ */
+export function rosterEntryKey(entry: RosterEntry): string {
+  return entry.kind === "resolved" ? `u:${entry.userId}` : `k:${entry.key}`;
+}
+
+/** Everything RosterPanel threads in to make the members table selectable. */
+export type RosterSelection = {
+  selectedKeys: Set<string>;
+  onToggle: (entry: RosterEntry) => void;
+  onToggleAll: () => void;
+  /** true = all selected, false = none, "indeterminate" = some. */
+  headerState: boolean | "indeterminate";
+  disabled: boolean;
+};
 
 /** Head vs member, labelled on BOTH states — see the note in CcaBadges. */
 function RoleLabel({ isHead }: { isHead: boolean }) {
@@ -59,47 +76,48 @@ function unresolvedCopy(entry: Extract<RosterEntry, { kind: "unresolved" }>) {
       };
 }
 
-/** A remove control, shown only when the table is given an `onRemove`. */
-function RemoveCell({
+function SelectCell({
   entry,
-  onRemove,
-  busy,
+  selection,
 }: {
   entry: RosterEntry;
-  onRemove: (entry: RosterEntry) => void;
-  busy: boolean;
+  selection: RosterSelection;
 }) {
+  const checked = selection.selectedKeys.has(rosterEntryKey(entry));
   return (
-    <TableCell className="text-right">
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={busy}
-        aria-label="Remove member"
-        onClick={() => onRemove(entry)}
-        className="text-gray-400 hover:text-red-600"
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
+    <TableCell className="w-0 pr-0">
+      <Checkbox
+        checked={checked}
+        disabled={selection.disabled}
+        onCheckedChange={() => selection.onToggle(entry)}
+        aria-label={
+          entry.kind === "resolved"
+            ? `Select ${entry.displayName ?? entry.email}`
+            : `Select ${entry.key}`
+        }
+      />
     </TableCell>
   );
 }
 
 function EntryRow({
   entry,
-  onRemove,
-  busy,
+  selection,
 }: {
   entry: RosterEntry;
-  onRemove?: (entry: RosterEntry) => void;
-  busy: boolean;
+  selection?: RosterSelection;
 }) {
   const duplicate = entry.userCcaRowCount > 1;
+  const selected =
+    selection?.selectedKeys.has(rosterEntryKey(entry)) ?? false;
 
   if (entry.kind === "unresolved") {
     const { label, detail } = unresolvedCopy(entry);
     return (
-      <TableRow className="border-amber-200 bg-amber-50">
+      <TableRow
+        className={selected ? "bg-amber-100" : "border-amber-200 bg-amber-50"}
+      >
+        {selection && <SelectCell entry={entry} selection={selection} />}
         <TableCell className="font-medium text-amber-900">
           <span title={detail}>{label}</span>
           {duplicate && (
@@ -112,13 +130,13 @@ function EntryRow({
         <TableCell className="text-right">
           <RoleLabel isHead={entry.isHead} />
         </TableCell>
-        {onRemove && <RemoveCell entry={entry} onRemove={onRemove} busy={busy} />}
       </TableRow>
     );
   }
 
   return (
-    <TableRow>
+    <TableRow className={selected ? "bg-emerald-50" : undefined}>
+      {selection && <SelectCell entry={entry} selection={selection} />}
       <TableCell className="font-medium text-gray-900">
         {entry.displayName ?? (
           <span className="text-gray-500">No name on file</span>
@@ -136,7 +154,6 @@ function EntryRow({
       <TableCell className="text-right">
         <RoleLabel isHead={entry.isHead} />
       </TableCell>
-      {onRemove && <RemoveCell entry={entry} onRemove={onRemove} busy={busy} />}
     </TableRow>
   );
 }
@@ -146,20 +163,18 @@ export default function RosterTable({
   entries,
   emptyCopy,
   /**
-   * When provided, each row gets a remove control. Passed ONLY to the members
-   * table on a head's own dashboard — the heads table and the read-only
-   * /admin/ccas viewer leave it undefined, so the extra column and the write
-   * affordance never appear there. Removal is still authorised server-side by
-   * assertHeadsCca regardless; this only decides whether to draw the button.
+   * When provided, each row gets a selection checkbox and the header gets a
+   * select-all. Passed ONLY to the members table on a head's own dashboard —
+   * the heads table and the read-only /admin/ccas viewer leave it undefined, so
+   * the column never appears there. Removal is still authorised server-side by
+   * assertHeadsCca; this only decides whether to draw the checkboxes.
    */
-  onRemove,
-  removingBusy = false,
+  selection,
 }: {
   title: string;
   entries: RosterEntry[];
   emptyCopy: string;
-  onRemove?: (entry: RosterEntry) => void;
-  removingBusy?: boolean;
+  selection?: RosterSelection;
 }) {
   return (
     <section>
@@ -179,23 +194,27 @@ export default function RosterTable({
           <Table>
             <TableHeader>
               <TableRow>
+                {selection && (
+                  <TableHead className="w-0 pr-0">
+                    <Checkbox
+                      checked={selection.headerState}
+                      disabled={selection.disabled}
+                      onCheckedChange={() => selection.onToggleAll()}
+                      aria-label="Select all members"
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead className="text-right">Role</TableHead>
-                {onRemove && (
-                  <TableHead className="text-right">
-                    <span className="sr-only">Remove</span>
-                  </TableHead>
-                )}
               </TableRow>
             </TableHeader>
             <TableBody>
               {entries.map((e) => (
                 <EntryRow
-                  key={e.kind === "resolved" ? e.userId : e.key}
+                  key={rosterEntryKey(e)}
                   entry={e}
-                  onRemove={onRemove}
-                  busy={removingBusy}
+                  selection={selection}
                 />
               ))}
             </TableBody>
