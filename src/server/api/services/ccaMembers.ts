@@ -63,6 +63,43 @@ export type RemoveMemberResult = {
 };
 
 /**
+ * THE single writer that ADDS a CCA membership — one canonical `UserCCA` row.
+ *
+ * MUST go through `$runCommandRaw`, NOT `db.userCCA.create`. `UserCCA` carries a
+ * DB-level `$jsonSchema` validator that declares `ccaID` as bsonType **"int"**
+ * (int32). Prisma's Mongo connector serializes an `Int` field as a 64-bit
+ * `long`, which the validator REJECTS with code 121 ("Document failed
+ * validation") — so `userCCA.create({ data: { ccaID, userID } })` throws for
+ * EVERY add, silently taking down application-acceptance and admin add-member.
+ * The extended-JSON `{ $numberInt }` forces a true int32 that passes.
+ *
+ * The write reply is INSPECTED (I-8f) rather than trusting a throw: a validation
+ * failure comes back as `ok:1` with a `writeErrors` array, not an exception.
+ *
+ * Caller supplies the CANONICAL userID and has already deduped against both key
+ * formats (UserCCA has no compound unique, so a check-then-insert can still race
+ * — the roster surfaces any duplicate rather than hiding it).
+ */
+export async function addCcaMember(
+  db: PrismaClient,
+  ccaID: number,
+  userID: string,
+): Promise<void> {
+  const reply = (await db.$runCommandRaw({
+    insert: "UserCCA",
+    documents: [{ ccaID: { $numberInt: String(ccaID) }, userID }],
+  })) as { ok?: number; n?: number; writeErrors?: unknown[] };
+
+  const writeErrors = reply?.writeErrors ?? [];
+  if (writeErrors.length > 0 || reply?.n !== 1) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "MEMBERSHIP_WRITE_FAILED",
+    });
+  }
+}
+
+/**
  * MEMBERSHIP LIVES IN THREE PLACES AND THIS CLEANS ALL OF THEM:
  *   1. UserCCA rows under the CANONICAL key
  *   2. UserCCA rows under the LEGACY A-format key (same person, other key)

@@ -10,6 +10,7 @@ import {
 } from "~/server/api/services/ccaScope";
 import { writeAudit } from "~/server/api/routers/admin";
 import {
+  addCcaMember,
   membershipKeysFor,
   removeCcaMember,
   removeMemberTargetSchema,
@@ -291,9 +292,9 @@ export const ccaAdminRouter = createTRPCRouter({
         });
       }
 
-      await ctx.db.userCCA.create({
-        data: { ccaID: input.ccaID, userID: input.userID },
-      });
+      // Raw insert via addCcaMember — a Prisma userCCA.create is rejected by the
+      // UserCCA validator (ccaID must be int32; Prisma sends long, code 121).
+      await addCcaMember(ctx.db, input.ccaID, input.userID);
 
       await writeAudit(ctx.db, {
         actorUserID,

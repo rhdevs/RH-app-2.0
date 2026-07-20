@@ -7,7 +7,7 @@ import { createTRPCRouter, identifiedProcedure } from "~/server/api/trpc";
 import { getUserRoles } from "~/server/api/services/access";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
 import { writeAudit } from "~/server/api/routers/admin";
-import { membershipKeysFor } from "~/server/api/services/ccaMembers";
+import { addCcaMember, membershipKeysFor } from "~/server/api/services/ccaMembers";
 import {
   assertApplicationsEnabled,
   nextCounter,
@@ -718,9 +718,9 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             select: { id: true },
           });
           if (!already) {
-            await ctx.db.userCCA.create({
-              data: { ccaID: app.ccaID, userID: app.userID },
-            });
+            // Raw insert via addCcaMember — a Prisma userCCA.create is rejected
+            // by the UserCCA validator (ccaID must be int32; Prisma sends long).
+            await addCcaMember(ctx.db, app.ccaID, app.userID);
           }
 
           await ctx.db.ccaApplication.update({
