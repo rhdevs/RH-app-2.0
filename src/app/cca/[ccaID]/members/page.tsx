@@ -21,5 +21,7 @@ export default function CcaMembersPage({
   const ccaID = parseCcaID(params.ccaID);
   if (ccaID === null) notFound();
 
-  return <RosterPanel ccaID={ccaID} hideHeader manageMembers />;
+  return (
+    <RosterPanel ccaID={ccaID} hideHeader manageMembers enableDirectory />
+  );
 }
