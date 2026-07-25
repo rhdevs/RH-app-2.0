@@ -206,7 +206,11 @@ export const createDraftInput = z
     description: descriptionField.optional(),
     startTime: epochSecondsField.optional(),
     endTime: epochSecondsField.optional(),
+    // Location is EITHER a facility (facilityID set → server denormalizes the
+    // name into `location`) OR free text (`location`, facilityID null). null
+    // facilityID clears a previous facility choice.
     location: locationField.optional(),
+    facilityID: z.number().int().positive().nullable().optional(),
     capacity: capacityField.nullable().optional(),
   })
   .superRefine(refineTimes);
@@ -225,6 +229,7 @@ export const updateDraftInput = z
     startTime: epochSecondsField.optional(),
     endTime: epochSecondsField.nullable().optional(),
     location: locationField.optional(),
+    facilityID: z.number().int().positive().nullable().optional(),
     capacity: capacityField.nullable().optional(),
     proposalUrl: z.string().url().nullable().optional(),
   })

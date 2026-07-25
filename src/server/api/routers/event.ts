@@ -18,6 +18,7 @@ import {
   nextEventId,
   withEventLock,
 } from "~/server/api/services/events";
+import { nextBookingId, withFacilityLock } from "~/server/api/services/booking";
 import { canonicalUserID } from "~/lib/identity";
 import {
   createDraftInput,
@@ -207,6 +208,26 @@ async function attachCcaNames(
   return byID;
 }
 
+/**
+ * Resolve a chosen facility to its id + name. The name is denormalized into
+ * Event.location so every display path (timeline, detail, CSV) renders the
+ * location without a join; the id drives the auto-booking on approval. Throws
+ * if the facility does not exist.
+ */
+async function resolveFacility(
+  db: PrismaClient,
+  facilityID: number,
+): Promise<{ facilityID: number; name: string }> {
+  const f = await db.facilities.findUnique({
+    where: { facilityID },
+    select: { facilityName: true },
+  });
+  if (!f) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "NO_SUCH_FACILITY" });
+  }
+  return { facilityID, name: f.facilityName };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Router                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -230,6 +251,16 @@ export const eventRouter = createTRPCRouter({
       });
       if (!cca) throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_CCA" });
 
+      // A facility choice denormalizes its name into `location`; otherwise the
+      // free-text location is used as-is.
+      let location: string | null = input.location ?? null;
+      let facilityID: number | null = null;
+      if (input.facilityID != null) {
+        const f = await resolveFacility(ctx.db, input.facilityID);
+        facilityID = f.facilityID;
+        location = f.name;
+      }
+
       const eventID = await nextEventId(ctx.db);
       await ctx.db.event.create({
         data: {
@@ -240,7 +271,8 @@ export const eventRouter = createTRPCRouter({
           description: input.description ?? null,
           startTime: input.startTime ?? null,
           endTime: input.endTime ?? null,
-          location: input.location ?? null,
+          location,
+          facilityID,
           capacity: input.capacity ?? null,
           status: "draft",
           createdAt: new Date(),
@@ -289,6 +321,20 @@ export const eventRouter = createTRPCRouter({
       if (input.capacity !== undefined) data.capacity = input.capacity;
       if (input.proposalUrl !== undefined) data.proposalUrl = input.proposalUrl;
 
+      // Facility ↔ location. A number selects a facility (denormalize its name,
+      // overriding any location text sent above); explicit null switches to
+      // "Other" (keep/clear the free text); undefined leaves both untouched.
+      if (input.facilityID !== undefined) {
+        if (input.facilityID === null) {
+          data.facilityID = null;
+          data.location = input.location ?? null;
+        } else {
+          const f = await resolveFacility(ctx.db, input.facilityID);
+          data.facilityID = f.facilityID;
+          data.location = f.name;
+        }
+      }
+
       await ctx.db.event.update({ where: { eventID: input.eventID }, data });
 
       // Clean up a replaced proposal PDF (non-fatal, mirrors updateProfile).
@@ -334,6 +380,11 @@ export const eventRouter = createTRPCRouter({
       if (event.startTime == null) missing.push("startTime");
       if (!event.location?.trim()) missing.push("location");
       if (!event.proposalUrl) missing.push("proposalUrl");
+      // A facility can only be auto-booked with a definite end time, so require
+      // it when a facility was chosen (free-text locations don't need one).
+      if (event.facilityID != null && event.endTime == null) {
+        missing.push("endTime");
+      }
       if (missing.length > 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -479,10 +530,31 @@ export const eventRouter = createTRPCRouter({
         where: { eventID: input.eventID },
         data: {
           status: "canceled",
+          bookingID: null,
           updatedAt: new Date(),
           updatedBy: userID,
         },
       });
+
+      // Free the facility: delete the auto-created booking so the slot reopens.
+      // Non-fatal — a missing booking (already deleted) is fine.
+      if (event.bookingID != null) {
+        try {
+          await ctx.db.bookings.deleteMany({
+            where: { bookingID: event.bookingID },
+          });
+        } catch (err) {
+          console.error(
+            JSON.stringify({
+              evt: "event_booking_delete_failed",
+              eventID: event.eventID,
+              bookingID: event.bookingID,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        }
+      }
+
       await writeAudit(ctx.db, {
         actorUserID: userID,
         actorRoles: roles,
@@ -736,15 +808,100 @@ export const eventRouter = createTRPCRouter({
           decisionReason: input.reason ?? null,
         },
       });
+
+      // On approval, if a facility was chosen, auto-create a Booking under the
+      // event's head for that facility at the event's time. BEST-EFFORT: a clash
+      // (the slot was taken between submit and approval) FLAGS the event instead
+      // of blocking approval or double-booking. Reuses the same
+      // withFacilityLock + conflict check + nextBookingId as createBooking. The
+      // facility ROLE gate is intentionally skipped — JCRC approving the event IS
+      // the authorization — but the physical time-conflict check is kept.
+      let autoBook: "booked" | "conflict" | "none" = "none";
+      if (
+        input.decision === "approve" &&
+        event.facilityID != null &&
+        event.startTime != null &&
+        event.endTime != null
+      ) {
+        const facilityID = event.facilityID;
+        const startTime = event.startTime;
+        const endTime = event.endTime;
+        try {
+          const result = await withFacilityLock(ctx.db, facilityID, async () => {
+            const conflicts = await ctx.db.bookings.findMany({
+              where: {
+                facilityID,
+                AND: [
+                  { endTime: { gt: startTime } },
+                  { startTime: { lt: endTime } },
+                ],
+              },
+              select: { id: true },
+            });
+            if (conflicts.length > 0) return { booked: false as const };
+            const bookingID = await nextBookingId(ctx.db);
+            await ctx.db.bookings.create({
+              data: {
+                bookingID,
+                ccaID: event.ccaID,
+                facilityID,
+                startTime,
+                endTime,
+                userID: event.createdBy,
+                eventName: event.title ?? `Event #${event.eventID}`,
+                description: `Auto-booked for event #${event.eventID}`,
+              },
+            });
+            return { booked: true as const, bookingID };
+          });
+          if (result.booked) {
+            autoBook = "booked";
+            await ctx.db.event.update({
+              where: { eventID: input.eventID },
+              data: { bookingID: result.bookingID, autoBookFailed: false },
+            });
+          } else {
+            autoBook = "conflict";
+            await ctx.db.event.update({
+              where: { eventID: input.eventID },
+              data: { autoBookFailed: true },
+            });
+          }
+        } catch (err) {
+          // NEVER fail the approval on a booking error — flag it for the head to
+          // book manually.
+          autoBook = "conflict";
+          console.error(
+            JSON.stringify({
+              evt: "event_autobook_failed",
+              eventID: event.eventID,
+              facilityID,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          );
+          await ctx.db.event
+            .update({
+              where: { eventID: input.eventID },
+              data: { autoBookFailed: true },
+            })
+            .catch(() => undefined);
+        }
+      }
+
       await writeAudit(ctx.db, {
         actorUserID: userID,
         actorRoles: roles,
         targetCcaID: event.ccaID,
         targetEventID: event.eventID,
         action: input.decision === "approve" ? "event.approve" : "event.reject",
-        reason: input.reason ?? undefined,
+        reason:
+          autoBook === "booked"
+            ? `${input.reason ? input.reason + "; " : ""}auto-booked facility #${event.facilityID}`
+            : autoBook === "conflict"
+              ? `${input.reason ? input.reason + "; " : ""}facility #${event.facilityID} clash — not booked`
+              : (input.reason ?? undefined),
       });
-      return { status: nextStatus as "approved" | "rejected" };
+      return { status: nextStatus as "approved" | "rejected", autoBook };
     }),
 
   /* ------------------------------ RESIDENT ------------------------------- */

@@ -142,6 +142,13 @@ export default function EventReviewDetail({ eventID }: { eventID: number }) {
         </div>
       ) : (
         <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+          {event.facilityID != null && (
+            <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              Approving will automatically book{" "}
+              <span className="font-medium">{event.location ?? "the facility"}</span>{" "}
+              for this event&rsquo;s time, under the CCA head.
+            </p>
+          )}
           <label className="block text-sm font-medium text-gray-700">
             Reason{" "}
             <span className="text-gray-400">(required to reject)</span>
