@@ -65,7 +65,8 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
 
   const navLinks = [
     { name: "Home", href: "/", icon: Home },
-    { name: "My Bookings", href: "/bookings", icon: Calendar },
+    // My Bookings lives in the profile dropdown (below), not the top nav, to
+    // keep the nav row uncrowded now that CCAs/Events sit there.
     // { name: "Facilities", href: "/facilities", icon: Box },
     // Resident-facing CCA browse + applications. Shown to everyone signed in;
     // the page itself is inert until cca.applications.enabled is on, so this is
@@ -97,6 +98,12 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
   const handleProfile = () => {
     router.push("/profile");
     setIsProfileDropdownOpen(false);
+  };
+
+  const handleBookings = () => {
+    router.push("/bookings");
+    setIsProfileDropdownOpen(false);
+    setIsMobileMenuOpen(false);
   };
 
   const handleMyApplications = () => {
@@ -211,6 +218,14 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                         </button>
 
                         <button
+                          onClick={handleBookings}
+                          className="flex w-full items-center px-4 py-2 text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
+                        >
+                          <Calendar size={16} className="mr-3 text-gray-400" />
+                          My Bookings
+                        </button>
+
+                        <button
                           onClick={handleMyCcas}
                           className="flex w-full items-center px-4 py-2 text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
                         >
@@ -292,6 +307,13 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                     >
                       <UserCircle size={18} />
                       <span>Profile</span>
+                    </button>
+                    <button
+                      onClick={handleBookings}
+                      className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
+                    >
+                      <Calendar size={18} />
+                      <span>My Bookings</span>
                     </button>
                     <button
                       onClick={handleMyCcas}
