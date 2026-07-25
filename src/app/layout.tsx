@@ -19,12 +19,19 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${GeistSans.variable}`}>
-      <body className="min-h-screen bg-gray-100">
+      <body className="flex min-h-screen flex-col bg-gray-100">
         <SessionProviderWrapper>
-          <TRPCReactProvider>
-            <MatricGate>{children}</MatricGate>
-          </TRPCReactProvider>
-          <footer className="fixed bottom-0 w-full bg-emerald-800 py-4 text-center text-sm text-white">
+          {/* flex-1 so the footer sits BELOW the content and is pushed to the
+              bottom of the viewport on short pages. It used to be `fixed`, which
+              overlaid the bottom of every page — on mobile that covered the
+              sign-up / log-in link at the foot of the auth card. In normal flow
+              it stays visible without ever blocking anything. */}
+          <main className="flex-1">
+            <TRPCReactProvider>
+              <MatricGate>{children}</MatricGate>
+            </TRPCReactProvider>
+          </main>
+          <footer className="bg-emerald-800 py-4 text-center text-sm text-white">
             Thanks for using the RH App! Feel free to report bugs or suggest
             features via form:
             <a
