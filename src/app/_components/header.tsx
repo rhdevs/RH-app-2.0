@@ -73,7 +73,7 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     // a link to a "not open yet" state at worst, never a broken route.
     { name: "CCAs", href: "/ccas", icon: LayoutGrid },
     { name: "Events", href: "/events", icon: CalendarDays },
-    ...(isCcaHead ? [{ name: "My CCAs", href: "/cca", icon: Users }] : []),
+    ...(isCcaHead ? [{ name: "Manage CCAs", href: "/cca", icon: Users }] : []),
     ...(canReachAdmin
       ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }]
       : []),
