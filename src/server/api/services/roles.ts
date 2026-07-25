@@ -137,6 +137,10 @@ export const AUDIT_ACTIONS = [
   "ccaInterviewSlot.open",
   "ccaInterviewSlot.edit",
   "ccaInterviewSlot.cancel",
+  // Bulk-cancel of every FREE (unbooked) slot at once. Booked slots are never
+  // touched by this — they still go through ccaInterviewSlot.cancel one at a
+  // time, which reverts the applicant. The audit row carries the cleared count.
+  "ccaInterviewSlot.clear",
   "ccaInterviewNote.add",
   // Events feature. approve/reject are written by JCRC (reviewEvents); publish,
   // cancel and attendees.export are written by the owning head (assertHeadsCca).
