@@ -6,6 +6,7 @@ import {
   EVENT_DESCRIPTION_MAX,
   EVENT_LOCATION_MAX,
 } from "~/lib/schemas/event";
+import { localInputToEpoch } from "~/app/events/_lib/format";
 
 /**
  * The proposal fields a head fills in at application time. A controlled block
@@ -76,6 +77,24 @@ export default function EventProposalFields({
   });
   const facilities = facilitiesQuery.data ?? [];
   const facilityChosen = isFacilitySelected(value);
+
+  // Live availability: only meaningful once a facility AND a valid time range
+  // are set. Advisory — the real gates are submit + approval.
+  const startEpoch = localInputToEpoch(value.startLocal);
+  const endEpoch = localInputToEpoch(value.endLocal);
+  const canCheckAvail =
+    facilityChosen &&
+    startEpoch != null &&
+    endEpoch != null &&
+    endEpoch > startEpoch;
+  const availability = api.event.facilityAvailability.useQuery(
+    {
+      facilityID: facilityChosen ? Number(value.facilitySelection) : 0,
+      startTime: startEpoch ?? 0,
+      endTime: endEpoch ?? 0,
+    },
+    { enabled: canCheckAvail, retry: false },
+  );
 
   return (
     <div className="space-y-4">
@@ -179,6 +198,25 @@ export default function EventProposalFields({
               approves — remember to set an end time.
             </p>
           )}
+          {facilityChosen && !canCheckAvail && (
+            <p className="text-xs text-gray-500">
+              Set start and end times to check if it&rsquo;s free.
+            </p>
+          )}
+          {canCheckAvail &&
+            (availability.data ? (
+              availability.data.available ? (
+                <p className="text-xs font-medium text-emerald-700">
+                  ✓ Free for the selected time.
+                </p>
+              ) : (
+                <p className="text-xs font-medium text-red-600">
+                  Already booked for this time — pick another time or facility.
+                </p>
+              )
+            ) : (
+              <p className="text-xs text-gray-500">Checking availability…</p>
+            ))}
         </div>
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-gray-700">

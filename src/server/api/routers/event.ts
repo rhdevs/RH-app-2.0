@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { del } from "@vercel/blob";
 import type { PrismaClient } from "@prisma/client";
@@ -228,6 +229,26 @@ async function resolveFacility(
   return { facilityID, name: f.facilityName };
 }
 
+/**
+ * How many existing bookings overlap [startTime, endTime) on a facility. Uses
+ * the SAME half-open overlap predicate as createBooking's conflict check, so the
+ * pre-submit validation, the submit gate and the approval-time booking all agree
+ * on what "already booked" means.
+ */
+async function countFacilityConflicts(
+  db: PrismaClient,
+  facilityID: number,
+  startTime: number,
+  endTime: number,
+): Promise<number> {
+  return db.bookings.count({
+    where: {
+      facilityID,
+      AND: [{ endTime: { gt: startTime } }, { startTime: { lt: endTime } }],
+    },
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /* Router                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -359,6 +380,34 @@ export const eventRouter = createTRPCRouter({
       return { ok: true };
     }),
 
+  /**
+   * Is a facility free for a time window? Drives the live "available / already
+   * booked" hint in the proposal form. Advisory only — availability can change
+   * before approval, so the real guards are submitForReview and decide. Any
+   * signed-in head may check; it exposes only a boolean + count, not who booked.
+   */
+  facilityAvailability: identifiedProcedure
+    .input(
+      z.object({
+        facilityID: z.number().int().positive(),
+        startTime: z.number().int().positive(),
+        endTime: z.number().int().positive(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      if (input.endTime <= input.startTime) {
+        return { available: false, conflicts: 0, badTime: true as const };
+      }
+      const conflicts = await countFacilityConflicts(
+        ctx.db,
+        input.facilityID,
+        input.startTime,
+        input.endTime,
+      );
+      return { available: conflicts === 0, conflicts, badTime: false as const };
+    }),
+
   submitForReview: identifiedProcedure
     .input(eventIdInput)
     .mutation(async ({ ctx, input }) => {
@@ -390,6 +439,29 @@ export const eventRouter = createTRPCRouter({
           code: "BAD_REQUEST",
           message: `INCOMPLETE:${missing.join(",")}`,
         });
+      }
+
+      // Validate facility availability at submit time — refuse to propose an
+      // event for a facility that is already booked for that window. This is an
+      // early gate, not a guarantee: the slot can still be taken before approval
+      // (decide handles that best-effort), but it stops the common case up front.
+      if (
+        event.facilityID != null &&
+        event.startTime != null &&
+        event.endTime != null
+      ) {
+        const conflicts = await countFacilityConflicts(
+          ctx.db,
+          event.facilityID,
+          event.startTime,
+          event.endTime,
+        );
+        if (conflicts > 0) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "FACILITY_UNAVAILABLE",
+          });
+        }
       }
 
       await ctx.db.event.update({
@@ -828,17 +900,13 @@ export const eventRouter = createTRPCRouter({
         const endTime = event.endTime;
         try {
           const result = await withFacilityLock(ctx.db, facilityID, async () => {
-            const conflicts = await ctx.db.bookings.findMany({
-              where: {
-                facilityID,
-                AND: [
-                  { endTime: { gt: startTime } },
-                  { startTime: { lt: endTime } },
-                ],
-              },
-              select: { id: true },
-            });
-            if (conflicts.length > 0) return { booked: false as const };
+            const conflicts = await countFacilityConflicts(
+              ctx.db,
+              facilityID,
+              startTime,
+              endTime,
+            );
+            if (conflicts > 0) return { booked: false as const };
             const bookingID = await nextBookingId(ctx.db);
             await ctx.db.bookings.create({
               data: {
