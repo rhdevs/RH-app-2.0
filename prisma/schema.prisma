@@ -609,7 +609,14 @@ model Event {
   /// UNIX epoch seconds, UTC (like Bookings). start required to submit.
   startTime         Int?
   endTime           Int?
+  /// Display label for the location. When facilityID is set this is the
+  /// denormalized facility name (so every display path renders without a join);
+  /// when facilityID is null it is the head's free-text "Other" location.
   location          String?
+  /// The chosen facility, or null for a free-text "Other" location. When set AND
+  /// endTime is present, approval auto-creates a Bookings row for it (see
+  /// event.decide). NOT a foreign key — Bookings/Facilities key on facilityID.
+  facilityID        Int?
   /// null = unlimited. Enforced under EventLock at signup time.
   capacity          Int?
 
@@ -618,6 +625,14 @@ model Event {
   decidedAt         DateTime?
   decidedBy         String?
   decisionReason    String?
+  /// The bookingID of the auto-created facility booking, set on approval when a
+  /// facility was chosen and the slot was free. Null when Other, or when the
+  /// slot was already taken (see autoBookFailed). Deleted with the event.
+  bookingID         Int?
+  /// True when a facility was chosen but the slot was already booked at approval
+  /// time, so no booking was made — surfaced to the head to book manually. The
+  /// event is still approved (approval is never blocked on a booking clash).
+  autoBookFailed    Boolean?
 
   // Public content — added by the head only after approval, shown to residents.
   publicDescription String?

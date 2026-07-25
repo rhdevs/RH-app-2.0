@@ -9,6 +9,7 @@ import { createDraftInput } from "~/lib/schemas/event";
 import { localInputToEpoch } from "~/app/events/_lib/format";
 import EventProposalFields, {
   EMPTY_PROPOSAL,
+  facilityPayload,
   type ProposalValue,
 } from "./EventProposalFields";
 
@@ -37,13 +38,15 @@ export default function EventCreateForm({ ccaID }: { ccaID: number }) {
     // time, and empty strings would fail the min-length rules.
     const start = localInputToEpoch(value.startLocal);
     const end = localInputToEpoch(value.endLocal);
+    const fp = facilityPayload(value);
     const payload = {
       ccaID,
       title: value.title.trim() || undefined,
       description: value.description.trim() || undefined,
       startTime: start ?? undefined,
       endTime: end ?? undefined,
-      location: value.location.trim() || undefined,
+      location: fp.location,
+      facilityID: fp.facilityID,
       capacity: value.capacity.trim() ? Number(value.capacity) : undefined,
     };
     const parsed = createDraftInput.safeParse(payload);

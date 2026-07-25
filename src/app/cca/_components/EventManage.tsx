@@ -18,6 +18,7 @@ import {
   localInputToEpoch,
 } from "~/app/events/_lib/format";
 import EventProposalFields, {
+  facilityPayload,
   type ProposalValue,
 } from "./EventProposalFields";
 import EventFileField from "./EventFileField";
@@ -32,6 +33,7 @@ const FIELD_LABELS: Record<string, string> = {
   title: "event name",
   description: "description",
   startTime: "start time",
+  endTime: "end time",
   location: "location",
   proposalUrl: "proposal PDF",
   banner: "banner image",
@@ -58,7 +60,14 @@ function ProposalEditor({ event }: { event: HeadEvent }) {
     description: event.description ?? "",
     startLocal: epochToLocalInput(event.startTime),
     endLocal: epochToLocalInput(event.endTime),
-    location: event.location ?? "",
+    // Facility → its id; free-text location → "other"; nothing → unset.
+    facilitySelection:
+      event.facilityID != null
+        ? String(event.facilityID)
+        : event.location
+          ? "other"
+          : "",
+    location: event.facilityID != null ? "" : (event.location ?? ""),
     capacity: event.capacity != null ? String(event.capacity) : "",
   });
   const [proposalUrl, setProposalUrl] = useState<string | null>(
@@ -71,13 +80,15 @@ function ProposalEditor({ event }: { event: HeadEvent }) {
   const submit = api.event.submitForReview.useMutation();
 
   function buildPatch() {
+    const fp = facilityPayload(value);
     return {
       eventID: event.eventID,
       title: value.title.trim() || undefined,
       description: value.description.trim() || undefined,
       startTime: localInputToEpoch(value.startLocal) ?? undefined,
       endTime: value.endLocal ? localInputToEpoch(value.endLocal) : null,
-      location: value.location.trim() || undefined,
+      location: fp.location,
+      facilityID: fp.facilityID,
       capacity: value.capacity.trim() ? Number(value.capacity) : null,
       proposalUrl,
     };
@@ -380,6 +391,34 @@ function CancelEventButton({ event }: { event: HeadEvent }) {
 /* Orchestrator                                                                */
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* Auto-booking status                                                         */
+/* -------------------------------------------------------------------------- */
+
+function AutoBookingNotice({ event }: { event: HeadEvent }) {
+  // Only relevant when a facility (not free-text) was chosen.
+  if (event.facilityID == null) return null;
+  if (event.bookingID != null) {
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+        <span className="font-medium">Facility booked automatically</span>
+        {event.location ? ` — ${event.location}` : ""}. It appears in the
+        bookings calendar under your name.
+      </div>
+    );
+  }
+  if (event.autoBookFailed) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <span className="font-medium">Facility not booked.</span>{" "}
+        {event.location ?? "The facility"} was already booked for this time, so
+        no automatic booking was made — please book it manually.
+      </div>
+    );
+  }
+  return null;
+}
+
 function mapError(e: unknown): string {
   const message = e instanceof Error ? e.message : "";
   const incomplete = incompleteMessage(message);
@@ -496,6 +535,7 @@ export default function EventManage({
             Approved. Add a banner, photos and a public description, then publish
             to put it on the residents’ timeline.
           </div>
+          <AutoBookingNotice event={event} />
           <PublicEditor event={event} mode="publish" />
           <div className="border-t border-gray-100 pt-4">
             <CancelEventButton event={event} />
@@ -506,6 +546,7 @@ export default function EventManage({
       {/* PUBLISHED — monitor + edit. */}
       {status === "published" && (
         <div className="space-y-8">
+          <AutoBookingNotice event={event} />
           <section>
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
               Signups
