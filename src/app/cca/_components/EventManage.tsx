@@ -425,6 +425,8 @@ function mapError(e: unknown): string {
   if (incomplete) return incomplete;
   if (message === "END_BEFORE_START")
     return "The end time must be after the start time.";
+  if (message === "FACILITY_UNAVAILABLE")
+    return "That facility is already booked for this time. Pick another time or facility before submitting.";
   if (message === "NOT_A_HEAD_OF_THIS_CCA")
     return "You're no longer a head of this CCA.";
   if (message === "EVENTS_DISABLED") return "Events aren't switched on yet.";
