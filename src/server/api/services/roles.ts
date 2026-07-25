@@ -137,6 +137,10 @@ export const AUDIT_ACTIONS = [
   "ccaInterviewSlot.open",
   "ccaInterviewSlot.edit",
   "ccaInterviewSlot.cancel",
+  // Bulk-cancel of every FREE (unbooked) slot at once. Booked slots are never
+  // touched by this — they still go through ccaInterviewSlot.cancel one at a
+  // time, which reverts the applicant. The audit row carries the cleared count.
+  "ccaInterviewSlot.clear",
   "ccaInterviewNote.add",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

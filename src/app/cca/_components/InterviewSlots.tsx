@@ -75,6 +75,16 @@ export default function InterviewSlots({ ccaID }: { ccaID: number }) {
     [list.data],
   );
 
+  // Free = unbooked. Only these are ever bulk-cleared; booked slots stay.
+  const freeCount = useMemo(
+    () => (list.data?.slots ?? []).filter((s) => s.bookedByUserID === null).length,
+    [list.data],
+  );
+
+  const clear = api.ccaApplicationsHead.clearFreeSlots.useMutation({
+    onSuccess: () => utils.ccaApplicationsHead.listSlots.invalidate({ ccaID }),
+  });
+
   return (
     <div className="space-y-6">
       <SlotGenerator
@@ -84,7 +94,38 @@ export default function InterviewSlots({ ccaID }: { ccaID: number }) {
       />
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-gray-900">Schedule</h2>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-gray-900">Schedule</h2>
+          {freeCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={clear.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Clear all ${freeCount} free (unbooked) slot${
+                      freeCount === 1 ? "" : "s"
+                    }? Booked slots are kept.`,
+                  )
+                ) {
+                  clear.mutate({ ccaID });
+                }
+              }}
+              className="text-red-600 hover:bg-red-50 hover:text-red-700"
+            >
+              <Trash2 className="mr-1.5 h-4 w-4" />
+              {clear.isPending ? "Clearing…" : "Clear free slots"}
+            </Button>
+          )}
+        </div>
+        {clear.error && (
+          <p className="mb-2 text-sm text-red-600">
+            {clear.error.message === "NOT_A_HEAD_OF_THIS_CCA"
+              ? "You can only clear slots for CCAs you head."
+              : "Those couldn’t be cleared. Try again."}
+          </p>
+        )}
         {list.isPending ? (
           <div className="h-32 animate-pulse rounded-lg bg-gray-200" />
         ) : list.error ? (

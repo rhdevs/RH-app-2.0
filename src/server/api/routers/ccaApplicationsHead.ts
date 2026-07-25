@@ -564,6 +564,60 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
       });
     }),
 
+  /**
+   * Clear every FREE (unbooked, non-canceled) slot for a CCA in one go — the
+   * bulk counterpart to cancelSlot, so a head doesn't delete a whole day one
+   * card at a time.
+   *
+   * BOOKED slots are DELIBERATELY untouched: cancelling one reverts an
+   * applicant to reschedule, which must stay a per-slot, confirmed action
+   * (cancelSlot), never a side effect of "clear". So this only ever removes
+   * slots nobody has claimed. Idempotent — clearing when there are none is a
+   * no-op that returns 0.
+   */
+  clearFreeSlots: identifiedProcedure
+    .input(ccaTargetInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertApplicationsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const scope = await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+
+      return withCcaLock(ctx.db, input.ccaID, async () => {
+        // Filter in JS, NOT the query: `{ canceledAt: null }` / `{ bookedByUserID
+        // : null }` miss absent-field slots on Prisma+Mongo (see listSlots), which
+        // would leave old free slots behind. Fetch, then filter both in memory.
+        const all = await ctx.db.ccaInterviewSlot.findMany({
+          where: { ccaID: input.ccaID },
+          select: { slotID: true, canceledAt: true, bookedByUserID: true },
+        });
+        const freeIDs = all
+          .filter((s) => s.canceledAt === null && s.bookedByUserID === null)
+          .map((s) => s.slotID);
+
+        if (freeIDs.length === 0) {
+          return { ccaID: input.ccaID, cleared: 0 };
+        }
+
+        // Mark them canceled by slotID list (not a null-filter), so absent-field
+        // rows are included. Nothing to revert — these were unbooked.
+        await ctx.db.ccaInterviewSlot.updateMany({
+          where: { slotID: { in: freeIDs } },
+          data: { canceledAt: new Date() },
+        });
+
+        await writeAudit(ctx.db, {
+          actorUserID: userID,
+          actorRoles: roles,
+          targetCcaID: input.ccaID,
+          action: "ccaInterviewSlot.clear",
+          reason: `${scope.via}: cleared ${freeIDs.length} free slot(s)`,
+        });
+
+        return { ccaID: input.ccaID, cleared: freeIDs.length };
+      });
+    }),
+
   /** Append an interview note to an application. */
   addNote: identifiedProcedure
     .input(addNoteInput)
