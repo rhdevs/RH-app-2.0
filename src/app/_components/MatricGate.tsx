@@ -6,8 +6,15 @@ import { useSession } from "next-auth/react";
 
 // Routes that must NEVER be gated (the auth flow + the onboarding page itself),
 // otherwise a matric-less user would be redirected in an infinite loop. Any
-// path equal to, or nested under, one of these is exempt.
-const ALLOW_LIST = ["/onboarding", "/login", "/signup", "/reset-password"];
+// path equal to, or nested under, one of these is exempt. `/whats-new` is a
+// public, read-only showcase page and is exempt so anyone can reach it.
+const ALLOW_LIST = [
+  "/onboarding",
+  "/login",
+  "/signup",
+  "/reset-password",
+  "/whats-new",
+];
 
 function isAllowed(pathname: string) {
   return ALLOW_LIST.some((p) => pathname === p || pathname.startsWith(p + "/"));
