@@ -14,6 +14,7 @@ import { z } from "zod";
 import { env } from "~/env";
 import { db } from "~/server/db";
 import { verifyPassword } from "~/lib/password";
+import { computeProfileGaps } from "~/lib/profileCompleteness";
 import type { CanonicalUserID } from "~/lib/identity";
 import {
   canonicalUserID,
@@ -142,6 +143,20 @@ declare module "next-auth" {
        * Already-resolved rows read as `[]` — see the session callback.
        */
       profileNeedsFields: string[];
+      /**
+       * STRICT PROFILE GATE. `profileIncomplete` is true when the user's own
+       * details are missing or improper — a blank / NUSNET-id display name, no
+       * Telegram handle, no block, or no matric — per
+       * `src/lib/profileCompleteness.ts`. Evaluated for EVERY identified session
+       * with no kill switch: the product decision is to enforce this for
+       * everyone, immediately. The client `MatricGate` routes such a session to
+       * `/profile` and shows a non-dismissable completion dialog;
+       * `profileMissingFields` names the offending fields. A LIVE read (I-4):
+       * the moment the user fills the fields and the session refreshes, this
+       * clears — nothing is baked into the 30-day JWT.
+       */
+      profileIncomplete: boolean;
+      profileMissingFields: string[];
       /**
        * D-7. False only for a pre-cutover JWT on an ineligible address, or a
        * blank/malformed stored email. RENDER-ONLY — protectedProcedure
@@ -424,6 +439,12 @@ export const authOptions = {
           // there is nothing to look up on this branch, and looking it up with
           // "" would be the ""-keyed-row hazard of I-8d one collection over.
           session.user.profileNeedsFields = [];
+          // Non-blocking on this branch: an empty identity is routed to the
+          // ineligibility page before the profile gate is ever consulted, and
+          // "not incomplete" is the only correct value with no canonical id to
+          // key a profile read on.
+          session.user.profileIncomplete = false;
+          session.user.profileMissingFields = [];
           session.user.roles = [];
           session.user.isAdmin = false;
           return session;
@@ -453,13 +474,24 @@ export const authOptions = {
         // user. The two lookups beside it predate that rule; a NEW promise here
         // must not widen the blast radius, so a ProfileCompletion fault degrades
         // to "not flagged" (no prompt) rather than to "logged out".
-        const [record, roleRow, matricRequired, completionRow] =
+        const [record, roleRow, matricRequired, completionRow, userDoc] =
           await Promise.all([
             db.userMatric.findUnique({ where: { userID } }),
             db.userRole.findUnique({ where: { userID } }),
             isMatricRequired(db),
             db.profileCompletion
               .findUnique({ where: { userID } })
+              .catch(() => null),
+            // The live profile fields the strict gate checks. Read by primary
+            // key (session.user.id is the User _id) with an EXPLICIT select — a
+            // bare read throws on a passwordHash-less Google row (I-2), and the
+            // `.catch` upholds rule 1 (this callback must never throw): a fault
+            // degrades to "no profile data" -> not gated, never logged out.
+            db.user
+              .findUnique({
+                where: { id: session.user.id },
+                select: { displayName: true, telegramHandle: true, block: true },
+              })
               .catch(() => null),
           ]);
 
@@ -474,6 +506,26 @@ export const authOptions = {
           completionRow && completionRow.resolvedAt == null
             ? (completionRow.needsFields ?? [])
             : [];
+
+        // STRICT PROFILE GATE. Computed live from the profile fields + matric
+        // above, using the SAME rules the client dialog mirrors, so the two
+        // never disagree about who is gated. `userDoc` may be null if the read
+        // faulted — treat that as "no data to prove completeness", i.e. gated,
+        // EXCEPT it degrades safely: computeProfileGaps on all-null returns the
+        // full set, which routes to /profile where the user can fix it (never a
+        // hard lockout). A transient fault therefore over-prompts, not
+        // over-admits.
+        const profileGaps = computeProfileGaps(
+          {
+            displayName: userDoc?.displayName ?? null,
+            telegramHandle: userDoc?.telegramHandle ?? null,
+            block: userDoc?.block ?? null,
+            matric: record?.matric ?? null,
+          },
+          { userID, email: token.email },
+        );
+        session.user.profileMissingFields = profileGaps;
+        session.user.profileIncomplete = profileGaps.length > 0;
 
         // Legacy-tolerant read for the D-6 dual-write window. Removing this
         // fallback belongs to doc 06 — dropping it early silently demotes any

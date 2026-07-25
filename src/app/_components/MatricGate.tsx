@@ -111,14 +111,33 @@ export default function MatricGate({
     session?.user?.matricRequired === true &&
     session?.user?.hasMatric === false;
 
+  // STRICT PROFILE GATE (always on). The user's own details are missing or
+  // improper (blank/NUSNET-id name, no Telegram, no block, no matric). Send
+  // them to /profile, which shows a non-dismissable completion dialog. This
+  // sits ABOVE the matric branch on purpose: the profile gate already includes
+  // matric, so /profile is the single surface to fix everything, and a user is
+  // never bounced /onboarding/matric -> /profile for two different prompts.
+  const needsProfileDetails =
+    authed &&
+    !ineligible &&
+    !needsProfileCompletion &&
+    session?.user?.profileIncomplete === true;
+
   const redirectTo = ineligible
     ? "/onboarding/ineligible"
     : needsProfileCompletion
       ? "/onboarding/complete-profile"
-      : needsMatric
-        ? "/onboarding/matric"
-        : null;
-  const blocked = redirectTo !== null && !isAllowed(pathname);
+      : needsProfileDetails
+        ? "/profile"
+        : needsMatric
+          ? "/onboarding/matric"
+          : null;
+  // `pathname !== redirectTo` so the DESTINATION renders instead of blanking:
+  // /profile is not on the allow-list (it must stay gated for a COMPLETE user
+  // who is merely browsing), but the incomplete user we just sent there has to
+  // be able to see it and its dialog.
+  const blocked =
+    redirectTo !== null && !isAllowed(pathname) && pathname !== redirectTo;
 
   useEffect(() => {
     if (blocked && redirectTo) {

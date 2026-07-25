@@ -18,6 +18,11 @@ import {
   MATRIC_RE,
   updateProfileInput,
 } from "~/lib/schemas/profile";
+import {
+  isDisplayNameValid,
+  PROFILE_FIELD_LABEL,
+  type ProfileField,
+} from "~/lib/profileCompleteness";
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -36,6 +41,21 @@ interface EditProfileModalProps {
   /** Given the message to surface, so the toast reflects what ACTUALLY saved
    *  rather than a fixed "Profile updated" that lies on a partial save. */
   onSuccess: (message: string) => void;
+  /**
+   * FORCED (profile-completion) mode. When true the dialog cannot be dismissed
+   * — no Close button, Escape and overlay-click are ignored — and the copy
+   * switches to "complete your profile to continue". Used by the strict profile
+   * gate on /profile.
+   */
+  forced?: boolean;
+  /** In forced mode, the fields that must be filled/valid before Save. */
+  requiredFields?: ProfileField[];
+  /** Identity, so the display-name rule (not your NUSNET id/email/matric) can
+   *  be mirrored client-side exactly as the server enforces it. */
+  identity?: { userID: string | null; email: string | null; matric: string };
+  /** Called after a successful save INSTEAD of onClose when forced — the parent
+   *  refreshes the session so the gate re-evaluates and unmounts this itself. */
+  onSaved?: () => void | Promise<void>;
 }
 
 /** The stored form of a typed matric. Matches the server's own transform
@@ -55,7 +75,12 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   onClose,
   initialData,
   onSuccess,
+  forced = false,
+  requiredFields = [],
+  identity,
+  onSaved,
 }) => {
+  const requires = (f: ProfileField) => forced && requiredFields.includes(f);
   const [displayName, setDisplayName] = useState<string>(
     initialData.displayName,
   );
@@ -118,6 +143,31 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
           : "Enter it in the format A0234567X — a letter, seven digits and a letter.";
     }
 
+    // Strict display-name rule (mirrors the server): not blank, and not just
+    // your NUSNET id / email / matric. Checked whenever identity is known, so a
+    // normal edit gets the same friendly inline error as the forced flow rather
+    // than a raw server rejection.
+    if (
+      identity &&
+      !isDisplayNameValid(displayName, {
+        userID: identity.userID,
+        email: identity.email,
+        matric: nextMatric || identity.matric,
+      })
+    ) {
+      errs.displayName ??=
+        "Enter your real name — not your NUSNET ID or email.";
+    }
+
+    // Forced-mode presence requirements: these fields are optional on a normal
+    // edit but mandatory when completing a profile.
+    if (requires("telegramHandle") && telegramHandle.trim() === "") {
+      errs.telegramHandle ??= "Enter your Telegram handle to continue.";
+    }
+    if (requires("matric") && nextMatric === "") {
+      errs.matric ??= "Enter your matriculation number to continue.";
+    }
+
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
       return;
@@ -160,12 +210,19 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
       );
       void utils.user.getCurrentUserData.invalidate();
 
-      onSuccess(
-        matricSaved
-          ? "Profile and matriculation number updated"
-          : "Profile updated successfully",
-      );
-      onClose();
+      if (forced) {
+        // The parent refreshes the session; the gate re-evaluates and unmounts
+        // this dialog itself once the profile is complete. Do NOT onClose here —
+        // a still-incomplete save (shouldn't happen, but safe) must keep it up.
+        await onSaved?.();
+      } else {
+        onSuccess(
+          matricSaved
+            ? "Profile and matriculation number updated"
+            : "Profile updated successfully",
+        );
+        onClose();
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : "Something went wrong.";
       // If matric went through and the profile write then failed, say so. The
@@ -192,18 +249,44 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
       onOpenChange={(open) => {
         // Radix gives us Escape, an overlay click, focus trapping, role="dialog"
         // and aria-modal for free. Do not hand-roll them again.
+        if (forced) return; // FORCED: non-dismissable — no close path at all.
         if (!open && !isPending) onClose();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto bg-white sm:max-w-lg">
+      <DialogContent
+        // Forced mode: block every dismissal route Radix offers and hide the
+        // built-in close "X" (a direct-child absolute button) so there is no way
+        // out but completing the form.
+        onEscapeKeyDown={(e) => forced && e.preventDefault()}
+        onPointerDownOutside={(e) => forced && e.preventDefault()}
+        onInteractOutside={(e) => forced && e.preventDefault()}
+        className={`max-h-[90vh] overflow-y-auto bg-white sm:max-w-lg${
+          forced ? " [&>button.absolute]:hidden" : ""
+        }`}
+      >
         <DialogHeader>
           <DialogTitle className="text-2xl font-bold text-gray-800">
-            Edit Profile
+            {forced ? "Complete your profile" : "Edit Profile"}
           </DialogTitle>
           <DialogDescription className="text-sm text-gray-500">
-            Your email and roles cannot be changed here.
+            {forced
+              ? "Fill in the details below to continue using the RHApp."
+              : "Your email and roles cannot be changed here."}
           </DialogDescription>
         </DialogHeader>
+
+        {forced && requiredFields.length > 0 && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Please add{" "}
+            {requiredFields.map((f, i) => (
+              <span key={f}>
+                {i > 0 && (i === requiredFields.length - 1 ? " and " : ", ")}
+                {PROFILE_FIELD_LABEL[f]}
+              </span>
+            ))}
+            .
+          </div>
+        )}
 
         {formError && (
           <div
@@ -260,7 +343,8 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
               />
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              5–32 characters: letters, digits or _. Leave blank to remove it.
+              5–32 characters: letters, digits or _.
+              {requires("telegramHandle") ? "" : " Leave blank to remove it."}
             </p>
             {fieldErrors.telegramHandle && (
               <p className="mt-1 text-sm text-red-600">
@@ -349,14 +433,17 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
         </div>
 
         <DialogFooter className="mt-6 gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isPending}
-            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Close
-          </button>
+          {/* No Close in forced mode: the only way out is completing the form. */}
+          {!forced && (
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isPending}
+              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Close
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void handleSubmit()}
@@ -365,7 +452,11 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
             disabled={isPending}
             className="rounded-md bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isPending ? "Saving…" : "Save Changes"}
+            {isPending
+              ? "Saving…"
+              : forced
+                ? "Save and continue"
+                : "Save Changes"}
           </button>
         </DialogFooter>
       </DialogContent>

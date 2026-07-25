@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
+import type { ProfileField } from "~/lib/profileCompleteness";
 import {
   User,
   Mail,
@@ -34,6 +35,14 @@ const ProfilePage: React.FC = () => {
   const [openEditProfileModal, setOpenEditProfileModal] =
     useState<boolean>(false);
   const [showMatric, setShowMatric] = useState<boolean>(false);
+
+  const { data: session, update: updateSession } = useSession();
+  // STRICT PROFILE GATE. MatricGate has already routed an incomplete session
+  // here; this drives the non-dismissable completion dialog below. Read from
+  // the session (the gate's own source of truth) so the two never disagree.
+  const forcedIncomplete = session?.user?.profileIncomplete === true;
+  const missingFields = (session?.user?.profileMissingFields ??
+    []) as ProfileField[];
 
   const {
     data: user,
@@ -76,10 +85,10 @@ const ProfilePage: React.FC = () => {
           open. Without this the modal keeps abandoned edits from a previous
           cancel and presents them as the current profile. The `key` additionally
           remounts it if the underlying profile changes beneath an open modal. */}
-      {user && openEditProfileModal && (
+      {user && (openEditProfileModal || forcedIncomplete) && (
         <EditProfileModal
           key={user.id}
-          isOpen={openEditProfileModal}
+          isOpen={openEditProfileModal || forcedIncomplete}
           onClose={() => setOpenEditProfileModal(false)}
           initialData={{
             displayName: user.displayName ?? "",
@@ -91,6 +100,21 @@ const ProfilePage: React.FC = () => {
             matric: user.matric ?? "",
           }}
           onSuccess={handleEditSuccess}
+          // Passed in BOTH modes so a normal edit gets the same friendly
+          // "not your NUSNET id" inline error the forced flow does.
+          identity={{
+            userID: user.userID ?? null,
+            email: user.email ?? null,
+            matric: user.matric ?? "",
+          }}
+          forced={forcedIncomplete}
+          requiredFields={forcedIncomplete ? missingFields : undefined}
+          // Forced completion refreshes the session so MatricGate re-evaluates
+          // and this dialog unmounts itself once the profile is complete.
+          onSaved={async () => {
+            await updateSession();
+            await refetch();
+          }}
         />
       )}
 
