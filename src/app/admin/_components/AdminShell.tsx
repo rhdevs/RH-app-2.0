@@ -10,6 +10,7 @@ import {
   DoorOpen,
   ScrollText,
   Settings2,
+  CalendarCheck,
 } from "lucide-react";
 
 import Header from "~/app/_components/header";
@@ -51,6 +52,14 @@ const ADMIN_TABS = [
     label: "Manage CCAs",
     icon: Settings2,
     requires: "manageCcas",
+  },
+  // Event review queue — admin + jcrc (reviewEvents). Behind the events.enabled
+  // kill switch checked in the procedures.
+  {
+    href: "/admin/events",
+    label: "Events",
+    icon: CalendarCheck,
+    requires: "reviewEvents",
   },
   {
     href: "/admin/facilities",

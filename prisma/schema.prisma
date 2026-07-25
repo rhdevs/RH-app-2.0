@@ -319,10 +319,17 @@ model RoleAuditLog {
   /// Reserved now so the future CCA system's history is queryable alongside
   /// role history with no backfill. See 07-cca-future.md.
   targetCcaID      Int?
+  /// The event an action concerns, for the Events feature's decision/export
+  /// trail. Nullable and additive (I-2) — no backfill, no validator (this
+  /// collection has none). Set by event.approve / event.reject / event.publish /
+  /// event.cancel / event.attendees.export.
+  targetEventID    Int?
   /// One of AUDIT_ACTIONS in src/server/api/services/roles.ts:
   /// grant | revoke | set | facilityAccess.set | denied | pending.create |
   /// pending.claim | pending.revoke | booking.denied.shadow |
-  /// ccaHead.grant | ccaHead.revoke | ccaHead.transfer
+  /// ccaHead.grant | ccaHead.revoke | ccaHead.transfer |
+  /// event.approve | event.reject | event.publish | event.cancel |
+  /// event.attendees.export
   action           String
   rolesBefore      String[] @default([])
   rolesAfter       String[] @default([])
@@ -337,6 +344,7 @@ model RoleAuditLog {
   @@index([actorUserID, at(sort: Desc)], map: "actor_at")
   @@index([batchId], map: "batch")
   @@index([targetCcaID, at(sort: Desc)], map: "cca_at")
+  @@index([targetEventID, at(sort: Desc)], map: "event_at")
 }
 
 /// A role grant for someone who has NOT signed up yet (D-8). Applied at their
@@ -552,6 +560,109 @@ model CcaInterviewNote {
   createdAt     DateTime? @default(now())
 
   @@index([applicationID], map: "application")
+}
+
+/// A CCA event, from proposal through to a published, signup-able listing.
+///
+/// BRAND-NEW, UNVALIDATED collection (no $jsonSchema) — so, unlike CCA/User,
+/// fields may be added here freely. It deliberately holds BOTH the proposal
+/// (title/description/proposalUrl/start/end/location/capacity, entered at
+/// application time) AND the public content (publicDescription/bannerUrl/
+/// photoUrls, added by the head only AFTER JCRC approval). One row, one
+/// lifecycle, so there is no join to keep in step.
+///
+/// I-2: every scalar is NULLABLE and every list has a default. This collection
+/// is read on the resident timeline and the head/review portals; a row written
+/// by a script or a partial hand-fix that omitted a required scalar would break
+/// Prisma deserialization for every subsequent reader. `status` is nullable with
+/// a default rather than a required enum for the same reason.
+///
+/// Keyed on `eventID` (a stable human int from the Counter collection, key
+/// "eventID" — see nextEventId in services/events.ts), NOT the ObjectId, so URLs
+/// and the blob path scheme (event/{eventID}/...) are stable and readable.
+///
+/// `createdBy`/`decidedBy`/`updatedBy` are CANONICAL userIDs (I-1), the same key
+/// as session.user.userID and CcaHead.userID. NEVER User.userID.
+///
+/// Authorisation is PER-EVENT via assertHeadsCca(db, actor, event.ccaID) — never
+/// a role check — because `cca_head` is scope-free. Times are UNIX epoch SECONDS
+/// (UTC), the same convention as Bookings.startTime.
+///
+/// status vocabulary (enforced in code, src/lib/schemas/event.ts):
+///   draft | submitted | approved | rejected | published | canceled
+/// `draft` exists so the proposal PDF (which needs an eventID in its blob path)
+/// can be uploaded before "Submit for review". `rejected` is editable and
+/// resubmittable; `canceled` is terminal.
+model Event {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  eventID           Int       @unique(map: "eventID")
+  ccaID             Int
+  createdBy         String
+
+  // Proposal — entered at application time.
+  title             String?
+  description       String?
+  /// Vercel Blob URL of the proposal PDF. VALIDATED before persist
+  /// (isOwnEventBlobUrl), never trusted from the client. Reviewers + owning head
+  /// only — never returned to residents.
+  proposalUrl       String?
+  /// UNIX epoch seconds, UTC (like Bookings). start required to submit.
+  startTime         Int?
+  endTime           Int?
+  location          String?
+  /// null = unlimited. Enforced under EventLock at signup time.
+  capacity          Int?
+
+  // Lifecycle / review decision.
+  status            String?   @default("submitted")
+  decidedAt         DateTime?
+  decidedBy         String?
+  decisionReason    String?
+
+  // Public content — added by the head only after approval, shown to residents.
+  publicDescription String?
+  /// Vercel Blob URLs, validated before persist (isOwnEventBlobUrl). photoUrls
+  /// is the gallery; order is display order.
+  bannerUrl         String?
+  photoUrls         String[]  @default([])
+  publishedAt       DateTime?
+
+  createdAt         DateTime? @default(now())
+  updatedAt         DateTime?
+  updatedBy         String?
+
+  @@index([ccaID, status], map: "cca_status")
+  @@index([status, startTime], map: "status_start")
+  @@index([startTime], map: "start")
+}
+
+/// One resident's signup for one event. Cancel is a HARD delete (the row is
+/// removed), which keeps the unique index clean and makes capacity a simple row
+/// count. Attendee PII (matric/block/telegram) is joined LIVE from User/
+/// UserMatric at export time, never snapshotted here, so an exported list always
+/// reflects current profile data.
+///
+/// I-2: userID keyed on the CANONICAL id; createdAt nullable with a default.
+model EventSignup {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  eventID   Int
+  userID    String
+  createdAt DateTime? @default(now())
+
+  @@unique([eventID, userID], map: "event_user")
+  @@index([eventID], map: "eventID")
+  @@index([userID], map: "userID")
+}
+
+/// Advisory mutex documents for per-event signup serialization, so a capacity
+/// check and the subsequent create cannot interleave and overbook. Same shape
+/// and reclaim strategy as BookingLock; driven by withEventLock in
+/// services/events.ts. `prisma db push` must create the unique index on `key` —
+/// that index is what makes the lock safe.
+model EventLock {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  key       String   @unique
+  createdAt DateTime @default(now())
 }
 
 /// Matric number stored as an ATTRIBUTE (not identity), kept out of the

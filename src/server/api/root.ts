@@ -7,6 +7,7 @@ import { ccaRouter } from "./routers/cca";
 import { ccaAdminRouter } from "./routers/ccaAdmin";
 import { ccaApplicationsRouter } from "./routers/ccaApplications";
 import { ccaApplicationsHeadRouter } from "./routers/ccaApplicationsHead";
+import { eventRouter } from "./routers/event";
 
 /**
  * This is the primary router for your server.
@@ -26,6 +27,9 @@ export const appRouter = createTRPCRouter({
   ccaApplications: ccaApplicationsRouter,
   /** CCA-head review/interview/decide, object-scoped by assertHeadsCca. */
   ccaApplicationsHead: ccaApplicationsHeadRouter,
+  /** Events: head authoring, JCRC review, resident timeline + signup. Behind
+   * the events.enabled switch; object-scoped per event's ccaID. */
+  event: eventRouter,
 });
 
 // export type definition of API
