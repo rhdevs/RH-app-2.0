@@ -138,6 +138,15 @@ export const AUDIT_ACTIONS = [
   "ccaInterviewSlot.edit",
   "ccaInterviewSlot.cancel",
   "ccaInterviewNote.add",
+  // Events feature. approve/reject are written by JCRC (reviewEvents); publish,
+  // cancel and attendees.export are written by the owning head (assertHeadsCca).
+  // attendees.export records a PII export (matric/block/telegram) and its
+  // audit row carries the exported attendee count in `reason`.
+  "event.approve",
+  "event.reject",
+  "event.publish",
+  "event.cancel",
+  "event.attendees.export",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -792,6 +801,13 @@ export type Capabilities = {
   viewSystemHealth: boolean;
   viewSystemHealthDetail: boolean;
   manageEnforcementFlag: boolean;
+  /**
+   * May review submitted events and approve/reject them (the /admin/events
+   * tab). Manager-level (admin + jcrc), matching the JCRC review role. Heads
+   * reach their OWN events surface via reachCcaDashboard + per-event
+   * assertHeadsCca, not this.
+   */
+  reviewEvents: boolean;
 };
 
 export function computeCapabilities(roles: readonly string[]): Capabilities {
@@ -821,5 +837,6 @@ export function computeCapabilities(roles: readonly string[]): Capabilities {
     viewSystemHealth: manager,
     viewSystemHealthDetail: admin,
     manageEnforcementFlag: admin,
+    reviewEvents: manager,
   };
 }

@@ -247,6 +247,7 @@ export type AuditEntry = {
   targetUserID?: string;
   targetFacilityID?: number;
   targetCcaID?: number;
+  targetEventID?: number;
   action: string;
   rolesBefore?: string[];
   rolesAfter?: string[];
@@ -281,6 +282,7 @@ export async function writeAudit(
         targetUserID: e.targetUserID ?? null,
         targetFacilityID: e.targetFacilityID ?? null,
         targetCcaID: e.targetCcaID ?? null,
+        targetEventID: e.targetEventID ?? null,
         action: e.action,
         rolesBefore: e.rolesBefore ?? [],
         rolesAfter: e.rolesAfter ?? [],

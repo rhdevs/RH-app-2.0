@@ -6,6 +6,7 @@ import {
   X,
   Home,
   Calendar,
+  CalendarDays,
   User,
   Users,
   LayoutGrid,
@@ -70,6 +71,7 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     // the page itself is inert until cca.applications.enabled is on, so this is
     // a link to a "not open yet" state at worst, never a broken route.
     { name: "CCAs", href: "/ccas", icon: LayoutGrid },
+    { name: "Events", href: "/events", icon: CalendarDays },
     ...(isCcaHead ? [{ name: "My CCAs", href: "/cca", icon: Users }] : []),
     ...(canReachAdmin
       ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }]
