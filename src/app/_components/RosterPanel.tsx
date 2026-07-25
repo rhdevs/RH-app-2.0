@@ -13,12 +13,15 @@ import {
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
+import { Download } from "lucide-react";
 import type { RosterEntry } from "~/server/api/services/ccaRoster";
 import RosterTable, {
   rosterEntryKey,
   type RosterSelection,
+  type MemberDetail,
 } from "./RosterTable";
 import RosterDriftNote from "./RosterDriftNote";
+import { downloadXlsx } from "~/lib/xlsx";
 
 /** How a roster entry maps to a removeMembers target. */
 function removalTarget(entry: RosterEntry) {
@@ -51,10 +54,18 @@ export default function RosterPanel({
    * only decides whether the checkboxes are drawn.
    */
   manageMembers = false,
+  /**
+   * Enables the click-to-expand member details and the "Export to Excel"
+   * button by fetching cca.memberDirectory (the roster plus each member's full
+   * profile). Set ONLY by a head's own member list; the read-only /admin/ccas
+   * viewer leaves it off, so it makes no extra query and nothing is expandable.
+   */
+  enableDirectory = false,
 }: {
   ccaID: number;
   hideHeader?: boolean;
   manageMembers?: boolean;
+  enableDirectory?: boolean;
 }) {
   const utils = api.useUtils();
   // Selected members, by rosterEntryKey. Confirmation opens a dialog separately.
@@ -74,9 +85,61 @@ export default function RosterPanel({
     onSuccess: async () => {
       setConfirming(false);
       setSelected(new Set());
-      await utils.cca.getRoster.invalidate({ ccaID });
+      await Promise.all([
+        utils.cca.getRoster.invalidate({ ccaID }),
+        utils.cca.memberDirectory.invalidate({ ccaID }),
+      ]);
     },
   });
+
+  // Full per-member details, fetched only when the head's member list asks for
+  // them. Drives the expandable rows and the Excel export.
+  const directory = api.cca.memberDirectory.useQuery(
+    { ccaID },
+    { enabled: enableDirectory, retry: false },
+  );
+
+  // rosterEntryKey -> detail, so a table row can look up its own person.
+  const details = useMemo(() => {
+    const map = new Map<string, MemberDetail>();
+    for (const e of directory.data?.entries ?? []) map.set(e.rowKey, e);
+    return map;
+  }, [directory.data]);
+
+  function exportExcel() {
+    const dir = directory.data;
+    if (!dir) return;
+    const header = [
+      "Name",
+      "Email",
+      "Role",
+      "User ID",
+      "Matric",
+      "Block",
+      "Telegram",
+      "Bio",
+      "Membership records",
+      "Notes",
+    ];
+    const rows = dir.entries.map((e) => [
+      e.name ?? (e.resolved ? "" : "Unmatched record"),
+      e.email ?? "",
+      e.role,
+      e.userID ?? "",
+      e.matric ?? "",
+      e.block != null ? String(e.block) : "",
+      e.telegramHandle ? `@${e.telegramHandle}` : "",
+      e.bio ?? "",
+      String(e.membershipRecords),
+      e.note ?? "",
+    ]);
+    const slug =
+      (dir.cca.ccaName ?? `cca-${ccaID}`)
+        .replace(/[^a-z0-9]+/gi, "-")
+        .replace(/^-+|-+$/g, "")
+        .toLowerCase() || `cca-${ccaID}`;
+    downloadXlsx(`${slug}-members`, "Members", [header, ...rows]);
+  }
 
   // Memoised so the `?? []` fallback doesn't mint a new array every render and
   // churn the selection memo below. react-query's `data` is reference-stable
@@ -174,6 +237,25 @@ export default function RosterPanel({
 
   return (
     <div className="space-y-6">
+      {enableDirectory && (
+        <div className="flex items-center justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportExcel}
+            disabled={
+              directory.isPending ||
+              !!directory.error ||
+              (directory.data?.entries.length ?? 0) === 0
+            }
+            title="Download every member and their details as an Excel file"
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export to Excel
+          </Button>
+        </div>
+      )}
+
       {!hideHeader && (
         <header>
           <h1 className="text-2xl font-semibold text-gray-900">
@@ -206,6 +288,7 @@ export default function RosterPanel({
         title="Heads"
         entries={heads}
         emptyCopy="Nobody is currently listed as a head of this CCA."
+        details={enableDirectory ? details : undefined}
       />
 
       {/* The bulk action bar. Reserves no space when nothing is selected, so it
@@ -241,6 +324,7 @@ export default function RosterPanel({
         entries={members}
         emptyCopy="No members are listed for this CCA yet."
         selection={selection}
+        details={enableDirectory ? details : undefined}
       />
 
       <AlertDialog
