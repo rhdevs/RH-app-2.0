@@ -14,6 +14,7 @@ import {
 } from "~/lib/schemas/ccaApplication";
 import { statusBadgeClass, residentStatusLabel } from "../_lib/status";
 import SlotPicker from "./SlotPicker";
+import ImageLightbox from "~/app/_components/ImageLightbox";
 
 /** Friendly copy for the machine-readable error tokens the procedures throw. */
 function applyErrorCopy(message: string | undefined): string | null {
@@ -103,10 +104,15 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
 
       {/* Header card */}
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+        {/* Cropped hard here — this container is ~6:1 on a desktop against a
+            4:1 upload — so it opens to the full image on click. */}
         {d.bannerUrl && (
-          <div className="relative h-32 w-full sm:h-40">
-            <Image src={d.bannerUrl} alt="" fill className="object-cover" />
-          </div>
+          <ImageLightbox
+            src={d.bannerUrl}
+            title={`${d.ccaName} banner`}
+            className="relative block h-32 w-full sm:h-40"
+            sizes="(min-width: 1024px) 960px, 100vw"
+          />
         )}
         <div className="flex items-start gap-4 p-5">
           {d.logoUrl ? (

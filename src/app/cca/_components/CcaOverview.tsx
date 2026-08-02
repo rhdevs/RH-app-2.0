@@ -8,6 +8,7 @@ import { useState } from "react";
 import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import RosterDriftNote from "~/app/_components/RosterDriftNote";
+import ImageLightbox from "~/app/_components/ImageLightbox";
 import StatTile from "./StatTile";
 import CcaHandoverDialog from "./CcaHandoverDialog";
 
@@ -68,22 +69,17 @@ export default function CcaOverview({ ccaID }: { ccaID: number }) {
           straddle the seam between the banner and the card below it. */}
       {(p?.bannerUrl ?? p?.logoUrl ?? p?.description) && (
         <div>
-          {/* Banner. `unoptimized` because these are already downscaled to
-              1600×400 WebP on upload — running them back through the image
-              optimizer would spend transformations to save almost nothing.
-              object-cover stretches the image to fill the whole banner. */}
+          {/* Banner. object-cover fills the container and therefore CROPS —
+              click to see the whole upload (ImageLightbox explains why that is
+              worth having, and why `unoptimized`). */}
           {p?.bannerUrl && (
-            <div className="relative h-48 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 sm:h-64">
-              <Image
-                src={p.bannerUrl}
-                alt=""
-                fill
-                className="object-cover"
-                sizes="100vw"
-                unoptimized
-                priority
-              />
-            </div>
+            <ImageLightbox
+              src={p.bannerUrl}
+              title={`${membership?.ccaName ?? "CCA"} banner`}
+              className="relative block h-48 w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 sm:h-64"
+              sizes="100vw"
+              priority
+            />
           )}
 
           {(p?.logoUrl ?? p?.description) && (
