@@ -56,8 +56,26 @@ export const APPLICATION_NOTES_MAX = 1500;
 export const INTERVIEW_LOCATION_MAX = 200;
 export const INTERVIEW_NOTE_MAX = 2000;
 export const DECISION_REASON_MAX = 1000;
-/** Soft cap on how many slots a head opens in one request — a sanity bound. */
+/** Soft cap on how many slots a head opens in one request — a sanity bound.
+ *  Unchanged by group slots: seats cost no rows, so 50 × 20 is still 50 rows. */
 export const MAX_SLOTS_PER_OPEN = 50;
+
+/**
+ * How many applicants may share one interview slot.
+ *
+ * These two live HERE rather than beside slotCapacity() in
+ * services/ccaApplications.ts because the head's slot generator is a client
+ * component and needs the VALUES — importing them from the server tree risks
+ * pulling Prisma into the browser bundle (see the module header). The service
+ * imports them back; there is still exactly one definition of each.
+ *
+ * DEFAULT is 1 because that is what every slot written before group slots
+ * existed means, and because capacity 1 must stay byte-for-byte today's
+ * behaviour. MAX is 20: big enough for a mass audition, small enough that a
+ * fat-fingered "200" is refused rather than opening a slot nobody can fill.
+ */
+export const SLOT_CAPACITY_DEFAULT = 1;
+export const SLOT_CAPACITY_MAX = 20;
 
 /** Reused everywhere a CCA is the target. ccaID 0 is RESERVED (cascade.ts). */
 const ccaID = z.number().int().positive();
@@ -65,6 +83,12 @@ const applicationID = z.number().int().positive();
 const slotID = z.number().int().positive();
 /** UNIX epoch SECONDS, matching Bookings.startTime/endTime. */
 const epochSeconds = z.number().int().positive();
+/**
+ * Seats on one slot. HEAD-ONLY — see the SECURITY note at the top of this file:
+ * this key must never appear on a resident input, or a resident could widen the
+ * slot they are about to book.
+ */
+const capacity = z.number().int().min(1).max(SLOT_CAPACITY_MAX);
 
 /* -------------------------------------------------------------------------- */
 /* Resident inputs                                                             */
@@ -97,12 +121,21 @@ export type CcaTargetInput = z.input<typeof ccaTargetInput>;
 /* Head inputs                                                                 */
 /* -------------------------------------------------------------------------- */
 
-/** One slot a head is opening. The clock check (not in the past) is server-side. */
+/**
+ * One slot a head is opening. The clock check (not in the past) is server-side.
+ *
+ * `capacity` DEFAULTS rather than being optional: the row must be written with
+ * an explicit number, never left absent, because Prisma+Mongo's `{ capacity:
+ * null }` does not match an absent field (§0.4 of the design doc). The generator
+ * applies one capacity to the whole batch; per-slot edits come later via
+ * editSlotInput.
+ */
 export const slotDraftSchema = z
   .object({
     startTime: epochSeconds,
     endTime: epochSeconds,
     location: z.string().trim().max(INTERVIEW_LOCATION_MAX).optional(),
+    capacity: capacity.default(SLOT_CAPACITY_DEFAULT),
   })
   .refine((s) => s.endTime > s.startTime, {
     message: "END_BEFORE_START",
@@ -120,7 +153,15 @@ export type OpenSlotsInput = z.input<typeof openSlotsInput>;
 export const cancelSlotInput = z.object({ ccaID, slotID });
 export type CancelSlotInput = z.input<typeof cancelSlotInput>;
 
-/** Edit an OPEN slot's time/location. A booked slot is refused server-side. */
+/**
+ * Edit a slot. Moving an OCCUPIED slot's time/location is refused server-side —
+ * that would change an interview out from under whoever booked it.
+ *
+ * `capacity` is OPTIONAL here, unlike slotDraftSchema: omitted means "leave it
+ * alone", which is what a client written before group slots sends. Lowering it
+ * below the seats already taken is refused (CAPACITY_BELOW_OCCUPANCY) — an edit
+ * never evicts anyone.
+ */
 export const editSlotInput = z
   .object({
     ccaID,
@@ -128,6 +169,7 @@ export const editSlotInput = z
     startTime: epochSeconds,
     endTime: epochSeconds,
     location: z.string().trim().max(INTERVIEW_LOCATION_MAX).optional(),
+    capacity: capacity.optional(),
   })
   .refine((s) => s.endTime > s.startTime, {
     message: "END_BEFORE_START",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MapPin } from "lucide-react";
+import { MapPin, Users } from "lucide-react";
 
 import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
@@ -16,6 +16,12 @@ import { formatSlot } from "../_lib/status";
  * `onDone` fires after a successful book and OWNS the cache invalidation for
  * whichever surface mounted this (getCca vs myApplications), so the picker stays
  * agnostic about where it lives.
+ *
+ * A slot may take more than one person. When it does the label says so BEFORE
+ * the applicant commits — turning up to what you thought was a 1:1 and finding
+ * three other people in the room is a bad surprise, and it is the reason
+ * capacity is shown to residents at all. What they never see is WHO else booked:
+ * the server sends counts only.
  */
 export default function SlotPicker({
   ccaID,
@@ -74,10 +80,19 @@ export default function SlotPicker({
                       : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
                   }`}
                 >
-                  <span className="font-medium text-gray-800">
-                    {formatSlot(s.startTime, s.endTime)}
+                  <span className="min-w-0">
+                    <span className="block font-medium text-gray-800">
+                      {formatSlot(s.startTime, s.endTime)}
+                    </span>
+                    {s.capacity > 1 && (
+                      <span className="mt-0.5 block text-xs text-amber-700">
+                        <Users className="mr-1 inline h-3 w-3 align-[-2px]" />
+                        Group interview · up to {s.capacity} people —{" "}
+                        {s.seatsLeft} seat{s.seatsLeft === 1 ? "" : "s"} left
+                      </span>
+                    )}
                   </span>
-                  <span className="flex items-center gap-3 text-gray-500">
+                  <span className="flex shrink-0 items-center gap-3 text-gray-500">
                     {s.location && (
                       <span className="inline-flex items-center gap-1">
                         <MapPin className="h-3.5 w-3.5" />
@@ -97,8 +112,8 @@ export default function SlotPicker({
 
       {book.error && (
         <p className="text-sm text-red-600">
-          {book.error.message === "SLOT_TAKEN"
-            ? "Someone just took that slot. Pick another."
+          {book.error.message === "SLOT_FULL"
+            ? "That slot just filled up. Pick another."
             : book.error.message === "SLOT_IN_PAST"
               ? "That slot has passed. Pick another."
               : "That didn't book. Try again."}

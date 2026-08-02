@@ -11,6 +11,8 @@ import { addCcaMember, membershipKeysFor } from "~/server/api/services/ccaMember
 import {
   assertApplicationsEnabled,
   nextCounter,
+  occupancyBySlot,
+  slotCapacity,
   SLOT_COUNTER_KEY,
   withCcaLock,
 } from "~/server/api/services/ccaApplications";
@@ -180,12 +182,28 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           const slotIDs = apps
             .map((a) => a.interviewSlotID)
             .filter((s): s is number => s !== null);
-          if (slotIDs.length === 0) return new Map<number, { startTime: number | null; endTime: number | null; location: string | null }>();
+          // slotID is IN the value, not just the key: the run-sheet groups
+          // applicants by the slot they share, and it needs something to group
+          // on. `capacity` rides along for the "3 of 4 seats" header.
+          type SlotRow = {
+            slotID: number;
+            startTime: number | null;
+            endTime: number | null;
+            location: string | null;
+            capacity: number | null;
+          };
+          if (slotIDs.length === 0) return new Map<number, SlotRow>();
           const rows = await ctx.db.ccaInterviewSlot.findMany({
             where: { slotID: { in: slotIDs } },
-            select: { slotID: true, startTime: true, endTime: true, location: true },
+            select: {
+              slotID: true,
+              startTime: true,
+              endTime: true,
+              location: true,
+              capacity: true,
+            },
           });
-          return new Map(rows.map((r) => [r.slotID, r]));
+          return new Map<number, SlotRow>(rows.map((r) => [r.slotID, r]));
         })(),
       ]);
 
@@ -199,10 +217,13 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           decidedAt: a.decidedAt,
           decisionReason: a.decisionReason,
           applicant: people.get(a.userID) ?? EMPTY_APPLICANT,
-          slot:
-            a.interviewSlotID !== null
-              ? (slots.get(a.interviewSlotID) ?? null)
-              : null,
+          slot: (() => {
+            if (a.interviewSlotID === null) return null;
+            const s = slots.get(a.interviewSlotID);
+            // Normalised HERE so no client ever sees a raw `capacity: null` and
+            // has to know that absent means 1.
+            return s ? { ...s, capacity: slotCapacity(s.capacity) } : null;
+          })(),
         })),
       };
     }),
@@ -291,7 +312,14 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
       };
     }),
 
-  /** All interview slots for a CCA, with who booked each — the head's calendar. */
+  /**
+   * All interview slots for a CCA with their occupants — the head's calendar.
+   *
+   * Occupancy is DERIVED from the applications that point at each slot, so this
+   * reads the applications rather than the slot row. The head (unlike a
+   * resident) gets the roster, not just a count: running a group interview means
+   * knowing who is in the room.
+   */
   listSlots: identifiedProcedure
     .input(ccaTargetInput)
     .query(async ({ ctx, input }) => {
@@ -306,34 +334,69 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
       // absent field — so that filter silently hides every open slot. Prisma
       // deserializes an absent optional scalar as null, so filtering in JS on
       // `s.canceledAt === null` catches both the absent and the null case.
-      const all = await ctx.db.ccaInterviewSlot.findMany({
-        where: { ccaID: input.ccaID },
-        select: {
-          slotID: true,
-          startTime: true,
-          endTime: true,
-          location: true,
-          bookedByUserID: true,
-          bookedApplicationID: true,
-          canceledAt: true,
-        },
-        orderBy: { startTime: "asc" },
-      });
+      const [all, claims] = await Promise.all([
+        ctx.db.ccaInterviewSlot.findMany({
+          where: { ccaID: input.ccaID },
+          select: {
+            slotID: true,
+            startTime: true,
+            endTime: true,
+            location: true,
+            capacity: true,
+            canceledAt: true,
+          },
+          orderBy: { startTime: "asc" },
+        }),
+        // A HEAD-ONLY read, deliberately NOT occupancyBySlot(): that helper
+        // projects interviewSlotID alone because it also runs on resident
+        // paths. Here the extra fields are the point, and one query gives both
+        // the counts and the roster.
+        ctx.db.ccaApplication.findMany({
+          where: { ccaID: input.ccaID },
+          select: {
+            applicationID: true,
+            userID: true,
+            status: true,
+            interviewSlotID: true,
+          },
+          orderBy: { applicationID: "asc" },
+        }),
+      ]);
       const slots = all.filter((s) => s.canceledAt === null);
 
-      const booked = slots
-        .map((s) => s.bookedByUserID)
-        .filter((u): u is string => u !== null);
-      const people = await resolveApplicants(ctx.db, booked);
+      // Group the claims by slot. `interviewSlotID` is tested in JS for the
+      // same absent-vs-null reason as canceledAt above.
+      const bySlot = new Map<number, typeof claims>();
+      for (const c of claims) {
+        if (c.interviewSlotID === null) continue;
+        const arr = bySlot.get(c.interviewSlotID) ?? [];
+        arr.push(c);
+        bySlot.set(c.interviewSlotID, arr);
+      }
+      const people = await resolveApplicants(
+        ctx.db,
+        slots.flatMap((s) => (bySlot.get(s.slotID) ?? []).map((c) => c.userID)),
+      );
 
       return {
-        slots: slots.map((s) => ({
-          ...s,
-          bookedBy:
-            s.bookedByUserID !== null
-              ? (people.get(s.bookedByUserID) ?? EMPTY_APPLICANT)
-              : null,
-        })),
+        slots: slots.map((s) => {
+          const occupants = bySlot.get(s.slotID) ?? [];
+          return {
+            slotID: s.slotID,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            location: s.location,
+            canceledAt: s.canceledAt,
+            capacity: slotCapacity(s.capacity),
+            occupancy: occupants.length,
+            occupants: occupants.map((c) => ({
+              applicationID: c.applicationID,
+              userID: c.userID,
+              status: c.status,
+              applicant: people.get(c.userID) ?? EMPTY_APPLICANT,
+            })),
+          };
+        }),
       };
     }),
 
@@ -413,11 +476,12 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
               location: s.location ?? null,
               createdBy: userID,
               createdAt: new Date(),
-              // Explicit nulls (not absent) so other queries' null filters match
-              // — Prisma+Mongo's null filter does not match an absent field.
-              bookedByUserID: null,
-              bookedApplicationID: null,
-              bookedAt: null,
+              // EXPLICIT, never absent — Prisma+Mongo's null filter does not
+              // match an absent field, and `capacity` is written as a real
+              // number for the same reason: a row whose capacity is absent
+              // reads back as null and only survives because slotCapacity()
+              // normalises it. New rows should not need that rescue.
+              capacity: s.capacity,
               canceledAt: null,
             },
           });
@@ -430,7 +494,12 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           targetCcaID: input.ccaID,
           action: "ccaInterviewSlot.open",
           batchId,
-          reason: `${scope.via}: opened ${created.length} slot(s)`,
+          // The capacity is in the audit line because "we opened 20 slots" and
+          // "we opened 20 slots for 6 people each" are very different decisions
+          // to have to reconstruct later.
+          reason: `${scope.via}: opened ${created.length} slot(s), ${
+            input.slots.reduce((n, s) => n + s.capacity, 0)
+          } seat(s)`,
         });
 
         return { ccaID: input.ccaID, opened: created.length, slotIDs: created };
@@ -438,10 +507,21 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
     }),
 
   /**
-   * Edit an OPEN slot's time and/or location. A BOOKED slot is refused — moving
-   * a slot out from under an applicant who already claimed it would silently
-   * change their interview time; the head must cancel it (which reverts the
-   * applicant) and open a new one instead.
+   * Edit a slot's time, location and/or capacity.
+   *
+   * MOVING an OCCUPIED slot is refused — changing the time out from under
+   * applicants who already claimed it would silently move their interview; the
+   * head must cancel it (which reverts every occupant) and open a new one.
+   * That is unchanged from the single-seat rule, just counted instead of
+   * boolean.
+   *
+   * CAPACITY is different, and is allowed on an occupied slot: raising it
+   * re-opens a full slot immediately, which is the whole point of the field.
+   * Lowering it below the seats already taken is refused
+   * (CAPACITY_BELOW_OCCUPANCY) — an edit never evicts anyone, and picking WHO
+   * to evict is not a decision a number in a form should make. So the guard is
+   * "unchanged time/location" rather than "unoccupied": a capacity-only save on
+   * an occupied slot sends the same start/end back and passes.
    */
   updateSlot: identifiedProcedure
     .input(editSlotInput)
@@ -457,30 +537,61 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           select: {
             slotID: true,
             ccaID: true,
+            startTime: true,
+            endTime: true,
+            location: true,
+            capacity: true,
             canceledAt: true,
-            bookedByUserID: true,
           },
         });
         if (!slot || slot.ccaID !== input.ccaID || slot.canceledAt !== null) {
           throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_SLOT" });
         }
-        if (slot.bookedByUserID !== null) {
+
+        // Counted INSIDE the lock, like every other check-then-write here: a
+        // capacity read outside it could be lowered onto an occupant who booked
+        // in between.
+        const occupancy =
+          (await occupancyBySlot(ctx.db, input.ccaID)).get(input.slotID) ?? 0;
+        const nextLocation = input.location ?? null;
+        // "" and null are the SAME location. The client sends `trim() ||
+        // undefined`, so a cleared box arrives as undefined -> null; treating a
+        // stored "" as different would make a capacity-only save on an occupied
+        // slot look like a move and be refused.
+        const moved =
+          input.startTime !== slot.startTime ||
+          input.endTime !== slot.endTime ||
+          (nextLocation ?? "") !== (slot.location ?? "");
+        if (occupancy > 0 && moved) {
           throw new TRPCError({ code: "CONFLICT", message: "SLOT_BOOKED" });
         }
+        if (input.capacity !== undefined && input.capacity < occupancy) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "CAPACITY_BELOW_OCCUPANCY",
+          });
+        }
+
         const now = Math.floor(Date.now() / 1000);
         if (input.endTime <= now) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "SLOT_IN_PAST" });
         }
 
         // Overlap against every OTHER non-canceled slot for this CCA.
-        const others = await ctx.db.ccaInterviewSlot.findMany({
-          where: {
-            ccaID: input.ccaID,
-            canceledAt: null,
-            slotID: { not: input.slotID },
-          },
-          select: { startTime: true, endTime: true },
-        });
+        //
+        // canceledAt is filtered in JS, NOT in the query. `{ canceledAt: null }`
+        // matches a stored null but NOT an ABSENT field (Prisma+Mongo), and 4 of
+        // the 34 production slots have it absent — those were invisible to this
+        // check, so an edit that overlapped one of them was accepted while
+        // openSlots (which already filters in JS) would have refused the same
+        // times. Every sibling site in this file does it this way; this one was
+        // the outlier.
+        const others = (
+          await ctx.db.ccaInterviewSlot.findMany({
+            where: { ccaID: input.ccaID, slotID: { not: input.slotID } },
+            select: { startTime: true, endTime: true, canceledAt: true },
+          })
+        ).filter((o) => o.canceledAt === null);
         const clash = others.some(
           (o) =>
             o.startTime !== null &&
@@ -496,7 +607,12 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           data: {
             startTime: input.startTime,
             endTime: input.endTime,
-            location: input.location ?? null,
+            location: nextLocation,
+            // Omitted capacity means "leave it alone", so the key is left out
+            // of `data` entirely — writing `capacity: undefined` and writing
+            // nothing are the same to Prisma, but spelling it out makes the
+            // "absent input, untouched field" contract visible.
+            ...(input.capacity !== undefined ? { capacity: input.capacity } : {}),
           },
         });
 
@@ -505,7 +621,11 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           actorRoles: roles,
           targetCcaID: input.ccaID,
           action: "ccaInterviewSlot.edit",
-          reason: `${scope.via}: edited slot #${input.slotID}`,
+          reason: `${scope.via}: edited slot #${input.slotID}${
+            input.capacity !== undefined
+              ? ` (capacity ${slotCapacity(slot.capacity)} → ${input.capacity}, ${occupancy} booked)`
+              : ""
+          }`,
         });
 
         return { slotID: input.slotID };
@@ -513,9 +633,11 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
     }),
 
   /**
-   * Cancel a slot. If it was booked, the applicant's application is reverted to
-   * `submitted` (so they can rebook) BEFORE the slot is marked canceled — a
-   * booked slot is never yanked out from under a resident silently.
+   * Cancel a slot. EVERY occupant is reverted to `submitted` (so they can
+   * rebook) BEFORE the slot is marked canceled — a claimed slot is never yanked
+   * out from under a resident silently, and on a group slot that is now four
+   * people, not one. One locked section, one audit row carrying a batchId, so
+   * the whole revert is attributable as a single act.
    */
   cancelSlot: identifiedProcedure
     .input(cancelSlotInput)
@@ -528,44 +650,34 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
       return withCcaLock(ctx.db, input.ccaID, async () => {
         const slot = await ctx.db.ccaInterviewSlot.findUnique({
           where: { slotID: input.slotID },
-          select: {
-            slotID: true,
-            ccaID: true,
-            canceledAt: true,
-            bookedApplicationID: true,
-          },
+          select: { slotID: true, ccaID: true, canceledAt: true },
         });
         if (!slot || slot.ccaID !== input.ccaID || slot.canceledAt !== null) {
           throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_SLOT" });
         }
 
-        let revertedApplicationID: number | null = null;
-        if (slot.bookedApplicationID !== null) {
-          // Only revert if that application is still pointing at THIS slot and
-          // is not already decided.
-          const reverted = await ctx.db.ccaApplication.updateMany({
-            where: {
-              applicationID: slot.bookedApplicationID,
-              interviewSlotID: slot.slotID,
-              status: "interview_scheduled",
-            },
-            data: {
-              status: "submitted",
-              interviewSlotID: null,
-              updatedAt: new Date(),
-            },
-          });
-          if (reverted.count > 0) revertedApplicationID = slot.bookedApplicationID;
-        }
+        // Every application still pointing HERE and still merely scheduled.
+        // `interviewSlotID: slot.slotID` is a value match, not a null filter,
+        // so the absent-field trap does not apply. A decided/interviewed
+        // occupant keeps its pointer, exactly as before: the interview is
+        // history at that point, not a booking to release.
+        const batchId = randomUUID();
+        const reverted = await ctx.db.ccaApplication.updateMany({
+          where: {
+            ccaID: input.ccaID,
+            interviewSlotID: slot.slotID,
+            status: "interview_scheduled",
+          },
+          data: {
+            status: "submitted",
+            interviewSlotID: null,
+            updatedAt: new Date(),
+          },
+        });
 
         await ctx.db.ccaInterviewSlot.update({
           where: { slotID: input.slotID },
-          data: {
-            canceledAt: new Date(),
-            bookedByUserID: null,
-            bookedApplicationID: null,
-            bookedAt: null,
-          },
+          data: { canceledAt: new Date() },
         });
 
         await writeAudit(ctx.db, {
@@ -573,27 +685,28 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           actorRoles: roles,
           targetCcaID: input.ccaID,
           action: "ccaInterviewSlot.cancel",
+          batchId,
           reason: `${scope.via}: canceled slot #${input.slotID}${
-            revertedApplicationID !== null
-              ? ` (reverted application #${revertedApplicationID})`
+            reverted.count > 0
+              ? ` (reverted ${reverted.count} application(s) to submitted)`
               : ""
           }`,
         });
 
-        return { slotID: input.slotID, revertedApplicationID };
+        return { slotID: input.slotID, revertedCount: reverted.count };
       });
     }),
 
   /**
-   * Clear every FREE (unbooked, non-canceled) slot for a CCA in one go — the
+   * Clear every FREE (occupancy 0, non-canceled) slot for a CCA in one go — the
    * bulk counterpart to cancelSlot, so a head doesn't delete a whole day one
    * card at a time.
    *
-   * BOOKED slots are DELIBERATELY untouched: cancelling one reverts an
-   * applicant to reschedule, which must stay a per-slot, confirmed action
-   * (cancelSlot), never a side effect of "clear". So this only ever removes
-   * slots nobody has claimed. Idempotent — clearing when there are none is a
-   * no-op that returns 0.
+   * OCCUPIED slots are DELIBERATELY untouched, and free means occupancy EXACTLY
+   * zero — a group slot with one person on it and three seats spare is NOT
+   * free. Cancelling it reverts that applicant to reschedule, which must stay a
+   * per-slot, confirmed action (cancelSlot), never a side effect of "clear".
+   * Idempotent — clearing when there are none is a no-op that returns 0.
    */
   clearFreeSlots: identifiedProcedure
     .input(ccaTargetInput)
@@ -604,15 +717,21 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
       const scope = await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
 
       return withCcaLock(ctx.db, input.ccaID, async () => {
-        // Filter in JS, NOT the query: `{ canceledAt: null }` / `{ bookedByUserID
-        // : null }` miss absent-field slots on Prisma+Mongo (see listSlots), which
-        // would leave old free slots behind. Fetch, then filter both in memory.
-        const all = await ctx.db.ccaInterviewSlot.findMany({
-          where: { ccaID: input.ccaID },
-          select: { slotID: true, canceledAt: true, bookedByUserID: true },
-        });
+        // Filter in JS, NOT the query: `{ canceledAt: null }` misses
+        // absent-field slots on Prisma+Mongo (see listSlots), which would leave
+        // old free slots behind. Fetch, then filter in memory.
+        const [all, occupancy] = await Promise.all([
+          ctx.db.ccaInterviewSlot.findMany({
+            where: { ccaID: input.ccaID },
+            select: { slotID: true, canceledAt: true },
+          }),
+          occupancyBySlot(ctx.db, input.ccaID),
+        ]);
         const freeIDs = all
-          .filter((s) => s.canceledAt === null && s.bookedByUserID === null)
+          .filter(
+            (s) =>
+              s.canceledAt === null && (occupancy.get(s.slotID) ?? 0) === 0,
+          )
           .map((s) => s.slotID);
 
         if (freeIDs.length === 0) {
@@ -620,7 +739,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         }
 
         // Mark them canceled by slotID list (not a null-filter), so absent-field
-        // rows are included. Nothing to revert — these were unbooked.
+        // rows are included. Nothing to revert — these hold nobody.
         await ctx.db.ccaInterviewSlot.updateMany({
           where: { slotID: { in: freeIDs } },
           data: { canceledAt: new Date() },
@@ -820,22 +939,23 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           };
         }
 
-        // REJECT. Free a still-future booked slot so another applicant can take
-        // it; a past interview slot is left as the historical record.
+        // REJECT. Free this applicant's SEAT — and only theirs — when the slot
+        // is still in the future, so someone else can take it; a past interview
+        // is left pointing at its slot as the historical record.
+        //
+        // Today's rule expressed on the pointer instead of the slot: the claim
+        // now IS the pointer, so "release the slot" and "null interviewSlotID"
+        // are the same write. On a group slot the other occupants are untouched
+        // by construction — nothing here reads or writes the slot row.
+        let freedSlot = false;
         if (app.interviewSlotID !== null) {
           const nowSec = Math.floor(Date.now() / 1000);
-          await ctx.db.ccaInterviewSlot.updateMany({
-            where: {
-              slotID: app.interviewSlotID,
-              bookedApplicationID: app.applicationID,
-              endTime: { gt: nowSec },
-            },
-            data: {
-              bookedByUserID: null,
-              bookedApplicationID: null,
-              bookedAt: null,
-            },
+          const slot = await ctx.db.ccaInterviewSlot.findUnique({
+            where: { slotID: app.interviewSlotID },
+            select: { endTime: true },
           });
+          const endTime = slot?.endTime ?? null;
+          freedSlot = endTime !== null && endTime > nowSec;
         }
 
         await ctx.db.ccaApplication.update({
@@ -846,6 +966,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             decidedAt: now,
             decisionReason: input.reason ?? null,
             updatedAt: now,
+            ...(freedSlot ? { interviewSlotID: null } : {}),
           },
         });
 
@@ -857,7 +978,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           action: "ccaApplication.reject",
           reason: `${scope.via}: application #${app.applicationID}${
             input.reason ? ` — ${input.reason}` : ""
-          }`,
+          }${freedSlot ? ` (freed seat on slot #${app.interviewSlotID})` : ""}`,
         });
 
         return {
