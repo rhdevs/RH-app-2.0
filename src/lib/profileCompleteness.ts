@@ -29,46 +29,34 @@ export const PROFILE_FIELD_LABEL: Record<ProfileField, string> = {
   matric: "your matriculation number",
 };
 
-const norm = (s: string) => s.trim().toLowerCase();
-
-/** The local-part of an @-address, lowercased; "" if it is not an address. */
-function emailLocalPart(email: string | null | undefined): string {
-  if (!email) return "";
-  const at = email.indexOf("@");
-  return norm(at === -1 ? email : email.slice(0, at));
-}
+/**
+ * The ONE shape a display name may not take: an E-format NUSNET id.
+ *
+ * Narrow ON PURPOSE. The first version of this rule gated on the user's own
+ * identifiers rather than on the SHAPE of what they typed — it refused any name
+ * that contained their userID. That is right for an opaque id and UNSATISFIABLE
+ * for a name-derived one: "KE BANGYAN" over userID "BANGYAN" was refused every
+ * time it was typed, so that resident could not get through the gate at all, and
+ * 52 accounts here have digit-free, name-derived userIDs of the same shape. The
+ * rule is now purely about the string. "E1234567" is not a name; what else a
+ * resident calls themselves is their business.
+ *
+ * UNANCHORED, so the "id with a bit tacked on" placeholder ("E1234567 Tan") is
+ * refused too. Tested against the lowercased name, hence the lowercase `e`.
+ */
+const E_FORMAT_ID = /e\d{7}/;
 
 /**
- * A display name is "proper" when it is present and is NOT just the user's own
- * identifiers. Blank, too short, equal to or containing their NUSNET id, or
- * equal to their email local-part or matric all count as improper — those are
- * exactly the auto-filled / placeholder names we are stamping out (a lot of
- * accounts currently have their NUSNET id as their name).
+ * A display name is "proper" when it is present and is not an E-format NUSNET
+ * id. That is the whole rule — nothing about the account's own identity is
+ * consulted; see E_FORMAT_ID for why.
  */
 export function isDisplayNameValid(
   displayName: string | null | undefined,
-  identity: {
-    userID?: string | null;
-    email?: string | null;
-    matric?: string | null;
-  },
 ): boolean {
   const name = (displayName ?? "").trim();
   if (name.length < 2) return false;
-  const n = norm(name);
-
-  const uid = identity.userID ? norm(identity.userID) : "";
-  // Equal to OR containing the NUSNET id: "E1234567" and "E1234567 Tan" are both
-  // rejected — the second is the "id with a bit tacked on" placeholder.
-  if (uid && (n === uid || n.includes(uid))) return false;
-
-  const local = emailLocalPart(identity.email);
-  if (local && n === local) return false;
-
-  const matric = identity.matric ? norm(identity.matric) : "";
-  if (matric && n === matric) return false;
-
-  return true;
+  return !E_FORMAT_ID.test(name.toLowerCase());
 }
 
 export type ProfileSnapshot = {
@@ -82,19 +70,9 @@ export type ProfileSnapshot = {
  * The required fields this user has NOT satisfied. Empty => their profile is
  * complete and proper, and the gate lets them through.
  */
-export function computeProfileGaps(
-  profile: ProfileSnapshot,
-  identity: { userID?: string | null; email?: string | null },
-): ProfileField[] {
+export function computeProfileGaps(profile: ProfileSnapshot): ProfileField[] {
   const gaps: ProfileField[] = [];
-  if (
-    !isDisplayNameValid(profile.displayName, {
-      ...identity,
-      matric: profile.matric,
-    })
-  ) {
-    gaps.push("displayName");
-  }
+  if (!isDisplayNameValid(profile.displayName)) gaps.push("displayName");
   if (!(profile.telegramHandle ?? "").trim()) gaps.push("telegramHandle");
   if (profile.block == null) gaps.push("block");
   if (!(profile.matric ?? "").trim()) gaps.push("matric");

@@ -381,31 +381,21 @@ export const userRouter = createTRPCRouter({
     .input(updateProfileInput)
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;
-      const userID = ctx.session.user.userID; // canonical E-format key (I-1)
 
       // Strict profile gate (server side): a proper display name is enforced on
       // EVERY save, not just the forced completion flow — otherwise a user could
       // "fix" the gate by setting their name back to their NUSNET id and loop.
       // Uses the SAME rule the client mirrors and the session callback gates on.
-      // Skipped for an empty identity (routed to /onboarding/ineligible anyway).
-      if (userID) {
-        const matricRow = await ctx.db.userMatric.findUnique({
-          where: { userID },
-          select: { matric: true },
+      //
+      // No identity read any more: the rule is a check on the SHAPE of the name
+      // (an E-format id), not a comparison against this account's own userID /
+      // email / matric. See profileCompleteness.ts — the comparison version was
+      // unsatisfiable for name-derived NUSNET ids.
+      if (!isDisplayNameValid(input.displayName)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Enter your real name — not your NUSNET ID.",
         });
-        if (
-          !isDisplayNameValid(input.displayName, {
-            userID,
-            email: ctx.session.user.email,
-            matric: matricRow?.matric ?? null,
-          })
-        ) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message:
-              "Enter your real name — not your NUSNET ID, email or matric number.",
-          });
-        }
       }
 
       const updatedUser = await ctx.db.user.update({
