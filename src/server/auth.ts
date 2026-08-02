@@ -515,15 +515,12 @@ export const authOptions = {
         // full set, which routes to /profile where the user can fix it (never a
         // hard lockout). A transient fault therefore over-prompts, not
         // over-admits.
-        const profileGaps = computeProfileGaps(
-          {
-            displayName: userDoc?.displayName ?? null,
-            telegramHandle: userDoc?.telegramHandle ?? null,
-            block: userDoc?.block ?? null,
-            matric: record?.matric ?? null,
-          },
-          { userID, email: token.email },
-        );
+        const profileGaps = computeProfileGaps({
+          displayName: userDoc?.displayName ?? null,
+          telegramHandle: userDoc?.telegramHandle ?? null,
+          block: userDoc?.block ?? null,
+          matric: record?.matric ?? null,
+        });
         session.user.profileMissingFields = profileGaps;
         session.user.profileIncomplete = profileGaps.length > 0;
 

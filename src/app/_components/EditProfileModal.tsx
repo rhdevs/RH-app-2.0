@@ -50,9 +50,6 @@ interface EditProfileModalProps {
   forced?: boolean;
   /** In forced mode, the fields that must be filled/valid before Save. */
   requiredFields?: ProfileField[];
-  /** Identity, so the display-name rule (not your NUSNET id/email/matric) can
-   *  be mirrored client-side exactly as the server enforces it. */
-  identity?: { userID: string | null; email: string | null; matric: string };
   /** Called after a successful save INSTEAD of onClose when forced — the parent
    *  refreshes the session so the gate re-evaluates and unmounts this itself. */
   onSaved?: () => void | Promise<void>;
@@ -77,7 +74,6 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   onSuccess,
   forced = false,
   requiredFields = [],
-  identity,
   onSaved,
 }) => {
   const requires = (f: ProfileField) => forced && requiredFields.includes(f);
@@ -143,20 +139,12 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
           : "Enter it in the format A0234567X — a letter, seven digits and a letter.";
     }
 
-    // Strict display-name rule (mirrors the server): not blank, and not just
-    // your NUSNET id / email / matric. Checked whenever identity is known, so a
-    // normal edit gets the same friendly inline error as the forced flow rather
-    // than a raw server rejection.
-    if (
-      identity &&
-      !isDisplayNameValid(displayName, {
-        userID: identity.userID,
-        email: identity.email,
-        matric: nextMatric || identity.matric,
-      })
-    ) {
-      errs.displayName ??=
-        "Enter your real name — not your NUSNET ID or email.";
+    // Strict display-name rule (mirrors the server): not blank, and not an
+    // E-format NUSNET id. A check on the SHAPE of what was typed, so it needs no
+    // identity — see profileCompleteness.ts. Applied on a normal edit too, so it
+    // surfaces as this friendly inline error rather than a raw server rejection.
+    if (!isDisplayNameValid(displayName)) {
+      errs.displayName ??= "Enter your real name — not your NUSNET ID.";
     }
 
     // Forced-mode presence requirements: these fields are optional on a normal

@@ -100,13 +100,6 @@ const ProfilePage: React.FC = () => {
             matric: user.matric ?? "",
           }}
           onSuccess={handleEditSuccess}
-          // Passed in BOTH modes so a normal edit gets the same friendly
-          // "not your NUSNET id" inline error the forced flow does.
-          identity={{
-            userID: user.userID ?? null,
-            email: user.email ?? null,
-            matric: user.matric ?? "",
-          }}
           forced={forcedIncomplete}
           requiredFields={forcedIncomplete ? missingFields : undefined}
           // Forced completion refreshes the session so MatricGate re-evaluates
