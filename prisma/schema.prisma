@@ -517,6 +517,17 @@ model CcaApplication {
   @@index([userID], map: "applicant")
   /// The duplicate-open-application check (one non-terminal row per person+CCA).
   @@index([ccaID, userID], map: "cca_applicant")
+  /// Everyone holding a seat on one slot. Serves the ONE query that filters on
+  /// this field alone: head `cancelSlot`'s updateMany, which reverts every
+  /// occupant of a slot it is about to cancel.
+  ///
+  /// It does NOT serve occupancyBySlot(), despite that being the field's main
+  /// reader — that function filters on `ccaID` (already covered by the ccaID
+  /// prefix of cca_status/cca_applicant) and reads interviewSlotID out of every
+  /// application for the CCA, counting in memory. That is a whole-CCA read on
+  /// every book, capacity edit and resident slot list; fine at ~63 applications
+  /// repo-wide, and the thing to revisit before it is thousands per CCA.
+  @@index([interviewSlotID], map: "slot")
 }
 
 /// An interview slot a CCA head opens from their availability; a resident then
@@ -524,27 +535,36 @@ model CcaApplication {
 /// UNIX epoch SECONDS (Int), not DateTime, and overlap is a range query, not a
 /// DB constraint (Mongo cannot express an overlapping-range unique index).
 ///
-/// A slot's lifecycle: created with bookedByUserID = null (open) → a resident's
-/// bookSlot sets bookedByUserID + bookedApplicationID under an advisory lock
-/// (withCcaLock) so two residents cannot claim the same slot. canceledAt marks
-/// a slot the head withdrew; a booked slot is reverted (application → submitted)
-/// before it is canceled, never hard-deleted out from under a resident.
+/// A slot's lifecycle: created open → residents claim seats under the per-CCA
+/// advisory lock (withCcaLock) so two of them cannot take the last seat.
+/// canceledAt marks a slot the head withdrew; every occupant is reverted
+/// (application → submitted) before it is canceled, never hard-deleted out from
+/// under a resident.
+///
+/// THERE IS NO CLAIM ON THIS ROW. `bookedByUserID`/`bookedApplicationID`/
+/// `bookedAt` were DELETED with group slots: occupancy is DERIVED as
+/// `count(CcaApplication where interviewSlotID == slotID)`, so the applicant's
+/// pointer is the single source of truth and the two sides cannot drift. They
+/// were removed rather than left unused precisely so that any reader still
+/// asking "is this slot booked?" fails to compile instead of silently reading
+/// "free" on a full slot.
 model CcaInterviewSlot {
-  id                  String    @id @default(auto()) @map("_id") @db.ObjectId
-  slotID              Int       @unique(map: "slotID")
-  ccaID               Int
-  startTime           Int?
-  endTime             Int?
-  location            String?
-  createdBy           String?
-  bookedByUserID      String?
-  bookedApplicationID Int?
-  bookedAt            DateTime?
-  canceledAt          DateTime?
-  createdAt           DateTime? @default(now())
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  slotID     Int       @unique(map: "slotID")
+  ccaID      Int
+  startTime  Int?
+  endTime    Int?
+  location   String?
+  createdBy  String?
+  /// How many applicants may claim this slot. ABSENT/null means 1 — every row
+  /// written before group slots existed. Normalise through slotCapacity()
+  /// (services/ccaApplications.ts) and NEVER inline `?? 1`, so the legacy
+  /// default lives in exactly one place.
+  capacity   Int?
+  canceledAt DateTime?
+  createdAt  DateTime? @default(now())
 
   @@index([ccaID, startTime, endTime], map: "cca_time")
-  @@index([bookedByUserID], map: "booked_by")
 }
 
 /// Append-only interview notes a head records against an application — multiple

@@ -198,7 +198,7 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
         <ApplicationInProgress
           ccaID={ccaID}
           app={app}
-          openSlotCount={d.openSlotCount}
+          openSeatCount={d.openSeatCount}
           onWithdraw={() =>
             withdraw.mutate({ applicationID: app.applicationID })
           }
@@ -310,11 +310,18 @@ function Card({ children }: { children: React.ReactNode }) {
 
 type AppShape = RouterOutputs["ccaApplications"]["getCca"]["application"];
 
-/** The panel shown while an application is live (submitted / scheduled). */
+/**
+ * The panel shown while an application is live (submitted / scheduled).
+ *
+ * `openSeatCount` is SEATS across every future open slot, not slots — one group
+ * slot taking four people is four bookable things. It is only ever tested as
+ * "> 0" here (is there anything to book at all?), but it is named for what it
+ * counts so a future "3 slots open" caption cannot quietly print the wrong noun.
+ */
 function ApplicationInProgress({
   ccaID,
   app,
-  openSlotCount,
+  openSeatCount,
   onWithdraw,
   withdrawing,
   onCancelSlot,
@@ -323,7 +330,7 @@ function ApplicationInProgress({
 }: {
   ccaID: number;
   app: NonNullable<AppShape>;
-  openSlotCount: number;
+  openSeatCount: number;
   onWithdraw: () => void;
   withdrawing: boolean;
   onCancelSlot: () => void;
@@ -346,7 +353,7 @@ function ApplicationInProgress({
           </span>
           <p className="mt-2 text-sm text-gray-600">
             {app.status === "submitted" &&
-              (openSlotCount > 0
+              (openSeatCount > 0
                 ? "Your application is in. Book an interview slot below."
                 : "Your application is in. The CCA will open interview slots soon.")}
             {scheduled && "Your interview is booked."}
@@ -382,7 +389,7 @@ function ApplicationInProgress({
                     {cancelingSlot ? "Cancelling…" : "Cancel interview"}
                   </button>
                 </>
-              ) : openSlotCount > 0 ? (
+              ) : openSeatCount > 0 ? (
                 <Button
                   onClick={() => setPicking(true)}
                   className="inline-flex items-center gap-1.5"
