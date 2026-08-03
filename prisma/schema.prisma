@@ -561,9 +561,25 @@ model CcaInterviewSlot {
   /// (services/ccaApplications.ts) and NEVER inline `?? 1`, so the legacy
   /// default lives in exactly one place.
   capacity   Int?
+  /// The facility this slot runs in, or null/absent for a free-text location.
+  /// When set, `location` is the DENORMALIZED facility name (same rule as
+  /// Event.location) so every display path renders without a join.
+  /// NOT a foreign key — Bookings/Facilities key on facilityID.
+  facilityID Int?
+  /// The bookingID of the facility booking that holds the room for this slot.
+  /// ONE booking covers a whole generated window, so every slot in that batch
+  /// carries the SAME bookingID; the room is released only when the last live
+  /// slot pointing at it is canceled. Null when the location is free text, or
+  /// for any slot written before facility booking existed.
+  bookingID  Int?
   canceledAt DateTime?
   createdAt  DateTime? @default(now())
 
+  /// NO index on bookingID, deliberately. The release check ("is any live slot
+  /// still holding this room?") filters ccaID + bookingID and is covered by the
+  /// ccaID prefix below, so these two fields need no `db push` — which matters,
+  /// because a push silently drops the non-schema indexes this database relies
+  /// on (email_unique_ci). `prisma generate` is enough for this change.
   @@index([ccaID, startTime, endTime], map: "cca_time")
 }
 

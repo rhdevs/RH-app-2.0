@@ -18,7 +18,11 @@ import {
   nextEventId,
   withEventLock,
 } from "~/server/api/services/events";
-import { nextBookingId, withFacilityLock } from "~/server/api/services/booking";
+import {
+  nextBookingId,
+  resolveFacility,
+  withFacilityLock,
+} from "~/server/api/services/booking";
 import { canonicalUserID } from "~/lib/identity";
 import {
   createDraftInput,
@@ -208,25 +212,9 @@ async function attachCcaNames(
   return byID;
 }
 
-/**
- * Resolve a chosen facility to its id + name. The name is denormalized into
- * Event.location so every display path (timeline, detail, CSV) renders the
- * location without a join; the id drives the auto-booking on approval. Throws
- * if the facility does not exist.
- */
-async function resolveFacility(
-  db: PrismaClient,
-  facilityID: number,
-): Promise<{ facilityID: number; name: string }> {
-  const f = await db.facilities.findUnique({
-    where: { facilityID },
-    select: { facilityName: true },
-  });
-  if (!f) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "NO_SUCH_FACILITY" });
-  }
-  return { facilityID, name: f.facilityName };
-}
+/* resolveFacility lives in services/booking.ts — the interview-slot flow
+ * resolves a facility the same way, and one definition is what keeps the two
+ * agreeing about what a missing facility means. */
 
 /* -------------------------------------------------------------------------- */
 /* Router                                                                      */

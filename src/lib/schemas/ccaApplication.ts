@@ -89,6 +89,12 @@ const epochSeconds = z.number().int().positive();
  * slot they are about to book.
  */
 const capacity = z.number().int().min(1).max(SLOT_CAPACITY_MAX);
+/**
+ * A bookable facility (Facilities.facilityID). HEAD-ONLY, like `capacity`:
+ * choosing one makes the server hold the room, so a resident input must never
+ * carry this key.
+ */
+const facilityID = z.number().int().positive();
 
 /* -------------------------------------------------------------------------- */
 /* Resident inputs                                                             */
@@ -143,9 +149,23 @@ export const slotDraftSchema = z
   });
 export type SlotDraft = z.input<typeof slotDraftSchema>;
 
+/**
+ * Open a batch of slots, optionally IN a facility.
+ *
+ * `facilityID` is on the BATCH, not on each slot, because the room is held once
+ * for the whole window (one Bookings row spanning the first slot's start to the
+ * last slot's end) rather than once per 15-minute slot. Per-slot facilities
+ * would mean per-slot bookings — fifty rows in the facility calendar for one
+ * afternoon of interviews.
+ *
+ * When it is set the server denormalizes the facility NAME into every slot's
+ * `location` (so the resident-facing list still reads "JCRC Room" with no
+ * join), and any `location` text on the drafts is ignored.
+ */
 export const openSlotsInput = z.object({
   ccaID,
   slots: z.array(slotDraftSchema).min(1).max(MAX_SLOTS_PER_OPEN),
+  facilityID: facilityID.optional(),
 });
 export type OpenSlotsInput = z.input<typeof openSlotsInput>;
 

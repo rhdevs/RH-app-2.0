@@ -137,6 +137,87 @@ export const facilityBookingRouter = createTRPCRouter({
       );
     }),
 
+  /**
+   * Every facility, each annotated with whether it is FREE for a given window
+   * and — when it is not — the booking that takes it.
+   *
+   * Deliberately NOT getAvailableFacilities, which returns the free ones and
+   * drops the rest: a picker built on that shows a room vanishing from the list
+   * when the head changes the time, with nothing to say why. A room that reads
+   * "Dance Studio — booked 3:00–4:00 PM" tells them to move the window; a room
+   * that is simply absent tells them the page is broken.
+   *
+   * ADVISORY, exactly like getFacilitiesForBooking (I-7): the window can be
+   * taken between this query and the write, so the booking path re-checks under
+   * withFacilityLock and remains the only thing that can refuse. Never gate a
+   * write on this result alone.
+   *
+   * `conflict` is the EARLIEST overlapping booking, not all of them — the picker
+   * needs one concrete "taken from X to Y" to act on, and a room with three
+   * clashes is no more available than a room with one.
+   */
+  getFacilityAvailability: protectedProcedure
+    .input(
+      z.object({
+        startTime: z.number().int(),
+        endTime: z.number().int(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      if (input.endTime <= input.startTime) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "END_BEFORE_START",
+        });
+      }
+      const [facilities, clashes] = await Promise.all([
+        ctx.db.facilities.findMany({ orderBy: { facilityID: "asc" } }),
+        // Half-open overlap, matching findFacilityConflict and every other
+        // overlap check here: a booking ending exactly when this window starts
+        // does not take the room.
+        ctx.db.bookings.findMany({
+          where: {
+            AND: [
+              { startTime: { lt: input.endTime } },
+              { endTime: { gt: input.startTime } },
+            ],
+          },
+          select: {
+            facilityID: true,
+            startTime: true,
+            endTime: true,
+            eventName: true,
+          },
+          orderBy: { startTime: "asc" },
+        }),
+      ]);
+
+      const firstClash = new Map<number, (typeof clashes)[number]>();
+      for (const c of clashes) {
+        if (!firstClash.has(c.facilityID)) firstClash.set(c.facilityID, c);
+      }
+
+      return facilities.map((f) => {
+        const clash = firstClash.get(f.facilityID);
+        return {
+          facilityID: f.facilityID,
+          facilityName: f.facilityName,
+          facilityLocation: f.facilityLocation,
+          available: clash === undefined,
+          // `eventName` is what the hall calendar already shows publicly for a
+          // booking, so surfacing it here leaks nothing new — and "taken by
+          // Dance Club auditions" is what makes the clash resolvable.
+          conflict: clash
+            ? {
+                startTime: clash.startTime,
+                endTime: clash.endTime,
+                eventName: clash.eventName,
+              }
+            : null,
+        };
+      });
+    }),
+
   // Get booking by bookingID
   getBooking: protectedProcedure
     .input(z.number())

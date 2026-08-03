@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  CalendarClock,
   Check,
   MapPin,
   Pencil,
@@ -59,6 +58,48 @@ function toEpoch(dateStr: string, hhmm: string): number | null {
   }
   return Math.floor(new Date(Y!, M! - 1, D!, h!, m!, 0, 0).getTime() / 1000);
 }
+/**
+ * The window [start, end) for one date plus a from/to time, ROLLING THE END
+ * PAST MIDNIGHT when it would otherwise not be after the start.
+ *
+ * "22:00 → 00:00" is how a 24-hour time picker spells "run until the end of the
+ * day", and "22:00 → 02:00" spells a late session — but read literally against
+ * the same date both land BEFORE the start, so the generator produced zero
+ * candidates and the form looked broken with nothing to explain it. Midnight is
+ * not an edge case here: it is the value a head reaches for whenever the last
+ * interview is the last thing of the day.
+ *
+ * `nextDay` is returned rather than kept quiet so the preview can SAY the window
+ * crosses midnight. A rollover the head did not intend (a mistyped 14:00 → 09:00)
+ * is then visible as "ends tomorrow" plus a preview full of slots, instead of
+ * being applied silently.
+ */
+function toWindow(
+  dateStr: string,
+  fromHHMM: string,
+  toHHMM: string,
+): { start: number; end: number; nextDay: boolean } | null {
+  const start = toEpoch(dateStr, fromHHMM);
+  const sameDayEnd = toEpoch(dateStr, toHHMM);
+  if (start === null || sameDayEnd === null) return null;
+  if (sameDayEnd > start) return { start, end: sameDayEnd, nextDay: false };
+  // Start == end is a typo, not a 24-hour day of interviews. Rolling it over
+  // would silently propose 96 slots off two identical times.
+  if (sameDayEnd === start) return null;
+  // +1 DAY in local terms, via the date parts — NOT +86400 seconds, which is an
+  // hour out either side of a DST change. Singapore has none, but the app's
+  // time inputs are local and this helper should not be the thing that has to
+  // be revisited if that ever stops being true.
+  const [Y, M, D] = dateStr.split("-").map(Number);
+  const [h, m] = toHHMM.split(":").map(Number);
+  if ([Y, M, D, h, m].some((n) => n === undefined || Number.isNaN(n))) {
+    return null;
+  }
+  const end = Math.floor(
+    new Date(Y!, M! - 1, D! + 1, h!, m!, 0, 0).getTime() / 1000,
+  );
+  return { start, end, nextDay: true };
+}
 function toDateInput(epoch: number): string {
   const d = new Date(epoch * 1000);
   const p = (n: number) => String(n).padStart(2, "0");
@@ -78,6 +119,24 @@ function fmtTime(epoch: number | null): string {
 }
 function overlaps(aS: number, aE: number, bS: number, bE: number): boolean {
   return aS < bE && bS < aE;
+}
+
+/**
+ * `value`, but only after it has stopped changing for `ms`.
+ *
+ * The room-availability lookup is keyed on the window the head is typing, and a
+ * `<input type="time">` emits a change per keystroke — without this, "14:30"
+ * fires four range scans of the whole Bookings collection, three of them for
+ * windows that existed for 80ms. Debounce on a STRING key, never on the range
+ * object: a fresh object every render would reset the timer forever.
+ */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
 }
 
 /* ================================ component ================================= */
@@ -130,7 +189,7 @@ export default function InterviewSlots({ ccaID }: { ccaID: number }) {
                   window.confirm(
                     `Clear all ${freeCount} empty slot${
                       freeCount === 1 ? "" : "s"
-                    }? Slots with anyone booked on them are kept.`,
+                    }? Slots with anyone booked on them are kept, and any room held only by the cleared slots is given back.`,
                   )
                 ) {
                   clear.mutate({ ccaID });
@@ -186,9 +245,27 @@ function SlotGenerator({
   // the card afterwards — a per-chip capacity picker in the preview would be a
   // lot of UI for a case that barely happens.
   const [capacity, setCapacity] = useState(SLOT_CAPACITY_DEFAULT);
+  /** "" = no location, "other" = free text, otherwise a facilityID as a string —
+   *  the same encoding the event proposal form uses, so the two location
+   *  pickers behave identically. */
+  const [facilitySelection, setFacilitySelection] = useState("");
   const [location, setLocation] = useState("");
   const [removed, setRemoved] = useState<Set<number>>(new Set());
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Public query (it feeds the signed-out calendar too), so a head with no
+  // facility-booking role still sees the list — booking a room for interviews is
+  // authorised by heading the CCA, and the server is the enforcement point.
+  const facilitiesQuery = api.bookings.getAllFacilities.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+  });
+  const facilities = facilitiesQuery.data ?? [];
+  const facilityID =
+    facilitySelection !== "" && facilitySelection !== "other"
+      ? Number(facilitySelection)
+      : null;
+  const facilityName =
+    facilities.find((f) => f.facilityID === facilityID)?.facilityName ?? null;
 
   const create = api.ccaApplicationsHead.openSlots.useMutation({
     onSuccess: async () => {
@@ -203,11 +280,12 @@ function SlotGenerator({
   // Build the candidate slots from the range + duration, then annotate each with
   // whether it collides with an already-open slot (client-side, so the head sees
   // conflicts before submitting rather than getting a whole-batch rejection).
+  const window = useMemo(() => toWindow(date, from, to), [date, from, to]);
+
   const candidates = useMemo(() => {
-    const startEpoch = toEpoch(date, from);
-    const endEpoch = toEpoch(date, to);
-    if (startEpoch === null || endEpoch === null || duration <= 0) return [];
-    if (endEpoch <= startEpoch) return [];
+    if (window === null || duration <= 0) return [];
+    const startEpoch = window.start;
+    const endEpoch = window.end;
     const durSec = duration * 60;
     const gapSec = Math.max(0, gap) * 60;
     const now = Math.floor(Date.now() / 1000);
@@ -236,23 +314,105 @@ function SlotGenerator({
       index += 1;
     }
     return out;
-  }, [date, from, to, duration, gap, existing]);
+  }, [window, duration, gap, existing]);
 
   const creatable = candidates.filter(
     (c) => !c.conflict && !c.past && !removed.has(c.index),
   );
   const overCap = creatable.length > MAX_SLOTS_PER_OPEN;
 
+  /* ----------------------- which rooms are free then ---------------------- */
+
+  // The window that would actually be BOOKED — the first creatable slot's start
+  // to the last one's end, not the typed window, because excluded/past/clashing
+  // chips are never opened and the room is not held for them. Falls back to the
+  // typed window so the picker starts annotating as soon as the times are in,
+  // before a duration has produced any chips.
+  //
+  // A plain derivation, NOT a useMemo: `creatable` is a fresh array every
+  // render, so a memo keyed on it would recompute anyway — and the STRING is
+  // what the rest of this depends on, which is stable whenever the times are.
+  const rangeKey =
+    creatable.length > 0
+      ? `${Math.min(...creatable.map((c) => c.startTime))}:${Math.max(
+          ...creatable.map((c) => c.endTime),
+        )}`
+      : window
+        ? `${window.start}:${window.end}`
+        : "";
+  const settledKey = useDebounced(rangeKey, 400);
+  const settledRange = useMemo(() => {
+    if (settledKey === "") return null;
+    const [s, e] = settledKey.split(":").map(Number);
+    return s !== undefined && e !== undefined
+      ? { startTime: s, endTime: e }
+      : null;
+  }, [settledKey]);
+
+  const availabilityQuery = api.bookings.getFacilityAvailability.useQuery(
+    settledRange ?? { startTime: 0, endTime: 0 },
+    {
+      enabled: settledRange !== null,
+      staleTime: 30 * 1000,
+      // react-query v5 spelling. Keeps the last answer on screen while the next
+      // one loads, so the option labels don't flicker back to bare names.
+      placeholderData: (prev) => prev,
+    },
+  );
+
+  // Only annotate when the ANSWER MATCHES THE WINDOW ON SCREEN. While the head
+  // is still typing, the newest data describes an older window, and a room
+  // labelled "free" for a window nobody asked about is worse than one labelled
+  // nothing at all.
+  const availabilityFresh =
+    rangeKey !== "" && rangeKey === settledKey && !availabilityQuery.isFetching;
+  const availability = useMemo(
+    () =>
+      new Map(
+        (availabilityFresh ? (availabilityQuery.data ?? []) : []).map((a) => [
+          a.facilityID,
+          a,
+        ]),
+      ),
+    [availabilityFresh, availabilityQuery.data],
+  );
+  const freeCount = [...availability.values()].filter((a) => a.available).length;
+  const selectedAvailability =
+    facilityID !== null ? (availability.get(facilityID) ?? null) : null;
+  const selectedBusy =
+    selectedAvailability !== null && !selectedAvailability.available
+      ? selectedAvailability.conflict
+      : null;
+
+  /** "Dance Studio" → "Dance Studio — booked 3:00–4:00 PM". */
+  const optionLabel = (f: { facilityID: number; facilityName: string }) => {
+    const a = availability.get(f.facilityID);
+    if (!a || a.available || !a.conflict) return f.facilityName;
+    return `${f.facilityName} — booked ${fmtTime(
+      a.conflict.startTime,
+    )}–${fmtTime(a.conflict.endTime)}`;
+  };
+
+  const msg = create.error?.message ?? "";
+  // The room clash carries the taken window (FACILITY_BOOKED:start:end) so the
+  // head is told WHEN it is taken and can move, rather than just "no".
+  const clash = /^FACILITY_BOOKED:(\d+):(\d+)$/.exec(msg);
   const serverError = create.error
-    ? create.error.message === "DUPLICATE_SLOT"
-      ? "One of these is identical to a slot you've already opened."
-      : create.error.message === "SLOT_OVERLAP"
-        ? "One of these overlaps a slot that was just taken. Refresh and regenerate."
-        : create.error.message === "SLOT_IN_PAST"
-          ? "Some of these are in the past."
-          : create.error.message === "NOT_A_HEAD_OF_THIS_CCA"
-            ? "You're no longer a head of this CCA."
-            : "Those didn't open. Try again."
+    ? clash
+      ? `${facilityName ?? "That room"} is already booked ${fmtTime(
+          Number(clash[1]),
+        )}–${fmtTime(Number(clash[2]))}. Pick another time or room — nothing was opened.`
+      : msg === "NO_SUCH_FACILITY"
+        ? "That room no longer exists. Pick another."
+        : msg === "DUPLICATE_SLOT"
+          ? "One of these is identical to a slot you've already opened."
+          : msg === "SLOT_OVERLAP"
+            ? "One of these overlaps a slot that was just taken. Refresh and regenerate."
+            : msg === "SLOT_IN_PAST"
+              ? "Some of these are in the past."
+              : msg === "NOT_A_HEAD_OF_THIS_CCA"
+                ? "You're no longer a head of this CCA."
+                : "Those didn't open. Try again."
     : null;
 
   const submit = () => {
@@ -269,13 +429,32 @@ function SlotGenerator({
       );
       return;
     }
+    if (facilitySelection === "other" && location.trim() === "") {
+      setFormError("Type the location, or pick a room from the list.");
+      return;
+    }
+    // Advisory check — the server re-checks under the facility lock and is the
+    // only thing that can actually refuse (I-7). This just saves a round trip
+    // for the case the head can already see on screen.
+    if (selectedBusy) {
+      setFormError(
+        `${facilityName} is booked ${fmtTime(
+          selectedBusy.startTime,
+        )}–${fmtTime(selectedBusy.endTime)}. Pick another room or move the window.`,
+      );
+      return;
+    }
     // Validate each against the shared schema before sending. `capacity` is
     // sent explicitly rather than left to the schema default, so what the head
     // sees in the preview is literally what is transmitted.
+    //
+    // `location` is only sent for a free-text choice: when a facility is picked
+    // the SERVER denormalizes its name into every slot, so the browser never
+    // gets to decide what the room is called.
     const slots = creatable.map((c) => ({
       startTime: c.startTime,
       endTime: c.endTime,
-      location: location.trim() || undefined,
+      location: facilityID === null ? location.trim() || undefined : undefined,
       capacity,
     }));
     for (const s of slots) {
@@ -285,7 +464,11 @@ function SlotGenerator({
       }
     }
     setFormError(null);
-    create.mutate({ ccaID, slots });
+    create.mutate({
+      ccaID,
+      slots,
+      ...(facilityID !== null ? { facilityID } : {}),
+    });
   };
 
   return (
@@ -324,16 +507,86 @@ function SlotGenerator({
           />
         </Field>
         <Field label="Location">
-          <input
-            type="text"
-            value={location}
-            maxLength={INTERVIEW_LOCATION_MAX}
-            onChange={(e) => setLocation(e.target.value)}
-            placeholder="e.g. JCRC Room (optional)"
+          <select
+            value={facilitySelection}
+            onChange={(e) => setFacilitySelection(e.target.value)}
             className={inputCls}
-          />
+          >
+            <option value="">No location</option>
+            {facilities.map((f) => {
+              const a = availability.get(f.facilityID);
+              return (
+                <option
+                  key={f.facilityID}
+                  value={String(f.facilityID)}
+                  // Taken rooms stay VISIBLE and disabled rather than being
+                  // filtered out: a room that silently disappears when the head
+                  // changes the time reads as a bug, where "booked 3:00–4:00 PM"
+                  // reads as something to work around.
+                  disabled={a !== undefined && !a.available}
+                >
+                  {optionLabel(f)}
+                </option>
+              );
+            })}
+            <option value="other">Other (type it in)</option>
+          </select>
+          {facilitySelection === "other" && (
+            <input
+              type="text"
+              value={location}
+              maxLength={INTERVIEW_LOCATION_MAX}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="e.g. the void deck outside Block C"
+              className={`${inputCls} mt-1.5`}
+            />
+          )}
         </Field>
       </div>
+
+      {/* What the list is showing right now: whose availability, for when, and
+          whether it is still being worked out. */}
+      {facilitySelection !== "other" && (
+        <p className="mt-2 text-xs text-gray-500">
+          {rangeKey === ""
+            ? "Pick a date and time to see which rooms are free then."
+            : !availabilityFresh
+              ? "Checking which rooms are free…"
+              : `${freeCount} of ${availability.size} room${
+                  availability.size === 1 ? "" : "s"
+                } free ${fmtTime(settledRange!.startTime)}–${fmtTime(
+                  settledRange!.endTime,
+                )}. Booked ones are greyed out.`}
+        </p>
+      )}
+
+      {/* The room was free when it was picked and is not any more — the head
+          changed the times afterwards. Said here rather than left to the server
+          to refuse on submit. */}
+      {selectedBusy && (
+        <p className="mt-2 text-xs font-medium text-red-600">
+          {facilityName} is booked {fmtTime(selectedBusy.startTime)}–
+          {fmtTime(selectedBusy.endTime)}
+          {selectedBusy.eventName ? ` (${selectedBusy.eventName})` : ""} — pick
+          another room or move the window.
+        </p>
+      )}
+
+      {/* Say what picking a room DOES, before it is done: it takes the room out
+          of the hall booking calendar for the whole window. */}
+      {facilityID !== null && selectedBusy === null && (
+        <p className="mt-2 text-xs text-emerald-700">
+          {facilityName} is booked for you the moment you open these slots —
+          one booking covering the whole window, under your name. Cancelling
+          every slot in it gives the room back.
+        </p>
+      )}
+      {facilitySelection === "other" && (
+        <p className="mt-2 text-xs text-gray-500">
+          Free text is a label only — no room is held. Pick a room from the list
+          if you need the hall booking.
+        </p>
+      )}
 
       <div className="mt-3 flex flex-wrap items-end gap-4">
         <div>
@@ -418,6 +671,22 @@ function SlotGenerator({
         </p>
       )}
 
+      {/* An empty preview now EXPLAINS itself. A window that fits nothing used
+          to render as no preview at all and a dead "Open slots" button, which is
+          how the midnight bug read to the heads who hit it: not "your times are
+          impossible" but "the page is broken". */}
+      {date !== "" && from !== "" && to !== "" && candidates.length === 0 && (
+        <p className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {window === null
+            ? "Start and end are the same time — set an end after the start."
+            : duration <= 0
+              ? "Set how many minutes each interview runs."
+              : `${fmtTime(window.start)}–${fmtTime(
+                  window.end,
+                )} isn't long enough for one ${duration}-minute interview. Widen the window or shorten each interview.`}
+        </p>
+      )}
+
       {/* Preview */}
       {candidates.length > 0 && (
         <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
@@ -482,6 +751,19 @@ function SlotGenerator({
               );
             })}
           </ul>
+          {window?.nextDay && (
+            <p className="mt-2 text-xs text-amber-700">
+              This window runs past midnight — it ends at {fmtTime(window.end)}{" "}
+              on {fmtDayTab(window.end)}.
+            </p>
+          )}
+          {facilityID !== null && creatable.length > 0 && (
+            <p className="mt-2 text-xs text-emerald-700">
+              {facilityName} will be booked{" "}
+              {fmtTime(Math.min(...creatable.map((c) => c.startTime)))}–
+              {fmtTime(Math.max(...creatable.map((c) => c.endTime)))}.
+            </p>
+          )}
           {candidates.some((c) => c.conflict) && (
             <p className="mt-2 text-xs text-gray-500">
               Struck-through times overlap slots you&rsquo;ve already opened and
@@ -683,6 +965,22 @@ function SlotCard({ ccaID, slot }: { ccaID: number; slot: Slot }) {
         <p className={`mt-0.5 inline-flex items-center gap-1 text-xs ${muted}`}>
           <MapPin className="h-3 w-3" />
           {slot.location}
+          {/* A held room reads differently from a typed-in label: one of them
+              means nobody else can have the room. */}
+          {slot.facilityID != null && (
+            <span
+              title={
+                slot.booking
+                  ? `Room booked ${fmtTime(slot.booking.startTime)}–${fmtTime(
+                      slot.booking.endTime,
+                    )}`
+                  : "Room booking was removed — the room is no longer held"
+              }
+              className={slot.booking ? "" : "text-red-600"}
+            >
+              {slot.booking ? "· booked" : "· not held"}
+            </span>
+          )}
         </p>
       )}
       <p className={`mt-1 text-xs font-medium tabular-nums ${muted}`}>
@@ -780,12 +1078,14 @@ function SlotEditForm({
   });
 
   const save = () => {
-    const startTime = toEpoch(date, from);
-    const endTime = toEpoch(date, to);
-    if (startTime === null || endTime === null) {
+    // Same midnight rollover as the generator: an interview that ends at 00:00
+    // ends at midnight TONIGHT, not this morning.
+    const win = toWindow(date, from, to);
+    if (win === null) {
       setErr("Pick a date, start and end.");
       return;
     }
+    const { start: startTime, end: endTime } = win;
     // Refuse locally what the server refuses, so the head is told BEFORE the
     // round trip that they would be evicting someone.
     if (capacity < slot.occupancy) {
@@ -816,16 +1116,26 @@ function SlotEditForm({
     update.mutate(parsed.data);
   };
 
+  const upMsg = update.error?.message ?? "";
+  const outside = /^OUTSIDE_BOOKING:(\d+):(\d+)$/.exec(upMsg);
   const serverErr = update.error
-    ? update.error.message === "SLOT_OVERLAP"
-      ? "That overlaps another slot."
-      : update.error.message === "SLOT_IN_PAST"
-        ? "That's in the past."
-        : update.error.message === "SLOT_BOOKED"
-          ? "Someone's booked on this slot — you can change how many people it takes, but not when or where. Cancel it instead."
-          : update.error.message === "CAPACITY_BELOW_OCCUPANCY"
-            ? "Someone booked while you were editing — capacity can't go below the number already on this slot."
-            : "That didn't save."
+    ? outside
+      ? `${slot.location ?? "That room"} is only held ${fmtTime(
+          Number(outside[1]),
+        )}–${fmtTime(
+          Number(outside[2]),
+        )}. Keep this slot inside that, or cancel it and open a new window.`
+      : upMsg === "FACILITY_LOCATION_LOCKED"
+        ? "This slot's location is the room booked for it — cancel it and open a new one to move rooms."
+        : upMsg === "SLOT_OVERLAP"
+          ? "That overlaps another slot."
+          : upMsg === "SLOT_IN_PAST"
+            ? "That's in the past."
+            : upMsg === "SLOT_BOOKED"
+              ? "Someone's booked on this slot — you can change how many people it takes, but not when or where. Cancel it instead."
+              : upMsg === "CAPACITY_BELOW_OCCUPANCY"
+                ? "Someone booked while you were editing — capacity can't go below the number already on this slot."
+                : "That didn't save."
     : null;
 
   return (
@@ -838,13 +1148,23 @@ function SlotEditForm({
         <input type="date" value={date} disabled={locked} onChange={(e) => setDate(e.target.value)} className={inputCls} />
         <input type="time" value={from} disabled={locked} onChange={(e) => setFrom(e.target.value)} className={inputCls} />
         <input type="time" value={to} disabled={locked} onChange={(e) => setTo(e.target.value)} className={inputCls} />
+        {/* A booked room is not editable text: `location` IS the facility's
+            name, and the server refuses to change it (FACILITY_LOCATION_LOCKED)
+            because moving rooms means releasing one booking and taking another.
+            Shown, disabled, rather than hidden — the head still needs to see
+            where the interview is. */}
         <input
           type="text"
           value={location}
-          disabled={locked}
+          disabled={locked || slot.facilityID != null}
           maxLength={INTERVIEW_LOCATION_MAX}
           onChange={(e) => setLocation(e.target.value)}
           placeholder="Location"
+          title={
+            slot.facilityID != null
+              ? "Booked room — cancel the slot to move rooms"
+              : undefined
+          }
           className={inputCls}
         />
         <label className="text-sm">
@@ -867,6 +1187,13 @@ function SlotEditForm({
           ? ` · ${slot.occupancy} already booked (time and location are locked while anyone is booked)`
           : ""}
       </p>
+      {slot.facilityID != null && slot.booking && (
+        <p className="text-xs text-emerald-700">
+          {slot.location} is held {fmtTime(slot.booking.startTime)}–
+          {fmtTime(slot.booking.endTime)} — this slot can move anywhere inside
+          that.
+        </p>
+      )}
       {(err ?? serverErr) && <p className="text-sm text-red-600">{err ?? serverErr}</p>}
       <div className="flex items-center gap-2">
         <Button onClick={save} disabled={update.isPending} className="inline-flex items-center gap-1.5">
