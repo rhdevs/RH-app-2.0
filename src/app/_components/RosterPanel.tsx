@@ -117,9 +117,6 @@ export default function RosterPanel({
       "Matric",
       "Block",
       "Telegram",
-      "Bio",
-      "Membership records",
-      "Notes",
     ];
     const rows = dir.entries.map((e) => [
       e.name ?? (e.resolved ? "" : "Unmatched record"),
@@ -129,9 +126,6 @@ export default function RosterPanel({
       e.matric ?? "",
       e.block != null ? String(e.block) : "",
       e.telegramHandle ? `@${e.telegramHandle}` : "",
-      e.bio ?? "",
-      String(e.membershipRecords),
-      e.note ?? "",
     ]);
     const slug =
       (dir.cca.ccaName ?? `cca-${ccaID}`)
@@ -248,7 +242,7 @@ export default function RosterPanel({
               !!directory.error ||
               (directory.data?.entries.length ?? 0) === 0
             }
-            title="Download every member and their details as an Excel file"
+            title="Download every member's contact details as an Excel file"
           >
             <Download className="mr-2 h-4 w-4" />
             Export to Excel
