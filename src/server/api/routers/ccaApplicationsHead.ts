@@ -17,6 +17,12 @@ import {
   withCcaLock,
 } from "~/server/api/services/ccaApplications";
 import {
+  findFacilityConflict,
+  nextBookingId,
+  resolveFacility,
+  withFacilityLock,
+} from "~/server/api/services/booking";
+import {
   addNoteInput,
   cancelSlotInput,
   ccaTargetInput,
@@ -146,6 +152,56 @@ function overlaps(
   bEnd: number,
 ): boolean {
   return aStart < bEnd && bStart < aEnd;
+}
+
+/**
+ * Release the facility bookings that no longer hold anything.
+ *
+ * ONE booking covers a whole generated window, so several slots share a
+ * bookingID; the room must be freed exactly when the LAST live slot pointing at
+ * it goes away, never on the first cancel. Call this AFTER the slots have been
+ * marked canceled, with the bookingIDs those slots carried.
+ *
+ * BEST-EFFORT, like the event-rejection path: a booking that has already been
+ * deleted (by hand, on the bookings page) is not an error, and a failure here
+ * must not roll back a cancel the head has already been told happened. The worst
+ * case is a stale hold on a room, which a human can delete; the alternative —
+ * failing the cancel — leaves applicants booked into an interview that is off.
+ *
+ * `canceledAt` is filtered in JS, not the query: `{ canceledAt: null }` misses
+ * ABSENT fields on Prisma+Mongo, which would make a live slot invisible here and
+ * free a room that is still in use. Same trap as listSlots.
+ */
+async function releaseUnusedBookings(
+  db: PrismaClient,
+  ccaID: number,
+  bookingIDs: readonly number[],
+): Promise<number[]> {
+  const ids = [...new Set(bookingIDs.filter((b): b is number => b !== null))];
+  const released: number[] = [];
+  for (const bookingID of ids) {
+    try {
+      const holders = (
+        await db.ccaInterviewSlot.findMany({
+          where: { ccaID, bookingID },
+          select: { slotID: true, canceledAt: true },
+        })
+      ).filter((s) => s.canceledAt === null);
+      if (holders.length > 0) continue;
+      await db.bookings.deleteMany({ where: { bookingID } });
+      released.push(bookingID);
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          evt: "interview_slot_booking_release_failed",
+          ccaID,
+          bookingID,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
+  }
+  return released;
 }
 
 export const ccaApplicationsHeadRouter = createTRPCRouter({
@@ -343,6 +399,8 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             endTime: true,
             location: true,
             capacity: true,
+            facilityID: true,
+            bookingID: true,
             canceledAt: true,
           },
           orderBy: { startTime: "asc" },
@@ -373,10 +431,31 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         arr.push(c);
         bySlot.set(c.interviewSlotID, arr);
       }
-      const people = await resolveApplicants(
-        ctx.db,
-        slots.flatMap((s) => (bySlot.get(s.slotID) ?? []).map((c) => c.userID)),
-      );
+      // The rooms held for these slots. Sent so the head's edit form can say
+      // WHICH window is held ("2:00–5:00 PM") instead of refusing a move with a
+      // bare error — and so a hold deleted by hand on the bookings page shows up
+      // here as `booking: null` rather than as a silent claim to a room nobody
+      // has any more.
+      const bookingIDs = [
+        ...new Set(
+          slots
+            .map((s) => s.bookingID)
+            .filter((b): b is number => b !== null && b !== undefined),
+        ),
+      ];
+      const [people, bookings] = await Promise.all([
+        resolveApplicants(
+          ctx.db,
+          slots.flatMap((s) => (bySlot.get(s.slotID) ?? []).map((c) => c.userID)),
+        ),
+        bookingIDs.length > 0
+          ? ctx.db.bookings.findMany({
+              where: { bookingID: { in: bookingIDs } },
+              select: { bookingID: true, startTime: true, endTime: true },
+            })
+          : Promise.resolve([]),
+      ]);
+      const bookingByID = new Map(bookings.map((b) => [b.bookingID, b]));
 
       return {
         slots: slots.map((s) => {
@@ -386,6 +465,11 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             startTime: s.startTime,
             endTime: s.endTime,
             location: s.location,
+            facilityID: s.facilityID,
+            booking:
+              s.bookingID != null
+                ? (bookingByID.get(s.bookingID) ?? null)
+                : null,
             canceledAt: s.canceledAt,
             capacity: slotCapacity(s.capacity),
             occupancy: occupants.length,
@@ -404,6 +488,25 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
    * Open one or more interview slots. Rejects a slot in the past, a zero/negative
    * duration (the schema already blocks end<=start), or one overlapping an
    * existing open slot OR another slot in the same batch.
+   *
+   * FACILITY. When `facilityID` is given the room is BOOKED HERE, at open time —
+   * this is the answer to "when does it auto-book?", and it is deliberately
+   * different from events (which book on JCRC approval, because an event is a
+   * proposal until then). A head opening interview slots is already authorised;
+   * there is nothing left to approve, and a room that is only held once someone
+   * books a slot is a room that can be taken from under the whole schedule.
+   *
+   * ONE booking spans the whole window (first start → last end), not one per
+   * slot: the head needs the room for the session, and fifty rows in the
+   * facility calendar for one afternoon helps nobody. A clash REFUSES the entire
+   * batch — unlike the events path, which flags and carries on, because there is
+   * no approval step here to review the flag, and half-opening a schedule into a
+   * room someone else has is worse than opening nothing.
+   *
+   * The facility ROLE gate (getBookableFacilityMap) is intentionally not applied:
+   * heading a CCA that is running interviews IS the authorization, exactly as
+   * JCRC approval is on the events path. The physical time-conflict check is
+   * kept, because two groups cannot share a room whatever their roles say.
    */
   openSlots: identifiedProcedure
     .input(openSlotsInput)
@@ -463,29 +566,105 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           accepted.push({ startTime: s.startTime, endTime: s.endTime });
         }
 
+        // Hold the room BEFORE writing any slot, so a clash leaves nothing
+        // behind. The window is the whole batch: first start → last end.
+        const facility =
+          input.facilityID != null
+            ? await resolveFacility(ctx.db, input.facilityID)
+            : null;
+        let bookingID: number | null = null;
+        if (facility) {
+          const windowStart = Math.min(...input.slots.map((s) => s.startTime));
+          const windowEnd = Math.max(...input.slots.map((s) => s.endTime));
+          const cca = await ctx.db.cCA.findUnique({
+            where: { ccaID: input.ccaID },
+            select: { ccaName: true },
+          });
+          // Nested INSIDE withCcaLock. The two locks are on disjoint keyspaces
+          // (`cca:` vs `facility:`) and are always taken in this order, so they
+          // cannot deadlock against each other.
+          bookingID = await withFacilityLock(
+            ctx.db,
+            facility.facilityID,
+            async () => {
+              const clash = await findFacilityConflict(
+                ctx.db,
+                facility.facilityID,
+                windowStart,
+                windowEnd,
+              );
+              if (clash) {
+                // Times ride in the message so the head is told WHEN the room is
+                // taken and can move the window, instead of "it didn't work".
+                throw new TRPCError({
+                  code: "CONFLICT",
+                  message: `FACILITY_BOOKED:${clash.startTime}:${clash.endTime}`,
+                });
+              }
+              const id = await nextBookingId(ctx.db);
+              await ctx.db.bookings.create({
+                data: {
+                  bookingID: id,
+                  ccaID: input.ccaID,
+                  facilityID: facility.facilityID,
+                  startTime: windowStart,
+                  endTime: windowEnd,
+                  userID,
+                  eventName: `${cca?.ccaName ?? `CCA #${input.ccaID}`} interviews`,
+                  description: `Auto-booked for ${input.slots.length} interview slot(s)`,
+                },
+              });
+              return id;
+            },
+          );
+        }
+
         const batchId = randomUUID();
         const created: number[] = [];
-        for (const s of input.slots) {
-          const slotID = await nextCounter(ctx.db, SLOT_COUNTER_KEY);
-          await ctx.db.ccaInterviewSlot.create({
-            data: {
-              slotID,
-              ccaID: input.ccaID,
-              startTime: s.startTime,
-              endTime: s.endTime,
-              location: s.location ?? null,
-              createdBy: userID,
-              createdAt: new Date(),
-              // EXPLICIT, never absent — Prisma+Mongo's null filter does not
-              // match an absent field, and `capacity` is written as a real
-              // number for the same reason: a row whose capacity is absent
-              // reads back as null and only survives because slotCapacity()
-              // normalises it. New rows should not need that rescue.
-              capacity: s.capacity,
-              canceledAt: null,
-            },
-          });
-          created.push(slotID);
+        try {
+          for (const s of input.slots) {
+            const slotID = await nextCounter(ctx.db, SLOT_COUNTER_KEY);
+            await ctx.db.ccaInterviewSlot.create({
+              data: {
+                slotID,
+                ccaID: input.ccaID,
+                startTime: s.startTime,
+                endTime: s.endTime,
+                // A facility wins over any free text on the draft: `location`
+                // is the DENORMALIZED name, so every reader (the resident slot
+                // list, the run-sheet) renders the room with no join.
+                location: facility ? facility.name : (s.location ?? null),
+                createdBy: userID,
+                createdAt: new Date(),
+                // EXPLICIT, never absent — Prisma+Mongo's null filter does not
+                // match an absent field, and `capacity` is written as a real
+                // number for the same reason: a row whose capacity is absent
+                // reads back as null and only survives because slotCapacity()
+                // normalises it. New rows should not need that rescue.
+                capacity: s.capacity,
+                facilityID: facility ? facility.facilityID : null,
+                bookingID,
+                canceledAt: null,
+              },
+            });
+            created.push(slotID);
+          }
+        } catch (err) {
+          // Never leave a room held for slots that do not exist. The slots
+          // written before the failure are canceled too, so the batch is
+          // all-or-nothing from the head's point of view.
+          if (created.length > 0) {
+            await ctx.db.ccaInterviewSlot.updateMany({
+              where: { slotID: { in: created } },
+              data: { canceledAt: new Date() },
+            });
+          }
+          if (bookingID !== null) {
+            await ctx.db.bookings
+              .deleteMany({ where: { bookingID } })
+              .catch(() => undefined);
+          }
+          throw err;
         }
 
         await writeAudit(ctx.db, {
@@ -496,13 +675,24 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           batchId,
           // The capacity is in the audit line because "we opened 20 slots" and
           // "we opened 20 slots for 6 people each" are very different decisions
-          // to have to reconstruct later.
+          // to have to reconstruct later. The room and its booking are there for
+          // the same reason: a held facility is a physical claim, and it must be
+          // attributable to the head who made it.
           reason: `${scope.via}: opened ${created.length} slot(s), ${
             input.slots.reduce((n, s) => n + s.capacity, 0)
-          } seat(s)`,
+          } seat(s)${
+            facility
+              ? ` in ${facility.name} (booking #${bookingID})`
+              : ""
+          }`,
         });
 
-        return { ccaID: input.ccaID, opened: created.length, slotIDs: created };
+        return {
+          ccaID: input.ccaID,
+          opened: created.length,
+          slotIDs: created,
+          bookingID,
+        };
       });
     }),
 
@@ -541,6 +731,8 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             endTime: true,
             location: true,
             capacity: true,
+            facilityID: true,
+            bookingID: true,
             canceledAt: true,
           },
         });
@@ -575,6 +767,42 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         const now = Math.floor(Date.now() / 1000);
         if (input.endTime <= now) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "SLOT_IN_PAST" });
+        }
+
+        // A slot in a booked room may be nudged WITHIN the window that was held
+        // for it, but never outside it and never renamed.
+        //
+        // The room is held once for a whole batch, so several slots share this
+        // booking: growing it for one of them could clash with another CCA, and
+        // shrinking it would hand away time the sibling slots are still using.
+        // Changing the ROOM is likewise a cancel-and-reopen, not an edit — the
+        // same rule the time already follows on an occupied slot. The alternative
+        // (re-booking per edited slot) fragments one afternoon's hold into a
+        // dozen rows and has to reason about a slot conflicting with its own
+        // batch's booking.
+        if (slot.facilityID != null) {
+          if ((nextLocation ?? "") !== (slot.location ?? "")) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "FACILITY_LOCATION_LOCKED",
+            });
+          }
+          const held =
+            slot.bookingID != null
+              ? await ctx.db.bookings.findUnique({
+                  where: { bookingID: slot.bookingID },
+                  select: { startTime: true, endTime: true },
+                })
+              : null;
+          if (
+            held &&
+            (input.startTime < held.startTime || input.endTime > held.endTime)
+          ) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: `OUTSIDE_BOOKING:${held.startTime}:${held.endTime}`,
+            });
+          }
         }
 
         // Overlap against every OTHER non-canceled slot for this CCA.
@@ -650,7 +878,12 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
       return withCcaLock(ctx.db, input.ccaID, async () => {
         const slot = await ctx.db.ccaInterviewSlot.findUnique({
           where: { slotID: input.slotID },
-          select: { slotID: true, ccaID: true, canceledAt: true },
+          select: {
+            slotID: true,
+            ccaID: true,
+            bookingID: true,
+            canceledAt: true,
+          },
         });
         if (!slot || slot.ccaID !== input.ccaID || slot.canceledAt !== null) {
           throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_SLOT" });
@@ -680,6 +913,13 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           data: { canceledAt: new Date() },
         });
 
+        // AFTER the cancel, so the just-canceled slot no longer counts as a
+        // holder. Frees the room only if this was the last live slot on it.
+        const released =
+          slot.bookingID != null
+            ? await releaseUnusedBookings(ctx.db, input.ccaID, [slot.bookingID])
+            : [];
+
         await writeAudit(ctx.db, {
           actorUserID: userID,
           actorRoles: roles,
@@ -690,10 +930,18 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             reverted.count > 0
               ? ` (reverted ${reverted.count} application(s) to submitted)`
               : ""
+          }${
+            released.length > 0
+              ? ` (released facility booking #${released.join(", #")})`
+              : ""
           }`,
         });
 
-        return { slotID: input.slotID, revertedCount: reverted.count };
+        return {
+          slotID: input.slotID,
+          revertedCount: reverted.count,
+          releasedBookings: released.length,
+        };
       });
     }),
 
@@ -723,19 +971,17 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         const [all, occupancy] = await Promise.all([
           ctx.db.ccaInterviewSlot.findMany({
             where: { ccaID: input.ccaID },
-            select: { slotID: true, canceledAt: true },
+            select: { slotID: true, bookingID: true, canceledAt: true },
           }),
           occupancyBySlot(ctx.db, input.ccaID),
         ]);
-        const freeIDs = all
-          .filter(
-            (s) =>
-              s.canceledAt === null && (occupancy.get(s.slotID) ?? 0) === 0,
-          )
-          .map((s) => s.slotID);
+        const free = all.filter(
+          (s) => s.canceledAt === null && (occupancy.get(s.slotID) ?? 0) === 0,
+        );
+        const freeIDs = free.map((s) => s.slotID);
 
         if (freeIDs.length === 0) {
-          return { ccaID: input.ccaID, cleared: 0 };
+          return { ccaID: input.ccaID, cleared: 0, releasedBookings: 0 };
         }
 
         // Mark them canceled by slotID list (not a null-filter), so absent-field
@@ -745,15 +991,34 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           data: { canceledAt: new Date() },
         });
 
+        // Then free every room no live slot is standing on any more. A window
+        // that still has ONE booked slot in it keeps its room — clearing the
+        // empties around an interview must not cancel the room it runs in.
+        const released = await releaseUnusedBookings(
+          ctx.db,
+          input.ccaID,
+          free
+            .map((s) => s.bookingID)
+            .filter((b): b is number => b !== null && b !== undefined),
+        );
+
         await writeAudit(ctx.db, {
           actorUserID: userID,
           actorRoles: roles,
           targetCcaID: input.ccaID,
           action: "ccaInterviewSlot.clear",
-          reason: `${scope.via}: cleared ${freeIDs.length} free slot(s)`,
+          reason: `${scope.via}: cleared ${freeIDs.length} free slot(s)${
+            released.length > 0
+              ? `, released ${released.length} facility booking(s)`
+              : ""
+          }`,
         });
 
-        return { ccaID: input.ccaID, cleared: freeIDs.length };
+        return {
+          ccaID: input.ccaID,
+          cleared: freeIDs.length,
+          releasedBookings: released.length,
+        };
       });
     }),
 
