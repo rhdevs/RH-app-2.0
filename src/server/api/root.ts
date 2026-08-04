@@ -8,6 +8,7 @@ import { ccaAdminRouter } from "./routers/ccaAdmin";
 import { ccaApplicationsRouter } from "./routers/ccaApplications";
 import { ccaApplicationsHeadRouter } from "./routers/ccaApplicationsHead";
 import { eventRouter } from "./routers/event";
+import { userAdminRouter } from "./routers/userAdmin";
 
 /**
  * This is the primary router for your server.
@@ -19,6 +20,14 @@ export const appRouter = createTRPCRouter({
   bookings: facilityBookingRouter,
   user: userRouter,
   admin: adminRouter,
+  /**
+   * Admin CRUD over user DETAILS (the /admin/users detail dialog). Read/update:
+   * admin + jcrc, behind the manageUserProfiles capability and the G3 target
+   * guard. Delete: admin only, behind deleteUsers AND the default-off
+   * admin.userDelete.enabled switch. EMAIL IS IMMUTABLE and ROLES ARE NOT
+   * WRITTEN here — admin.setUserRoles / grantCcaHead own them (I-14).
+   */
+  userAdmin: userAdminRouter,
   /** Object-scoped CCA reads. Guarded per-ccaID, not per-role — see cca.ts. */
   cca: ccaRouter,
   /** Admin-only CCA management, behind the cca.management.enabled switch. */

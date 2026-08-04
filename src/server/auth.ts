@@ -32,6 +32,11 @@ import {
   getAuthEnforcement,
   isMatricRequired,
 } from "~/server/api/services/access";
+// The ONE derivation of "does another live User row resolve to this NUSNET id".
+// Imported rather than restated: a second copy is a second chance to write the
+// equality-on-email version, which misses the whitespace variants that are
+// precisely the rows the merge scripts delete. See the deleted-row branch below.
+import { findCanonicalIdCollisions } from "~/server/api/services/userAdmin";
 
 /**
  * D-7 + I-12. THE eligibility predicate for sign-in, and the only one. The
@@ -179,6 +184,31 @@ declare module "next-auth" {
        * again, one layer down.
        */
       hasIdentity: boolean;
+      /**
+       * The `User` row this session was minted against (`session.user.id`, the
+       * Mongo `_id` frozen into the JWT at sign-in) NO LONGER EXISTS.
+       *
+       * A SEPARATE FACT FROM `eligible`, and it has to be, because two very
+       * different things produce it and only one of them is a revocation:
+       *   - `userAdmin.delete` removed the account. The human is gone;
+       *     `eligible` goes false with this.
+       *   - an account MERGE removed the LOSING row (merge-by-canonical.mjs and
+       *     the four one-off fix-*.mjs scripts all end in
+       *     `db.user.delete({ where: { id } })`). The human is fine, their
+       *     surviving row and every canonical-keyed record of theirs are intact,
+       *     and `eligible` must NOT move — marking them ineligible would 403
+       *     every request they make for up to the 30-day JWT lifetime for having
+       *     been on the wrong half of a duplicate pair.
+       *
+       * RENDER-LAYER ONLY, like `hasIdentity`. It exists so MatricGate has
+       * somewhere to send these sessions: in both cases the token points at a
+       * row that is gone and the only action that resolves it is signing out and
+       * back in. Without it the deleted case renders the whole app shell with
+       * every tRPC call failing FORBIDDEN and no explanation, because
+       * `hasIdentity` is still true (the email still canonicalises) and every
+       * other gate flag was set to its non-blocking value.
+       */
+      accountMissing: boolean;
       /**
        * Live role list, re-read from the database on EVERY session read
        * (invariant I-4 — never baked into the 30-day JWT).
@@ -397,6 +427,10 @@ export const authOptions = {
         // it is line 302's value, named). Deliberately NOT flag-aware: unlike
         // `eligible` below it does not move when a kill switch moves.
         session.user.hasIdentity = userID !== null;
+        // Default for every path below. Only the deleted-account branch raises
+        // it, and it must be a boolean on every branch — MatricGate reads it
+        // first, and `undefined` there would be a silent "everything is fine".
+        session.user.accountMissing = false;
         // I-11. `eligible` is the D-7 DECISION, so it follows the switch: with
         // the flag "off" nobody is marked ineligible and protectedProcedure's
         // backstop never fires, which is what keeps deploy day inert for
@@ -474,7 +508,7 @@ export const authOptions = {
         // user. The two lookups beside it predate that rule; a NEW promise here
         // must not widen the blast radius, so a ProfileCompletion fault degrades
         // to "not flagged" (no prompt) rather than to "logged out".
-        const [record, roleRow, matricRequired, completionRow, userDoc] =
+        const [record, roleRow, matricRequired, completionRow, userRead] =
           await Promise.all([
             db.userMatric.findUnique({ where: { userID } }),
             db.userRole.findUnique({ where: { userID } }),
@@ -487,13 +521,132 @@ export const authOptions = {
             // bare read throws on a passwordHash-less Google row (I-2), and the
             // `.catch` upholds rule 1 (this callback must never throw): a fault
             // degrades to "no profile data" -> not gated, never logged out.
+            //
+            // WRAPPED IN A TAG rather than collapsed to `null`. "The read
+            // faulted" and "the row is not there" are DIFFERENT FACTS and the
+            // branch below acts on only one of them; `.catch(() => null)` erases
+            // the distinction, and acting on the merged value would log users
+            // out on a transient Atlas hiccup. `ok` is the discriminator.
             db.user
               .findUnique({
                 where: { id: session.user.id },
-                select: { displayName: true, telegramHandle: true, block: true },
+                select: {
+                  displayName: true,
+                  telegramHandle: true,
+                  block: true,
+                },
               })
-              .catch(() => null),
+              .then((row) => ({ ok: true as const, row }))
+              .catch(() => ({ ok: false as const, row: null })),
           ]);
+
+        const userDoc = userRead.row;
+
+        /* ---- THE User ROW THIS TOKEN NAMES IS GONE -------------------------
+         * Sessions are JWTs with a 30-day maxAge and there is NO server-side
+         * session store to delete, so `userAdmin.delete` cannot revoke a token
+         * that is already in a browser. Without this branch the delete is not a
+         * delete: the very next request from that browser reaches the I-8b
+         * self-heal below, `stored` is [] (the cascade removed the UserRole
+         * document), and `ensureBaseline` UPSERTS a fresh
+         * `UserRole { roles: ["resident"] }` under the departed canonical id —
+         * re-creating exactly the orphaned role row that 05-verification.md
+         * §613 names as escalation residue and that the cascade deletes in its
+         * step 2. From there `user.setMatric` (a plain protectedProcedure)
+         * re-admits them through matricProcedure and they can write Bookings and
+         * Posts keyed to a userID with no User row, for up to a month.
+         *
+         * ONLY on a PROVABLY absent row (`ok` and no row). A faulted read keeps
+         * the old degrade-safely behaviour — over-prompt, never log out.
+         *
+         * "THE ROW IS GONE" IS NOT "THE ACCOUNT WAS DELETED", and conflating the
+         * two was a lockout. `session.user.id` is the `_id` frozen into the JWT
+         * at sign-in, and FIVE remediation scripts delete `User` rows as their
+         * NORMAL operation — merge-by-canonical.mjs, fix-claresta-duplicate.mjs,
+         * fix-lgd-duplicate.mjs, merge-mingyuan-duplicate.mjs, dedupe-users.mjs
+         * all end in `db.user.delete({ where: { id } })` for the LOSING row of a
+         * duplicate pair. A resident who was signed in on that row keeps a
+         * 30-day token pointing at a dead `_id` while their canonical identity,
+         * their surviving `User` row and every canonical-keyed record of theirs
+         * are intact. Marking them ineligible would make every
+         * protectedProcedure throw NUS_ACCOUNT_REQUIRED — bookings, profile,
+         * CCA, everything — for having been merged.
+         *
+         * So EXISTENCE IS DECIDED ON THE IDENTITY, NOT ON THE `_id`: if any
+         * other live row canonicalises to the same NUSNET id, this was a merge
+         * and `eligible` does not move. Only when nothing of theirs survives is
+         * the session's authority revoked. The probe reuses
+         * `findCanonicalIdCollisions` — the same over-broad-then-filtered
+         * derivation the delete refusal uses — rather than an equality on the
+         * email, which would MISS the whitespace variants that are exactly the
+         * rows the merge scripts delete. It costs a query only on this branch,
+         * which is unreachable in steady state, so rule 2 above still holds. It
+         * cannot throw (rule 1).
+         *
+         * IT FAILS CLOSED — `.catch(() => false)`, i.e. toward REVOKING, and
+         * that is the opposite of this file's usual degrade direction because
+         * here the two outcomes do NOT have different remedies. The usual
+         * argument ("over-prompt, never lock out") assumes a wrongly-gated user
+         * loses something; on THIS branch they do not. `accountMissing` is set
+         * to true on BOTH sides of the probe, and MatricGate checks it FIRST and
+         * routes both cases to /onboarding/ineligible, whose only action is sign
+         * out — which is also the remedy for a merged user (signing back in
+         * mints a JWT against the surviving row). So a merged user misclassified
+         * as "not merged" loses nothing they were not already being redirected
+         * away from, while a DELETED user misclassified as "merged" keeps
+         * `eligible: true` from line 440 and with it full protectedProcedure
+         * authority for up to 30 days — `user.setMatric` is a plain
+         * protectedProcedure and would write a UserMatric row under a canonical
+         * id with no owning User row, and `evaluateBooking`'s repair-on-deny
+         * calls `ensureBaseline`, re-creating the very orphaned UserRole this
+         * branch's early return exists to prevent.
+         *
+         * The asymmetry is why the fault matters at all: this is the single
+         * most timeout-prone query in this callback (an unindexed
+         * `contains` + `mode: "insensitive"` regex, i.e. a collection scan over
+         * ~1382 rows), and it sits in the same Promise.all as an indexed
+         * findUnique that can succeed while it faults. "One collection scan
+         * timed out" must not be a way to keep a deleted account's authority.
+         *
+         * BOTH CASES STILL RETURN EARLY, and that is the security half. There is
+         * deliberately no self-heal and no pending-grant redemption on this
+         * path: `ensureBaseline` would UPSERT a fresh
+         * `UserRole { roles: ["resident"] }` under this canonical id — the
+         * orphaned role row 05-verification.md §613 names as escalation residue
+         * and that the cascade deletes in its step 2 — and it would do so for a
+         * token naming a row nobody can point at. Skipping it closes that in
+         * both cases, whether or not `eligible` moved.
+         *
+         * `accountMissing` is what routes the browser (MatricGate). Without it
+         * this branch left `hasIdentity` true and every other flag non-blocking,
+         * so nothing redirected: the app shell rendered with every tRPC call
+         * failing FORBIDDEN, no explanation and no sign-out prompt, for up to
+         * the 30-day JWT lifetime.
+         */
+        if (userRead.ok && userRead.row === null) {
+          const mergedAway = await findCanonicalIdCollisions(
+            db,
+            userID,
+            session.user.id,
+          )
+            .then((rows) => rows.length > 0)
+            // UNPROVEN COLLISION => NOT MERGED => authority revoked. See the
+            // "fails closed" paragraph above before changing this to `true`.
+            .catch(() => false);
+
+          session.user.accountMissing = true;
+          // Authority is revoked ONLY when nothing of theirs survives.
+          if (!mergedAway) session.user.eligible = false;
+          session.user.matric = null;
+          session.user.hasMatric = false;
+          session.user.matricRequired = false;
+          session.user.profileNeedsFields = [];
+          session.user.profileIncomplete = false;
+          session.user.profileMissingFields = [];
+          session.user.roles = [];
+          session.user.isAdmin = false;
+          return session;
+        }
 
         session.user.matric = record?.matric ?? null;
         session.user.hasMatric = Boolean(record?.matric);

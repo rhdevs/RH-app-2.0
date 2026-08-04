@@ -54,6 +54,25 @@ export async function deleteCcaCascade(db: PrismaClient, ccaID: number) {
   });
 }
 
+/**
+ * NOT THE ACCOUNT-DELETION PATH. /admin/users deletes through
+ * `deleteUserAccountCascade` in services/userAdmin.ts.
+ *
+ * This one keys the final delete on the STORED `User.userID` column — a column
+ * holding an A-format matric on ~515 rows and, on the split-identity rows,
+ * ANOTHER LIVE HUMAN'S canonical key — and `user.deleteMany` on a non-unique
+ * scalar can therefore match TWO people. It also leaves UserRole, CcaHead,
+ * UserMatric, ProfileCompletion, CcaApplication and PendingRoleGrant behind; an
+ * orphaned UserRole is inherited by whoever next signs in on that address
+ * (05-verification.md §613) and an orphaned CcaHead keeps a dead `cca_head`
+ * string alive forever (GUARD 2 above).
+ *
+ * See scripts/remediation/fix-claresta-duplicate.mjs and fix-lgd-duplicate.mjs,
+ * both of which carry banner comments refusing to call it for exactly that
+ * reason. It has NO CALLER in src/ and is kept, unchanged, only so those
+ * scripts' warnings still name a real function. Do not "fix" it in place — that
+ * would make four scripts' documented reasoning wrong.
+ */
 export async function deleteUserCascade(db: PrismaClient, userID: string) {
   return db.$transaction(async (tx) => {
     await tx.bookings.deleteMany({ where: { userID } });

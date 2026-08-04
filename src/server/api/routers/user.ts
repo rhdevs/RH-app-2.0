@@ -8,8 +8,15 @@ import {
   MATRIC_RE,
   type ProfileCompletionField,
 } from "~/lib/schemas/profile";
-import type { PrismaClient } from "@prisma/client";
 import { getUserRoles } from "../services/access";
+// THE shared profile writers. MOVED out of this file (not copied) when the
+// admin user-detail surface gained a profile edit — see the header of
+// services/profile.ts for why a second matric writer is the specific hazard.
+import {
+  assertMatricUnclaimed,
+  clearable,
+  writeMatric,
+} from "../services/profile";
 import { isDisplayNameValid } from "~/lib/profileCompleteness";
 
 // Matric number: "A" + 7 digits + an uppercase letter, e.g. A0234567X. The
@@ -37,125 +44,17 @@ export type ProfileCCA = {
 type RawUserCcaDoc = { userCCA?: unknown; userID?: unknown };
 
 /* -------------------------------------------------------------------------- */
-/* D-5: how a cleared optional String is persisted                             */
+/* D-5 / THE matric writer — now in services/profile.ts                        */
 /* -------------------------------------------------------------------------- */
-
-/**
- * OPEN QUESTION — the user must run the step-0 $jsonSchema dump before this is
- * settled. The `User` collection is $jsonSchema-guarded, and `String?` in the
- * Prisma schema means "optional/absent", NOT "null-accepting": Prisma infers
- * nullability from a missing key, not from the validator. No existing write path
- * has ever produced a null here (register/route.ts writes concrete values after
- * a presence check; the old updateUserData always wrote strings), so the
- * validator may well declare `bsonType: "string"` and reject the first
- * "clear my handle" save at the database.
- *
- * Until the dump is read, clearing is routed through this ONE helper so the
- * answer is a one-line flip rather than a hunt:
- *
- *   Branch A — bsonType is an array including "null"  ->  CLEAR_MODE = "null"
- *   Branch B — bsonType excludes null (bare "string") ->  CLEAR_MODE = "unset"
- *   Branch C — the field is in the validator's `required` array -> it cannot be
- *              cleared at all; make it required in updateProfileInput with
- *              `.refine((v) => v !== "")` and drop the clear affordance from the
- *              modal, rather than shipping a UI control that always errors.
- *
- * "unset" is the SAFE-UNDER-BOTH default and is why it is selected here: Prisma
- * Mongo's `{ unset: true }` removes the key, which every branch-A validator also
- * accepts (an optional field is satisfied by absence), whereas writing `null`
- * under branch B is rejected. Reads are identical either way — an absent key
- * deserialises as `null` — so no client code depends on this choice.
- *
- * If the dump comes back branch A and you prefer a literal null on disk, flip
- * the constant. If it comes back branch C, take the branch-C action above; this
- * helper cannot save you there, because the write itself is illegal.
- *
- * scripts/remediation/normalize-telegram-handles.mjs makes the SAME decision and
- * must be flipped in the same commit ($unset vs $set: null).
+/*
+ * `clearable` (with the whole D-5 branch-A/B/C note), `writeMatric` and
+ * `assertMatricUnclaimed` were MOVED to `../services/profile`, unchanged, when
+ * `routers/userAdmin.ts` gained an admin-side profile edit. Nothing about their
+ * behaviour changed and the call order below is identical; they live one level
+ * down so that BOTH routers share one matric writer and one CLEAR_MODE constant.
+ * Do not re-declare a local copy here — read the header of services/profile.ts
+ * first if you are tempted.
  */
-const CLEAR_MODE: "null" | "unset" = "unset";
-
-type ClearableString = string | null | { unset: true };
-
-/** "" from the shared schema means "clear it"; anything else is a literal set. */
-function clearable(value: string): ClearableString {
-  if (value !== "") return value;
-  return CLEAR_MODE === "unset" ? { unset: true } : null;
-}
-
-/* -------------------------------------------------------------------------- */
-/* THE matric writer                                                           */
-/* -------------------------------------------------------------------------- */
-
-/**
- * The ONE path that writes UserMatric. `setMatric` (the matric onboarding page)
- * and `completeProfile` (the post-merge form) both go through here, so there is
- * exactly one place that decides how a matric is keyed and persisted.
- *
- * Extracted rather than copied: a second upsert would be a second chance to key
- * it on `session.user.id` (the Mongo _id) instead of the canonical `userID`,
- * which is the mis-keying that produced the duplicate rows this whole feature
- * exists to clean up after. The `userID` parameter is typed non-null, so the
- * ""-key hazard (I-8d) cannot reach this function without a caller's guard
- * having run first — callers guard, this function assumes.
- */
-async function writeMatric(
-  db: PrismaClient,
-  userID: string,
-  matric: string,
-): Promise<string> {
-  const record = await db.userMatric.upsert({
-    where: { userID },
-    create: { userID, matric },
-    update: { matric },
-  });
-  return record.matric;
-}
-
-/**
- * Refuse a matric that a DIFFERENT canonical userID already holds.
- *
- * Why this is a check and not a `@unique` index: `UserMatric.matric` is
- * deliberately non-unique in schema.prisma because the legacy data ALREADY
- * contains duplicate matrics, and bulk resolution needs to READ those rows and
- * report them as AMBIGUOUS rather than have the database refuse to hold them.
- * Adding a unique index would break that remediation path (and could not be
- * created against the live collection anyway while the duplicates exist).
- *
- * But "we must be able to read pre-existing duplicates" is not "a user may
- * newly claim someone else's number". Matric is an identity key in the bulk
- * import: if two accounts hold one matric, an import row can resolve to the
- * wrong person, which is an impersonation primitive, not a display bug. So the
- * WRITE path refuses new collisions while the SCHEMA stays permissive enough to
- * represent the old ones.
- *
- * This is a read-then-write check and is therefore TOCTOU-racy in principle;
- * two users would have to submit the same matric within the same few
- * milliseconds to slip through, and the result is the pre-existing AMBIGUOUS
- * state that bulk resolution already handles rather than a new failure mode.
- *
- * Applied in `setMatric` (self-service) only. `completeProfile` resolves a
- * post-merge flag against a matric the merge itself derived, and hard-failing
- * there would strand a user in a form they cannot clear.
- */
-async function assertMatricUnclaimed(
-  db: PrismaClient,
-  userID: string,
-  matric: string,
-): Promise<void> {
-  const claimedByAnother = await db.userMatric.findFirst({
-    where: { matric, userID: { not: userID } },
-    select: { id: true },
-  });
-
-  if (claimedByAnother) {
-    throw new TRPCError({
-      code: "CONFLICT",
-      message:
-        "That matriculation number is already registered to another account. If you think that is wrong, contact the JCRC.",
-    });
-  }
-}
 
 export const userRouter = createTRPCRouter({
   getCurrentUserData: protectedProcedure.query(async ({ ctx }) => {

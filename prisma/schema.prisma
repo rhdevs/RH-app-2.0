@@ -329,7 +329,20 @@ model RoleAuditLog {
   /// pending.claim | pending.revoke | booking.denied.shadow |
   /// ccaHead.grant | ccaHead.revoke | ccaHead.transfer |
   /// event.approve | event.reject | event.publish | event.cancel |
-  /// event.attendees.export
+  /// event.attendees.export |
+  /// user.detail.read | user.profile.update | user.delete
+  ///
+  /// user.detail.read / user.profile.update / user.delete are the /admin/users
+  /// detail dialog. user.detail.read is a READ — the only one in this list —
+  /// and it is recorded because userAdmin.get discloses matric, telegramHandle
+  /// and bio per target to every jcrc, which listUsers does not; without the row
+  /// a bulk harvest of the hall's PII leaves no trace at all.
+  /// NEITHER WRITE writes a role set — `user.delete` removes the whole UserRole
+  /// DOCUMENT inside the delete transaction (I-14 still holds: applyRoleChange
+  /// and writeCcaHeadString remain the only writers of UserRole.roles). The
+  /// delete's row carries rolesBefore, because it is the only surviving record
+  /// of the privilege that was destroyed — which is why this collection stays
+  /// append-only and is NOT touched by deleteUserAccountCascade.
   action           String
   rolesBefore      String[] @default([])
   rolesAfter       String[] @default([])
