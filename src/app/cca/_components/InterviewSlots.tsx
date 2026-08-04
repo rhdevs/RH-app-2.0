@@ -14,6 +14,13 @@ import {
 import { api, type RouterOutputs } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
+import {
   editSlotInput,
   INTERVIEW_LOCATION_MAX,
   MAX_SLOTS_PER_OPEN,
@@ -35,15 +42,41 @@ function seatsLeft(slot: Slot): number {
   return Math.max(0, slot.capacity - slot.occupancy);
 }
 
-/** Occupant names for a card, in booking order. */
-function occupantNames(slot: Slot): string[] {
-  return slot.occupants.map(
-    (o) => o.applicant.displayName ?? o.applicant.email ?? o.userID,
-  );
+/** Best available human label for an occupant: name, else email, else the id. */
+function applicantLabel(o: Slot["occupants"][number]): string {
+  return o.applicant.displayName ?? o.applicant.email ?? o.userID;
 }
 
-/** How many names a card shows before the rest have to be asked for. */
-const OCCUPANTS_COLLAPSED = 3;
+/** One line of names for the card. Clipped by CSS rather than by count — the
+ *  card is a summary, and the whole roster is one click away in the dialog. */
+function occupantSummary(slot: Slot): string {
+  return slot.occupants.map(applicantLabel).join(", ");
+}
+
+/** Up to two initials for the avatar disc; "?" when there is nothing to take. */
+function initials(label: string): string {
+  const parts = label.trim().split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map((p) => p[0]!.toUpperCase()).join("") || "?";
+}
+
+/**
+ * How each application status reads on the roster, and in what colour.
+ *
+ * Keyed loosely (`string`) rather than by ApplicationStatus: an unknown status
+ * from an older row renders as no badge at all, which is a missing badge rather
+ * than a crash on `undefined.label`.
+ */
+const STATUS_META: Record<string, { label: string; className: string }> = {
+  submitted: { label: "Applied", className: "bg-gray-100 text-gray-700" },
+  interview_scheduled: {
+    label: "Scheduled",
+    className: "bg-amber-100 text-amber-800",
+  },
+  interviewed: { label: "Interviewed", className: "bg-sky-100 text-sky-800" },
+  accepted: { label: "Accepted", className: "bg-emerald-100 text-emerald-800" },
+  rejected: { label: "Rejected", className: "bg-red-100 text-red-700" },
+  withdrawn: { label: "Withdrawn", className: "bg-gray-100 text-gray-500" },
+};
 
 /* ------------------------------- time helpers ------------------------------ */
 
@@ -914,6 +947,7 @@ function ScheduleView({ ccaID, slots }: { ccaID: number; slots: Slot[] }) {
 function SlotCard({ ccaID, slot }: { ccaID: number; slot: Slot }) {
   const utils = api.useUtils();
   const [editing, setEditing] = useState(false);
+  const [viewing, setViewing] = useState(false);
   const occupied = slot.occupancy > 0;
   const full = seatsLeft(slot) === 0;
   const group = slot.capacity > 1;
@@ -954,48 +988,76 @@ function SlotCard({ ccaID, slot }: { ccaID: number; slot: Slot }) {
 
   return (
     <div className={`relative rounded-lg border p-3 ${tone}`}>
-      <p
-        className={`text-sm font-semibold tabular-nums ${
-          full ? "text-white" : "text-gray-800"
-        }`}
+      {/* The card body is the trigger: clicking anywhere on it opens the roster.
+          A BUTTON wrapping the body rather than a handler on the card div, so
+          it is focusable and works from the keyboard — and a sibling of the
+          edit/cancel controls rather than their parent, because nesting those
+          inside it would be invalid HTML and would swallow their clicks. */}
+      <button
+        type="button"
+        onClick={() => setViewing(true)}
+        aria-label={`Who's booked ${fmtTime(slot.startTime)} to ${fmtTime(
+          slot.endTime,
+        )}`}
+        className="block w-full text-left"
       >
-        {fmtTime(slot.startTime)} – {fmtTime(slot.endTime)}
-      </p>
-      {slot.location && (
-        <p className={`mt-0.5 inline-flex items-center gap-1 text-xs ${muted}`}>
-          <MapPin className="h-3 w-3" />
-          {slot.location}
-          {/* A held room reads differently from a typed-in label: one of them
-              means nobody else can have the room. */}
-          {slot.facilityID != null && (
-            <span
-              title={
-                slot.booking
-                  ? `Room booked ${fmtTime(slot.booking.startTime)}–${fmtTime(
-                      slot.booking.endTime,
-                    )}`
-                  : "Room booking was removed — the room is no longer held"
-              }
-              className={slot.booking ? "" : "text-red-600"}
-            >
-              {slot.booking ? "· booked" : "· not held"}
-            </span>
-          )}
+        <p
+          className={`text-sm font-semibold tabular-nums ${
+            full ? "text-white" : "text-gray-800"
+          }`}
+        >
+          {fmtTime(slot.startTime)} – {fmtTime(slot.endTime)}
         </p>
-      )}
-      <p className={`mt-1 text-xs font-medium tabular-nums ${muted}`}>
-        {group ? (
-          <>
-            <Users className="mr-1 inline h-3 w-3 align-[-2px]" />
-            {slot.occupancy}/{slot.capacity} booked
-          </>
-        ) : occupied ? (
-          "Booked"
-        ) : (
-          "Free"
+        {slot.location && (
+          <span
+            className={`mt-0.5 inline-flex items-center gap-1 text-xs ${muted}`}
+          >
+            <MapPin className="h-3 w-3" />
+            {slot.location}
+            {/* A held room reads differently from a typed-in label: one of them
+                means nobody else can have the room. */}
+            {slot.facilityID != null && (
+              <span
+                title={
+                  slot.booking
+                    ? `Room booked ${fmtTime(slot.booking.startTime)}–${fmtTime(
+                        slot.booking.endTime,
+                      )}`
+                    : "Room booking was removed — the room is no longer held"
+                }
+                className={slot.booking ? "" : "text-red-600"}
+              >
+                {slot.booking ? "· booked" : "· not held"}
+              </span>
+            )}
+          </span>
         )}
-      </p>
-      {occupied && <OccupantList slot={slot} muted={muted} />}
+        <span
+          className={`mt-1 block text-xs font-medium tabular-nums ${muted}`}
+        >
+          {group ? (
+            <>
+              <Users className="mr-1 inline h-3 w-3 align-[-2px]" />
+              {slot.occupancy}/{slot.capacity} booked
+            </>
+          ) : occupied ? (
+            "Booked"
+          ) : (
+            "Free"
+          )}
+        </span>
+        {occupied && (
+          <span className={`mt-0.5 block truncate text-xs ${muted}`}>
+            {occupantSummary(slot)}
+          </span>
+        )}
+      </button>
+
+      <SlotOccupantsDialog
+        slot={slot}
+        open={viewing}
+        onOpenChange={setViewing}
+      />
 
       {/* Actions — always visible so they work on touch too. */}
       <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
@@ -1045,39 +1107,118 @@ function SlotCard({ ccaID, slot }: { ccaID: number; slot: Slot }) {
 }
 
 /**
- * Who is booked on this slot. Everyone is reachable HERE, on the card — the
- * head running a group session needs the whole room, and the summary this
- * replaces stopped at three names with no way to see the rest short of the
- * run-sheet.
+ * Everyone booked on one slot.
  *
- * Still collapsed by default, because capacity goes to 20 and twenty names in
- * every card would push the day's slots off the screen. The names wrap rather
- * than `truncate`, so what IS shown is shown in full: the old one-line clamp
- * could cut a name off mid-word even when there were only two of them.
+ * The card can only ever be a summary — it is one of up to a dozen in a
+ * three-column grid, and capacity goes to 20 — so the full roster lives here,
+ * where there is room to give each person a line of their own with the matric
+ * and email the head needs to actually identify them.
+ *
+ * Rendered per card rather than once for the day: Radix only mounts the
+ * content while `open`, so the closed ones cost nothing.
  */
-function OccupantList({ slot, muted }: { slot: Slot; muted: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const names = occupantNames(slot);
-  const hidden = names.length - OCCUPANTS_COLLAPSED;
-  const shown = expanded ? names : names.slice(0, OCCUPANTS_COLLAPSED);
+function SlotOccupantsDialog({
+  slot,
+  open,
+  onOpenChange,
+}: {
+  slot: Slot;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const free = seatsLeft(slot);
 
   return (
-    <p className={`mt-0.5 text-xs ${muted}`}>
-      {shown.join(", ")}
-      {hidden > 0 && (
-        <>
-          {expanded ? " · " : " "}
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            aria-expanded={expanded}
-            className="font-medium underline underline-offset-2 hover:no-underline"
-          >
-            {expanded ? "Show fewer" : `+${hidden} more`}
-          </button>
-        </>
-      )}
-    </p>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* `gap-0 p-0` undoes the primitive's uniform padding so the header can
+          run edge to edge in colour. The `[&>button]` rule recolours the
+          built-in close X, which is foreground-dark by default and would sit
+          nearly invisible on the emerald header. */}
+      <DialogContent className="max-w-md gap-0 overflow-hidden p-0 [&>button]:text-white/70 [&>button]:hover:text-white">
+        <DialogHeader className="space-y-0 bg-gradient-to-br from-emerald-600 to-emerald-700 p-5 text-left">
+          <DialogTitle className="pr-8 text-xl font-semibold tabular-nums text-white">
+            {fmtTime(slot.startTime)} – {fmtTime(slot.endTime)}
+          </DialogTitle>
+          <DialogDescription className="text-sm text-emerald-50">
+            {slot.startTime !== null ? fmtDayTab(slot.startTime) : "Undated"}
+          </DialogDescription>
+          <div className="flex flex-wrap items-center gap-1.5 pt-3">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-xs font-medium text-white">
+              <Users className="h-3.5 w-3.5" />
+              {slot.occupancy} of {slot.capacity} booked
+            </span>
+            {slot.location && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-xs font-medium text-white">
+                <MapPin className="h-3.5 w-3.5" />
+                {slot.location}
+              </span>
+            )}
+          </div>
+        </DialogHeader>
+
+        {/* Scrolls at 20 names rather than growing the dialog past the
+            viewport, which is where the header would go off the top. */}
+        <div className="max-h-[55vh] overflow-y-auto p-2">
+          {slot.occupants.length === 0 ? (
+            <p className="px-3 py-10 text-center text-sm text-gray-500">
+              Nobody has booked this slot yet.
+            </p>
+          ) : (
+            <ul className="space-y-0.5">
+              {slot.occupants.map((o) => {
+                const label = applicantLabel(o);
+                // `status` is nullable on the row, and an unknown one is not in
+                // the table — either way that is no badge, not a crash.
+                const meta = o.status !== null ? STATUS_META[o.status] : undefined;
+                // Falls back to the raw id: an applicant whose account did not
+                // resolve still has to be identifiable as SOMEBODY, and a blank
+                // second line would read as a rendering fault.
+                const sub =
+                  [o.applicant.matric, o.applicant.email]
+                    .filter(Boolean)
+                    .join(" · ") || o.userID;
+                return (
+                  <li
+                    key={o.applicationID}
+                    className="flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-gray-50"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-xs font-semibold text-emerald-700">
+                      {initials(label)}
+                    </span>
+                    {/* WRAPS, never truncates. Reading the whole name is the
+                        entire point of this dialog, and on a phone the row is
+                        narrow enough that a clamp would cut "Nurul Aisyah Binte
+                        Rahman" in half — reintroducing, one level down, the
+                        problem the card's summary line already has. */}
+                    <span className="min-w-0 flex-1">
+                      <span className="block break-words text-sm font-medium text-gray-900">
+                        {label}
+                      </span>
+                      <span className="block break-words text-xs text-gray-500">
+                        {sub}
+                      </span>
+                    </span>
+                    {meta && (
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${meta.className}`}
+                      >
+                        {meta.label}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {free > 0 && slot.occupants.length > 0 && (
+          <p className="border-t border-gray-100 px-5 py-3 text-xs text-gray-500">
+            {free} more seat{free === 1 ? "" : "s"} can still be booked.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
