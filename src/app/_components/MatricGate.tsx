@@ -22,7 +22,19 @@ function isAllowed(pathname: string) {
 
 /**
  * Client-side login gate. Mounted once in the root layout (inside the session
- * provider so `useSession` works). Two distinct states, checked in this order:
+ * provider so `useSession` works). Distinct states, checked in this order:
+ *
+ *  0. NO ACCOUNT ROW (`accountMissing === true`) — the `User` document this
+ *     session's JWT names is gone: the account was deleted through
+ *     `userAdmin.delete`, or this was the losing row of an account merge. It is
+ *     checked FIRST because every flag below describes fields on a row that is
+ *     not there, and the session callback sets them all to their non-blocking
+ *     values — so without this branch nothing redirected and the user got the
+ *     whole app shell with every tRPC call failing FORBIDDEN, for up to the
+ *     30-day JWT lifetime. `hasIdentity` does NOT cover it: the email still
+ *     canonicalises, so that flag is still true. Sends them to
+ *     /onboarding/ineligible, which offers the only action that resolves either
+ *     case — sign out.
  *
  *  1. NO IDENTITY (`hasIdentity === false`) — the session's email does not
  *     canonicalize to an @u.nus.edu id: a non-NUS address, or a pre-cutover JWT
@@ -91,21 +103,33 @@ export default function MatricGate({
   const router = useRouter();
 
   const authed = status === "authenticated";
+  // CHECKED BEFORE EVERYTHING ELSE, because every flag below describes a `User`
+  // row that is not there. The session callback raises this when the `_id` the
+  // JWT was minted against no longer resolves — the account was deleted, or it
+  // was the losing row of a merge — and in both cases the only action that
+  // resolves it is signing out and back in. It is NOT covered by `ineligible`
+  // below: the email still canonicalises, so `hasIdentity` is still true, and
+  // without this branch these sessions rendered the full app with every tRPC
+  // call failing and nothing to click.
+  const accountMissing = authed && session?.user?.accountMissing === true;
   // D-C. `hasIdentity`, never `eligible`: see (1) in the docstring above. This
   // branch is NOT behind `rbac.matric.enforcement` — that switch gates the
   // matric redirect below (`matricRequired`) and nothing else. An empty
   // identity is not a policy question and does not vary by mode.
-  const ineligible = authed && session?.user?.hasIdentity === false;
+  const ineligible =
+    authed && !accountMissing && session?.user?.hasIdentity === false;
   // Post-merge completion. `?? []` matters: a session cookie minted before this
   // field existed has no `profileNeedsFields` at all, and `undefined.length`
   // would throw inside the root layout — i.e. a blank app for every logged-in
   // user until their JWT rolled over. Absent means "not flagged".
   const needsProfileCompletion =
     authed &&
+    !accountMissing &&
     !ineligible &&
     (session?.user?.profileNeedsFields ?? []).length > 0;
   const needsMatric =
     authed &&
+    !accountMissing &&
     !ineligible &&
     !needsProfileCompletion &&
     session?.user?.matricRequired === true &&
@@ -119,19 +143,25 @@ export default function MatricGate({
   // never bounced /onboarding/matric -> /profile for two different prompts.
   const needsProfileDetails =
     authed &&
+    !accountMissing &&
     !ineligible &&
     !needsProfileCompletion &&
     session?.user?.profileIncomplete === true;
 
-  const redirectTo = ineligible
-    ? "/onboarding/ineligible"
-    : needsProfileCompletion
-      ? "/onboarding/complete-profile"
-      : needsProfileDetails
-        ? "/profile"
-        : needsMatric
-          ? "/onboarding/matric"
-          : null;
+  // Both terminal states land on the SAME page, which reads the flag and says
+  // the right thing (see there). One route rather than two because the action
+  // is identical — sign out — and /onboarding is already allow-listed, so a
+  // second segment would only add another way to get the exemption wrong.
+  const redirectTo =
+    accountMissing || ineligible
+      ? "/onboarding/ineligible"
+      : needsProfileCompletion
+        ? "/onboarding/complete-profile"
+        : needsProfileDetails
+          ? "/profile"
+          : needsMatric
+            ? "/onboarding/matric"
+            : null;
   // `pathname !== redirectTo` so the DESTINATION renders instead of blanking:
   // /profile is not on the allow-list (it must stay gated for a COMPLETE user
   // who is merely browsing), but the incomplete user we just sent there has to
