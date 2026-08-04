@@ -151,6 +151,30 @@ export const AUDIT_ACTIONS = [
   "event.publish",
   "event.cancel",
   "event.attendees.export",
+  // Admin CRUD over USER DETAILS (/admin/users detail dialog). NOTE what is
+  // absent: no "user.create" (signup + PendingRoleGrant own onboarding) and no
+  // role action — these endpoints are NOT a second writer of UserRole.roles
+  // (I-14). `user.delete` REMOVES the whole UserRole document rather than
+  // writing a role set, and its row carries the deleted user's rolesBefore so
+  // the privilege that was destroyed stays on the record.
+  //
+  // `user.detail.read` is the ONLY read in this list, and it is here for the
+  // same reason `explainAccess` audits: it is a per-target disclosure primitive
+  // over the whole user base, reachable by every jcrc. `userAdmin.get` returns
+  // matric, telegramHandle and bio — none of which is in the listUsers
+  // projection — so a loop over the ids listUsers already hands out exfiltrates
+  // the hall's matriculation numbers and Telegram handles. The target guard
+  // audits only DENIALS (target holds admin / unkeyed row), so without this row
+  // every successful read of a non-admin is silent and an admin investigating a
+  // leak cannot say who read what, or that a bulk read happened at all. The
+  // same PII exported in bulk is already audited by `event.attendees.export`.
+  //
+  // All three names are under the 32-character cap that admin.listAuditLog's
+  // `action: z.string().max(32)` filter imposes — keep any future addition
+  // under it too, or the filter silently cannot select it.
+  "user.detail.read",
+  "user.profile.update",
+  "user.delete",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -792,7 +816,20 @@ export type Capabilities = {
    * Deliberately NOT a licence to delete: no surface deletes a CCA.
    */
   manageCcas: boolean;
-  /** May act on a user who holds `admin` at all. D-2: admin only. */
+  /**
+   * May act on a user who holds `admin` at all. D-2: admin only.
+   *
+   * ALSO covers a target whose authority cannot be EVALUATED, which is the same
+   * question asked of a row this deploy cannot key: an account with no canonical
+   * id may still carry a pre-cutover `UserRole` holding `admin`, filed under the
+   * unanchored derivation auth.ts used before the eligibility cutover. That is
+   * why assertMayManageUserProfileOf refuses every non-admin actor on such a
+   * target (CANNOT_MODIFY_AN_UNKEYED_ACCOUNT) — read that function for the full
+   * argument — and why UserRoleTable disables its Details button on this
+   * capability for those rows rather than letting a jcrc click into a FORBIDDEN
+   * that also writes a `denied` audit row. One tier, one statement: unevaluable
+   * authority is treated as admin authority.
+   */
   modifyAdmins: boolean;
   /** May see WHO holds admin (counts and identities). D-2: admin only. */
   seeAdminIdentities: boolean;
@@ -812,6 +849,30 @@ export type Capabilities = {
    * assertHeadsCca, not this.
    */
   reviewEvents: boolean;
+  /**
+   * May open a user's detail record and EDIT their profile fields
+   * (displayName / block / telegramHandle / bio / matric). Manager-level:
+   * fixing a resident's onboarding data is JCRC work. It is NOT a licence to
+   * reach any target — assertMayManageUserProfileOf (G3) is applied by EVERY
+   * procedure in routers/userAdmin.ts, the `get` read included, so a jcrc
+   * cannot open an admin's record. That read carries matric, telegramHandle
+   * and bio, none of which is in the listUsers projection, which is why the
+   * guard is on the read and not only on the writes; the enumeration cost that
+   * buys, and why it was accepted, is argued once on
+   * assertMayManageUserProfileOf. Do not restate it here — and do not describe
+   * this capability's reach from memory, read that function.
+   *
+   * Deliberately NOT a role-editing capability: roles stay behind
+   * setUserRoles / grantCcaHead and their own guards.
+   */
+  manageUserProfiles: boolean;
+  /**
+   * May DELETE an account. Admin only, and additionally behind the
+   * admin.userDelete.enabled kill switch checked in the procedure. Joins
+   * manageFacilityAccess / readAuditLog / manageCcas in the admin-only tier
+   * because it is the only irreversible write in the admin surface.
+   */
+  deleteUsers: boolean;
 };
 
 export function computeCapabilities(roles: readonly string[]): Capabilities {
@@ -842,5 +903,7 @@ export function computeCapabilities(roles: readonly string[]): Capabilities {
     viewSystemHealthDetail: admin,
     manageEnforcementFlag: admin,
     reviewEvents: manager,
+    manageUserProfiles: manager,
+    deleteUsers: admin,
   };
 }

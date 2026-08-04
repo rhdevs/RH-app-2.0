@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useDebounceValue } from "usehooks-ts";
-import { Loader2, Settings2 } from "lucide-react";
+import { Loader2, Settings2, UserCog } from "lucide-react";
 
 import { api } from "~/trpc/react";
 import { Alert, AlertDescription } from "~/components/ui/alert";
@@ -35,6 +35,7 @@ import EmptyState from "../EmptyState";
 import { isMissingBaseline } from "../../_lib/anomalies";
 import type { AdminUserRow } from "../../_lib/types";
 import ManageRolesDialog from "./ManageRolesDialog";
+import UserDetailDialog from "./UserDetailDialog";
 
 export default function UserRoleTable() {
   const cap = useCapabilities();
@@ -42,6 +43,11 @@ export default function UserRoleTable() {
   const [search] = useDebounceValue(rawSearch, 300);
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [target, setTarget] = useState<AdminUserRow | null>(null);
+  // Separate state from `target`, not a mode flag on one: the two dialogs are
+  // different surfaces over the same row and one of them hands off to the other
+  // (Details → Manage roles), which a single "which dialog" enum would make a
+  // three-way transition instead of two independent booleans.
+  const [detail, setDetail] = useState<AdminUserRow | null>(null);
 
   const {
     data,
@@ -226,20 +232,77 @@ export default function UserRoleTable() {
                     </div>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!u.canonicalUserID}
-                      onClick={() => setTarget(u)}
-                      title={
-                        u.canonicalUserID
-                          ? undefined
-                          : "This account has no canonical NUSNET id, so roles cannot be keyed to it."
-                      }
-                    >
-                      <Settings2 className="mr-1.5 h-3.5 w-3.5" />
-                      Manage
-                    </Button>
+                    <div className="flex items-center justify-end gap-2">
+                      {/* `disabled` is evaluated PER BUTTON and must not be
+                          lifted to the row. Manage roles is disabled without a
+                          canonical id because roles are KEYED on it.
+
+                          Profile details are keyed on the User ObjectId, so a
+                          non-NUS account is reachable in principle — and it is
+                          one of the accounts most likely to need cleaning up.
+                          FOR AN ADMIN. It is NOT viewable by a jcrc, and the
+                          button must say so rather than lead them into a
+                          refusal: assertMayManageUserProfileOf denies every
+                          non-admin actor on a target with no canonical id
+                          (CANNOT_MODIFY_AN_UNKEYED_ACCOUNT) because such a row's
+                          authority is UNEVALUABLE — a pre-cutover UserRole
+                          holding `admin` can still be filed under a key this
+                          deploy cannot derive — and that denial applies to `get`
+                          too. An enabled button therefore led a jcrc to a hard
+                          FORBIDDEN plus a `denied` RoleAuditLog row on the
+                          highest-signal action this system records, once per
+                          click. `modifyAdmins` is the capability that matches:
+                          it is the admin-only tier for "may act on a target
+                          whose authority is admin, or cannot be shown not to
+                          be".
+
+                          `hasAccount` is a SEPARATE refusal and both are needed.
+                          On the ROLE-FILTERED branch of listUsers `id` falls
+                          back to the UserRole `_id` when no User row hydrated it
+                          (`id: u?.id ?? r.id`), which listUsers' own comment
+                          calls a LEGITIMATE state — a claimed pending grant, a
+                          hand-seeded admin. Handing that id to userAdmin.get
+                          returns NOT_FOUND, which the dialog renders as "That
+                          account no longer exists", which is false and whose
+                          suggested remedy does nothing. Disabled rather than
+                          hidden in both cases: the row is real, the profile is
+                          not reachable by this viewer. */}
+                      {cap.manageUserProfiles && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={
+                            !u.hasAccount ||
+                            (!u.canonicalUserID && !cap.modifyAdmins)
+                          }
+                          onClick={() => setDetail(u)}
+                          title={
+                            !u.hasAccount
+                              ? "This role grant has no user account behind it, so there are no profile details to show."
+                              : !u.canonicalUserID && !cap.modifyAdmins
+                                ? "This account isn't on an @u.nus.edu address, so its role record can't be read back and there's no way to check what access it holds. Only an admin can open it."
+                                : undefined
+                          }
+                        >
+                          <UserCog className="mr-1.5 h-3.5 w-3.5" />
+                          Details
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!u.canonicalUserID}
+                        onClick={() => setTarget(u)}
+                        title={
+                          u.canonicalUserID
+                            ? undefined
+                            : "This account has no canonical NUSNET id, so roles cannot be keyed to it."
+                        }
+                      >
+                        <Settings2 className="mr-1.5 h-3.5 w-3.5" />
+                        Manage
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               );
@@ -262,6 +325,20 @@ export default function UserRoleTable() {
 
       {target && (
         <ManageRolesDialog target={target} onClose={() => setTarget(null)} />
+      )}
+
+      {detail && (
+        <UserDetailDialog
+          target={detail}
+          onClose={() => setDetail(null)}
+          // The hand-off. The table owns "which dialog is open", so the swap is
+          // one state transition here rather than two dialogs each trying to
+          // mount the other.
+          onManageRoles={() => {
+            setTarget(detail);
+            setDetail(null);
+          }}
+        />
       )}
     </>
   );
