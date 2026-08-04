@@ -35,15 +35,15 @@ function seatsLeft(slot: Slot): number {
   return Math.max(0, slot.capacity - slot.occupancy);
 }
 
-/** Occupant names for a card, truncated: four rows of names in a small card is
- *  noise, and the head opens the run-sheet to actually work through them. */
-function occupantSummary(slot: Slot): string {
-  const names = slot.occupants.map(
+/** Occupant names for a card, in booking order. */
+function occupantNames(slot: Slot): string[] {
+  return slot.occupants.map(
     (o) => o.applicant.displayName ?? o.applicant.email ?? o.userID,
   );
-  if (names.length <= 3) return names.join(", ");
-  return `${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
 }
+
+/** How many names a card shows before the rest have to be asked for. */
+const OCCUPANTS_COLLAPSED = 3;
 
 /* ------------------------------- time helpers ------------------------------ */
 
@@ -995,11 +995,7 @@ function SlotCard({ ccaID, slot }: { ccaID: number; slot: Slot }) {
           "Free"
         )}
       </p>
-      {occupied && (
-        <p className={`mt-0.5 truncate text-xs ${muted}`}>
-          {occupantSummary(slot)}
-        </p>
-      )}
+      {occupied && <OccupantList slot={slot} muted={muted} />}
 
       {/* Actions — always visible so they work on touch too. */}
       <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
@@ -1045,6 +1041,43 @@ function SlotCard({ ccaID, slot }: { ccaID: number; slot: Slot }) {
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Who is booked on this slot. Everyone is reachable HERE, on the card — the
+ * head running a group session needs the whole room, and the summary this
+ * replaces stopped at three names with no way to see the rest short of the
+ * run-sheet.
+ *
+ * Still collapsed by default, because capacity goes to 20 and twenty names in
+ * every card would push the day's slots off the screen. The names wrap rather
+ * than `truncate`, so what IS shown is shown in full: the old one-line clamp
+ * could cut a name off mid-word even when there were only two of them.
+ */
+function OccupantList({ slot, muted }: { slot: Slot; muted: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const names = occupantNames(slot);
+  const hidden = names.length - OCCUPANTS_COLLAPSED;
+  const shown = expanded ? names : names.slice(0, OCCUPANTS_COLLAPSED);
+
+  return (
+    <p className={`mt-0.5 text-xs ${muted}`}>
+      {shown.join(", ")}
+      {hidden > 0 && (
+        <>
+          {expanded ? " · " : " "}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="font-medium underline underline-offset-2 hover:no-underline"
+          >
+            {expanded ? "Show fewer" : `+${hidden} more`}
+          </button>
+        </>
+      )}
+    </p>
   );
 }
 
