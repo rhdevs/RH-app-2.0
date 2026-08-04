@@ -155,12 +155,27 @@ function overlaps(
 }
 
 /**
- * Release the facility bookings that no longer hold anything.
+ * Bring the facility bookings back in line with the slots that are still live.
  *
  * ONE booking covers a whole generated window, so several slots share a
- * bookingID; the room must be freed exactly when the LAST live slot pointing at
- * it goes away, never on the first cancel. Call this AFTER the slots have been
- * marked canceled, with the bookingIDs those slots carried.
+ * bookingID. Call this AFTER the slots have been marked canceled, with the
+ * bookingIDs those slots carried. Two outcomes per booking:
+ *
+ *  - NOTHING left on it → delete it. The room must be freed exactly when the
+ *    LAST live slot goes away, never on the first cancel.
+ *  - SOMETHING left → shrink it to the span the survivors actually need. A head
+ *    who opens 2–5pm and then cancels the last six slots was holding the room
+ *    until 5pm for interviews that are off; nobody else could book it and
+ *    nothing on screen said why.
+ *
+ * Cancelling a slot in the MIDDLE recomputes to the same span and writes
+ * nothing — the hold is one contiguous block and cannot be given back in
+ * pieces, so an interview at each end still needs the room in between.
+ *
+ * Shrinking NEVER needs a fresh clash check: updateSlot refuses to move a slot
+ * outside its booking (OUTSIDE_BOOKING), so every live slot is already inside
+ * the old window and the new span is a subset of a hold this CCA already owns.
+ * Growing would be a different matter, and is not something this can do.
  *
  * BEST-EFFORT, like the event-rejection path: a booking that has already been
  * deleted (by hand, on the bookings page) is not an error, and a failure here
@@ -172,28 +187,81 @@ function overlaps(
  * ABSENT fields on Prisma+Mongo, which would make a live slot invisible here and
  * free a room that is still in use. Same trap as listSlots.
  */
-async function releaseUnusedBookings(
+async function reconcileSlotBookings(
   db: PrismaClient,
   ccaID: number,
   bookingIDs: readonly number[],
-): Promise<number[]> {
+): Promise<{ released: number[]; resized: number[] }> {
   const ids = [...new Set(bookingIDs.filter((b): b is number => b !== null))];
   const released: number[] = [];
+  const resized: number[] = [];
   for (const bookingID of ids) {
     try {
       const holders = (
         await db.ccaInterviewSlot.findMany({
           where: { ccaID, bookingID },
-          select: { slotID: true, canceledAt: true },
+          select: {
+            slotID: true,
+            startTime: true,
+            endTime: true,
+            canceledAt: true,
+          },
         })
       ).filter((s) => s.canceledAt === null);
-      if (holders.length > 0) continue;
-      await db.bookings.deleteMany({ where: { bookingID } });
-      released.push(bookingID);
+
+      if (holders.length === 0) {
+        await db.bookings.deleteMany({ where: { bookingID } });
+        released.push(bookingID);
+        continue;
+      }
+
+      // A live slot with no times cannot be covered by a computed span, and
+      // shrinking around it could pull the room out from under a real
+      // interview. Leave the booking exactly as it is — an oversized hold is
+      // recoverable, an undersized one is not.
+      if (holders.some((s) => s.startTime === null || s.endTime === null)) {
+        continue;
+      }
+      const start = Math.min(...holders.map((s) => s.startTime!));
+      const end = Math.max(...holders.map((s) => s.endTime!));
+
+      const booking = await db.bookings.findUnique({
+        where: { bookingID },
+        select: { startTime: true, endTime: true },
+      });
+      // Already gone, or already the right size — nothing to write. The
+      // equality check is what makes a middle cancel a no-op.
+      if (!booking || (booking.startTime === start && booking.endTime === end)) {
+        continue;
+      }
+      // SHRINK ONLY. A slot sitting outside its own booking should be
+      // impossible (OUTSIDE_BOOKING), but a row written before that rule
+      // existed would compute a WIDER span — and widening a room hold without
+      // re-running the clash check is how you double-book a facility. Leave it
+      // and say so, rather than quietly taking time this CCA has not claimed.
+      if (start < booking.startTime || end > booking.endTime) {
+        console.error(
+          JSON.stringify({
+            evt: "interview_slot_booking_would_grow",
+            ccaID,
+            bookingID,
+            bookingStart: booking.startTime,
+            bookingEnd: booking.endTime,
+            slotSpanStart: start,
+            slotSpanEnd: end,
+          }),
+        );
+        continue;
+      }
+      await db.bookings.update({
+        where: { bookingID },
+        data: { startTime: start, endTime: end },
+      });
+      resized.push(bookingID);
     } catch (err) {
       console.error(
         JSON.stringify({
-          evt: "interview_slot_booking_release_failed",
+          evt: "interview_slot_booking_reconcile_failed",
           ccaID,
           bookingID,
           error: err instanceof Error ? err.message : String(err),
@@ -201,7 +269,7 @@ async function releaseUnusedBookings(
       );
     }
   }
-  return released;
+  return { released, resized };
 }
 
 export const ccaApplicationsHeadRouter = createTRPCRouter({
@@ -914,11 +982,12 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         });
 
         // AFTER the cancel, so the just-canceled slot no longer counts as a
-        // holder. Frees the room only if this was the last live slot on it.
-        const released =
+        // holder. Frees the room if this was the last live slot on it, and
+        // otherwise gives back whichever end of the window it was holding.
+        const { released, resized } =
           slot.bookingID != null
-            ? await releaseUnusedBookings(ctx.db, input.ccaID, [slot.bookingID])
-            : [];
+            ? await reconcileSlotBookings(ctx.db, input.ccaID, [slot.bookingID])
+            : { released: [], resized: [] };
 
         await writeAudit(ctx.db, {
           actorUserID: userID,
@@ -934,6 +1003,10 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             released.length > 0
               ? ` (released facility booking #${released.join(", #")})`
               : ""
+          }${
+            resized.length > 0
+              ? ` (shrank facility booking #${resized.join(", #")} to the remaining slots)`
+              : ""
           }`,
         });
 
@@ -941,6 +1014,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           slotID: input.slotID,
           revertedCount: reverted.count,
           releasedBookings: released.length,
+          resizedBookings: resized.length,
         };
       });
     }),
@@ -981,7 +1055,12 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         const freeIDs = free.map((s) => s.slotID);
 
         if (freeIDs.length === 0) {
-          return { ccaID: input.ccaID, cleared: 0, releasedBookings: 0 };
+          return {
+            ccaID: input.ccaID,
+            cleared: 0,
+            releasedBookings: 0,
+            resizedBookings: 0,
+          };
         }
 
         // Mark them canceled by slotID list (not a null-filter), so absent-field
@@ -993,8 +1072,10 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
 
         // Then free every room no live slot is standing on any more. A window
         // that still has ONE booked slot in it keeps its room — clearing the
-        // empties around an interview must not cancel the room it runs in.
-        const released = await releaseUnusedBookings(
+        // empties around an interview must not cancel the room it runs in — but
+        // it does shrink to that interview, which is the whole point of
+        // clearing the empties either side of it.
+        const { released, resized } = await reconcileSlotBookings(
           ctx.db,
           input.ccaID,
           free
@@ -1011,6 +1092,10 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             released.length > 0
               ? `, released ${released.length} facility booking(s)`
               : ""
+          }${
+            resized.length > 0
+              ? `, shrank ${resized.length} facility booking(s)`
+              : ""
           }`,
         });
 
@@ -1018,6 +1103,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           ccaID: input.ccaID,
           cleared: freeIDs.length,
           releasedBookings: released.length,
+          resizedBookings: resized.length,
         };
       });
     }),
