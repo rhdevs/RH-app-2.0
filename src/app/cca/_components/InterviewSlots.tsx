@@ -6,6 +6,7 @@ import {
   MapPin,
   Pencil,
   Plus,
+  Send,
   Trash2,
   Users,
   X,
@@ -1112,7 +1113,8 @@ function SlotCard({ ccaID, slot }: { ccaID: number; slot: Slot }) {
  * The card can only ever be a summary — it is one of up to a dozen in a
  * three-column grid, and capacity goes to 20 — so the full roster lives here,
  * where there is room to give each person a line of their own with the matric
- * and email the head needs to actually identify them.
+ * and email the head needs to identify them, and the Telegram handle they need
+ * to reach them.
  *
  * Rendered per card rather than once for the day: Radix only mounts the
  * content while `open`, so the closed ones cost nothing.
@@ -1197,6 +1199,27 @@ function SlotOccupantsDialog({
                       <span className="block break-words text-xs text-gray-500">
                         {sub}
                       </span>
+                      {/* Its own line, and a link: reaching the room is what a
+                          head opens this roster to do — a session moves, or
+                          somebody is next — and a handle buried in the `sub`
+                          run would be one more string to copy out by hand. A
+                          handle that was never set SAYS so, so "unreachable"
+                          is distinguishable from "I misread the row". */}
+                      {o.applicant.telegramHandle ? (
+                        <a
+                          href={`https://t.me/${o.applicant.telegramHandle}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-0.5 inline-flex items-center gap-1 break-all text-xs font-medium text-emerald-700 hover:underline"
+                        >
+                          <Send className="h-3 w-3 shrink-0" />@
+                          {o.applicant.telegramHandle}
+                        </a>
+                      ) : (
+                        <span className="mt-0.5 block text-xs text-gray-400">
+                          No Telegram handle
+                        </span>
+                      )}
                     </span>
                     {meta && (
                       <span
