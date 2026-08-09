@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
-import { canonicalUserID, isCanonicalResidentID } from "~/lib/identity";
+import { EXT_ID, canonicalUserID, isCanonicalResidentID } from "~/lib/identity";
 
 /**
  * Role VOCABULARY + the stored-baseline machinery (RBAC v2, 02-backend-authz.md
@@ -27,9 +27,34 @@ export type { CanonicalUserID } from "~/lib/identity";
 
 /**
  * Single source of truth for role identifiers.
- * Adding a role = add it here and to ASSIGNABLE_BY, and nothing else.
+ *
+ * THIS COMMENT USED TO SAY "adding a role = add it here and to ASSIGNABLE_BY,
+ * and nothing else". That was false, and it was false in the silent direction:
+ * a role added to ROLES alone is DROPPED at the read boundary by
+ * normalizeStoredRoles (it keeps only grantable roles plus the baseline), so it
+ * would be stored, invisible and inert, and nothing would say so. The accurate
+ * checklist, derived by walking the actual consumers:
+ *
+ *   1. ROLES (here)                    — or normalizeStoredRoles cannot type it
+ *   2. GRANTABLE_ROLES                 — or normalizeStoredRoles DROPS it on
+ *                                        every read, and assertCanMutateRoles
+ *                                        never sees it in the actor's set
+ *   3. ASSIGNABLE_BY + REVOCABLE_FROM_OTHERS_BY — who may grant/revoke it, and
+ *                                        what IT may grant/revoke
+ *   4. FACILITY_ROLES                  — only if a facility may require it
+ *   5. computeCapabilities             — what it can actually DO; a role with no
+ *                                        capability is a badge, not a power
+ *   6. a procedure builder in server/api/trpc.ts — so a router can gate on it
+ *   7. the badge maps in src/app/_components/RoleBadges.tsx and
+ *      src/app/admin/_components/RoleBadge.tsx — or the UI renders the raw
+ *      string, and the hardcoded `as` unions in the admin components (which are
+ *      casts, so they will NOT fail to compile) start lying
+ *   8. ROLE_VOCAB in scripts/remediation/lib/rbac.mjs — or rbac-doctor.mjs
+ *      reports every legitimate grant as an out-of-vocabulary stray and exits 1
+ *
+ * PRECEDENCE is deliberately NOT on that list. See its own comment.
  */
-export const ROLES = ["admin", "jcrc", "cca_head", "resident"] as const;
+export const ROLES = ["admin", "jcrc", "cca_head", "resident", "scrc"] as const;
 // The v1 pseudo-role "user" is DELETED from the vocabulary (00-overview.md
 // §2.2); `resident` is the floor. Do not re-add it — an unused enum member is a
 // read-boundary hazard (07-cca-future.md §1.4).
@@ -38,6 +63,27 @@ export type Role = (typeof ROLES)[number];
 export const ADMIN_ROLE = "admin" as const;
 export const JCRC_ROLE = "jcrc" as const;
 export const CCA_HEAD_ROLE = "cca_head" as const;
+/**
+ * Hall Office / SCRC. A STAFF-SIDE role, not a student-leadership one, and the
+ * narrowest privileged role in the vocabulary.
+ *
+ * GRANTABLE BY ADMIN ONLY — it appears in no ASSIGNABLE_BY entry but admin's,
+ * which is what stops it self-propagating. Its one power OVER OTHER USERS is
+ * `jcrc`: ASSIGNABLE_BY.scrc / REVOCABLE_FROM_OTHERS_BY.scrc are exactly
+ * ["jcrc"], because appointing the JCRC is the hall office's actual job. It
+ * gets read-only oversight of CCA rosters and events on top of that, and
+ * NOTHING else — in particular NOT manageCcaHeads, which would hand it
+ * assertHeadsCca and with it every CCA write and the attendee PII export.
+ *
+ * KNOWN, ACCEPTED CONSEQUENCE, stated here because it is not obvious from the
+ * capability list: because it may grant `jcrc`, an scrc holder can appoint a
+ * confederate who then holds the whole manager tier. The chain TERMINATES there
+ * (ASSIGNABLE_BY.jcrc is [], so no path reaches `admin`, manageFacilityAccess,
+ * deleteUsers, readAuditLog or manageEnforcementFlag). It is contained by the
+ * self-target refusal in admin.setJcrcRole, the `scrc.enabled` kill switch, and
+ * an audit row per grant carrying the actor's roles.
+ */
+export const SCRC_ROLE = "scrc" as const;
 /**
  * Baseline capability of every verified NUS account. STORED and auto-assigned
  * (I-8), never GRANTABLE: it is written only by ensureBaseline, the register
@@ -83,8 +129,15 @@ export const DEFAULT_ROLE = "user" as const;
  * `resident` is not a sanction — I-8b repairs it at the target's next page
  * load. A booking ban is a separate affirmative flag (00-overview.md §3.4),
  * never the absence of the baseline.
+ *
+ * `scrc` IS here, and its membership is MANDATORY rather than a design choice.
+ * normalizeStoredRoles — the read boundary every consumer goes through — keeps
+ * a stored string only if it is grantable or is the baseline. Omit `scrc` from
+ * this list and the role is written to Mongo, dropped on every read, absent
+ * from the session, absent from the actor set assertCanMutateRoles computes
+ * ASSIGNABLE_BY from, and therefore completely inert with no error anywhere.
  */
-export const GRANTABLE_ROLES = ["admin", "jcrc", "cca_head"] as const;
+export const GRANTABLE_ROLES = ["admin", "jcrc", "cca_head", "scrc"] as const;
 export type GrantableRole = (typeof GRANTABLE_ROLES)[number];
 
 /**
@@ -92,8 +145,19 @@ export type GrantableRole = (typeof GRANTABLE_ROLES)[number];
  * pulled the two domains apart: `resident` is requirable but not grantable, and
  * `admin` is grantable but must NEVER be stored in requiredRoles (it is an
  * implicit bypass; storing it invites someone to delete it and lock admins out).
+ *
+ * `scrc` is here for the WRITE path, not the read path: canBookWithRoles does a
+ * plain string intersection and would honour any stored value, but
+ * admin.setFacilityAccess validates against this enum, so without the entry the
+ * admin UI physically cannot write ["jcrc","scrc"] onto the SCRC Room and the
+ * change would have to be made by hand in Atlas — unaudited.
  */
-export const FACILITY_ROLES = ["resident", "jcrc", "cca_head"] as const;
+export const FACILITY_ROLES = [
+  "resident",
+  "jcrc",
+  "cca_head",
+  "scrc",
+] as const;
 export type FacilityRole = (typeof FACILITY_ROLES)[number];
 
 /** Values allowed in `RoleAuditLog.action` (prisma/schema.prisma). */
@@ -175,6 +239,55 @@ export const AUDIT_ACTIONS = [
   "user.detail.read",
   "user.profile.update",
   "user.delete",
+  // The SECOND read in this list, and it is here for exactly the
+  // `user.detail.read` reason: admin.resolveJcrcCandidate is a per-target
+  // disclosure primitive (identifier in, a named person out) reachable by every
+  // scrc holder, and it is the ONLY enumeration-shaped surface `scrc` has. The
+  // grant/revoke it precedes is already audited by applyRoleChange's "set" row,
+  // so without this one a hall-office member can probe who exists — email by
+  // email — and leave no trace at all unless they then act.
+  //
+  // There is deliberately NO "scrc.jcrc.grant" / ".revoke": the write goes
+  // through applyRoleChange, which hardcodes action "set" and denormalises
+  // actorRoles onto the row, so `actorRoles contains "scrc"` already selects
+  // every hall-office role change. A distinct action would mean either editing
+  // the chokepoint or writing a duplicate row — both worse than a query.
+  //
+  // 19 characters, under the 32-char cap admin.listAuditLog's filter imposes.
+  "scrc.candidate.read",
+  // D-7 BREAK-GLASS PIN SURFACE (admin.addAuthAllowlistEntry /
+  // removeAuthAllowlistEntry, adminProcedure only). These two are the ONLY
+  // actions in this list that create or destroy an IDENTITY rather than a
+  // privilege: an AuthAllowlist row is what lets a non-@u.nus.edu address hold
+  // a session key at all (see prisma/schema.prisma's AuthAllowlist model and
+  // services/authAllowlist.ts). Everything else here presupposes an identity
+  // and moves roles around on top of it.
+  //
+  // `targetUserID` carries the EXT pin and `reason` carries the pinned address,
+  // so "who was handed an identity, by whom, when" is one query. Denials are
+  // written as `denied` with denyReason EMAIL_IS_CANONICAL /
+  // PIN_ALREADY_HAS_ROLES / EMAIL_ALREADY_PINNED / PIN_ALREADY_USED /
+  // PIN_STILL_HOLDS_ROLES — the shapes the write refuses (M4).
+  //
+  // There is deliberately NO "authAllowlist.update": a pin is immutable, so
+  // re-aiming a key at a different address is remove-then-add, i.e. two rows.
+  // 18 and 21 characters, both under the 32-char cap.
+  "authAllowlist.add",
+  "authAllowlist.remove",
+  // IDENTITY RE-KEY (scripts/remediation/rekey-to-ext-identity.mjs). Written
+  // once per migrated account, and it is THE ONLY THING THAT TIES THE TWO KEYS
+  // TOGETHER.
+  //
+  // That matters more here than for any other action in this list, because
+  // `RoleAuditLog` is deliberately NOT re-keyed by that script — those rows
+  // state what was true at the time and rewriting them would make the log
+  // assert history that did not happen. The consequence is that an account's
+  // audit trail is SPLIT across its old key and its pin, and this row is the
+  // join: `rolesBefore: [<old key>]`, `rolesAfter: [<pin>]`, `targetUserID`
+  // the pin. Without it the pre-migration half of a person's history is
+  // unreachable by anyone who only knows their current id.
+  // 13 characters, well under the 32-char cap.
+  "identity.rekey",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -185,6 +298,18 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
  * default-OPEN and cannot interpret `resident`. Writing it there would be
  * meaningless at best and would displace a real value at worst.
  * Removed entirely in doc 06.
+ *
+ * `scrc` is EXCLUDED FOR THE SAME REASON, and this is the one place in the
+ * whole scrc change where doing the obvious thing would touch live traffic.
+ * legacyMirror returns the FIRST match, so putting `scrc` anywhere above `jcrc`
+ * would mirror a jcrc+scrc holder as "scrc" — a scalar the still-deployed
+ * pre-v2 access.ts cannot interpret — and a rollback would silently demote a
+ * sitting JCRC member out of the SCRC Room and out of /admin. Putting it below
+ * `cca_head` is harmless and also pointless. Leaving it out is correct: a plain
+ * scrc holder mirrors to "" (falsy, benign, exactly the resident treatment) and
+ * a jcrc+scrc holder still mirrors to "jcrc".
+ *
+ * Must stay identical to PRECEDENCE in scripts/remediation/lib/rbac.mjs.
  */
 export const PRECEDENCE = ["admin", "jcrc", "cca_head"] as const;
 
@@ -228,15 +353,23 @@ export function legacyMirror(roles: readonly string[]): string | null {
  * `resident` maps to [] and appears in no other entry, in either direction, at
  * any level — I-8e. `user` is retained as a key only so a legacy row still
  * carrying the dead scalar resolves to [] instead of undefined.
+ *
+ * `scrc` (hall office) is the FIRST non-admin key with a non-empty entry, and
+ * it is exactly ["jcrc"] — narrower than admin's, and narrower than the role
+ * itself: `scrc` cannot grant `scrc`, so the role cannot self-propagate and
+ * only an admin can ever create another hall-office account. It appears in
+ * admin's list for the same reason `jcrc` does. Read SCRC_ROLE's comment for
+ * the escalation closure this opens and what contains it.
  */
 export const ASSIGNABLE_BY: Record<string, readonly GrantableRole[]> =
   Object.assign(
     Object.create(null) as Record<string, readonly GrantableRole[]>,
     {
-      admin: ["admin", "jcrc"] as const,
+      admin: ["admin", "jcrc", "scrc"] as const,
       jcrc: [] as const,
       cca_head: [] as const,
       resident: [] as const,
+      scrc: ["jcrc"] as const,
       user: [] as const,
     },
   );
@@ -246,6 +379,12 @@ export const ASSIGNABLE_BY: Record<string, readonly GrantableRole[]> =
  * ASSIGNABLE_BY even though D-3 currently makes them identical, because they
  * answer different questions and will diverge again if a role is ever made
  * grant-but-not-revoke. `resident` is absent here too (I-8e).
+ *
+ * `scrc: ["jcrc"]` deliberately MATCHES its ASSIGNABLE_BY entry: a hall office
+ * that can appoint the JCRC but not un-appoint it would push every removal back
+ * to an admin, and the whole point of the role is that it does not need one.
+ * Note it still cannot revoke `scrc` — not from others and, via G5's self-branch
+ * plus this map, not meaningfully from anyone but itself.
  */
 export const REVOCABLE_FROM_OTHERS_BY: Record<
   string,
@@ -253,13 +392,78 @@ export const REVOCABLE_FROM_OTHERS_BY: Record<
 > = Object.assign(
   Object.create(null) as Record<string, readonly GrantableRole[]>,
   {
-    admin: ["admin", "jcrc"] as const,
+    admin: ["admin", "jcrc", "scrc"] as const,
     jcrc: [] as const,
     cca_head: [] as const,
     resident: [] as const,
+    scrc: ["jcrc"] as const,
     user: [] as const,
   },
 );
+
+/* -------------------------------------------------------------------------- */
+/* Mutually exclusive roles                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Role pairs NOBODY may hold at once. A FIFTH invariant, alongside the sticky
+ * baseline, the last-admin guard, the compare-and-set and CH-1.
+ *
+ * ONE PAIR TODAY: `jcrc` + `scrc`. This is not tidiness — it closes a hole that
+ * the capability matrix cannot see, because the leak is in the UNION of two
+ * individually-sound role definitions:
+ *
+ *   - `roleManagerProcedure` admits anyone holding `jcrc`. So a jcrc+scrc holder
+ *     reaches `setUserRoles`, whose payload is a CLIENT-SUPPLIED FINAL ROLE SET
+ *     — defeating the entire reason `setJcrcRole` constructs its set on the
+ *     server — plus `previewBulkImport` / `commitBulkChunk` and
+ *     `createPendingGrants`.
+ *   - `assignableBy(["jcrc","scrc"])` unions ASSIGNABLE_BY.jcrc ([]) with
+ *     ASSIGNABLE_BY.scrc (["jcrc"]) to give ["jcrc"], which is non-empty, so
+ *     `bulkAssign` and `createPendingGrants` both compute TRUE for them.
+ *
+ * Composed: one person who holds both can bulk-grant `jcrc` to hundreds of
+ * accounts in a single call, or queue deferred grants that redeem later — and
+ * NONE of those paths reads the `scrc.enabled` kill switch, because the switch
+ * is checked in the three scrc procedures and nowhere else. The switch would be
+ * off and the grant power would still be live. The original plan left this as an
+ * "operational rule: do not grant scrc to a jcrc holder". An operational rule is
+ * not a mechanism, and this one is a mechanism.
+ *
+ * ENFORCED ON THE RESULTING SET, NOT THE DELTA, at every writer of
+ * `UserRole.roles`: assertCanMutateRoles (audited denial — covers setUserRoles,
+ * setJcrcRole, bulk import, bulk undo and their previews), applyRoleChange (a
+ * backstop assert for a hand-written caller), createPendingGrants (refused at
+ * creation) and redeemPendingGrants (re-checked at redemption against the
+ * target's CURRENT stored roles, because a grant is a bearer credential that
+ * outlives the state it was created in). Checking the delta instead would let a
+ * payload that merely OMITS the conflicting role slip past — the same shape of
+ * mistake G4 exists to prevent.
+ *
+ * `resident` is in no pair and must never be: it is the sticky baseline, so a
+ * pair containing it would make some role set unreachable rather than forbidden.
+ */
+export const EXCLUSIVE_ROLE_PAIRS = [[JCRC_ROLE, SCRC_ROLE]] as const;
+
+/**
+ * The deny reason if `roles` contains a forbidden pair, else null.
+ *
+ * Returns a STRING rather than throwing, because its four call sites need four
+ * different failure modes — an audited `deny()`, an INTERNAL_SERVER_ERROR
+ * assert, a Zod-level refusal and a quiet skip on the never-throws session path.
+ * Lives here rather than in admin.ts so the redemption path in this file can use
+ * it without closing the auth.ts import cycle.
+ */
+export function forbiddenRoleCombination(
+  roles: readonly string[],
+): string | null {
+  for (const [a, b] of EXCLUSIVE_ROLE_PAIRS) {
+    if (roles.includes(a) && roles.includes(b)) {
+      return `CANNOT_HOLD_${a.toUpperCase()}_AND_${b.toUpperCase()}`;
+    }
+  }
+  return null;
+}
 
 export function isRole(v: string): v is Role {
   return (ROLES as readonly string[]).includes(v);
@@ -357,6 +561,53 @@ export const userIDSchema = z
   .trim()
   .toUpperCase()
   .regex(E_FORMAT, "Must be an E-format NUSNET id");
+
+/**
+ * An `EXT:` allowlist pin as an INPUT — the other half of the principal key
+ * space (08-userid-keydrift.md §3 Branch C, prisma/schema.prisma's
+ * `AuthAllowlist`).
+ *
+ * `.trim().toUpperCase()` first, mirroring `userIDSchema` above so the two
+ * behave identically on whitespace and case: a pasted "  ext:ngocanh_mai " must
+ * either resolve or be refused, never be quietly stored as a third spelling of
+ * one key.
+ *
+ * The pattern is `EXT_ID` from ~/lib/identity, IMPORTED AND NOT RESTATED —
+ * scripts/remediation/verify-identity-parity.mjs bans private identity
+ * derivations by source scan, and a second copy of this regex is precisely the
+ * thing that rots.
+ */
+export const extUserIDSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(EXT_ID, "Must be an EXT: allowlist id");
+
+/**
+ * The role-mutation TARGET: `userIDSchema` PLUS the EXT namespace, and NOTHING
+ * ELSE WIDENS.
+ *
+ * LIVES HERE, BESIDE `userIDSchema`, FOR THE SAME REASON THAT ONE DOES: this
+ * module is runtime-pure and therefore importable by client components, and
+ * `src/app/admin/_components/audit/AuditLogTable.tsx` parses its filter inputs
+ * with this exact schema so the client cannot be stricter than the server
+ * (I-12; a client guard that rejects what the server accepts fails open,
+ * 09 §2.6). Defining it in routers/admin.ts instead would drag `node:crypto`
+ * and `~/env` into the browser bundle.
+ *
+ * The APPLICATION of it is enumerated, and the enumeration is the containment —
+ * see the note beside `setUserRoles` in routers/admin.ts. It is applied at
+ * exactly three server sites (`setUserRoles`, `explainAccess`, `listAuditLog`'s
+ * filters). Every other target site — bulk import's `resolveIdentifier`,
+ * pending grants, CCA-head grants, and the hall office's own `setJcrcRole` —
+ * stays on the bare `userIDSchema`, so the EXT namespace is unreachable from a
+ * pasted spreadsheet.
+ *
+ * `.or()` and NOT a rewritten regex: `userIDSchema`'s `.trim().toUpperCase()`
+ * transform is load-bearing at all 11 of its existing sites and a hand-merged
+ * pattern would drop it.
+ */
+export const roleTargetUserIDSchema = userIDSchema.or(extUserIDSchema);
 
 /* -------------------------------------------------------------------------- */
 /* I-8b — the stored baseline's self-heal                                      */
@@ -536,7 +787,7 @@ export async function ensureBaseline(
  * grants would sit until purgeExpiredPendingGrants silently deleted them.
  * Shipping the writer without the reader is worse than shipping neither.
  *
- * FOUR PROPERTIES, all load-bearing:
+ * FIVE PROPERTIES, all load-bearing:
  *
  *  1. NEVER THROWS. Same rule as ensureBaseline — it is awaited (indirectly) on
  *     the NextAuth session path, and a rejection there force-logs-out the user.
@@ -559,6 +810,14 @@ export async function ensureBaseline(
  *  4. `pendingCheckedAt` IS STAMPED UNCONDITIONALLY, including the no-grant and
  *     expired cases. That stamp is what makes the steady-state cost of this
  *     whole feature exactly zero queries after one run per user.
+ *
+ *  5. THE EXCLUSION INVARIANT IS RE-CHECKED AT REDEMPTION, against the TARGET'S
+ *     current roles (EXCLUSIVE_ROLE_PAIRS). Property 3's argument applied to the
+ *     other side of the grant: this is the one writer of UserRole.roles that
+ *     does not pass through applyRoleChange, so G8 cannot see it, and a pending
+ *     `jcrc` queued before the target was made `scrc` would otherwise create the
+ *     forbidden pair silently at their next login. Costs one findUnique on a
+ *     path that runs once per user, ever.
  */
 export async function redeemPendingGrants(
   db: PrismaClient,
@@ -603,9 +862,33 @@ export async function redeemPendingGrants(
           : [],
     );
     const canAssign = assignableBy(granterRoles);
-    const granted = grant.roles.filter(
+    let granted = grant.roles.filter(
       (r) => isGrantableRole(r) && canAssign.has(r),
     );
+
+    // Property 5. THE EXCLUSION INVARIANT, re-checked HERE against the target's
+    // CURRENT stored roles — not against the roles they had when the grant was
+    // queued, which is the same argument property 3 makes about the granter.
+    // This path is the fourth writer of UserRole.roles and the ONE that does not
+    // go through applyRoleChange, so G8 cannot cover it; without this, a pending
+    // `jcrc` created before someone was made `scrc` would quietly produce the
+    // forbidden pair at their next login, with no actor present to refuse.
+    //
+    // The whole grant is refused rather than partially applied: a bearer
+    // credential that silently degrades to a subset is worse than one that fails
+    // and says so, and `refused` below already carries the reason onto the audit
+    // row. `$addToSet` is additive, so there is nothing to roll back.
+    const targetRow = await db.userRole.findUnique({ where: { userID } });
+    const targetStored = normalizeStoredRoles(
+      targetRow?.roles?.length
+        ? targetRow.roles
+        : targetRow?.role
+          ? [targetRow.role]
+          : [],
+    );
+    const conflict = forbiddenRoleCombination([...targetStored, ...granted]);
+    if (conflict) granted = [];
+
     const refused = grant.roles.filter((r) => !granted.includes(r));
 
     if (granted.length > 0) {
@@ -638,10 +921,14 @@ export async function redeemPendingGrants(
       rolesBefore: grant.roles,
       rolesAfter: granted,
       ok: granted.length > 0,
+      // The conflict is reported AHEAD of the granter check, because when both
+      // fire the exclusion is the real reason and "the granter may no longer
+      // assign this" would send an investigator to the wrong person.
       denyReason:
-        refused.length > 0
+        conflict ??
+        (refused.length > 0
           ? `GRANTER_NO_LONGER_MAY_ASSIGN:${refused.join("+")}`
-          : null,
+          : null),
       batchId: grant.batchId,
     });
     await stampPendingChecked(db, userID);
@@ -873,11 +1160,79 @@ export type Capabilities = {
    * because it is the only irreversible write in the admin surface.
    */
   deleteUsers: boolean;
+
+  /* ---- Hall Office / SCRC (scrc) ---------------------------------------- */
+
+  /**
+   * May reach /scrc AT ALL — the hall office's own surface.
+   *
+   * COARSE, exactly like reachDashboard and reachCcaDashboard: it answers "is
+   * this surface for you", never "may you do the thing on it". Every procedure
+   * the page calls re-asserts its own capability and the `scrc.enabled` switch.
+   *
+   * DELIBERATELY NOT reachDashboard. /scrc is a top-level route with its own
+   * layout precisely so that `scrc` never needs reachDashboard, which would
+   * drag in AdminShell, the manager-only admin.getStats overview, and every
+   * /admin/* child layout that trusts its parent.
+   */
+  reachScrcDashboard: boolean;
+  /**
+   * May list, grant and revoke `jcrc` through the /scrc surface — appointing
+   * the JCRC is the hall office's job.
+   *
+   * This is the capability form of ASSIGNABLE_BY.scrc = ["jcrc"], not a second
+   * source of truth: the actual write still goes through assertCanMutateRoles
+   * and applyRoleChange, which re-read the actor's roles live (I-5) and consult
+   * the maps. This field only gates reaching the three procedures.
+   *
+   * It is NOT `listUsers`. admin.listUsers pages the whole hall; the hall
+   * office gets admin.listJcrcRoster (the jcrc roster only, admins filtered
+   * OUT rather than redacted) plus a one-identifier-in, one-person-out
+   * resolver, which is the narrowest pair that supports both grant and revoke.
+   */
+  manageJcrcRoster: boolean;
+  /**
+   * May read ANY CCA's roster (heads + members), read-only.
+   *
+   * Deliberately a SECOND capability rather than widening `viewAnyCcaRoster`,
+   * which gates /admin/ccas — a page that also manages CCA heads. Consulted
+   * only by `assertMayViewCcaRoster`. Do NOT pass it to `assertHeadsCca`.
+   *
+   * NEVER a licence to WRITE a roster, and never a licence to read PII.
+   * "Roster" here means NAMES, headship and grant dates — and holding this
+   * capability alone is NOT what makes that true. A raw roster carries every
+   * member's email, stored userID and raw membership keys (mostly A-format
+   * matric numbers), so cca.getRoster and cca.listHeads REDACT those away on
+   * the `via: "readOnly"` branch; without that, a holder who can enumerate all
+   * 89 CCAs would reassemble most of admin.listUsers plus a pile of matrics
+   * from a capability whose name says read-only. cca.memberDirectory
+   * (matric/telegram/bio) is not reachable from here at all — it stays on
+   * assertHeadsCca.
+   *
+   * So: this field opens a DOOR, and the two procedures behind it decide what
+   * walks through. Any third procedure that adopts assertMayViewCcaRoster
+   * inherits the same obligation.
+   */
+  viewCcaRostersReadOnly: boolean;
+  /**
+   * May read events of ANY status, including submitted and unpublished ones,
+   * through event.listForOversight / getForOversight.
+   *
+   * NEVER `reviewEvents`. The approve/reject mutation stays on
+   * roleManagerProcedure AND re-checks reviewEvents live, so this field cannot
+   * reach it even by accident. No attendee data is exposed by either oversight
+   * procedure — that is event.exportAttendees, which is head-scoped.
+   */
+  viewEventsReadOnly: boolean;
 };
 
 export function computeCapabilities(roles: readonly string[]): Capabilities {
   const admin = roles.includes(ADMIN_ROLE);
   const manager = admin || roles.includes(JCRC_ROLE);
+  // Hall office. Deliberately NOT folded into `manager`: `scrc` must compute
+  // FALSE for every manager-tier field below, and the only safe way to
+  // guarantee that is for `manager` to stay literally `admin || jcrc`.
+  const scrc = roles.includes(SCRC_ROLE);
   return {
     reachDashboard: manager,
     listUsers: manager,
@@ -905,5 +1260,54 @@ export function computeCapabilities(roles: readonly string[]): Capabilities {
     reviewEvents: manager,
     manageUserProfiles: manager,
     deleteUsers: admin,
+    // SCRC_ROLE's first appearance in a capability. Admin is included in all
+    // four so an admin can exercise and inspect the hall-office surface
+    // without holding the role; `manager` in the two read-only fields is a
+    // WIDENING OF NOTHING — admin and jcrc already reach both surfaces through
+    // manageCcaHeads / reviewEvents, so those two fields are additive for
+    // `scrc` and behaviour-identical for everyone else.
+    reachScrcDashboard: admin || scrc,
+    manageJcrcRoster: admin || scrc,
+    viewCcaRostersReadOnly: manager || scrc,
+    viewEventsReadOnly: manager || scrc,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Compile-time proof for the profile gate's exemption list                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `src/lib/profileCompleteness.ts` names the roles that are exempt from the
+ * strict profile gate. It CANNOT import SCRC_ROLE from this file — it is
+ * value-imported by `"use client"` components and must stay server-import-free —
+ * so it duplicates the role string as a key of MINIMAL_PROFILE_ROLES.
+ *
+ * THIS LINE IS WHAT MAKES THAT DUPLICATION SAFE. Typing the key list as
+ * `readonly Role[]` turns a typo ("srcc") or an invented role ("hall_office")
+ * into a `tsc --noEmit` error at build time. Without it the exemption would be
+ * SILENTLY INERT: the gate would keep holding the hall office, the symptom would
+ * be "they are still stuck at /profile", and nothing anywhere would point at the
+ * misspelled key.
+ *
+ * The import is safe in the other direction too: `~/lib/profileCompleteness` has
+ * no server imports at all (no Prisma, no `~/env`, no `next/server`), so this
+ * file stays runtime-pure exactly as its header requires — the same reasoning
+ * that already permits the `~/lib/identity` import at the top.
+ *
+ * NOTE THE CAST, WHICH IS TO `keyof typeof` AND NOT TO `Role[]`. Writing
+ * `Object.keys(MINIMAL_PROFILE_ROLES) as Role[]` — the obvious form — would be
+ * INERT: it asserts the conclusion instead of checking it, and a misspelled key
+ * would compile clean. Casting to the object's OWN key union and then ASSIGNING
+ * that to `readonly Role[]` is what makes the compiler do the work: the
+ * assignment fails if any key is not a member of ROLES.
+ */
+import { MINIMAL_PROFILE_ROLES } from "~/lib/profileCompleteness";
+const _minimalRolesAreRealRoles: readonly Role[] = Object.keys(
+  MINIMAL_PROFILE_ROLES,
+) as (keyof typeof MINIMAL_PROFILE_ROLES)[];
+// Referenced so `@typescript-eslint/no-unused-vars` stays quiet without an
+// eslint-disable comment. Same escape hatch as `void KILL_SWITCH_NOTE` in
+// src/server/api/routers/ccaAdmin.ts. The declaration above is the assertion;
+// this statement only keeps it alive.
+void _minimalRolesAreRealRoles;

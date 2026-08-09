@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import type { PrismaClient } from "@prisma/client";
 
 import { computeCapabilities } from "./roles";
+import { assertScrcEnabled } from "./scrcFlag";
 
 /* -------------------------------------------------------------------------- */
 /* The object-scoped guard                                                     */
@@ -9,8 +10,16 @@ import { computeCapabilities } from "./roles";
 
 export type CcaScope = {
   ccaID: number;
-  /** How the caller got in. Recorded so the UI can say "viewing as JCRC". */
-  via: "headship" | "manageCcaHeads";
+  /**
+   * How the caller got in. Recorded so the UI can say "viewing as JCRC".
+   *
+   * `readOnly` is produced ONLY by assertMayViewCcaRoster (never by
+   * assertHeadsCca), so a `via` of "readOnly" can never accompany a write. The
+   * UI must treat it as strictly weaker than the other two; RosterPanel already
+   * does, because it branches on `via === "manageCcaHeads"` positively rather
+   * than switching exhaustively.
+   */
+  via: "headship" | "manageCcaHeads" | "readOnly";
 };
 
 export type CcaActor = {
@@ -60,6 +69,62 @@ export async function assertHeadsCca(
   // requireCapability's CAPABILITY_REQUIRED:<key>. NOT_FOUND would be better
   // non-disclosure but would lie about a CCA that exists, and a ccaID is not a
   // secret — it is public in the booking UI.
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message: "NOT_A_HEAD_OF_THIS_CCA",
+  });
+}
+
+/**
+ * READ ONLY. NEVER call this from a procedure that writes, and never merge it
+ * with assertHeadsCca.
+ *
+ * assertHeadsCca is THE write guard: it also gates cca.updateProfile,
+ * cca.removeMembers, cca.handoverHeads, cca.memberDirectory (matric/telegram/
+ * bio) and event.publish / cancelEvent / exportAttendees. Widening it by one
+ * capability would hand all of that to whoever holds that capability, which is
+ * why the hall office got a SECOND function instead of a wider first one. The
+ * two must stay separate even though branches 1 and 2 below are duplicated
+ * from it — the duplication is the point, and it is four lines.
+ *
+ * ORDER IS LOAD-BEARING. Branches 1 and 2 are byte-for-byte the decision
+ * assertHeadsCca makes, and they come FIRST, so an admin, a jcrc or a genuine
+ * head reaches exactly the same answer by exactly the same route and NEVER
+ * touches the `scrc.enabled` flag read. Only a caller who would otherwise have
+ * been refused falls through to branch 3, so flipping the switch off cannot
+ * affect anybody who could already read the roster.
+ *
+ * `actor.roles` MUST be a live getUserRoles() read (I-5), same as
+ * assertHeadsCca — see its comment for why.
+ */
+export async function assertMayViewCcaRoster(
+  db: PrismaClient,
+  actor: CcaActor,
+  ccaID: number,
+): Promise<CcaScope> {
+  const capabilities = computeCapabilities(actor.roles);
+
+  // 1 + 2: identical to assertHeadsCca, in the same order, for the same reason.
+  if (capabilities.manageCcaHeads) {
+    return { ccaID, via: "manageCcaHeads" };
+  }
+
+  const row = await db.ccaHead.findUnique({
+    where: { userID_ccaID: { userID: actor.userID, ccaID } },
+    select: { id: true },
+  });
+  if (row) return { ccaID, via: "headship" };
+
+  // 3: the read-only tier (hall office). Behind the kill switch, and behind it
+  // HERE rather than in the callers, so the flag cannot be forgotten by the
+  // next procedure that adopts this guard.
+  if (capabilities.viewCcaRostersReadOnly) {
+    await assertScrcEnabled(db);
+    return { ccaID, via: "readOnly" };
+  }
+
+  // Same message and same non-disclosure argument as assertHeadsCca. A caller
+  // refused here learns nothing it would not have learned there.
   throw new TRPCError({
     code: "FORBIDDEN",
     message: "NOT_A_HEAD_OF_THIS_CCA",

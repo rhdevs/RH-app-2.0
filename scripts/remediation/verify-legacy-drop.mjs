@@ -122,13 +122,22 @@ async function main() {
 
   // --- B6: unexercised deferred privilege -------------------------------
   // PendingRoleGrant is a THIRD repository of privilege that survives the
-  // cutover. An outstanding deferred admin/jcrc grant redeemed AFTER the drop
-  // is a privilege change nobody at the go/no-go gate ever saw.
+  // cutover. An outstanding deferred admin/jcrc/scrc grant redeemed AFTER the
+  // drop is a privilege change nobody at the go/no-go gate ever saw.
+  //
+  // "scrc" (hall office) is in this list because it is a PRIVILEGED grantable
+  // role like the other two, not a baseline: it carries the power to appoint
+  // the JCRC. Leaving it out would let an outstanding hall-office grant sail
+  // through the gate unseen, which is the exact failure this check exists to
+  // prevent — and this list is the one that BLOCKS, so an omission here is
+  // silent. Any future addition to GRANTABLE_ROLES must be added here too.
+  // `cca_head` is deliberately absent: it is in no ASSIGNABLE_BY entry, so it
+  // cannot travel the deferred path at all.
   let pending = [];
   try { pending = await findAll(db, "PendingRoleGrant"); } catch { /* may not exist yet */ }
   const nowMs = Date.now();
   const livePriv = pending.filter((p) =>
-    (p.roles ?? []).some((r) => r === "admin" || r === "jcrc") &&
+    (p.roles ?? []).some((r) => r === "admin" || r === "jcrc" || r === "scrc") &&
     (!p.expiresAt || new Date(p.expiresAt?.$date ?? p.expiresAt).getTime() > nowMs));
   for (const p of livePriv) {
     blocking.push(`PendingRoleGrant ${p.userID}: outstanding ${JSON.stringify(p.roles)} created by ` +

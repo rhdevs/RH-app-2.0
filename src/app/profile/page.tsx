@@ -2,7 +2,10 @@
 
 import React, { useState } from "react";
 import { signOut, useSession } from "next-auth/react";
-import type { ProfileField } from "~/lib/profileCompleteness";
+import {
+  isMinimalProfileRole,
+  type ProfileField,
+} from "~/lib/profileCompleteness";
 import {
   User,
   Mail,
@@ -102,6 +105,15 @@ const ProfilePage: React.FC = () => {
           onSuccess={handleEditSuccess}
           forced={forcedIncomplete}
           requiredFields={forcedIncomplete ? missingFields : undefined}
+          /* Read from the SESSION's live role list, and derived with the SAME
+             predicate the server gate uses (isMinimalProfileRole), so the
+             dialog cannot disagree with the gate about who is exempt. It is
+             passed unconditionally — NOT only when `forcedIncomplete` — because
+             the block guard it relaxes is on the normal edit path too: an
+             exempt account with a perfectly complete profile still has no block
+             and would otherwise be unable to save a name change. Purely
+             cosmetic: the server re-derives the exemption on every write. */
+          minimalProfile={isMinimalProfileRole(session?.user?.roles ?? [])}
           // Forced completion refreshes the session so MatricGate re-evaluates
           // and this dialog unmounts itself once the profile is complete.
           onSaved={async () => {

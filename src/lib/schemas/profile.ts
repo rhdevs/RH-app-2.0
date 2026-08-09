@@ -71,14 +71,32 @@ export const updateProfileInput = z.object({
       message: "Telegram handle must be 5–32 characters: letters, digits or _",
     }),
 
-  // Required, matching signup, which mandates it. The page must initialise the
-  // select to UNSET rather than defaulting to a block the user never chose —
-  // the old `user?.block ?? 8` pre-selected Block 8 and let it be saved by
-  // accident. Nullability is not the fix; an unset control is.
+  // The page must initialise the select to UNSET rather than defaulting to a
+  // block the user never chose — the old `user?.block ?? 8` pre-selected Block 8
+  // and let it be saved by accident. Nullability is not the fix; an unset
+  // control is.
+  //
+  // OPTIONAL, NOT NULLABLE. `undefined` means "leave the stored value alone";
+  // there is deliberately NO value that means "clear it" — the same posture as
+  // `matric` in the admin router's update schema, and the reason is the same: a
+  // field that can be blanked by omission gets blanked by a client that forgot
+  // to send it. When a value IS sent it must still be one of BLOCKS, so this
+  // widens WHEN the field is written, never WHAT may be written.
+  //
+  // Why it became optional: a hall-office (`scrc`) account has no hall block to
+  // live in and is exempt from that half of the profile gate (see
+  // src/lib/profileCompleteness.ts). With `block` required here, that account
+  // could never submit this form at all — the shared schema, which the client
+  // mirrors with a real safeParse, would refuse the save.
+  //
+  // A RESIDENT'S BEHAVIOUR IS BYTE-IDENTICAL: EditProfileModal still refuses a
+  // blank block before it ever parses (that guard is now gated on
+  // `minimalProfile`), so a resident's payload always carries one.
   block: z
     .number()
     .int()
-    .refine((n) => (BLOCKS as readonly number[]).includes(n), "Invalid block"),
+    .refine((n) => (BLOCKS as readonly number[]).includes(n), "Invalid block")
+    .optional(),
 });
 
 export type UpdateProfileInput = z.input<typeof updateProfileInput>;

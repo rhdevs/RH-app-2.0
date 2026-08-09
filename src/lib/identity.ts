@@ -47,7 +47,40 @@ export function isNusStudentEmail(email: string | null | undefined): boolean {
 }
 
 /**
- * A canonical, non-empty identity key derived from an @u.nus.edu address.
+ * A well-formed, non-empty PRINCIPAL KEY. Exactly two things can be one:
+ *
+ *   1. a NUSNET id derived from an @u.nus.edu address — `canonicalUserID()`;
+ *   2. an admin-pinned allowlist id in the `EXT:` namespace — `asExtUserID()`
+ *      (08-userid-keydrift.md §3 Branch C, for a principal with no NUS
+ *      address).
+ *
+ * Those two functions are the only DERIVERS, and they both live in this file,
+ * so the set of things that can be derived into an authorization key is
+ * enumerable by reading one module.
+ *
+ * THERE IS A THIRD ENTRY POINT AND IT IS WEAKER THAN THE OTHER TWO. SAY SO.
+ * `asStoredCanonicalUserID` re-admits a value read back out of Mongo, and it
+ * gates on `isCanonicalResidentID` — a SHAPE test: non-empty, and no '@'. It
+ * therefore brands strings that NEITHER minting function could ever have
+ * produced. `asStoredCanonicalUserID("hello")` is a branded "hello". Read as a
+ * security statement, "nothing new can become a key" is FALSE, and it should
+ * not be written here as though it were true.
+ *
+ * What is actually true, and what the property rests on: it is sound only over
+ * a value that a KEYED WRITER put in a *ID column, and both of its call sites
+ * feed it exactly that — `UserRole.userID`, never `session.user.userID` and
+ * never a client-supplied field. Its own doc comment states the rule and the
+ * misuse; this paragraph exists so the summary above does not quietly cancel
+ * it. If a third call site ever hands it something an operator or a request
+ * body supplied, the enumerability claim at the top of this comment stops
+ * holding — and nothing in the type system will say so, because the brand is
+ * exactly what that function hands out.
+ *
+ * The NAME still says "canonical" because widening it to `PrincipalUserID`
+ * would have touched ~30 call sites, each one a chance to get a guard wrong,
+ * for zero runtime difference (the brand is erased). What widened is the
+ * MEANING, stated here; what did not widen is the guarantee, which was never
+ * "this came from NUS" — see isCanonicalResidentID's provenance note.
  *
  * The brand exists so the ABSENT identity can leave the `string` domain
  * entirely (09 §5.2, D-B). Before C9 absence was `""` — an in-band member of
@@ -64,6 +97,57 @@ export function isNusStudentEmail(email: string | null | undefined): boolean {
  * serialized shape changes and nothing needs the brand back after JSON.parse.
  */
 export type CanonicalUserID = string & { readonly __brand: "CanonicalUserID" };
+
+/**
+ * THE EXTERNAL IDENTITY NAMESPACE. An admin-pinned key for a principal that has
+ * no @u.nus.edu address — hall office staff, whose addresses are @nus.edu.sg
+ * (08-userid-keydrift.md §3 Branch C). One `AuthAllowlist` row pins one address
+ * to one of these.
+ *
+ * THE ':' IS THE WHOLE MECHANISM (M1). NUS_STUDENT_EMAIL's capture class is
+ * `[A-Z0-9._%-]` — it does not contain ':' — so `canonicalUserID()` can NEVER
+ * return a string matching this pattern, for ANY input, because every character
+ * it can return comes from that class. The two key spaces are PROVABLY
+ * DISJOINT, not conventionally separate.
+ *
+ * That is what makes the attack in 05-verification.md §164 —
+ * `{ email: "attacker@gmail.com", pinnedUserID: "E1633673" }`, which would
+ * hand an admin's authorization key to a stranger with NO grant path and
+ * therefore NO escalation guard firing — UNREPRESENTABLE rather than merely
+ * refused. `isExtUserID("E1633673")` is false, and the parity gate asserts it.
+ *
+ * Uppercase and `_` only, so a pin is legible in `RoleAuditLog.actorUserID` and
+ * greppable across collections. Length-bounded at both ends: the 3-char floor
+ * keeps `EXT:` alone from being a key, and the 32-char ceiling stops an id
+ * being used to smuggle a payload into an audit row.
+ *
+ * A pin is ADMIN-SUPPLIED AND VALIDATED, never auto-derived at read time — see
+ * services/authAllowlist.ts.
+ */
+export const EXT_ID = /^EXT:[A-Z0-9_]{3,32}$/;
+
+/** Pure shape test over the EXT namespace. See EXT_ID for why ':' matters. */
+export function isExtUserID(id: string | null | undefined): boolean {
+  return typeof id === "string" && EXT_ID.test(id);
+}
+
+/**
+ * The ONE minting function for the EXT half of the brand — the exact mirror of
+ * `asStoredCanonicalUserID` for the canonical half, and A RUNTIME CHECK, NEVER
+ * A CAST. Every EXT id in this codebase passes through here.
+ *
+ * It is what `pinnedUserIDFor` calls on the value it READ BACK OUT OF MONGO
+ * (mechanism M2), which is the half that survives a compromised write path: a
+ * row typed by hand in Atlas, or written by some future code path that skipped
+ * the zod schema, mints NO IDENTITY AT ALL rather than a bad one. The
+ * admin-only audited write (M4) alone would not give you that — it only
+ * governs the writes it can see.
+ */
+export function asExtUserID(
+  id: string | null | undefined,
+): CanonicalUserID | null {
+  return isExtUserID(id) ? (id as CanonicalUserID) : null;
+}
 
 /**
  * Returns null for anything that is not a valid @u.nus.edu address.
@@ -107,8 +191,23 @@ export function canonicalUserID(
  * Calling this on an admin-supplied `targetUserID` and concluding that the
  * principal is NUS-verified is exactly the misuse that breaks it — a pasted
  * bulk list would mint stored `resident` rows for principals whose NUS
- * provenance was never established. Note also that an `EXT:`-namespaced
- * allowlist pin would pass this test.
+ * provenance was never established.
+ *
+ * AN `EXT:`-NAMESPACED ALLOWLIST PIN PASSES THIS TEST. Not hypothetically —
+ * `AuthAllowlist` exists and pins are stored in `UserRole.userID`, so
+ * `isCanonicalResidentID("EXT:NGOCANH_MAI")` is true today, and the parity gate
+ * asserts it as a documented false positive. It is DESIRED there: it is what
+ * lets `asStoredCanonicalUserID` re-admit a pin read out of `UserRole` so the
+ * admin roster row is a usable grant target.
+ *
+ * IT IS SAFE ONLY BECAUSE EVERY BASELINE WRITER TAKES AN EMAIL AND
+ * CANONICALIZES INTERNALLY (I-8d). `ensureBaseline` returns false at its
+ * `!userID` clause — `canonicalUserID("ngocanh.mai@nus.edu.sg")` is null —
+ * BEFORE this predicate is ever consulted, so an EXT principal receives no
+ * `resident` baseline mechanically rather than by convention (08 §3.4). A
+ * future function that takes an ID and mints a baseline breaks this, and the
+ * breakage is silent. That property is the load-bearing one; do not remove it
+ * without removing this false positive too.
  *
  * Deliberately NOT E_FORMAT.test(id): see canonicalUserID above (L-27).
  *

@@ -201,6 +201,7 @@ function EntryRow({
   expanded,
   onToggleExpand,
   colSpan,
+  showEmail,
 }: {
   entry: RosterEntry;
   selection?: RosterSelection;
@@ -209,6 +210,8 @@ function EntryRow({
   expanded: boolean;
   onToggleExpand: () => void;
   colSpan: number;
+  /** Mirrors RosterTable's prop — see it for why this is not a guard. */
+  showEmail: boolean;
 }) {
   const duplicate = entry.userCcaRowCount > 1;
   const selected =
@@ -230,7 +233,9 @@ function EntryRow({
             </span>
           )}
         </TableCell>
-        <TableCell className="text-amber-700">—</TableCell>
+        {showEmail && (
+          <TableCell className="text-amber-700">—</TableCell>
+        )}
         <TableCell className="text-right">
           <RoleLabel isHead={entry.isHead} />
         </TableCell>
@@ -272,7 +277,9 @@ function EntryRow({
             </span>
           )}
         </TableCell>
-        <TableCell className="text-gray-600">{entry.email}</TableCell>
+        {showEmail && (
+          <TableCell className="text-gray-600">{entry.email}</TableCell>
+        )}
         <TableCell className="text-right">
           <RoleLabel isHead={entry.isHead} />
         </TableCell>
@@ -303,12 +310,27 @@ export default function RosterTable({
    * there is clickable.
    */
   details,
+  /**
+   * DEFAULT TRUE, so every existing caller is unchanged.
+   *
+   * Set false by the hall-office viewer, whose roster arrives from the server
+   * with `email` already NULLED (cca.getRoster redacts on the `readOnly` tier —
+   * see redactRosterForReadOnly). This flag does not hide anything the client
+   * holds; it stops the table drawing a column header over data the server
+   * declined to send, which reads as broken rather than as deliberate.
+   *
+   * It is presentation only and must never be mistaken for a guard: passing
+   * `showEmail` has no effect on what the server returns, and passing it TRUE
+   * on a redacted roster shows an empty column, not an address.
+   */
+  showEmail = true,
 }: {
   title: string;
   entries: RosterEntry[];
   emptyCopy: string;
   selection?: RosterSelection;
   details?: Map<string, MemberDetail>;
+  showEmail?: boolean;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggleExpand = (key: string) =>
@@ -319,9 +341,10 @@ export default function RosterTable({
       return next;
     });
 
-  // Name + Email + Role, plus the select column when present. The expanded
-  // detail row spans all of them.
-  const colSpan = (selection ? 1 : 0) + 3;
+  // Name + Role, plus Email when shown and the select column when present. The
+  // expanded detail row spans all of them, so this must track both flags or the
+  // detail panel stops lining up with the table above it.
+  const colSpan = (selection ? 1 : 0) + (showEmail ? 1 : 0) + 2;
 
   return (
     <section>
@@ -352,7 +375,7 @@ export default function RosterTable({
                   </TableHead>
                 )}
                 <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
+                {showEmail && <TableHead>Email</TableHead>}
                 <TableHead className="text-right">Role</TableHead>
               </TableRow>
             </TableHeader>
@@ -370,6 +393,7 @@ export default function RosterTable({
                     expanded={expanded.has(key)}
                     onToggleExpand={() => toggleExpand(key)}
                     colSpan={colSpan}
+                    showEmail={showEmail}
                   />
                 );
               })}

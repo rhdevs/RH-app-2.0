@@ -81,6 +81,50 @@ const FIXTURES = [
   [undefined, null, false],
 ];
 
+/**
+ * THE `EXT:` NAMESPACE (08-userid-keydrift.md §3 Branch C).
+ *
+ * These fixtures turn mechanism M1 from an argument into a test. The claim is
+ * that `EXT_ID` and the value set of `canonicalUserID` are PROVABLY DISJOINT,
+ * because NUS_STUDENT_EMAIL's capture class `[A-Z0-9._%-]` does not contain
+ * ':'. The whole security case for the allowlist rests on it: an
+ * `AuthAllowlist` row can never pin an address to a key some real NUS session
+ * also resolves to.
+ *
+ * Longhand for the same reason the email fixtures are: so a regression present
+ * in BOTH implementations still fails the gate.
+ */
+const EXT_FIXTURES = [
+  ["EXT:NGOCANH_MAI", true],
+  ["EXT:VINCENT_KOH", true],
+  ["EXT:ABC", true], // exactly the 3-char floor
+  ["EXT:AB", false], // below it
+  ["EXT:" + "A".repeat(32), true], // exactly the 32-char ceiling
+  ["EXT:" + "A".repeat(33), false], // above it
+  // THE ATTACK (05-verification.md:164). A NUSNET id is NOT an EXT id, so a row
+  // {email:"attacker@gmail.com", pinnedUserID:"E1633673"} mints nothing. If this
+  // line ever goes true, an admin's authorization key is pinnable to a stranger
+  // with no grant path and therefore no escalation guard firing.
+  ["E1633673", false],
+  ["G.S_SAMUEL", false], // L-27's real account: a canonical id, not an EXT id
+  ["ext:alice", false], // lowercased namespace prefix
+  ["EXT:alice", false], // lowercased slug
+  ["EXT:A B", false], // space is not in the slug class
+  ["EXT:A-B", false], // nor is '-'
+  ["EXT:A.B", false], // nor is '.'
+  ["XEXT:ABC", false], // unanchored would accept this
+  // A trailing newline. JS `$` without /m asserts END OF INPUT and does NOT
+  // match before a trailing \n (unlike Perl/Python), so this is false — pinned
+  // here because that is a language detail an author could easily assume the
+  // other way, and the assumption would admit a smuggled trailing byte.
+  ["EXT:ABC\n", false],
+  ["EXT:", false],
+  ["EXT", false],
+  ["", false],
+  [null, false],
+  [undefined, false],
+];
+
 /** isCanonicalResidentID is a shape test on an ID, not on an email. */
 const ID_FIXTURES = [
   ["E1234567", true],
@@ -153,8 +197,47 @@ for (const [input, expectedID, expectedNus] of FIXTURES) {
     if ((mod.canonicalUserID(input) !== null) !== mod.isNusStudentEmail(input)) {
       failures.push(`GATE/KEY DISAGREE (${name}) on ${i}`);
     }
+
+    // ---- M1, AS A TEST RATHER THAN AS AN ARGUMENT ------------------------
+    // NOTHING canonicalUserID CAN PRODUCE IS AN EXT ID. Asserted over the whole
+    // email fixture list, in both implementations, rather than reasoned about
+    // in a comment: the disjointness of the two key spaces is the entire
+    // security case for AuthAllowlist. If it ever fails, one address could
+    // resolve to a key an admin-issued pin also resolves to, and
+    // {email:"attacker@…", pinnedUserID:"<an admin's id>"} stops being
+    // unrepresentable. The argument is that NUS_STUDENT_EMAIL's capture class
+    // [A-Z0-9._%-] excludes ':' while EXT_ID requires one; this is the check
+    // that the argument still describes the code.
+    if (mod.isExtUserID(mod.canonicalUserID(input))) {
+      failures.push(`NAMESPACE COLLISION (${name}): canonicalUserID(${i}) is an EXT id`);
+    }
   }
 }
+
+// ---------------------------------------------------------------------------
+// The EXT namespace itself. See EXT_FIXTURES.
+// ---------------------------------------------------------------------------
+for (const [input, expected] of EXT_FIXTURES) {
+  const i = show(input);
+  check(`isExtUserID(${i})`, ts.isExtUserID(input), mjs.isExtUserID(input), expected);
+  // asExtUserID is the MINTING function (M2). The brand it applies is erased at
+  // runtime, so the only thing left to compare is exactly the thing that
+  // matters: it passes a well-formed pin through and turns everything else into
+  // the ABSENT value. Derived from the longhand `expected` column one line up,
+  // so each fixture's truth is still stated by hand exactly once.
+  check(
+    `asExtUserID(${i})`,
+    ts.asExtUserID(input),
+    mjs.asExtUserID(input),
+    expected ? input : null,
+  );
+}
+
+// EXT_ID is a RegExp, and two RegExp objects are never `===` even when
+// identical — comparing them through check() would report DRIFT on every run.
+// Compare the source and flags instead, which is what actually has to match.
+check("EXT_ID.source", ts.EXT_ID.source, mjs.EXT_ID.source, "^EXT:[A-Z0-9_]{3,32}$");
+check("EXT_ID.flags", ts.EXT_ID.flags, mjs.EXT_ID.flags, "");
 
 for (const [input, expected] of ID_FIXTURES) {
   const i = show(input);
@@ -309,7 +392,11 @@ for (const { root, exts } of SCAN) {
 // report
 // ---------------------------------------------------------------------------
 
-const cases = FIXTURES.length * 3 + ID_FIXTURES.length * 3;
+// FIXTURES: canonicalUserID + isNusStudentEmail + normalizeEmail per row.
+// ID_FIXTURES: isCanonicalResidentID + isResidentEligible + asStoredCanonicalUserID.
+// EXT_FIXTURES: isExtUserID + asExtUserID. Plus the two EXT_ID regex compares.
+const cases =
+  FIXTURES.length * 3 + ID_FIXTURES.length * 3 + EXT_FIXTURES.length * 2 + 2;
 
 if (failures.length) {
   console.error(failures.join("\n"));

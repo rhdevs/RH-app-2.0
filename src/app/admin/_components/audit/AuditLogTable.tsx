@@ -4,7 +4,13 @@ import { useMemo, useState } from "react";
 import { format, formatDistanceToNow } from "date-fns";
 
 import { api, type RouterOutputs } from "~/trpc/react";
-import { userIDSchema } from "~/server/api/services/roles";
+// From services/roles.ts, NOT routers/admin.ts. This file is `"use client"`,
+// and routers/admin.ts imports `node:crypto` and `~/env` at module scope —
+// value-importing a schema from it would drag both into the browser bundle.
+// services/roles.ts is runtime-pure precisely so client components can share
+// the server's vocabulary (see its header), which is what makes I-12's "one
+// predicate, not two" affordable here.
+import { roleTargetUserIDSchema } from "~/server/api/services/roles";
 import {
   Accordion,
   AccordionContent,
@@ -102,12 +108,25 @@ export default function AuditLogTable({
    * the server's own schema means the trailing space is normalised away and the
    * filter applies, which is what the operator meant.
    *
-   * And when a filter is present but genuinely unparseable we FAIL CLOSED: the
-   * query does not run at all. Showing everything is the one outcome an audit
-   * surface must never produce silently.
+   * `roleTargetUserIDSchema`, NOT the bare `userIDSchema`, and this is the
+   * SAME upgrade `listAuditLog`'s own input made server-side (admin.ts): an
+   * `EXT:`-namespaced allowlist pin is now a legal audit target AND actor — it
+   * is the one principal whose whole identity was issued by hand, so its
+   * history is exactly what an operator most needs to filter to. The strict
+   * `/^E\d{7}$/`-only parse `userIDSchema` applies would FAIL CLOSED on a pin
+   * exactly as it does on a typo: unparseable, filter dropped, query disabled
+   * below. That is silent under-filtering, not a refusal — the box would look
+   * accepted while quietly excluding the one identity it was asked to isolate.
+   * `roleTargetUserIDSchema` is `userIDSchema.or(extUserIDSchema)`, so an
+   * E-format id behaves byte-identically to before and only the EXT branch is
+   * new.
+   *
+   * And when a filter is present but genuinely unparseable we still FAIL
+   * CLOSED: the query does not run at all. Showing everything is the one
+   * outcome an audit surface must never produce silently.
    */
-  const actorParsed = userIDSchema.safeParse(actorUserID);
-  const targetParsed = userIDSchema.safeParse(targetUserID);
+  const actorParsed = roleTargetUserIDSchema.safeParse(actorUserID);
+  const targetParsed = roleTargetUserIDSchema.safeParse(targetUserID);
   const actorInvalid = actorUserID.trim() !== "" && !actorParsed.success;
   const targetInvalid = targetUserID.trim() !== "" && !targetParsed.success;
   const filterInvalid = actorInvalid || targetInvalid;

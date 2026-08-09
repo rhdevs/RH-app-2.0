@@ -305,7 +305,20 @@ export const userRouter = createTRPCRouter({
           // "" clears. See the D-5 note on `clearable` above — this is the ONE
           // place the branch-A/B decision is encoded.
           telegramHandle: clearable(input.telegramHandle),
-          block: input.block,
+          // OMITTED WHEN ABSENT, never written as null. `block` is optional on
+          // the shared schema (see the note there): `undefined` means "leave the
+          // stored value alone", and there is deliberately no value meaning
+          // "clear it". Spreading rather than assigning is what makes that true
+          // — `block: input.block` would hand Prisma `undefined`, which is a
+          // no-op today but is one refactor away from becoming a null write, and
+          // it would read as though omission were a supported way to blank the
+          // field. Same posture as `matric` in the admin router.
+          //
+          // A resident's payload always carries a block (EditProfileModal
+          // refuses a blank one before parsing), so this branch is reached ONLY
+          // by a profile-gate-exempt account — behaviour for all 1382 residents
+          // is byte-identical.
+          ...(input.block !== undefined ? { block: input.block } : {}),
         },
         // Mirror the read path's select — a bare update returns the whole row,
         // including passwordHash, straight into the browser and the React Query

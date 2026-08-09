@@ -24,6 +24,11 @@ const ROLE_STYLES: Record<
     label: "JCRC",
     cls: "bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-100",
   },
+  scrc: {
+    label: "Hall Office",
+    cls: "bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-100",
+    title: "Hall Office / SCRC. Can appoint JCRC and book the SCRC Room.",
+  },
   cca_head: {
     label: "CCA Head",
     cls: "bg-blue-100 text-blue-800 border-blue-300 hover:bg-blue-100",

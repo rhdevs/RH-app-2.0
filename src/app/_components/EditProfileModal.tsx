@@ -50,6 +50,24 @@ interface EditProfileModalProps {
   forced?: boolean;
   /** In forced mode, the fields that must be filled/valid before Save. */
   requiredFields?: ProfileField[];
+  /**
+   * MINIMAL-PROFILE mode: this account is exempt from the strict profile gate's
+   * block/telegram/matric requirements (see MINIMAL_PROFILE_ROLES in
+   * src/lib/profileCompleteness.ts — hall-office staff, who have no hall block).
+   *
+   * IT EXISTS BECAUSE THE BLOCK CHECK IN handleSubmit WAS UNCONDITIONAL. That
+   * check returns before any mutation fires, so without this prop an exempt
+   * account could not save the form AT ALL — not even a display-name change —
+   * and the only symptom would be an inline "Please select your block." on a
+   * field they were told was not required. A hard blocker with a soft-looking
+   * error message.
+   *
+   * Deliberately SEPARATE from `forced`: it describes WHO the account is, not
+   * whether the dialog is dismissable, and the two combine in all four ways (an
+   * exempt account still gets the non-dismissable dialog if its display name is
+   * missing).
+   */
+  minimalProfile?: boolean;
   /** Called after a successful save INSTEAD of onClose when forced — the parent
    *  refreshes the session so the gate re-evaluates and unmounts this itself. */
   onSaved?: () => void | Promise<void>;
@@ -66,6 +84,12 @@ const normalizeMatric = (v: string) => v.trim().toUpperCase();
  * impossible for a profile save to strip `resident` (lockout mode 16). Roles are
  * read-only badges on the profile page. Keep it that way; role mutation belongs
  * to the admin surface behind its escalation guards.
+ *
+ * It DOES take a `minimalProfile` flag, which is a different thing entirely: it
+ * carries no privilege and grants nothing. It only relaxes the client-side
+ * BLOCK requirement for accounts the profile gate already exempts server-side
+ * (src/lib/profileCompleteness.ts). The server re-derives that exemption from
+ * the live role set on every request; this flag is never trusted for anything.
  */
 const EditProfileModal: React.FC<EditProfileModalProps> = ({
   isOpen,
@@ -74,6 +98,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   onSuccess,
   forced = false,
   requiredFields = [],
+  minimalProfile = false,
   onSaved,
 }) => {
   const requires = (f: ProfileField) => forced && requiredFields.includes(f);
@@ -106,10 +131,25 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const handleSubmit = async () => {
     setFormError(null);
 
-    if (block === "") {
+    // A RESIDENT MUST STILL PICK A BLOCK, and this returns before any mutation
+    // fires, so it is a hard stop rather than a warning. It was UNCONDITIONAL,
+    // which made the form unsaveable for a profile-gate-exempt account (hall
+    // office: no block to pick, and none required of them) — see the
+    // `minimalProfile` prop. Gating it here rather than deleting it keeps every
+    // resident's path byte-identical: their payload always carries a block, so
+    // the server's `block` becoming optional never widens what they can send.
+    if (!minimalProfile && block === "") {
       setFieldErrors({ block: "Please select your block." });
       return;
     }
+
+    // OMITTED, NOT SENT AS "" OR null. `block` is optional on the shared schema
+    // and `undefined` means "leave the stored value alone" — there is
+    // deliberately no value meaning "clear it". Computed ONCE and spread into
+    // BOTH the client-side mirror parse below and the mutation payload, so the
+    // two cannot disagree about what is being submitted. Only reachable with
+    // `block === ""` in minimal mode, because of the guard above.
+    const blockPayload = block === "" ? {} : { block };
 
     // Mirror the server's validation client-side using the SAME schema, so the
     // two can never disagree about what is accepted.
@@ -117,7 +157,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
       displayName,
       telegramHandle,
       bio,
-      block,
+      ...blockPayload,
     });
 
     const errs: Record<string, string> = {};
@@ -149,6 +189,14 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
     // Forced-mode presence requirements: these fields are optional on a normal
     // edit but mandatory when completing a profile.
+    //
+    // ALREADY ROLE-AWARE, with no change needed here: `requires(f)` is driven by
+    // `requiredFields`, which the page passes straight from the session's
+    // `profileMissingFields` — computed server-side by the role-aware
+    // computeProfileGaps. An exempt account is never asked for these, so these
+    // two checks simply do not fire for them. Do NOT add `minimalProfile` here;
+    // that would be a second derivation of the same exemption, and the two would
+    // drift.
     if (requires("telegramHandle") && telegramHandle.trim() === "") {
       errs.telegramHandle ??= "Enter your Telegram handle to continue.";
     }
@@ -184,7 +232,8 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
         displayName,
         telegramHandle,
         bio,
-        block,
+        // The SAME object the mirror parse above validated. See blockPayload.
+        ...blockPayload,
       });
 
       // The MERGE matters: the mutation deliberately returns neither roles nor
