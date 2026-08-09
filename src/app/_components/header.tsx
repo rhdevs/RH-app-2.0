@@ -14,6 +14,7 @@ import {
   LogOut,
   UserCircle,
   ShieldCheck,
+  Landmark,
 } from "lucide-react";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
@@ -44,6 +45,8 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
    * every user, so it must not pull in the capability module or issue a
    * whoAmI query on every page load just to decide whether to draw one link.
    * `session.user.roles` is render-only (I-5); nothing is authorised from it.
+   *
+   * Roles tested here under the exception: admin, jcrc, cca_head, scrc.
    */
   const roles = session?.user?.roles ?? [];
   const canReachAdmin = roles.includes("admin") || roles.includes("jcrc");
@@ -63,6 +66,18 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
    */
   const isCcaHead = roles.includes("cca_head");
 
+  /**
+   * Same sanctioned exception as canReachAdmin above, for the same reason.
+   *
+   * Gated on `scrc` ALONE, not on `reachScrcDashboard` (admin || scrc): a plain
+   * hall-office holder cannot reach /admin at all, so this link is their only
+   * way in, whereas an admin who does not hold `scrc` has no business being
+   * pointed at someone else's surface and can still type the URL. The link is
+   * cosmetic either way — /scrc/layout.tsx does the real check with a LIVE role
+   * read, and every procedure behind it re-checks its own capability.
+   */
+  const isScrc = roles.includes("scrc");
+
   const navLinks = [
     { name: "Home", href: "/", icon: Home },
     // My Bookings lives in the profile dropdown (below), not the top nav, to
@@ -74,6 +89,9 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     { name: "CCAs", href: "/ccas", icon: LayoutGrid },
     { name: "Events", href: "/events", icon: CalendarDays },
     ...(isCcaHead ? [{ name: "Manage CCAs", href: "/cca", icon: Users }] : []),
+    ...(isScrc
+      ? [{ name: "Hall Office", href: "/scrc", icon: Landmark }]
+      : []),
     ...(canReachAdmin
       ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }]
       : []),

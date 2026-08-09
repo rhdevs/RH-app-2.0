@@ -1,6 +1,6 @@
 "use client";
 
-import { Users, ShieldCheck, Landmark, UserCog } from "lucide-react";
+import { Users, ShieldCheck, Landmark, UserCog, Building2 } from "lucide-react";
 
 import { api } from "~/trpc/react";
 import AdminStatCard from "./_components/AdminStatCard";
@@ -24,6 +24,17 @@ export default function AdminOverviewPage() {
           label="CCA heads"
           value={data?.ccaHead ?? "—"}
           icon={UserCog}
+        />
+        {/* Hall Office. Shown to every manager as a plain count, unlike the
+            Admins card below: how many accounts can appoint the JCRC is
+            ordinary operational information, and a jcrc who cannot see that
+            number cannot notice it going from 2 to 5. It is a COUNT only —
+            WHO holds it is /admin/users' role filter, which is a different
+            question with its own guard. */}
+        <AdminStatCard
+          label="Hall Office"
+          value={data?.scrc ?? "—"}
+          icon={Building2}
         />
         {/* getStats returns `admins: null` for a caller without
             seeAdminIdentities, so the card is omitted because the DATA is

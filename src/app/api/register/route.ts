@@ -84,6 +84,18 @@ export async function POST(req: Request) {
     // resident baseline, so this rejection was a lockout, not just an
     // inconvenience. The @nus.edu.sg clause is now subsumed: the anchored
     // regex admits u.nus.edu and nothing else.
+    //
+    // DELIBERATELY NOT WIDENED TO THE AuthAllowlist COLLECTION, unlike
+    // src/app/api/reset-password/request-verification-code/route.ts, which is.
+    // SELF-REGISTRATION STAYS @u.nus.edu-ONLY, FOREVER. This is the boundary
+    // that keeps the allowlist from becoming a signup path: a pin lets an
+    // ADMIN-CREATED account set its first password, it must never let a
+    // stranger create an account. A staff address is provisioned by an admin
+    // (scripts/remediation/provision-ext-account.mjs, or
+    // admin.addAuthAllowlistEntry) and never self-served. Widening this line
+    // would mean anyone holding a pinned address could mint their own `User`
+    // row with their own password and their own displayName, outside the
+    // audited provisioning path.
     if (!isNusStudentEmail(email)) {
       return NextResponse.json({ error: "Invalid Email" }, { status: 400 });
     }

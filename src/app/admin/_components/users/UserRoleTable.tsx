@@ -64,7 +64,7 @@ export default function UserRoleTable() {
       role:
         roleFilter === "all"
           ? undefined
-          : (roleFilter as "admin" | "jcrc" | "cca_head"),
+          : (roleFilter as "admin" | "jcrc" | "cca_head" | "scrc"),
       limit: 25,
     },
     {
@@ -211,6 +211,23 @@ export default function UserRoleTable() {
                           <span className="text-gray-400">—</span>
                         )}
                       </span>
+                      {/* An `EXT:` id is NOT derived from the email — it was
+                          ISSUED, by an admin, as a row on the authentication
+                          allowlist. Labelled because an operator who sees
+                          `EXT:NGOCANH_MAI` with no explanation next to an
+                          @nus.edu.sg address has every reason to file it as a
+                          bug, and the remedy they would reach for (deleting the
+                          account) is the one thing the delete refusal exists to
+                          stop. The server already computes this — same
+                          namespace test the session path authorizes on. */}
+                      {u.pinned && (
+                        <span
+                          className="rounded border border-amber-300 bg-amber-50 px-1 py-px text-[10px] font-medium text-amber-800"
+                          title="This account's sign-in and identity were granted by an entry on the authentication allowlist (/admin/allowlist), not derived from an @u.nus.edu address."
+                        >
+                          Pinned
+                        </span>
+                      )}
                       {u.keyMismatch && <KeyMismatchIcon />}
                     </div>
                   </TableCell>

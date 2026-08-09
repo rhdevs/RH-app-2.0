@@ -92,6 +92,7 @@ export default function CcaHeadBulkWizard() {
               | "admin"
               | "jcrc"
               | "cca_head"
+              | "scrc"
             )[],
             via: r.via,
             confidence: r.confidence,

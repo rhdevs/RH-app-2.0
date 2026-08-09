@@ -14,13 +14,17 @@ import { z } from "zod";
 import { env } from "~/env";
 import { db } from "~/server/db";
 import { verifyPassword } from "~/lib/password";
-import { computeProfileGaps } from "~/lib/profileCompleteness";
-import type { CanonicalUserID } from "~/lib/identity";
 import {
-  canonicalUserID,
-  isNusStudentEmail,
-  normalizeEmail,
-} from "~/lib/identity";
+  REQUIRED_PROFILE_FIELDS,
+  computeProfileGaps,
+  requiredProfileFieldsFor,
+} from "~/lib/profileCompleteness";
+import type { CanonicalUserID } from "~/lib/identity";
+// `canonicalUserID` is deliberately NOT imported here any more: the session
+// callback resolves through resolvePrincipalID below, which composes it with
+// the allowlist. Importing it again would invite a second, half-aware
+// derivation of the session key.
+import { isNusStudentEmail, normalizeEmail } from "~/lib/identity";
 import {
   BASELINE_ROLE,
   ADMIN_ROLE,
@@ -32,6 +36,15 @@ import {
   getAuthEnforcement,
   isMatricRequired,
 } from "~/server/api/services/access";
+// The D-7 break-glass ALLOWLIST — the collection half. Read its header before
+// touching either call site below: it is the only thing in this app that can
+// turn an address the domain rule rejects into an authorization key, and the
+// mechanism that keeps that safe (M2, namespace re-validation at every read)
+// lives there, not here.
+import {
+  pinnedUserIDFor,
+  resolvePrincipalID,
+} from "~/server/api/services/authAllowlist";
 // The ONE derivation of "does another live User row resolve to this NUSNET id".
 // Imported rather than restated: a second copy is a second chance to write the
 // equality-on-email version, which misses the whitespace variants that are
@@ -39,11 +52,26 @@ import {
 import { findCanonicalIdCollisions } from "~/server/api/services/userAdmin";
 
 /**
- * D-7 + I-12. THE eligibility predicate for sign-in, and the only one. The
- * domain rule itself lives in ~/lib/identity — this wrapper adds nothing but
- * the break-glass allowlist, which is SIGN-IN ONLY: an allowlisted non-NUS
- * address still has canonicalUserID() === null, so it receives no stored
- * baseline (I-8d), holds no roles and cannot book.
+ * D-7 + I-12. THE domain half of the eligibility predicate. The rule itself
+ * lives in ~/lib/identity — this wrapper adds nothing but the ENV-VAR
+ * break-glass allowlist.
+ *
+ * THE ENV ALLOWLIST IS SIGN-IN ONLY, AND STILL IS. An address admitted by
+ * `AUTH_EMAIL_ALLOWLIST` still has `canonicalUserID() === null`, so it receives
+ * no stored baseline (I-8d), holds no roles and cannot book. `resolvePrincipalID`
+ * — the function that decides what key a session gets — does NOT consult this
+ * variable, only the `AuthAllowlist` COLLECTION. That asymmetry is deliberate
+ * and is the whole reason both survive:
+ *
+ *   env var    admits a sign-in during an outage in which THE DATABASE is the
+ *              broken thing. Confers no identity, so it cannot be a privilege
+ *              escalation vector — there is nothing to escalate.
+ *   collection admits a sign-in AND mints an `EXT:` principal key. It is
+ *              administered through an audited adminProcedure, revocable in
+ *              seconds, and every read of it re-validates the namespace.
+ *
+ * If you ever make the env var mint a key, you have created an unaudited,
+ * un-revocable, deploy-time identity source. Do not.
  *
  * Read from process.env rather than ~/env because src/env.js is outside this
  * change's scope; unset means "no exceptions", which is the safe default.
@@ -78,6 +106,22 @@ async function maySignIn(
   const email = normalizeEmail(rawEmail);
   if (!email) return false;
   if (passesDomainRule(email)) return true;
+
+  // The COLLECTION half of the break-glass (08 §3 Branch C). Reached ONLY for
+  // an address the domain rule and the env allowlist have both already
+  // rejected, so no @u.nus.edu sign-in pays for it.
+  //
+  // WITHOUT THIS LINE the admin-provisioned staff accounts are admitted today
+  // only by accident: `rbac.auth.enforcement` defaults to "off", and in that
+  // mode the fall-through below returns true for every non-empty address. The
+  // day someone flips that switch to "enforce" — which is the whole point of
+  // the switch existing — the hall office is locked out. Relying on a kill
+  // switch staying off is not a design.
+  //
+  // Fails CLOSED: pinnedUserIDFor returns the absent value on any fault and
+  // never throws, so a database outage degrades this to "not allowlisted",
+  // which is exactly the behaviour that predates the collection.
+  if ((await pinnedUserIDFor(db, email)) !== null) return true;
 
   const mode = await getAuthEnforcement(db);
   if (mode === "enforce") return false;
@@ -421,7 +465,31 @@ export const authOptions = {
         // I-1: anchored derivation via the ONE shared helper, replacing an
         // unanchored .replace() with no .trim() that returned garbage-but-truthy
         // keys like "ALICE@GMAIL.COM" for non-NUS addresses.
-        const userID = canonicalUserID(token.email);
+        //
+        // resolvePrincipalID = canonicalUserID(email) ?? pinnedUserIDFor(...).
+        //
+        // COSTS NOTHING IN STEADY STATE. The `??` short-circuits, so for every
+        // @u.nus.edu address — which is all live traffic — the right operand is
+        // never evaluated and NO query is issued. Rule 2 above ("ZERO reads
+        // beyond the two indexed findUniques") is preserved exactly. Only a
+        // non-canonical session pays, and it pays one findUnique on a unique
+        // index over a collection holding single-digit rows, behind a 15s cache.
+        // Those sessions previously early-returned below with zero queries, so
+        // this is +1 for them and +0 for everyone else.
+        //
+        // IT CANNOT THROW. resolvePrincipalID wraps its read and degrades to the
+        // absent identity — rule 1 above, and the degraded behaviour is
+        // byte-identical to what this line did before the allowlist existed.
+        //
+        // THE PIN IS DELIBERATELY NOT STAMPED ON THE TOKEN. `jwt` above writes
+        // only id/email/name and MUST STAY THAT WAY. session.maxAge is 30 days
+        // and updateAge is 24h, so a pin baked into the token would mean
+        // REMOVING AN AuthAllowlist ROW DOES NOT REVOKE THE IDENTITY FOR UP TO
+        // A MONTH — and that identity carries `scrc`. This is the same argument
+        // this file already makes for `roles` (I-4) and `matricRequired`
+        // (I-11); resolving live is what makes revocation take effect in 15
+        // seconds instead of 30 days.
+        const userID = await resolvePrincipalID(db, token.email);
         session.user.userID = userID;
         // D-C: the identity fact, derived HERE and nowhere else (no new query —
         // it is line 302's value, named). Deliberately NOT flag-aware: unlike
@@ -655,27 +723,15 @@ export const authOptions = {
         // history, not a live prompt, and reads as [] too, so a user who has
         // already filled the form is never re-prompted even though the row is
         // kept for the audit trail.
-        session.user.profileNeedsFields =
+        // READ HERE, PUBLISHED BELOW. The value cannot be assigned yet: it is
+        // now filtered by the user's ROLES (see where it lands, just after
+        // `session.user.roles`), and the role set does not exist until the
+        // self-heal has run. Splitting the read from the publish keeps the
+        // `resolvedAt` semantics next to the query they describe.
+        const rawNeedsFields =
           completionRow && completionRow.resolvedAt == null
             ? (completionRow.needsFields ?? [])
             : [];
-
-        // STRICT PROFILE GATE. Computed live from the profile fields + matric
-        // above, using the SAME rules the client dialog mirrors, so the two
-        // never disagree about who is gated. `userDoc` may be null if the read
-        // faulted — treat that as "no data to prove completeness", i.e. gated,
-        // EXCEPT it degrades safely: computeProfileGaps on all-null returns the
-        // full set, which routes to /profile where the user can fix it (never a
-        // hard lockout). A transient fault therefore over-prompts, not
-        // over-admits.
-        const profileGaps = computeProfileGaps({
-          displayName: userDoc?.displayName ?? null,
-          telegramHandle: userDoc?.telegramHandle ?? null,
-          block: userDoc?.block ?? null,
-          matric: record?.matric ?? null,
-        });
-        session.user.profileMissingFields = profileGaps;
-        session.user.profileIncomplete = profileGaps.length > 0;
 
         // Legacy-tolerant read for the D-6 dual-write window. Removing this
         // fallback belongs to doc 06 — dropping it early silently demotes any
@@ -701,6 +757,18 @@ export const authOptions = {
           // Pass the EMAIL, not the id: ensureBaseline canonicalizes internally
           // so the write cannot be reached without an @u.nus.edu address having
           // been presented (I-8d — provenance, not shape).
+          //
+          // FOR AN `EXT:` PRINCIPAL THIS BLOCK RUNS ON EVERY REQUEST, FOREVER,
+          // AND THAT IS BY DESIGN — not a bug for the next reader to "fix".
+          // 08 §3.4: an allowlist-pinned identity receives NO `resident`
+          // baseline, so `stored` never contains it and this condition is
+          // always true for them. The call costs one function invocation and
+          // NOTHING ELSE: ensureBaseline canonicalizes the email itself, gets
+          // null for an @nus.edu.sg address, and returns false at its `!userID`
+          // clause BEFORE issuing any query or any write. That the baseline is
+          // withheld mechanically — by the email failing to canonicalize —
+          // rather than by an `if (isExt)` somewhere is exactly what makes it
+          // trustworthy; see isCanonicalResidentID's note in ~/lib/identity.
           const healed = await ensureBaseline(db, token.email);
           if (healed) stored = [...stored, BASELINE_ROLE];
           // If it did NOT heal we do NOT synthesise the role. The stored value
@@ -716,6 +784,74 @@ export const authOptions = {
         session.user.roles = roles;
         session.user.isAdmin = roles.includes(ADMIN_ROLE);
 
+        /* ---- WALL 2: the POST-MERGE completion prompt ----------------------
+         * ROLE-AWARE, AND IT HAS TO BE, because MatricGate checks THIS BEFORE
+         * the strict profile gate below (`needsProfileCompletion` gates
+         * `needsProfileDetails`) and routes to /onboarding/complete-profile.
+         *
+         * Without the filter, an exempt account carrying a ProfileCompletion
+         * row that names `matric` / `block` / `telegramHandle` would be held at
+         * that page permanently: the fields it demands are exactly the ones the
+         * exemption says they will never have, so there is no input that clears
+         * the prompt. `profileIncomplete` being false would not help — the gate
+         * never reaches it. That is the resident-stranding trap
+         * unstick-profile-completion.mjs was written to release 18 people from,
+         * re-created for a population that cannot escape it at all.
+         *
+         * LATENT TODAY, FIXED ANYWAY. Only the merge scripts write
+         * ProfileCompletion rows, and an EXT identity cannot have been merged
+         * (nothing else canonicalises to a pin). But "unreachable" here rests on
+         * a property of a different subsystem, and the cost of not depending on
+         * that is four lines.
+         *
+         * THE FILTER IS CONSERVATIVE IN THE SAME DIRECTION userAdmin's WALL 2
+         * is: a name this deploy's vocabulary does not recognise is KEPT, never
+         * dropped, because a deploy cannot judge a field it does not understand.
+         * Only a field that IS in the strict vocabulary AND is not required of
+         * THIS user is removed. For every non-exempt account the required set
+         * IS the strict vocabulary, so this filter is the identity function and
+         * all 1382 residents behave byte-identically.
+         */
+        const requiredForUser = new Set<string>(requiredProfileFieldsFor(roles));
+        const strictVocabulary = new Set<string>(REQUIRED_PROFILE_FIELDS);
+        session.user.profileNeedsFields = rawNeedsFields.filter(
+          (f) => !strictVocabulary.has(f) || requiredForUser.has(f),
+        );
+
+        // STRICT PROFILE GATE. Computed live from the profile fields + matric
+        // above, using the SAME rules the client dialog mirrors, so the two
+        // never disagree about who is gated. `userDoc` may be null if the read
+        // faulted — treat that as "no data to prove completeness", i.e. gated,
+        // EXCEPT it degrades safely: computeProfileGaps on all-null returns the
+        // full set, which routes to /profile where the user can fix it (never a
+        // hard lockout). A transient fault therefore over-prompts, not
+        // over-admits.
+        //
+        // MOVED BELOW THE ROLE RESOLUTION. computeProfileGaps is now ROLE-AWARE
+        // (src/lib/profileCompleteness.ts: MINIMAL_PROFILE_ROLES — hall office
+        // staff hold no matric, live in no block, and have no reason to publish
+        // a Telegram handle to residents), so the gate must read the SAME live
+        // role set the rest of this callback does. Nothing between the old
+        // position and this one reads profileGaps, so the move is inert for
+        // every existing user.
+        //
+        // DO NOT compute a second, earlier role set to keep this where it was.
+        // That is a second derivation of the same fact in the same function and
+        // it WILL drift — and when it drifts, the session gate and the tRPC
+        // walls in userAdmin.ts stop agreeing about who is held, which is the
+        // exact state unstick-profile-completion.mjs exists to clean up.
+        const profileGaps = computeProfileGaps(
+          {
+            displayName: userDoc?.displayName ?? null,
+            telegramHandle: userDoc?.telegramHandle ?? null,
+            block: userDoc?.block ?? null,
+            matric: record?.matric ?? null,
+          },
+          roles,
+        );
+        session.user.profileMissingFields = profileGaps;
+        session.user.profileIncomplete = profileGaps.length > 0;
+
         // D-8 pending-grant redemption. `pendingCheckedAt` is stamped
         // unconditionally by redeemPendingGrants as its final step (INCLUDING
         // the no-grants and expired cases), which is what makes this check cost
@@ -729,6 +865,17 @@ export const authOptions = {
         // does not need to be visible in THIS request (the claimant has just
         // signed up and is being redirected anyway), and awaiting it would put a
         // multi-write path in front of every first page load.
+        //
+        // FOR AN `EXT:` PRINCIPAL BEFORE ITS FIRST ROLE GRANT there is no
+        // UserRole row at all, so `roleRow` is null, `pendingCheckedAt` is
+        // undefined and this fires on every request. It costs one findUnique on
+        // PendingRoleGrant plus one FAILING update, both swallowed — and,
+        // importantly, IT CANNOT CREATE A STRAY UserRole ROW: stampPendingChecked
+        // uses `update`, not `upsert`, inside its own try/catch, so a missing
+        // document throws P2025 into that catch rather than inserting an empty,
+        // role-less row under the pin. Two wasted queries per request for one
+        // account until the `scrc` grant lands, after which the row exists and
+        // this stamps once and never runs again.
         if (roleRow?.pendingCheckedAt == null) {
           void redeemPendingGrants(db, userID).catch(() => {
             /* contained */

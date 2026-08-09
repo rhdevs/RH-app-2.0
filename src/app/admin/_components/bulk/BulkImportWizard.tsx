@@ -102,11 +102,13 @@ export default function BulkImportWizard({
               | "admin"
               | "jcrc"
               | "cca_head"
+              | "scrc"
             )[],
             expectedBefore: r.expectedBefore as (
               | "admin"
               | "jcrc"
               | "cca_head"
+              | "scrc"
             )[],
             via: r.via,
             confidence: r.confidence,
@@ -171,7 +173,7 @@ export default function BulkImportWizard({
               rows: rows.map((r) => ({
                 lineNo: r.lineNo,
                 identifier: r.identifier,
-                roles: r.roles as ("admin" | "jcrc" | "cca_head")[],
+                roles: r.roles as ("admin" | "jcrc" | "cca_head" | "scrc")[],
               })),
             });
           }}

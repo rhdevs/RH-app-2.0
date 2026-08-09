@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 
 import { canonicalUserID, type CanonicalUserID } from "~/lib/identity";
 import { getUserRoles } from "./access";
+import { resolvePrincipalID } from "./authAllowlist";
 import { ADMIN_ROLE } from "./roles";
 
 /**
@@ -152,9 +153,35 @@ export async function loadAdminUserTarget(
   return {
     userObjectId: row.id,
     email: row.email,
-    // I-1. Derived here and nowhere else. `row.userID` is NOT consulted for
-    // this — it is carried alongside, for display and for the mismatch check.
-    canonicalUserID: canonicalUserID(row.email),
+    /**
+     * I-1 STILL HOLDS: this is derived from the EMAIL and from nowhere else.
+     * `row.userID` is NOT consulted for it — that column is carried alongside,
+     * for display and for the mismatch check, because on ~515 rows it holds an
+     * A-format matric and on the split-identity rows it holds ANOTHER LIVE
+     * HUMAN'S key.
+     *
+     * It now resolves the `EXT:` namespace too, so an allowlist-pinned account's
+     * admin record is keyed exactly the way the session keys it. Three
+     * consequences, each verified rather than assumed:
+     *
+     *  - userAdmin.get reads the target's roles under the right key, so the
+     *    role-aware profile gate agrees with the session. WITHOUT THIS the
+     *    role-awareness is inert for exactly the accounts it was added for, and
+     *    the admin surface reports "missing matric/block/telegram" for a user
+     *    the gate is not holding — a false alarm on the one page whose job is
+     *    diagnosing the gate.
+     *  - assertMayManageUserProfileOf's CANNOT_MODIFY_AN_UNKEYED_ACCOUNT branch
+     *    stops firing, so A JCRC CAN NOW EDIT A PINNED ACCOUNT'S displayName /
+     *    block / bio. ACCEPTED, and stated here rather than discovered: it is
+     *    identical to how every resident is already treated (`scrc` is not
+     *    `admin`), it does not reach roles, matric-as-identity or email, and
+     *    the alternative — leaving `cid` null — breaks the bullet above and
+     *    re-opens the delete hazard below by a different door.
+     *  - computeDeleteRefusals' ABSENT_CANONICAL_ID and LEGACY_KEY_MISMATCH
+     *    stop firing, which makes DELETE reachable. That is why
+     *    PINNED_ALLOWLIST_ACCOUNT exists — see it.
+     */
+    canonicalUserID: await resolvePrincipalID(db, row.email),
     legacyUserID: row.userID,
     displayName: row.displayName,
     telegramHandle: row.telegramHandle,
@@ -344,6 +371,7 @@ export type DeleteRefusal =
   | "ABSENT_CANONICAL_ID"
   | "LEGACY_KEY_MISMATCH"
   | "SHARED_CANONICAL_ID"
+  | "PINNED_ALLOWLIST_ACCOUNT"
   | `SOLE_HEAD_OF_CCA:${number}`;
 
 /**
@@ -444,6 +472,42 @@ export async function computeDeleteRefusals(
   // reusing it would print "this account has no matric record" as the reason a
   // delete was refused.
   if (cid === null) out.push("ABSENT_CANONICAL_ID");
+
+  // --- the identity was ISSUED BY AN ALLOWLIST PIN --------------------------
+  // A pinned account is now DELETABLE as far as every other refusal here is
+  // concerned: loadAdminUserTarget resolves the EXT namespace, so cid is
+  // non-null (ABSENT_CANONICAL_ID does not fire) and provisioning writes the
+  // pin into `User.userID` (LEGACY_KEY_MISMATCH does not fire either). Without
+  // this refusal the delete would go through.
+  //
+  // AND `deleteUserAccountCascade` DOES NOT KNOW ABOUT AuthAllowlist. It cleans
+  // thirteen collections and that is not one of them, so the delete would leave
+  // the pin standing. Re-creating a `User` row on that address — which anyone
+  // could then do, because maySignIn still admits it — RE-ATTACHES the identity,
+  // and with it any UserRole document the cascade did not reach. That is
+  // 07-cca-future.md §5's hazard exactly, and it is the same shape as the attack
+  // the whole collection is designed against: a key spent by a party who was
+  // never granted it.
+  //
+  // REFUSING RATHER THAN EXTENDING THE CASCADE, deliberately. The pin is an
+  // ADMIN-ISSUED CREDENTIAL. Destroying it should be a separate, deliberate,
+  // audited act on the surface that issued it (admin.removeAuthAllowlistEntry),
+  // not a silent side effect inside a thirteen-collection transaction that also
+  // carries a retention special case for Bookings. The operator's path is:
+  // revoke the roles, remove the pin, then delete the account — three audit
+  // rows instead of one.
+  //
+  // PAIRED WITH removeAuthAllowlistEntry's PIN_STILL_HOLDS_ROLES, which refuses
+  // the OPPOSITE order. Two locks on opposite doors: you cannot delete the
+  // account while the pin lives, and you cannot remove the pin while it holds
+  // roles. The only way through is the one that leaves a complete trail.
+  if (cid !== null) {
+    const pin = await db.authAllowlist.findUnique({
+      where: { pinnedUserID: cid },
+      select: { id: true },
+    });
+    if (pin) out.push("PINNED_ALLOWLIST_ACCOUNT");
+  }
 
   // --- self -----------------------------------------------------------------
   // Without this an admin can delete themselves straight out of the last-admin

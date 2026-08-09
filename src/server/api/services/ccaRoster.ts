@@ -35,7 +35,13 @@ export type RosterResolved = {
   kind: "resolved";
   /** THE dedupe key. Collapses a person's A-format and canonical keys. */
   userId: string;
-  email: string;
+  /**
+   * NULLABLE ONLY BECAUSE OF THE READ-ONLY TIER. Resolution always produces a
+   * real address — a row without one cannot resolve — so for a head or a
+   * manager this is never null. `redactRosterForReadOnly` below blanks it for
+   * the hall office, and this type is what forces every renderer to cope.
+   */
+  email: string | null;
   displayName: string | null;
   storedUserID: string | null;
   isHead: boolean;
@@ -77,6 +83,76 @@ export type Roster = {
   counts: { heads: number; members: number; total: number };
   drift: RosterDrift;
 };
+
+/* -------------------------------------------------------------------------- */
+/* The read-only (hall office) projection                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Strip every IDENTIFIER off a roster, leaving names, headship and grant dates.
+ *
+ * WHY THIS EXISTS. A full `Roster` carries each member's EMAIL, their stored
+ * `userID`, and — in `membershipKeys` and an unresolved entry's `key` — the raw
+ * UserCCA membership strings, which are mostly A-FORMAT MATRIC NUMBERS. A caller
+ * who can list all 89 CCAs and read every roster can therefore reassemble most
+ * of `admin.listUsers` plus a pile of matrics, one CCA at a time. That is
+ * exactly the disclosure `viewCcaRostersReadOnly` promises not to be, and it is
+ * what requirement 8 withholds from the hall office.
+ *
+ * So the read-only tier gets the answer to "who is in this CCA" — a list of
+ * NAMES, who leads it, and when they were made a head — and nothing that lets
+ * it contact, key, or cross-reference those people. Heads and managers are
+ * untouched: `assertMayViewCcaRoster` hands them `via: "headship"` or
+ * `"manageCcaHeads"`, the caller does not call this, and their response is
+ * byte-identical to what it was before this function existed.
+ *
+ * UNRESOLVED ROWS ARE KEPT, NOT DROPPED, and their `key` is replaced with an
+ * opaque per-response token rather than blanked. Dropping them would silently
+ * disagree with `counts` and with `drift`, which is the 07 §3 anti-pattern this
+ * whole module was built to avoid — the hall office should still see THAT a CCA
+ * has three unmatchable membership records, because that is a data-quality fact
+ * about the CCA and not a fact about a person. The token keeps each row
+ * distinct so React keys and the amber rendering still work; it is deliberately
+ * NOT derived from the real key, so it cannot be reversed or correlated between
+ * two requests.
+ *
+ * `drift` and `counts` pass through UNCHANGED. They are aggregates over records,
+ * not disclosures about people.
+ *
+ * WHAT IS DELIBERATELY LEFT IN, having been considered: `userId`. It is a
+ * MongoDB ObjectId — not a canonical E-id, so no address can be derived from it,
+ * which is the whole reason `email`, `storedUserID` and `membershipKeys` had to
+ * go. It IS a stable cross-CCA correlator ("the same person appears in these
+ * four rosters"), but `displayName` already correlates just as well and is the
+ * point of the feature, and `rosterEntryKey` needs it for React keys. Removing
+ * it would buy nothing and break the rendering.
+ */
+export function redactRosterForReadOnly(roster: Roster): Roster {
+  let hidden = 0;
+  const redact = (e: RosterEntry): RosterEntry =>
+    e.kind === "resolved"
+      ? {
+          ...e,
+          email: null,
+          storedUserID: null,
+          // Every key that resolved to this person — A-format matric included.
+          membershipKeys: [],
+        }
+      : {
+          ...e,
+          key: `hidden-${++hidden}`,
+          // The User.ids that claimed an ambiguous key. Investigating a
+          // duplicate account is JCRC work, and the ids are useless without
+          // the admin surface that resolves them.
+          candidateUserIds: [],
+        };
+
+  return {
+    ...roster,
+    heads: roster.heads.map(redact),
+    members: roster.members.map(redact),
+  };
+}
 
 /**
  * The shape user.findRaw yields under our projection. Untyped BSON: every field
@@ -335,8 +411,14 @@ export async function resolveRoster(
 
   /* ---- output ---- */
 
+  // `email` is nullable ONLY for the read-only projection, which is applied
+  // downstream of this sort (redactRosterForReadOnly maps over already-ordered
+  // arrays and preserves their order), so at this point it is always a real
+  // address. `?? e.userId` is a total-function fallback for the type, not a
+  // reachable branch — and it keeps the comparator deterministic if that ever
+  // stops being true.
   const label = (e: RosterEntry) =>
-    e.kind === "resolved" ? (e.displayName ?? e.email) : e.key;
+    e.kind === "resolved" ? (e.displayName ?? e.email ?? e.userId) : e.key;
 
   // Sorted SERVER-side: the union's insertion order is not stable between
   // renders. Unresolved last, so the amber block reads as a footer rather than

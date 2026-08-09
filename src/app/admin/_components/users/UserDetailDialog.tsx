@@ -518,7 +518,7 @@ function DetailBody({
    */
   const confirmable = needsFields.filter(
     (f): f is ProfileField =>
-      (REQUIRED_PROFILE_FIELDS as string[]).includes(f) &&
+      (REQUIRED_PROFILE_FIELDS as readonly string[]).includes(f) &&
       !(gaps as string[]).includes(f),
   );
   const deleteEnabled = impact.data?.enabled ?? false;

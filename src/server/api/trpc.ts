@@ -13,8 +13,9 @@ import { ZodError } from "zod";
 
 import { auth } from "~/server/auth";
 import { db } from "~/server/db";
-import { ADMIN_ROLE, JCRC_ROLE } from "~/server/api/services/roles";
+import { ADMIN_ROLE, JCRC_ROLE, SCRC_ROLE } from "~/server/api/services/roles";
 import { isMatricRequired } from "~/server/api/services/access";
+import { isMinimalProfileRole } from "~/lib/profileCompleteness";
 
 /**
  * 1. CONTEXT
@@ -209,9 +210,30 @@ export const identifiedProcedure = protectedProcedure.use(({ ctx, next }) => {
  * posts alike. `rbac.booking.enforcement` does not reach this path, so without
  * a switch of its own the only remedy would be a redeploy. See
  * isMatricRequired.
+ *
+ * THE ONE EXEMPTION (`isMinimalProfileRole`) comes from the SAME predicate the
+ * strict profile gate uses — src/lib/profileCompleteness.ts — not a second list
+ * of roles that would drift from it. A hall-office (`scrc`) account is staff: it
+ * has no matriculation number to hold, so without this the day anyone flips the
+ * unrelated `rbac.matric.enforcement` switch to "enforce" the hall office
+ * silently loses BOOKING (facilitiesBooking's createBooking and updateBooking
+ * are both matricProcedure) — the exact capability this role exists to grant,
+ * lost months later from a switch nobody connected to it.
+ *
+ * Reading `ctx.session.user.roles` here is sound and precedented: `requireRoles`
+ * below does exactly the same, and the session role list is a LIVE per-request
+ * database read (I-4, the session callback in auth.ts), so there is no
+ * stale-privilege window.
+ *
+ * ORDER MATTERS for cost, not correctness: the two synchronous checks run before
+ * the flag read, so an exempt caller never issues the `isMatricRequired` query.
  */
 export const matricProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  if (!ctx.session.user.hasMatric && (await isMatricRequired(ctx.db))) {
+  if (
+    !ctx.session.user.hasMatric &&
+    !isMinimalProfileRole(ctx.session.user.roles ?? []) &&
+    (await isMatricRequired(ctx.db))
+  ) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "MATRIC_REQUIRED",
@@ -222,11 +244,22 @@ export const matricProcedure = protectedProcedure.use(async ({ ctx, next }) => {
 
 /**
  * Composable matric gate, so role + matric can be layered in either order.
- * Same rule as `matricProcedure`, including the kill switch, expressed as a
- * middleware for callers that build their own chain.
+ * Same rule as `matricProcedure`, including the kill switch AND including the
+ * `isMinimalProfileRole` exemption — the two MUST agree, or which of the two
+ * spellings a router happened to use would decide whether the hall office can
+ * book. See matricProcedure above for why the exemption exists at all.
+ *
+ * Built with `t.middleware`, so `ctx.session` is typed as the ROOT context and
+ * is nullable here; the roles are therefore read as `ctx.session?.user?.roles ??
+ * []`, which is the same optional-chained shape the `hasMatric` check beside it
+ * already uses. An absent session yields `[]`, which is never exempt.
  */
 export const requireMatric = t.middleware(async ({ ctx, next }) => {
-  if (!ctx.session?.user?.hasMatric && (await isMatricRequired(ctx.db))) {
+  if (
+    !ctx.session?.user?.hasMatric &&
+    !isMinimalProfileRole(ctx.session?.user?.roles ?? []) &&
+    (await isMatricRequired(ctx.db))
+  ) {
     throw new TRPCError({ code: "FORBIDDEN", message: "MATRIC_REQUIRED" });
   }
   // `next()` with NO argument, deliberately, here and in every middleware below.
@@ -362,3 +395,32 @@ export const adminProcedure = protectedProcedure
 
 /** May reach role management at all: admin or jcrc. The D-2 dashboard gate. */
 export const roleManagerProcedure = roleProcedure(JCRC_ROLE);
+
+/**
+ * May reach the HALL OFFICE surface: admin or scrc. NOT a role-manager.
+ *
+ * A separate builder rather than `roleProcedure(JCRC_ROLE, SCRC_ROLE)` — and
+ * emphatically not a widening of roleManagerProcedure above, which gates ~25
+ * procedures including listUsers, setUserRoles, every bulk-import and
+ * pending-grant surface, explainAccess, systemHealth and the whole CCA-head
+ * manager. Admitting `scrc` there would hand the hall office the entire manager
+ * tier in one character. This builder gates exactly three procedures
+ * (listJcrcRoster / resolveJcrcCandidate / setJcrcRole), each of which ALSO
+ * asserts `manageJcrcRoster` and the `scrc.enabled` switch.
+ *
+ * A jcrc is deliberately NOT admitted: appointing the JCRC is hall-office work,
+ * and D-3 already says a jcrc may not grant jcrc.
+ */
+export const scrcProcedure = roleProcedure(SCRC_ROLE);
+
+/**
+ * READ-ONLY oversight of CCAs and events: admin, jcrc or scrc.
+ *
+ * Wider than either of the two above, and safe only because everything behind
+ * it is a read with no PII: the CCA roster (names, no matric/telegram/bio) and
+ * event records (no attendees). The write and PII procedures on the same data —
+ * cca.memberDirectory, cca.updateProfile, event.decide, event.exportAttendees —
+ * keep their existing, narrower builders and their own guards. Do not adopt
+ * this builder for anything that writes.
+ */
+export const oversightProcedure = roleProcedure(JCRC_ROLE, SCRC_ROLE);

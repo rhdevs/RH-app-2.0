@@ -11,6 +11,7 @@ import {
   ScrollText,
   Settings2,
   CalendarCheck,
+  KeyRound,
 } from "lucide-react";
 
 import Header from "~/app/_components/header";
@@ -66,6 +67,12 @@ const ADMIN_TABS = [
     label: "Facilities",
     icon: DoorOpen,
     requires: "manageFacilityAccess",
+  },
+  {
+    href: "/admin/allowlist",
+    label: "Allowlist",
+    icon: KeyRound,
+    requires: "modifyAdmins",
   },
   {
     href: "/admin/audit",

@@ -235,12 +235,19 @@ export function inspectWriteReply(reply, label) {
 }
 
 /** Role vocabulary. roles[] lives in a collection with NO $jsonSchema validator,
- *  so nothing but code constrains what strings land there (06 D1). */
-export const ROLE_VOCAB = ["admin", "jcrc", "cca_head", "resident"];
+ *  so nothing but code constrains what strings land there (06 D1).
+ *
+ *  MUST match ROLES in src/server/api/services/roles.ts. This list is what
+ *  rbac-doctor.mjs calls "out of vocabulary": a role added to the app but not
+ *  here makes the doctor RED on every legitimate grant, which is why "scrc" is
+ *  added HERE FIRST, before anyone can hold it. */
+export const ROLE_VOCAB = ["admin", "jcrc", "cca_head", "resident", "scrc"];
 
 /** Values legal in FacilityAccess.requiredRoles. A DIFFERENT enum from
- *  GRANTABLE_ROLES. "admin" is an implicit bypass and is NEVER stored. */
-export const FACILITY_ROLES = ["resident", "jcrc", "cca_head"];
+ *  GRANTABLE_ROLES. "admin" is an implicit bypass and is NEVER stored.
+ *  "scrc" is here because the SCRC Room (facilityID 17) is gated on
+ *  ["jcrc","scrc"] — the hall office books its own room. */
+export const FACILITY_ROLES = ["resident", "jcrc", "cca_head", "scrc"];
 
 /**
  * Highest privilege first. Single source of truth for the legacy mirror.
@@ -250,6 +257,15 @@ export const FACILITY_ROLES = ["resident", "jcrc", "cca_head"];
  * FacilityAccess.requiredRole would make a Phase-2 revert DENY that room to
  * every non-admin. And roles[0] is NOT a substitute: it would mirror an
  * admin+jcrc user as "jcrc", silently demoting them on rollback.
+ *
+ * "scrc" is deliberately absent for the SAME reason, and the omission is
+ * load-bearing rather than an oversight. The only consumer of the mirror is the
+ * pre-v2 access.ts, which knows nothing of "scrc"; mirroring a jcrc+scrc holder
+ * as "scrc" would write an uninterpretable scalar and DEMOTE that person out of
+ * the SCRC Room and /admin on a rollback. Leaving it out mirrors them as "jcrc"
+ * (correct) and mirrors a plain scrc holder as "" (falsy, benign — exactly the
+ * resident treatment). Must stay identical to PRECEDENCE in
+ * src/server/api/services/roles.ts: three elements, in this order.
  */
 export const PRECEDENCE = ["admin", "jcrc", "cca_head"];
 export const legacyMirror = (roles) => PRECEDENCE.find((r) => (roles ?? []).includes(r)) ?? "";

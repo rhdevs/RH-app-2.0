@@ -276,7 +276,7 @@ const updateSchema = z
         z
           .string()
           .refine((f): f is ProfileField =>
-            (REQUIRED_PROFILE_FIELDS as string[]).includes(f),
+            (REQUIRED_PROFILE_FIELDS as readonly string[]).includes(f),
           ),
       )
       .max(REQUIRED_PROFILE_FIELDS.length)
@@ -482,12 +482,30 @@ export const userAdminRouter = createTRPCRouter({
          * being held on — not a second opinion that could disagree with the
          * gate.
          */
-        profileGaps: computeProfileGaps({
-          displayName: target.displayName,
-          telegramHandle: target.telegramHandle,
-          block: target.block,
-          matric,
-        }),
+        profileGaps: computeProfileGaps(
+          {
+            displayName: target.displayName,
+            telegramHandle: target.telegramHandle,
+            block: target.block,
+            matric,
+          },
+          /* THE TARGET'S ROLES, NOT THE ACTOR'S. computeProfileGaps is
+           * role-aware (a hall-office account is exempt from block / telegram /
+           * matric — see MINIMAL_PROFILE_ROLES), and the question this field
+           * answers is "what is walling THIS user", so the roles that decide it
+           * are theirs. Passing `actorRoles` here would report the operator's
+           * exemption against someone else's profile.
+           *
+           * `roles` is the UNREDACTED set read at :418 — the `admin`-stripped
+           * copy below is for DISPLAY only, and filtering it before this call
+           * would make the answer depend on who is looking.
+           *
+           * Already in scope and already read, so this costs no extra query. If
+           * the roles could not be read (no canonical id) it is `[]`, which is
+           * never exempt — the strict set, i.e. over-prompt, never over-admit.
+           */
+          roles,
+        ),
         /**
          * WALL 2 — the post-merge completion flag, and a SEPARATE one.
          * MatricGate checks `needsProfileCompletion` (this row) BEFORE
@@ -923,13 +941,38 @@ export const userAdminRouter = createTRPCRouter({
                   )?.matric ?? null)
                 : null);
 
+            /* THE TARGET'S ROLES — see WALL 1's note. computeProfileGaps is
+             * role-aware, and the comment on condition 1 above requires this to
+             * be "the SAME function WALL 1 and the session callback gate on".
+             * SAME FUNCTION IS NOT ENOUGH IF IT IS FED A DIFFERENT ARGUMENT: an
+             * exempt account would report no gaps at WALL 1 and at the gate, but
+             * gaps here, so this block would refuse to resolve entries that
+             * nothing will ever fill — the resident-stranding trap
+             * unstick-profile-completion.mjs was written to release 18 people
+             * from, re-created one account at a time.
+             *
+             * Read here rather than beside `cid` so the query is issued ONLY on
+             * the rare path that has a live ProfileCompletion row to judge; the
+             * common save costs nothing. `cid` is non-null throughout this block
+             * (the `if (cid !== null)` above), so there is no absent identity
+             * being spent as a real one. A fault on this read is caught by the
+             * wrapper below exactly like the three queries beside it: the
+             * completion row is left LIVE and reported on the audit line, so the
+             * degrade direction is still over-prompt, never a wall taken down on
+             * a guess.
+             */
+            const targetRoles = await getUserRoles(ctx.db, cid);
+
             const stillGapped = new Set<string>(
-              computeProfileGaps({
-                displayName: updated.displayName,
-                telegramHandle: updated.telegramHandle,
-                block: updated.block,
-                matric: matricNow,
-              }),
+              computeProfileGaps(
+                {
+                  displayName: updated.displayName,
+                  telegramHandle: updated.telegramHandle,
+                  block: updated.block,
+                  matric: matricNow,
+                },
+                targetRoles,
+              ),
             );
             // Anything the gate vocabulary does not name is KEPT: this deploy
             // cannot judge a field it does not understand.

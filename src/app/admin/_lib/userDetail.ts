@@ -188,6 +188,30 @@ const MESSAGE_COPY: Record<string, string> = {
   // mounted; this covers the paths that skip the preview.
   ABSENT_CANONICAL_ID:
     "This account has no NUSNET id, so its records can't be located and it can't be deleted safely. Ask a developer to clear it out first.",
+  // Same reason as the two above: it arrives as a PRECONDITION_FAILED on the
+  // paths that skip the preview, and the generic "something changed" line would
+  // be wrong — this is a standing property of the account.
+  PINNED_ALLOWLIST_ACCOUNT:
+    "This account's sign-in was granted by an authentication allowlist entry. Remove its roles, then its allowlist entry, then delete it — otherwise the entry survives and anyone re-created on that address inherits this identity.",
+  // admin.addAuthAllowlistEntry / removeAuthAllowlistEntry refusals. Mapped so
+  // the allowlist panel shows the REASON and the REMEDY rather than a raw
+  // FORBIDDEN string, on the surface where a wrong click issues an identity.
+  EMAIL_IS_CANONICAL:
+    "That's an @u.nus.edu address, so it already has a NUSNET identity of its own. Pinning it here would give one person two accounts. It doesn't need an allowlist entry — it can already sign in.",
+  PIN_ALREADY_HAS_ROLES:
+    "Something already holds roles under that ID. Revoke them from Manage roles first — otherwise whoever you pin to it would inherit them silently.",
+  EMAIL_ALREADY_PINNED:
+    "That email address already has an allowlist entry. Remove the existing one first; an address may be pinned to exactly one ID.",
+  PIN_ALREADY_USED:
+    "That ID is already pinned to another address. IDs are not reusable — pick a different one, or remove the existing entry first.",
+  PIN_STILL_HOLDS_ROLES:
+    "That entry's ID still holds roles. Revoke them from Manage roles first, so the removal leaves nothing behind that a future entry could inherit.",
+  NO_SUCH_PIN: "That allowlist entry no longer exists. Reload the page.",
+  // The unique index rejected the insert but neither probe found the offending
+  // row — i.e. it was removed between the two. Nothing was written; a retry is
+  // genuinely the right instruction here, unlike every other refusal above.
+  ALLOWLIST_CONFLICT:
+    "That entry collided with an existing one, which has since been removed. Nothing was saved — try again.",
   // Passed through verbatim: the server, EditProfileModal and the mirror schema
   // above all use this exact string, and it is already operator-readable.
   "Enter your real name — not your NUSNET ID.":
@@ -372,6 +396,14 @@ export function refusalCopy(
       return "This account's stored ID doesn't match its email, so its records can't be attributed safely. This is the split-account case — ask a developer to run a merge script instead.";
     case "SHARED_CANONICAL_ID":
       return "Another account resolves to the same NUSNET id as this one (usually a stray space or a different capitalisation in the email). Deleting either one would take the other's roles, bookings and matric with it, because those records are filed under the shared id. Ask a developer to run the account merge (scripts/remediation/merge-by-canonical.mjs) first.";
+    // The account's identity was ISSUED by an allowlist pin rather than derived
+    // from an @u.nus.edu address, and the delete cascade does not know about
+    // that collection — it would leave the pin behind, so re-creating a User row
+    // on the same address would re-attach the identity. Worded as an ORDER OF
+    // OPERATIONS, because that is exactly what the two paired refusals enforce
+    // (this one, and PIN_STILL_HOLDS_ROLES on the allowlist surface).
+    case "PINNED_ALLOWLIST_ACCOUNT":
+      return "This account's sign-in was granted by an entry on the authentication allowlist, and deleting it here would leave that entry behind — anyone re-created on the same address would inherit this identity. Remove its roles from Manage roles, then remove its allowlist entry, then delete the account.";
     default:
       // Same call as the unknown-collection fallback above: an unmapped refusal
       // must still BLOCK and still be visible, never silently disappear and let

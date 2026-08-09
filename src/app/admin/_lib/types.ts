@@ -32,6 +32,16 @@ export type AdminUserRow = {
   hasAccount: boolean;
   /** Server-computed: canonicalUserID(email) !== null. Never guessed here. */
   eligible: boolean;
+  /**
+   * The identity was ISSUED by an `AuthAllowlist` row rather than derived from
+   * an @u.nus.edu address — i.e. `canonicalUserID` sits in the `EXT:` namespace.
+   *
+   * Server-computed on BOTH arms of listUsers, deliberately: a field present on
+   * one arm only would make this union un-flatMappable, which is the exact
+   * problem this type exists to solve. Never derived in the browser — the shape
+   * test that decides it is the same one the session path authorizes on.
+   */
+  pinned: boolean;
   keyMismatch: boolean;
   /** Stored roles, with `admin` redacted for viewers without seeAdminIdentities. */
   roles: string[];

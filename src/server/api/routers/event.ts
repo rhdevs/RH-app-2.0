@@ -1,17 +1,20 @@
+import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { del } from "@vercel/blob";
-import type { PrismaClient } from "@prisma/client";
+import type { Event, PrismaClient } from "@prisma/client";
 
 import {
   createTRPCRouter,
   identifiedProcedure,
   protectedProcedure,
   roleManagerProcedure,
+  oversightProcedure,
   requireMatric,
 } from "~/server/api/trpc";
 import { getUserRoles } from "~/server/api/services/access";
 import { computeCapabilities } from "~/server/api/services/roles";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
+import { assertScrcEnabled } from "~/server/api/services/scrcFlag";
 import { writeAudit } from "~/server/api/routers/admin";
 import {
   assertEventsEnabled,
@@ -32,6 +35,7 @@ import {
   eventIdInput,
   ccaIdInput,
   normalizeStatus,
+  EVENT_STATUSES,
   PROPOSAL_EDITABLE,
   PUBLIC_EDITABLE,
 } from "~/lib/schemas/event";
@@ -39,7 +43,7 @@ import {
 /**
  * The Events feature.
  *
- * THREE authorization CLASSES live here, deliberately in one router because they
+ * FOUR authorization CLASSES live here, deliberately in one router because they
  * are one feature, but each procedure states which it uses:
  *
  *   - HEAD-scoped (identifiedProcedure + assertHeadsCca on the event's ccaID):
@@ -48,6 +52,14 @@ import {
  *     string. `cca_head` is scope-free.
  *   - REVIEWER (roleManagerProcedure = admin + jcrc): the JCRC review queue and
  *     approve/reject. `decide` additionally re-reads roles live (I-5).
+ *   - OVERSIGHT (oversightProcedure = admin + jcrc + scrc): READ-ONLY. The hall
+ *     office watching the pipeline — listForOversight / getForOversight, every
+ *     status, no attendee data. It is additionally behind the `scrc.enabled`
+ *     kill switch, so the whole class can be turned off in 15s without a
+ *     redeploy, and it DELIBERATELY DOES NOT REACH `decide`: approve/reject is
+ *     REVIEWER-only, stays on roleManagerProcedure, and re-checks `reviewEvents`
+ *     live. Watching the queue and deciding it are separate powers; do not adopt
+ *     this builder for anything that writes.
  *   - RESIDENT (protectedProcedure, + requireMatric for signup): the public
  *     timeline, detail and signup. getPublic NEVER returns proposalUrl or the
  *     internal proposal description.
@@ -211,6 +223,61 @@ async function attachCcaNames(
   for (const r of rows) byID.set(r.ccaID, r.ccaName);
   return byID;
 }
+
+/**
+ * Fields `event.getForOversight` BLANKS for the hall office (the non-manager
+ * branch of the OVERSIGHT tier). Requirement 5 was "view events, read-only",
+ * which is a question about STATUS and SCHEDULE, not about the proposal or the
+ * reviewer's private notes:
+ *
+ *   description     the head's INTERNAL proposal text, written for the JCRC.
+ *                   getPublic already withholds it from residents for the same
+ *                   reason; the public-facing copy is `publicDescription`.
+ *   proposalUrl     the proposal PDF. prisma/schema.prisma states outright:
+ *                   reviewers + owning head only.
+ *   decisionReason  the reviewer's private feedback to the head on a rejection.
+ *
+ * AND EVERY CANONICAL-ID FIELD ON THE RECORD, which is a different reason and
+ * the one that is easy to miss. `createdBy`, `decidedBy` and `updatedBy` all
+ * hold a canonical E-format userID, and a canonical id IS an email address one
+ * derivation later (`E1234567` -> `e1234567@u.nus.edu`) — the same mistake that
+ * was made in cca.listHeads. A hall-office caller can page every event in the
+ * hall, so leaving any of the three in place hands over a directory of every
+ * head who has ever proposed an event and every reviewer who has ever decided
+ * one:
+ *
+ *   createdBy       the proposing head.
+ *   decidedBy       WHICH jcrc decided. That an event was approved is oversight;
+ *                   which individual signed it off is the JCRC's own business,
+ *                   and naming them invites exactly the pressure the separation
+ *                   exists to avoid.
+ *   updatedBy       whoever last touched the row.
+ *
+ * `ccaID` stays: it names an organisation, not a person, and the hall office
+ * already has the full CCA list. `decidedAt`, `publishedAt`, `createdAt` and
+ * `updatedAt` stay — "when did this move" is a pipeline fact and is the whole
+ * point of watching the pipeline.
+ *
+ * Blanked to null rather than deleted, so the response SHAPE is identical for
+ * both tiers and no client has to branch on field presence.
+ *
+ * An OBJECT spread over the record, not a list of keys assigned in a loop:
+ * `createdBy` is non-nullable in the schema (`String`, not `String?`), so a
+ * loop writing null could not typecheck without a cast, and a cast here would
+ * be a cast on precisely the line that decides what leaves the server. The
+ * `satisfies` clause still checks every key against `keyof Event`, so a typo or
+ * a renamed column fails the build instead of silently redacting nothing.
+ *
+ * TO RE-ENABLE A FIELD: delete its line here. That is the whole toggle.
+ */
+const SCRC_HIDDEN_EVENT_FIELDS = {
+  description: null,
+  proposalUrl: null,
+  decisionReason: null,
+  createdBy: null,
+  decidedBy: null,
+  updatedBy: null,
+} as const satisfies Partial<Record<keyof Event, null>>;
 
 /* resolveFacility lives in services/booking.ts — the interview-slot flow
  * resolves a facility the same way, and one definition is what keeps the two
@@ -890,6 +957,191 @@ export const eventRouter = createTRPCRouter({
               : (input.reason ?? undefined),
       });
       return { status: nextStatus as "approved" | "rejected", autoBook };
+    }),
+
+  /* ----------------------------- OVERSIGHT ------------------------------- */
+  /*
+   * READ-ONLY, admin + jcrc + scrc, and behind `scrc.enabled` on top of
+   * `events.enabled`. The pair below is the hall office's whole reach into
+   * events: see the pipeline, read one record, do nothing to it.
+   *
+   * WHY NOT JUST WIDEN listForReview/getForReview. Two reasons, either of which
+   * is sufficient. (1) They are the JCRC QUEUE: listForReview filters to
+   * `status: "submitted"` because a queue is work waiting to be done, whereas
+   * oversight wants drafts, approvals and cancellations too — different
+   * question, different answer. (2) They sit on roleManagerProcedure, the
+   * builder that also gates `decide`; widening it would hand approve/reject to
+   * the hall office as a side effect of wanting a list. Two small procedures
+   * cost less than that coupling.
+   *
+   * The gate is written out in both bodies rather than factored into a helper,
+   * following `decide` above, which likewise inlines its own live capability
+   * re-check. Order is fixed and load-bearing: assertEventsEnabled FIRST (the
+   * file rule — the switch is the boundary), then a LIVE role read, then the
+   * capability, then the scrc switch.
+   */
+
+  /**
+   * Every event, newest first, optionally filtered by status. PAGED.
+   *
+   * Projection is listForReview's PLUS `status` (normalised — the stored column
+   * is a nullable String). Nothing else: no proposalUrl, no internal proposal
+   * description, no attendee data, no PII. Oversight is "what is happening", not
+   * "who is going"; exportAttendees stays head-scoped. The `select` is explicit
+   * so the wide fields are never even READ, rather than read and then dropped —
+   * `description` and `proposalUrl` on every event in the hall is a lot of bytes
+   * to pull across just to throw away.
+   *
+   * ORDERED BY updatedAt DESC — MOST RECENTLY TOUCHED FIRST. This is a feed of
+   * what is happening, not a queue of what is waiting (that is listForReview),
+   * so an event proposed a year ago and edited this morning belongs at the TOP.
+   * It briefly ordered by `eventID desc` instead, on the mistaken belief that a
+   * cursor needs the sort key to be unique: it does not — the cursor is on `id`
+   * and only names WHERE to resume, while `orderBy` decides the sequence. This
+   * is the same pairing admin.listAuditLog already runs in production
+   * (`orderBy: { at: "desc" }` with `cursor: { id }`).
+   *
+   * The honest caveat of that pairing, which listAuditLog shares: `updatedAt` is
+   * not unique, so an event edited BETWEEN two page fetches moves in the
+   * ordering and can be seen twice or missed once. That is a stale-window
+   * artefact of cursor paging over a mutable sort key, not a correctness bug in
+   * the projection, and for a human scrolling an oversight feed it is the right
+   * trade against showing them a year-stale event first.
+   */
+  listForOversight: oversightProcedure
+    // EVENT_STATUSES is imported rather than retyped so the filter vocabulary
+    // cannot drift from normalizeStatus'. Note "canceled", one l.
+    .input(
+      z.object({
+        status: z.enum(EVENT_STATUSES).optional(),
+        limit: z.number().int().min(1).max(100).default(25),
+        cursor: z.string().optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      // I-5: LIVE read. session.user.roles is render-only and up to 30 days
+      // stale, so a demoted hall-office member would otherwise keep reading.
+      const roles = await getUserRoles(ctx.db, userID);
+      const capabilities = computeCapabilities(roles);
+      if (!capabilities.viewEventsReadOnly) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "CAPABILITY_REQUIRED:viewEventsReadOnly",
+        });
+      }
+      // THE SWITCH GATES THE HALL OFFICE, NOT THE SURFACE. It was unconditional
+      // here at first, on the reasoning that a new procedure has no existing
+      // callers to break — true, and it missed that an ADMIN holds
+      // reachScrcDashboard and can therefore open /scrc BEFORE rollout, at which
+      // point every panel errored and the surface could not be inspected by the
+      // one person entitled to inspect it. Same shape as the branch ordering in
+      // assertMayViewCcaRoster: whoever could already do this is unaffected by
+      // the flag, and only the tier the flag exists for is held behind it.
+      if (!capabilities.reviewEvents) await assertScrcEnabled(ctx.db);
+
+      // KNOWN AND DELIBERATE: this filters the RAW column, while the returned
+      // `status` is normalizeStatus'd. Event.status is nullable with a default,
+      // and normalizeStatus maps null — and anything unrecognised — to "draft",
+      // so `status: "draft"` will NOT match a row stored as null even though
+      // that row comes back reading "draft". Left alone on purpose: an OR on
+      // `{ status: null }` would make "draft" mean something different here than
+      // it means in decide's NOT_UNDER_REVIEW check and in PROPOSAL_EDITABLE.
+      // The unfiltered list (no `status` input) shows every row regardless.
+      const rows = await ctx.db.event.findMany({
+        where: input.status ? { status: input.status } : {},
+        select: {
+          id: true,
+          eventID: true,
+          ccaID: true,
+          title: true,
+          startTime: true,
+          location: true,
+          updatedAt: true,
+          status: true,
+        },
+        take: input.limit + 1,
+        ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+        orderBy: { updatedAt: "desc" }, // newest activity first — a feed, not a queue
+      });
+      const events = rows.slice(0, input.limit);
+      const nextCursor =
+        rows.length > input.limit
+          ? (events[events.length - 1]?.id ?? null)
+          : null;
+
+      const names = await attachCcaNames(
+        ctx.db,
+        events.map((e) => e.ccaID),
+      );
+      return {
+        events: events.map((e) => ({
+          eventID: e.eventID,
+          ccaID: e.ccaID,
+          ccaName: names.get(e.ccaID) ?? null,
+          title: e.title,
+          startTime: e.startTime,
+          location: e.location,
+          updatedAt: e.updatedAt,
+          status: normalizeStatus(e.status),
+        })),
+        nextCursor,
+      };
+    }),
+
+  /**
+   * One event's record, for the oversight detail view.
+   *
+   * A MANAGER GETS getForReview'S ANSWER, BYTE FOR BYTE. A hall-office caller
+   * gets the same record with four fields removed — see SCRC_HIDDEN_EVENT_FIELDS
+   * below. The body was originally identical for both, which meant `scrc` was
+   * handed `proposalUrl` (schema.prisma calls it "reviewers + owning head only")
+   * and the private decision trail, from a capability whose entire description
+   * is "view events, read-only".
+   *
+   * There is no getForOversight counterpart to `decide`: reading an event and
+   * deciding it are separate powers, and only the REVIEWER tier has the second.
+   */
+  getForOversight: oversightProcedure
+    .input(eventIdInput)
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const capabilities = computeCapabilities(roles);
+      if (!capabilities.viewEventsReadOnly) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "CAPABILITY_REQUIRED:viewEventsReadOnly",
+        });
+      }
+      // `reviewEvents` IS the manager tier for events (admin || jcrc), so it is
+      // the honest discriminator here — both for the kill switch and for the
+      // projection below. See listForOversight for why the switch is checked on
+      // the non-manager branch only.
+      if (!capabilities.reviewEvents) await assertScrcEnabled(ctx.db);
+
+      const event = await ctx.db.event.findUnique({
+        where: { eventID: input.eventID },
+      });
+      if (!event) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
+      }
+      const names = await attachCcaNames(ctx.db, [event.ccaID]);
+
+      const full = { ...event, status: normalizeStatus(event.status) };
+      if (capabilities.reviewEvents) {
+        return { event: full, ccaName: names.get(event.ccaID) ?? null };
+      }
+
+      // If the hall office is ever meant to read proposals, edit
+      // SCRC_HIDDEN_EVENT_FIELDS rather than deleting this branch — the branch
+      // is also what keeps the manager path provably untouched.
+      return {
+        event: { ...full, ...SCRC_HIDDEN_EVENT_FIELDS },
+        ccaName: names.get(event.ccaID) ?? null,
+      };
     }),
 
   /* ------------------------------ RESIDENT ------------------------------- */

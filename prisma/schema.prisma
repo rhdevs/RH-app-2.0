@@ -263,6 +263,11 @@ model BookingLock {
 /// null, never "user".
 model UserRole {
   id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  /// THE authorization key. Normally a canonical NUSNET id derived from an
+  /// @u.nus.edu address (I-1). It may ALSO hold an `EXT:` allowlist pin — an
+  /// admin-provisioned principal with no NUS address (see AuthAllowlist). The
+  /// two namespaces are provably disjoint (':' is excluded from
+  /// canonicalUserID's capture class), so nothing here is ambiguous.
   userID           String    @unique
   roles            String[]  @default([])
   /// LEGACY mirror, dual-written for the rollback window only. Dropped in
@@ -289,7 +294,7 @@ model UserRole {
 /// There is no "open to everyone" state any more. Every facility is given an
 /// explicit row by seed-roles-v2.mjs so that "configured as a normal room" is
 /// distinguishable from "never configured" (see rbac-doctor's UNCONFIGURED
-/// line). Allowed values: resident | jcrc | cca_head.
+/// line). Allowed values: resident | jcrc | cca_head | scrc.
 ///
 /// Same I-2 no-required-scalar invariant as UserRole.
 model FacilityAccess {
@@ -330,7 +335,16 @@ model RoleAuditLog {
   /// ccaHead.grant | ccaHead.revoke | ccaHead.transfer |
   /// event.approve | event.reject | event.publish | event.cancel |
   /// event.attendees.export |
-  /// user.detail.read | user.profile.update | user.delete
+  /// user.detail.read | user.profile.update | user.delete |
+  /// scrc.candidate.read |
+  /// authAllowlist.add | authAllowlist.remove
+  ///
+  /// authAllowlist.add / authAllowlist.remove are the D-7 break-glass pin
+  /// surface (adminProcedure only). `targetUserID` carries the EXT pin and
+  /// `reason` carries the pinned address, so "who was handed an identity, by
+  /// whom, when" is one query on this collection. A denied attempt is written
+  /// as `denied` with denyReason EMAIL_IS_CANONICAL / PIN_ALREADY_HAS_ROLES /
+  /// EMAIL_ALREADY_PINNED / PIN_ALREADY_USED / PIN_STILL_HOLDS_ROLES.
   ///
   /// user.detail.read / user.profile.update / user.delete are the /admin/users
   /// detail dialog. user.detail.read is a READ — the only one in this list —
@@ -343,6 +357,11 @@ model RoleAuditLog {
   /// delete's row carries rolesBefore, because it is the only surviving record
   /// of the privilege that was destroyed — which is why this collection stays
   /// append-only and is NOT touched by deleteUserAccountCascade.
+  /// scrc.candidate.read is the same kind of read as user.detail.read: a
+  /// per-target disclosure (identifier in, a named person out) reachable by
+  /// every hall-office holder via admin.resolveJcrcCandidate, recorded here
+  /// because without it a scrc holder could probe who exists, email by email,
+  /// and leave no trace unless they then act.
   action           String
   rolesBefore      String[] @default([])
   rolesAfter       String[] @default([])
@@ -414,6 +433,52 @@ model SystemFlag {
   value     String
   updatedAt DateTime?
   updatedBy String?
+}
+
+/// D-7 break-glass, the COLLECTION variant (08-userid-keydrift.md §3 Branch C).
+/// Resolves the contradiction 05-verification.md:164 and rbac-doctor.mjs name:
+/// the collection variant wins; the AUTH_EMAIL_ALLOWLIST env var survives as
+/// break-glass for an outage in which the DATABASE is the broken thing, and it
+/// confers SIGN-IN ONLY (it mints no identity — see resolvePrincipalID).
+///
+/// One row = one non-@u.nus.edu address that may sign in, PINNED to a stable
+/// identity key in the `EXT:` namespace.
+///
+/// SECURITY — read src/server/api/services/authAllowlist.ts before touching
+/// this. `pinnedUserID` is @unique AND is re-validated against
+/// /^EXT:[A-Z0-9_]{3,32}$/ AT EVERY READ. The ':' is load-bearing:
+/// canonicalUserID's capture class is [A-Z0-9._%-], which excludes ':', so an
+/// EXT id can never equal any NUSNET id this app can derive. A row pinning a
+/// non-EXT value therefore mints NO identity — it is dropped at the read
+/// boundary, not merely discouraged at the write. That is what makes
+/// { email: "attacker@gmail.com", pinnedUserID: "E1633673" } — a row that would
+/// otherwise hand an admin's authorization key to a stranger with no grant path
+/// and therefore no escalation guard firing — unrepresentable rather than
+/// merely refused.
+///
+/// NEITHER INDEX EXISTS UNTIL scripts/remediation/create-auth-allowlist.mjs
+/// RUNS. A Prisma @unique on Mongo is a client-side type assertion, not an
+/// index. Do NOT `prisma db push` to get them — it drops User.email_unique_ci
+/// (see the User model), which is the duplicate-account guard.
+///
+/// EXT identities receive NO `resident` baseline (I-8d, 08 §3.4) — and
+/// mechanically, not conventionally: ensureBaseline takes an EMAIL and
+/// canonicalizes internally, so it returns false before issuing any query.
+///
+/// Brand-new collection: no $jsonSchema validator (confirm with
+/// scripts/remediation/preflight-scrc-validators.mjs before the first insert).
+model AuthAllowlist {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  /// normalizeEmail()'d: trimmed, lowercased. Must match User.email byte for
+  /// byte — email_unique_ci folds CASE but not WHITESPACE.
+  email        String   @unique
+  /// EXT:<SLUG>. Immutable — there is deliberately no update path, only create
+  /// + delete, so re-aiming a key at a different human is two audit rows.
+  pinnedUserID String   @unique
+  /// Why this address exists. Rendered on the admin surface.
+  note         String?
+  addedBy      String
+  addedAt      DateTime @default(now())
 }
 
 /// Which CCA(s) a user heads. `cca_head` CANNOT be derived from existing data:

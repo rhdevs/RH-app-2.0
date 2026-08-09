@@ -80,11 +80,72 @@ export function canonicalUserID(email) {
 }
 
 /**
+ * THE EXTERNAL IDENTITY NAMESPACE. An admin-pinned key for a principal that has
+ * no @u.nus.edu address — hall office staff, whose addresses are @nus.edu.sg
+ * (08-userid-keydrift.md §3 Branch C). One `AuthAllowlist` row pins one address
+ * to one of these.
+ *
+ * THE ':' IS THE WHOLE MECHANISM (M1). NUS_STUDENT_EMAIL's capture class is
+ * `[A-Z0-9._%-]` — it does not contain ':' — so `canonicalUserID()` can NEVER
+ * return a string matching this pattern, for ANY input, because every character
+ * it can return comes from that class. The two key spaces are PROVABLY
+ * DISJOINT, not conventionally separate.
+ *
+ * That is what makes the attack in 05-verification.md §164 —
+ * `{ email: "attacker@gmail.com", pinnedUserID: "E1633673" }`, which would
+ * hand an admin's authorization key to a stranger with NO grant path and
+ * therefore NO escalation guard firing — UNREPRESENTABLE rather than merely
+ * refused. `isExtUserID("E1633673")` is false, and the parity gate asserts it.
+ *
+ * Uppercase and `_` only, so a pin is legible in `RoleAuditLog.actorUserID` and
+ * greppable across collections. Length-bounded at both ends: the 3-char floor
+ * keeps `EXT:` alone from being a key, and the 32-char ceiling stops an id
+ * being used to smuggle a payload into an audit row.
+ *
+ * WHY THIS IS MIRRORED INTO THE .mjs AT ALL, when the TS half's value is the
+ * brand and brands are erased: same answer as asStoredCanonicalUserID below.
+ * The runtime half — "return the absent value for anything failing the shape
+ * test" — is the load-bearing half, and it is the half the scripts need.
+ * provision-ext-account.mjs must refuse a pin outside this namespace, and
+ * rbac-doctor.mjs must be able to REPORT a stored pin that is outside it (that
+ * is a row which mints no identity at all — see M2 in
+ * src/server/api/services/authAllowlist.ts). Both would otherwise hand-roll the
+ * regex, which verify-identity-parity.mjs's private-derivation ban exists to
+ * stop.
+ */
+export const EXT_ID = /^EXT:[A-Z0-9_]{3,32}$/;
+
+/** Pure shape test over the EXT namespace. See EXT_ID for why ':' matters. */
+export function isExtUserID(id) {
+  return typeof id === "string" && EXT_ID.test(id);
+}
+
+/**
+ * The ONE minting function for the EXT half of the brand — the exact mirror of
+ * asStoredCanonicalUserID for the canonical half, and A RUNTIME CHECK, NEVER A
+ * CAST. Every EXT id in this codebase passes through here.
+ *
+ * On the .ts side it is what pinnedUserIDFor calls on the value it READ BACK
+ * OUT OF MONGO (mechanism M2), so a row typed by hand in Atlas mints NO
+ * IDENTITY AT ALL rather than a bad one. On this side it is the same refusal,
+ * available to scripts that have no type system watching them.
+ */
+export function asExtUserID(id) {
+  return isExtUserID(id) ? id : null;
+}
+
+/**
  * POST-CANONICALIZATION SANITY CHECK. A pure SHAPE test carrying no
  * provenance — sound only over a string canonicalUserID() has just produced.
  * Backfills and merge scripts must call it as
  * `isCanonicalResidentID(canonicalUserID(user.email))`, never on a userID read
  * straight out of a document (I-8d).
+ *
+ * AN `EXT:` PIN PASSES THIS TEST — a documented false positive, asserted as
+ * such by the parity gate. Safe only because every baseline writer takes an
+ * EMAIL and canonicalizes internally (I-8d), so ensureBaseline returns false at
+ * its `!userID` clause long before this predicate is consulted. See the fuller
+ * note in src/lib/identity.ts.
  */
 export function isCanonicalResidentID(userID) {
   return typeof userID === "string" && userID.length > 0 && !userID.includes("@");

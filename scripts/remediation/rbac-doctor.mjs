@@ -19,6 +19,12 @@
  * By default every RED line prints up to 20 offending identifiers; --names
  * prints all of them. A bare count is not actionable (I-16).
  *
+ * THE AuthAllowlist SECTION is the D-7 break-glass detector (08 §3 Branch C).
+ * It asserts pin uniqueness FROM THE DATA rather than from `listIndexes`, so a
+ * skipped create-auth-allowlist.mjs — which leaves the Prisma @unique enforcing
+ * nothing — is still visible here. The collection being ABSENT is the normal
+ * pre-rollout state and is reported, never RED. See allowlistSection() below.
+ *
  * "eligible users MISSING it" is computed over User rows whose email matches
  * the anchored NUS regex ONLY. Counting non-NUS rows there would make it a line
  * that can NEVER reach zero, and a gate that can never reach zero gets
@@ -30,7 +36,9 @@
  * a failure. See nonNusReport() below.
  */
 import { PrismaClient } from "@prisma/client";
-import { canonicalUserID, isCanonicalResidentID } from "./lib/identity.mjs";
+import {
+  canonicalUserID, isCanonicalResidentID, normalizeEmail, isExtUserID,
+} from "./lib/identity.mjs";
 import {
   findAll, countWhere, numify, E_FORMAT, ROLE_VOCAB, SENTINEL_FACILITY_ID, legacyCanonicalUserID,
   aggregateAll, isCommit, abort,
@@ -66,6 +74,164 @@ function line(label, value, { bad = null, note = "", info = false } = {}) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// AuthAllowlist — the D-7 break-glass, COLLECTION variant (08 §3 Branch C)
+//
+// READ-ONLY, like everything else in the default mode.
+//
+// THE THING THIS SECTION IS ACTUALLY FOR. One row here is `{ email,
+// pinnedUserID }`, and `pinnedUserID` becomes `session.user.userID` verbatim —
+// which IS the authorization key: auth.ts and access.ts both do a bare
+// `findUnique({ where: { userID } })` with no provenance check. So a row
+// pinning an address to `E1633673` would hand that address an admin's roles
+// through NO GRANT PATH AT ALL, meaning not one escalation guard is crossed and
+// not one audit row is written.
+//
+// Four mechanisms stop that, and this section is the DETECTOR for two of them
+// failing:
+//
+//   M2 (namespace enforced at READ time). `asExtUserID` re-validates every pin
+//      as it is read, so a hand-written Atlas row mints nothing. A pin failing
+//      EXT_ID here is therefore not itself an escalation — it is EVIDENCE that
+//      somebody wrote to this collection outside the audited mutation, which is
+//      worth waking up for regardless of what the pin says.
+//
+//   M3 (uniqueness, enforced by a real Mongo index). A Prisma `@unique` on
+//      Mongo enforces NOTHING until `createIndexes` has run
+//      (create-auth-allowlist.mjs). If that step is skipped, two rows can share
+//      a pin and `addAuthAllowlistEntry`'s P2002 refusal can never fire —
+//      silently. So uniqueness is asserted HERE FROM THE DATA, not by reading
+//      `listIndexes`: a missing index becomes visible the moment it lets a
+//      duplicate through, without anyone having to remember to check for it.
+//
+// It also prints what each pin CARRIES, because the operational rule that an
+// EXT identity should never hold `admin` is a policy, not a code guard — and a
+// policy nobody can see is not a policy.
+//
+// ABSENT IS NORMAL. Before create-auth-allowlist.mjs runs, this collection does
+// not exist. That is reported and is NOT a RED line and NOT an exit-1.
+// ---------------------------------------------------------------------------
+
+/** { present, rows, error }. `present:false` means the collection is absent —
+ *  distinguished from "exists and is empty", because those mean different
+ *  things about where the rollout has got to. */
+async function readAuthAllowlist() {
+  try {
+    // No server-side filter on listCollections: Atlas rejects
+    // `filter: { name: { $in: [...] } }` with "can't get regex from filter doc
+    // not a regex" (see preflight-scrc-validators.mjs). Ask for everything,
+    // narrow in JS — one round trip, still read-only.
+    const lc = await raw({ listCollections: 1 });
+    const present = (lc?.cursor?.firstBatch ?? []).some((c) => c?.name === "AuthAllowlist");
+    if (!present) return { present: false, rows: [], error: null };
+    const rows = await findAll(db, "AuthAllowlist", {
+      email: 1, pinnedUserID: 1, note: 1, addedBy: 1, addedAt: 1,
+    });
+    return { present: true, rows, error: null };
+  } catch (e) {
+    // FAIL LOUD, never fail quiet. An unreadable allowlist reported as an empty
+    // one would print a clean bill of health over exactly the rows this section
+    // exists to inspect.
+    return { present: null, rows: [], error: String(e?.message ?? e) };
+  }
+}
+
+function allowlistSection(allowlist, users, userRole) {
+  console.log(``);
+  if (allowlist.error) {
+    line("AuthAllowlist: UNREADABLE", 1, {
+      bad: [allowlist.error],
+      note: "not a measured zero — resolve before trusting this report",
+    });
+    return;
+  }
+  if (allowlist.present === false) {
+    line("AuthAllowlist rows", "n/a", {
+      info: true,
+      note: "collection ABSENT — expected before create-auth-allowlist.mjs",
+    });
+    return;
+  }
+
+  const rows = allowlist.rows ?? [];
+  line("AuthAllowlist rows (admin-pinned identities)", rows.length, { info: true });
+  if (!rows.length) {
+    console.log(`      (collection exists but holds no pins — the break-glass is unused)`);
+    return;
+  }
+
+  const rolesByID = new Map(userRole.map((r) => [String(r.userID ?? ""), r.roles ?? []]));
+  const emailsPresent = new Set(users.map((u) => normalizeEmail(String(u.email ?? ""))));
+
+  // --- M2: every pin must be in the EXT namespace -------------------------
+  const notExt = rows
+    .filter((r) => !isExtUserID(String(r.pinnedUserID ?? "")))
+    .map((r) => `${String(r.email)}->${JSON.stringify(r.pinnedUserID ?? null)}`);
+  line("  pins OUTSIDE the EXT: namespace", notExt.length, {
+    bad: notExt,
+    note: "mints NO identity (M2) — someone wrote this row by hand",
+  });
+
+  // --- M3: uniqueness, asserted from the DATA -----------------------------
+  const byPin = new Map();
+  const byEmail = new Map();
+  for (const r of rows) {
+    const p = String(r.pinnedUserID ?? "");
+    const e = normalizeEmail(String(r.email ?? ""));
+    if (!byPin.has(p)) byPin.set(p, []);
+    byPin.get(p).push(e);
+    byEmail.set(e, (byEmail.get(e) ?? 0) + 1);
+  }
+  const sharedPins = [...byPin]
+    .filter(([, emails]) => emails.length > 1)
+    .map(([p, emails]) => `${p} <- ${emails.join(" + ")}`);
+  const dupEmails = [...byEmail].filter(([, n]) => n > 1).map(([e, n]) => `${e}(x${n})`);
+  line("  pins claimed by MORE THAN ONE email", sharedPins.length, {
+    bad: sharedPins,
+    note: "M3 BROKEN — the pin_unique index is missing (create-auth-allowlist.mjs)",
+  });
+  line("  emails appearing more than once", dupEmails.length, {
+    bad: dupEmails,
+    note: "the email_unique index is missing",
+  });
+
+  // --- the operational rule, made visible ---------------------------------
+  const extAdmins = rows
+    .filter((r) => (rolesByID.get(String(r.pinnedUserID ?? "")) ?? []).includes("admin"))
+    .map((r) => `${String(r.pinnedUserID)}(${String(r.email)})`);
+  line("  EXT pins holding \"admin\"", extAdmins.length, {
+    bad: extAdmins,
+    note: "an identity minted from a row, not from an NUS address, with full admin",
+  });
+
+  // --- a pinned address that ALSO has a canonical identity ----------------
+  //
+  // One human, two identity keys: two UserRole rows, two booking owners, two
+  // audit trails, and nothing that reconciles them. addAuthAllowlistEntry
+  // refuses this (EMAIL_IS_CANONICAL) and so does provision-ext-account.mjs, so
+  // a hit here means the row predates those guards or bypassed them.
+  const canonicalPinned = rows
+    .filter((r) => canonicalUserID(String(r.email ?? "")) !== null)
+    .map((r) => `${String(r.email)}->${String(r.pinnedUserID)}`);
+  line("  pinned addresses that ALSO canonicalise", canonicalPinned.length, {
+    bad: canonicalPinned,
+    note: "one human with two identity keys",
+  });
+
+  // --- the roster, one line per pin ---------------------------------------
+  console.log(`\n      pin                       email                                    roles              User row`);
+  for (const r of rows) {
+    const pin = String(r.pinnedUserID ?? "(null)");
+    const email = normalizeEmail(String(r.email ?? ""));
+    const roles = rolesByID.get(pin) ?? [];
+    const hasUser = emailsPresent.has(email);
+    console.log(
+      `      ${pin.padEnd(25)} ${email.padEnd(40)} ${JSON.stringify(roles).padEnd(18)} ` +
+        `${hasUser ? "yes" : "NO — session would sign out (accountMissing)"}`,
+    );
+  }
+}
+
 async function main() {
   if (NONNUS) return nonNusReport();
   console.log(`\n=== rbac-doctor.mjs ===  ${new Date().toISOString()}\n`);
@@ -77,13 +243,33 @@ async function main() {
   const access = (await findAll(db, "FacilityAccess", { facilityID: 1, requiredRoles: 1, requiredRole: 1 }))
     .map((a) => ({ ...a, facilityID: numify(a.facilityID) }));
 
+  // D-7 break-glass, the COLLECTION variant. Read BEFORE the population loop
+  // because the "INELIGIBLE" line below subtracts these addresses. Absent is
+  // the normal pre-rollout state and is not an error — see allowlistSection().
+  const allowlist = await readAuthAllowlist();
+  const pinnedEmails = new Map(
+    (allowlist.rows ?? []).map((r) => [normalizeEmail(String(r.email ?? "")), String(r.pinnedUserID ?? "")]),
+  );
+
   // --- population -------------------------------------------------------
   const eligible = new Map();
-  const nonNus = [], blank = [], nonE = [], collisions = [];
+  const nonNus = [], blank = [], nonE = [], collisions = [], pinned = [];
   for (const u of users) {
     const e = String(u.email ?? "");
     const id = canonicalUserID(e);
-    if (!isCanonicalResidentID(id)) { (e.trim() ? nonNus : blank).push(e || String(u._id?.$oid ?? u._id)); continue; }
+    if (!isCanonicalResidentID(id)) {
+      // AN ADDRESS WITH AN ALLOWLIST PIN IS NOT INELIGIBLE. It has no canonical
+      // id — that is the whole reason it needs a pin — but resolvePrincipalID
+      // gives it an EXT: identity, so it signs in, holds roles and books rooms.
+      // Leaving it in the INELIGIBLE bucket labels the hall office as locked
+      // out, and a future operator reading this report will go and "fix" a
+      // thing that is working exactly as designed — most likely by widening the
+      // domain rule, which is the one change this whole mechanism exists to
+      // avoid. Counted separately instead.
+      if (e.trim() && pinnedEmails.has(normalizeEmail(e))) pinned.push(e);
+      else (e.trim() ? nonNus : blank).push(e || String(u._id?.$oid ?? u._id));
+      continue;
+    }
     if (!E_FORMAT.test(id)) nonE.push(id);
     if (eligible.has(id)) collisions.push(id);
     else eligible.set(id, e);
@@ -91,11 +277,18 @@ async function main() {
 
   line("users(total)", users.length);
   line("users(eligible, canonical has no @)", eligible.size);
-  line("users(INELIGIBLE — cannot sign in under D-7)", nonNus.length, { info: true, note: "migration list" });
+  line("users(pinned via AuthAllowlist — sign in as EXT)", pinned.length, {
+    info: true, note: "NOT locked out; see the allowlist section" });
+  if (pinned.length) console.log(`      ${(ALL_NAMES ? pinned : pinned.slice(0, 20)).join(", ")}`);
+  line("users(INELIGIBLE — cannot sign in under D-7)", nonNus.length, {
+    info: true, note: "migration list; pinned addresses SUBTRACTED" });
   if (nonNus.length) console.log(`      ${(ALL_NAMES ? nonNus : nonNus.slice(0, 20)).join(", ")}`);
   line("canonical id collisions", collisions.length, { bad: collisions, note: "merged accounts" });
   line("canonical id empty (blank email)", blank.length, { bad: blank });
   line("canonical id not E-format", nonE.length, { info: true, note: "LEGITIMATE — never exclude (L-27)" });
+
+  // --- the D-7 break-glass allowlist ------------------------------------
+  allowlistSection(allowlist, users, userRole);
 
   // --- stored baseline (the flip gate) ----------------------------------
   const withResident = new Set(userRole.filter((r) => (r.roles ?? []).includes("resident")).map((r) => r.userID));
@@ -164,10 +357,14 @@ async function main() {
   let pending = [];
   try { pending = await findAll(db, "PendingRoleGrant"); } catch { /* collection may not exist yet */ }
   const nowMs = Date.now();
-  const privPending = pending.filter((p) => (p.roles ?? []).some((r) => r === "admin" || r === "jcrc"));
+  // admin | jcrc | scrc — every PRIVILEGED grantable role. Must stay in step
+  // with the identical filter in verify-legacy-drop.mjs, which BLOCKS the drop;
+  // this one only reports, so a divergence shows up here as a quiet undercount.
+  // cca_head cannot travel the deferred path (no ASSIGNABLE_BY entry).
+  const privPending = pending.filter((p) => (p.roles ?? []).some((r) => r === "admin" || r === "jcrc" || r === "scrc"));
   const expired = pending.filter((p) => p.expiresAt && new Date(p.expiresAt?.$date ?? p.expiresAt).getTime() <= nowMs);
   line("PendingRoleGrant: outstanding", pending.length);
-  line("  of which admin/jcrc", privPending.length, {
+  line("  of which admin/jcrc/scrc", privPending.length, {
     bad: privPending.map((p) => `${p.userID}:${JSON.stringify(p.roles)}`),
     note: "requires named sign-off before the legacy drop" });
   line("  expired, unclaimed", expired.length, { info: true });

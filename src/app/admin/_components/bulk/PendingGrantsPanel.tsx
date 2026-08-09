@@ -199,7 +199,12 @@ export default function PendingGrantsPanel() {
               create.mutate({
                 rows: splitPasted(identifiers).map((identifier) => ({
                   identifier,
-                  roles: selectedRoles as ("admin" | "jcrc" | "cca_head")[],
+                  roles: selectedRoles as (
+                    | "admin"
+                    | "jcrc"
+                    | "cca_head"
+                    | "scrc"
+                  )[],
                 })),
                 expiresInDays: days,
                 reason: reason.trim() || undefined,

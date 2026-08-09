@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 
 import { api } from "~/trpc/react";
+// Runtime-pure by design (roles.ts header) — safe to value-import in a client
+// component, which is the whole reason the vocabulary lives there.
+import { forbiddenRoleCombination } from "~/server/api/services/roles";
 import {
   BASELINE_ROLE,
   GRANTABLE_ROLES,
@@ -41,6 +44,7 @@ const ROLE_LABEL: Record<string, string> = {
   admin: "Admin",
   jcrc: "JCRC",
   cca_head: "CCA Head",
+  scrc: "Hall Office",
 };
 
 /**
@@ -58,6 +62,7 @@ const LOCKED_REASON: Record<string, string> = {
   // everyone including admins. The server answers USE_CCA_HEAD_ENDPOINT.
   cca_head:
     "CCA headship is managed from the CCAs surface, so the scoped record stays in sync.",
+  scrc: "Only an admin can grant or remove the Hall Office role.",
 };
 
 export default function ManageRolesDialog({
@@ -123,12 +128,26 @@ export default function ManageRolesDialog({
       );
       return;
     }
+    // G8, mirrored client-side for the MESSAGE only. The server refuses this
+    // combination at assertCanMutateRoles and audits the denial; without this
+    // the operator would get the bare code `CANNOT_HOLD_JCRC_AND_SCRC` in the
+    // error strip, which is what every other denial here renders but is
+    // unusually opaque for a rule that is about policy rather than permission.
+    // Imported from services/roles rather than re-listed, so the UI cannot
+    // drift from the invariant it is describing — and it is NOT a guard: it
+    // saves a round trip, and removing it changes nothing but the wording.
+    if (forbiddenRoleCombination(selected)) {
+      setFormError(
+        "Nobody can hold both JCRC and Hall Office. The Hall Office appoints the JCRC, so one account holding both could grant JCRC in bulk and bypass the Hall Office kill switch. Remove one before saving.",
+      );
+      return;
+    }
     setRoles.mutate({
       // canonicalUserID, NEVER legacyUserID — the latter holds an A-format
       // matric for ~515 rows and a grant keyed on it creates a row no session
       // will ever match (I-1).
       userID: targetUserID,
-      roles: selected as ("admin" | "jcrc" | "cca_head")[],
+      roles: selected as ("admin" | "jcrc" | "cca_head" | "scrc")[],
       reason: reason.trim() || undefined,
     });
   };

@@ -1,11 +1,22 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 
-import { createTRPCRouter, identifiedProcedure } from "~/server/api/trpc";
+import {
+  createTRPCRouter,
+  identifiedProcedure,
+  oversightProcedure,
+} from "~/server/api/trpc";
 import { getUserRoles } from "~/server/api/services/access";
 import { computeCapabilities, isEFormatUserID } from "~/server/api/services/roles";
-import { assertHeadsCca } from "~/server/api/services/ccaScope";
-import { resolveRoster } from "~/server/api/services/ccaRoster";
+import {
+  assertHeadsCca,
+  assertMayViewCcaRoster,
+} from "~/server/api/services/ccaScope";
+import { assertScrcEnabled } from "~/server/api/services/scrcFlag";
+import {
+  redactRosterForReadOnly,
+  resolveRoster,
+} from "~/server/api/services/ccaRoster";
 import { randomUUID } from "node:crypto";
 
 import { del } from "@vercel/blob";
@@ -33,13 +44,33 @@ import { canonicalUserID } from "~/lib/identity";
  * validator-guarded `CCA` collection is never written from here.
  *
  * THE ONE RULE IN THIS FILE: every procedure that takes a ccaID FROM THE CLIENT
- * MUST call assertHeadsCca before touching CCA-scoped data. The procedure
- * builder does NOT do it for you — identifiedProcedure only narrows identity. A
- * procedure here that forgets the guard is a full-roster IDOR across all 89
- * CCAs.
+ * MUST call assertHeadsCca — or, for a roster READ only, assertMayViewCcaRoster
+ * — before touching CCA-scoped data. The procedure builder does NOT do it for
+ * you — identifiedProcedure only narrows identity. A procedure here that forgets
+ * the guard is a full-roster IDOR across all 89 CCAs.
  *
+ *     grep -nE "assertHeadsCca|assertMayViewCcaRoster" src/server/api/routers/cca.ts
  *     grep -n "input.ccaID" src/server/api/routers/cca.ts
- *     → every hit must sit in a procedure whose body also names assertHeadsCca.
+ *     → every hit of the second must sit in a procedure whose body also names
+ *       one of the two guards.
+ *
+ * THE TWO ARE NOT INTERCHANGEABLE. assertMayViewCcaRoster is a strictly WIDER
+ * gate: it additionally admits the hall office (viewCcaRostersReadOnly), who may
+ * look at a roster and nothing else. It is therefore NOT a substitute for
+ * assertHeadsCca on a write, nor on a read that carries PII — using it on
+ * updateProfile, removeMembers, handoverHeads or memberDirectory (matric /
+ * telegram / bio) would hand those to a read-only role in one line. Writes and
+ * PII reads stay on assertHeadsCca; only getRoster and listHeads take the wider
+ * guard.
+ *
+ * AND THE WIDER GUARD IS NOT THE WHOLE STORY — BOTH OF THOSE TWO ALSO REDACT.
+ * A full roster carries every member's email, stored userID and raw membership
+ * keys (mostly A-format matrics), and listHeads carries every head's email, so
+ * "the guard let them in" is only half the boundary. Each branches on
+ * `scope.via === "readOnly"` and strips identifiers down to names, headship and
+ * grant dates for that tier alone; heads and managers are byte-identical to
+ * before. If you add a third procedure to this guard, it inherits the
+ * obligation: check `scope.via` and decide what the read-only tier may see.
  *
  * The gate is on `input.ccaID` SPECIFICALLY, not on the string "ccaID". listMine
  * touches ccaID a dozen times and needs no guard, because every id it handles
@@ -142,6 +173,14 @@ export const ccaRouter = createTRPCRouter({
    * THE security boundary for both /cca/[ccaID] and /admin/ccas. Neither page
    * pre-guards — a client can call this from the console on any page, so the
    * layouts are defence in depth only (I-7).
+   *
+   * Guarded by assertMayViewCcaRoster, NOT assertHeadsCca, and this is the only
+   * difference between the two: a roster is names + grant dates, so the hall
+   * office may read one without being able to touch anything. Admin, jcrc and a
+   * genuine head take branches 1 and 2 of that guard, which are byte-for-byte
+   * assertHeadsCca — so their answer, their `via` and their query count are
+   * unchanged, and they never touch the `scrc.enabled` flag read. The flag check
+   * for the read-only tier lives INSIDE the guard; do not repeat it here.
    */
   getRoster: identifiedProcedure
     // .positive(), not .nonnegative(): ccaID 0 is RESERVED (see cascade.ts) and
@@ -151,9 +190,22 @@ export const ccaRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const userID = ctx.session.user.userID;
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
-      const scope = await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+      const scope = await assertMayViewCcaRoster(
+        ctx.db,
+        { userID, roles },
+        input.ccaID,
+      );
       const roster = await resolveRoster(ctx.db, input.ccaID);
-      return { ...roster, via: scope.via };
+      // THE READ-ONLY TIER GETS NAMES, NOT IDENTIFIERS. A full roster carries
+      // every member's email, stored userID and raw membership keys (mostly
+      // A-format matrics); a caller who can enumerate all 89 CCAs would
+      // reassemble most of admin.listUsers from them. Keyed off `scope.via`,
+      // which only assertMayViewCcaRoster can set to "readOnly", so a head or a
+      // manager takes the untouched branch and sees exactly what they always
+      // have. See redactRosterForReadOnly.
+      const visible =
+        scope.via === "readOnly" ? redactRosterForReadOnly(roster) : roster;
+      return { ...visible, via: scope.via };
     }),
 
   /**
@@ -537,15 +589,37 @@ export const ccaRouter = createTRPCRouter({
    * the email and also match the stored key), while still returning the
    * authoritative CcaHead.userID that Remove needs.
    *
-   * Guarded by assertHeadsCca, so it works for a manager (manageCcaHeads) on any
-   * CCA and for a head on their own — the same gate as the rest of this router.
+   * Guarded by assertMayViewCcaRoster, so it works for a manager
+   * (manageCcaHeads) on any CCA, for a head on their own, and — through branch 3
+   * of that guard, behind the `scrc.enabled` switch — for the hall office
+   * read-only. It is the roster's other half: who leads this CCA is exactly the
+   * question the hall office asks.
+   *
+   * THE ANSWER IS NOT THE SAME FOR ALL THREE. A manager or a head gets name,
+   * EMAIL and grant date — unchanged, and identical to what /admin/ccas has
+   * always shown. The read-only tier gets name and grant date with the email
+   * NULLED, because 89 CCAs' worth of head addresses is a contact list, and
+   * building one out of a read-only capability is the disclosure requirement 8
+   * withholds. Matric, telegram and bio are absent for everyone here — those
+   * live in memberDirectory, which stays on assertHeadsCca.
+   *
+   * NOT a licence to write: Remove-head still goes through admin.setCcaHeads /
+   * cca.handoverHeads, both of which re-guard with assertHeadsCca.
    */
   listHeads: identifiedProcedure
     .input(z.object({ ccaID: z.number().int().positive() }))
     .query(async ({ ctx, input }) => {
       const userID = ctx.session.user.userID;
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
-      await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+      const scope = await assertMayViewCcaRoster(
+        ctx.db,
+        { userID, roles },
+        input.ccaID,
+      );
+      // Same rule as getRoster: the read-only tier gets NAMES, not addresses.
+      // 89 CCAs x their heads is a contact list, and assembling one is exactly
+      // what `viewCcaRostersReadOnly` promises not to allow.
+      const readOnly = scope.via === "readOnly";
 
       const heads = await ctx.db.ccaHead.findMany({
         where: { ccaID: input.ccaID },
@@ -584,9 +658,23 @@ export const ccaRouter = createTRPCRouter({
 
       return {
         heads: heads.map((h) => ({
-          userID: h.userID,
+          // NULLED FOR THE READ-ONLY TIER TOO, and the earlier defence for
+          // keeping it ("it is the row's own primary key") was simply wrong.
+          // `CcaHead.userID` is a canonical E-format id, and this very
+          // procedure derives the address from it four lines up:
+          // `E1234567` -> `e1234567@u.nus.edu`. Returning the id while nulling
+          // the email hands back the same contact list one derivation later, so
+          // a loop over listAllForOversight -> listHeads would still reassemble
+          // name + email for every head in the hall. It also contradicted
+          // redactRosterForReadOnly, which nulls `storedUserID` for exactly
+          // this reason — two paths, one rule.
+          //
+          // Nothing renders this for the read-only tier (the only caller is
+          // /admin/ccas' CcaHeadsManager, which is manager-gated), so nulling
+          // costs no UI. A manager or head is unaffected.
+          userID: readOnly ? null : h.userID,
           displayName: byKey.get(h.userID)?.displayName ?? null,
-          email: byKey.get(h.userID)?.email ?? null,
+          email: readOnly ? null : (byKey.get(h.userID)?.email ?? null),
           grantedAt: h.grantedAt,
         })),
       };
@@ -743,4 +831,62 @@ export const ccaRouter = createTRPCRouter({
         selfRemoved: revoked.includes(userID),
       };
     }),
+
+  /* --------------------------- OVERSIGHT (read-only) ---------------------- */
+
+  /**
+   * Every CCA's NAME, for the hall office's CCA picker. A name list and nothing
+   * else — no heads, no members, no counts.
+   *
+   * WHY A NEW PROCEDURE. The two existing "all the CCAs" lists are both out of
+   * reach and both for good reasons: admin.listCcas requires manageCcaHeads
+   * (admin.ts) — the capability that makes assertHeadsCca pass unconditionally,
+   * i.e. full write on all 89 CCAs — and ccaApplications.browse sits behind a
+   * DIFFERENT kill switch (`cca.applications.enabled`), so the CCA picker would
+   * go dark whenever applications are off. Neither is a usable CCA list for the
+   * hall office, and widening either would cost far more than it buys. The
+   * projection is deliberately IDENTICAL to admin.listCcas' so the two cannot
+   * drift into disagreeing about what a "CCA list" is.
+   *
+   * WHY oversightProcedure AND NOT identifiedProcedure, which every other
+   * procedure in this file uses. Those are object-scoped: the client names a
+   * ccaID and the guard is the entire boundary, so the builder answers nothing.
+   * This one takes NO input — there is no object to scope to — so the role gate
+   * IS the boundary and a role-gated builder is the honest way to say so.
+   *
+   * This list is NOT an authorization. It grants no read of any roster: every
+   * ccaID the picker hands back is authorised again, per-CCA, by
+   * assertMayViewCcaRoster inside getRoster / listHeads. A leaked name buys an
+   * attacker a number that is already public in the booking UI.
+   */
+  listAllForOversight: oversightProcedure.query(async ({ ctx }) => {
+    const userID = ctx.session.user.userID;
+    // I-5: LIVE read. session.user.roles is render-only and up to 30 days stale,
+    // so a demoted hall-office member would otherwise keep the picker.
+    const roles = await getUserRoles(ctx.db, userID);
+    const capabilities = computeCapabilities(roles);
+    if (!capabilities.viewCcaRostersReadOnly) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "CAPABILITY_REQUIRED:viewCcaRostersReadOnly",
+      });
+    }
+
+    // The switch is checked HERE rather than left to assertMayViewCcaRoster,
+    // because nothing below calls that guard — but on the SAME branch that
+    // guard puts it on, and not unconditionally as it was at first. An ADMIN
+    // holds reachScrcDashboard, so an admin can open /scrc before rollout; an
+    // unconditional check made every panel error for the one person entitled to
+    // inspect the surface before switching it on. `manageCcaHeads` is the
+    // manager tier here, i.e. exactly the callers who reach a roster through
+    // branch 1 of assertMayViewCcaRoster and never touch the flag.
+    if (!capabilities.manageCcaHeads) await assertScrcEnabled(ctx.db);
+
+    return {
+      ccas: await ctx.db.cCA.findMany({
+        select: { ccaID: true, ccaName: true, category: true },
+        orderBy: { ccaName: "asc" },
+      }),
+    };
+  }),
 });

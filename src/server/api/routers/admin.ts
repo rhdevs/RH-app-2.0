@@ -9,7 +9,15 @@ import {
   createTRPCRouter,
   protectedProcedure,
   roleManagerProcedure,
+  scrcProcedure,
 } from "../trpc";
+import { assertScrcEnabled } from "../services/scrcFlag";
+import {
+  allowlistPinExists,
+  pinnedUserIDsFor,
+  resetAuthAllowlistCache,
+} from "../services/authAllowlist";
+import { isExtUserID, normalizeEmail } from "~/lib/identity";
 import {
   evaluateBooking,
   getEnforcementMode,
@@ -23,20 +31,25 @@ import {
   FACILITY_ROLES,
   GRANTABLE_ROLES,
   JCRC_ROLE,
+  SCRC_ROLE,
   assignableBy,
   asStoredCanonicalUserID,
   canonicalUserID,
   type CanonicalUserID,
   computeCapabilities,
+  forbiddenRoleCombination,
   isGrantableRole,
   isEFormatUserID,
   isNusStudentEmail,
   legacyMirror,
   revocableFromOthersBy,
   userIDSchema,
+  extUserIDSchema,
+  roleTargetUserIDSchema,
   type Capabilities,
   type GrantableRole,
 } from "../services/roles";
+import { MATRIC_RE } from "~/lib/schemas/profile";
 
 /**
  * The admin / role-management router (02-backend-authz.md §§6-8).
@@ -87,6 +100,40 @@ import {
 const roleSchema = z.enum(GRANTABLE_ROLES);
 
 /**
+ * `extUserIDSchema` / `roleTargetUserIDSchema` are DEFINED IN
+ * ../services/roles.ts, beside `userIDSchema`, and imported here — not declared
+ * locally. That module is runtime-pure and client-importable; this one pulls in
+ * `node:crypto` and `~/env`, so a `"use client"` component that needed the
+ * schema (AuditLogTable's filter parse) could not import it from here without
+ * dragging both into the browser bundle.
+ *
+ * THE ENUMERATION OF WHERE roleTargetUserIDSchema IS APPLIED IS THE CONTAINMENT,
+ * so it is written out rather than left implicit. Three sites in this file:
+ *
+ *   setUserRoles   — the ONLY way to grant `scrc` to an allowlist-pinned
+ *                    hall-office account.
+ *   explainAccess  — read-only, audited; the only tool for triaging "why can't
+ *                    the hall office book room N".
+ *   listAuditLog   — read-only, adminProcedure; the surface whose whole job is
+ *                    oversight of this role.
+ *
+ * Every OTHER target site in this file stays on the bare `userIDSchema`:
+ *
+ *   resolveIdentifier (bulk import + pending grants) — so a pasted `EXT:…` in a
+ *       1000-row CSV comes back UNRESOLVED. THIS IS THE CONTAINMENT ON M4: the
+ *       EXT namespace is unreachable from a spreadsheet.
+ *   createPendingGrants / revokePendingGrant — a pending grant is redeemed at
+ *       FIRST LOGIN against a canonical id; a deferred grant to a pinned
+ *       identity would be a second, unaudited provisioning path.
+ *   grantCcaHead / revokeCcaHead / transferCcaHead — the hall office must not
+ *       become a CCA head.
+ *   setJcrcRole / listJcrcRoster / resolveJcrcCandidate — all three target
+ *       RESIDENTS. EXCLUSIVE_ROLE_PAIRS makes an `scrc` target impossible
+ *       anyway (G8 denies jcrc+scrc), so widening them would only let the hall
+ *       office aim its one power at the EXT namespace for no purpose.
+ */
+
+/**
  * Facilities require a DIFFERENT vocabulary than users are granted: `resident`
  * is requirable but not grantable, and `admin` is grantable but must never be
  * stored as a requirement (it is an implicit bypass; storing it invites someone
@@ -101,6 +148,120 @@ const facilityRoleSchema = z.enum(FACILITY_ROLES);
  * catastrophic-backtracking vector, and role managers are students.
  */
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The shape `resolveJcrcCandidate` returns.
+ *
+ * DELIBERATELY NOT `HeadCandidateResult`, which it originally mirrored. That
+ * union distinguishes NOT_FOUND from NOT_SIGNED_IN, and this procedure ALSO had
+ * to refuse a target holding `admin`. Three negative outcomes plus a positive
+ * one turned the admin refusal into an ORACLE: a non-existent address answered
+ * NOT_SIGNED_IN or NOT_FOUND, an ordinary account answered FOUND, and only an
+ * ADMIN answered NOT_FOUND-after-resolving — so the branch written to hide
+ * admins was the one thing that uniquely marked them, and a loop over the hall's
+ * addresses enumerated the admin list exactly.
+ *
+ * So there are now TWO outcomes, not four. NOT_AVAILABLE is returned, byte for
+ * byte, for every negative: the identifier did not resolve, it resolved to
+ * somebody who has never signed in, it resolved to an admin, or it resolved to
+ * another HALL-OFFICE account. No status, no message, no field, and no shape
+ * difference separates them. It carries NO userID — echoing the resolved id back
+ * would have re-opened the same oracle one field lower down.
+ *
+ * The `scrc` case joined that list late, and only because of COMPOSITION: alone,
+ * reporting a hall-office account as FOUND leaked nothing this role could not
+ * already see, but paired with setJcrcRole's opaque refusal it eliminated every
+ * other cause and identified them exactly. See the screen in the procedure.
+ *
+ * AMBIGUOUS survives as its own status, and that is a considered exception. It
+ * is decided ENTIRELY by `userMatric.findMany().length > 1`, before any role or
+ * account lookup happens at all, so it cannot separate an admin from anyone
+ * else — an admin with a unique matric answers NOT_AVAILABLE like every other
+ * refusal, and a resident with a duplicated one answers AMBIGUOUS. The only bit
+ * it discloses is "the matric YOU just typed is claimed by more than one
+ * account", which the identical branch in cca.resolveHeadCandidate already
+ * discloses to every CCA head, and which the operator needs in order to know to
+ * try a NUSNET id instead.
+ *
+ * `holdsJcrc` on the FOUND branch lets the UI offer Revoke instead of Grant.
+ */
+export type JcrcCandidateResult =
+  | {
+      status: "FOUND";
+      userID: string;
+      displayName: string | null;
+      email: string | null;
+      holdsJcrc: boolean;
+    }
+  /** A matric matched more than one account. Decided before any role lookup. */
+  | { status: "AMBIGUOUS" }
+  /**
+   * No usable grant target. Covers "no such identifier", "never signed in" and
+   * "holds admin", indistinguishably and on purpose. Do NOT add a field, a
+   * reason code or a sub-status to this branch — the whole point is that the
+   * caller cannot tell which of the three it got.
+   */
+  | { status: "NOT_AVAILABLE" };
+
+/**
+ * Guard messages that describe THE TARGET rather than the CALLER, and which
+ * `admin.setJcrcRole` therefore flattens to `SCRC_TARGET_UNAVAILABLE` before
+ * they reach a hall-office client.
+ *
+ * WHY A LIST AND NOT A BLANKET CATCH. `sanitizeErrors` in trpc.ts rewrites
+ * INTERNAL_SERVER_ERROR only; every FORBIDDEN message is passed through to the
+ * client verbatim, by design, because for admin and jcrc the specific reason IS
+ * the product. That is right for them and wrong for `scrc`, whose reachable
+ * target set is the whole hall: a message that varies with a property of the
+ * target turns one repeatable call into an enumeration of that property.
+ *
+ * Each entry, and what it would otherwise disclose:
+ *   CANNOT_MODIFY_AN_ADMIN     — G3. "this account holds admin". The one that
+ *                                reopened the oracle resolveJcrcCandidate had
+ *                                just been rewritten to close.
+ *   CANNOT_HOLD_JCRC_AND_SCRC  — G8. "this account holds scrc", i.e. an
+ *                                enumeration of the hall office itself.
+ *   NOT_A_CANONICAL_USERID     — G7. Unreachable from setJcrcRole (userIDSchema
+ *                                already enforces E-format at the boundary),
+ *                                listed so it stays closed if that ever changes.
+ *   CANNOT_REMOVE_LAST_ADMIN   — applyRoleChange. Unreachable here for the same
+ *                                structural reason (this mutation only ever
+ *                                adds or removes `jcrc`), listed for the same
+ *                                defensive reason.
+ *   USE_CCA_HEAD_ENDPOINT      — G4, when `cca_head` lands in the delta. "this
+ *                                account heads a CCA". Race-only from
+ *                                setJcrcRole: the requested set is built from a
+ *                                pre-check read, so `cca_head` can only enter
+ *                                the delta if the target gains or loses a
+ *                                headship between that read and the guard's.
+ *   CANNOT_REVOKE_SCRC_FROM_OTHERS
+ *                              — G4 removals. `revocableFromOthersBy(["scrc"])`
+ *                                is exactly {jcrc}, so this fires if `scrc` ever
+ *                                appears in the removal set — again only via the
+ *                                same race, and again it would answer "this
+ *                                account holds scrc".
+ *
+ * The last two are the races this allowlist is FOR: it exists precisely because
+ * the pre-checks in setJcrcRole read the target in an earlier statement than the
+ * guards do, and a list that covered only the messages the pre-checks already
+ * pre-empt would be documentation rather than a backstop.
+ *
+ * DELIBERATELY ABSENT: CANNOT_GRANT_JCRC, CANNOT_REVOKE_JCRC_FROM_OTHERS,
+ * NOT_A_ROLE_MANAGER, CANNOT_SELF_ASSIGN, CAPABILITY_REQUIRED:*, SCRC_DISABLED
+ * and CONFLICT_ROLES_CHANGED. Every one of those is identical for every target
+ * — they describe the ACTOR or a race — so they leak nothing and are worth far
+ * more to the operator stated plainly.
+ *
+ * If a future guard's message depends on the target, add it here.
+ */
+const TARGET_DISCRIMINATING = new Set<string>([
+  "CANNOT_MODIFY_AN_ADMIN",
+  "CANNOT_HOLD_JCRC_AND_SCRC",
+  "NOT_A_CANONICAL_USERID",
+  "CANNOT_REMOVE_LAST_ADMIN",
+  "USE_CCA_HEAD_ENDPOINT",
+  "CANNOT_REVOKE_SCRC_FROM_OTHERS",
+]);
 
 const listInput = z.object({
   search: z.string().trim().max(100).optional(),
@@ -327,9 +488,21 @@ const forbid = (msg: string): never => {
  * THE privilege-escalation firewall. Computes the resulting role set for a
  * `set`-style request and validates it, or throws and audits the denial.
  *
- *  G1 CALLER      caller must hold admin or jcrc. Also enforced by the
+ *  G1 CALLER      caller must hold admin, jcrc or scrc. Also enforced by the
  *                 procedure middleware — belt and braces, because this function
  *                 is the thing every future surface will call.
+ *                 `scrc` (hall office) was added when it gained
+ *                 ASSIGNABLE_BY.scrc = ["jcrc"]: G1 is a REACHABILITY gate, and
+ *                 leaving it out would have refused the hall office here with
+ *                 NOT_A_ROLE_MANAGER before its (narrow, legitimate) delta was
+ *                 ever evaluated by G4. What `scrc` may actually do to whom is
+ *                 still decided entirely by G3/G4/G5/G6 and the maps — this
+ *                 line grants nothing.
+ *                 Deliberately NOT rewritten as `assignableBy(actorRoles).size
+ *                 === 0`, which would be tidier and WRONG: a jcrc's set is
+ *                 empty, so that form would newly deny jcrc HERE with
+ *                 NOT_A_ROLE_MANAGER instead of at G4 with CANNOT_GRANT_JCRC,
+ *                 silently changing the denyReason on existing audit rows.
  *  G2 VOCABULARY  every requested role must be a known GRANTABLE role. Zod
  *                 rejects most of these first; this survives a router that
  *                 forgets. `resident` fails G2 by design (I-8e).
@@ -350,10 +523,24 @@ const forbid = (msg: string): never => {
  *                 Scoped to non-admins deliberately: an admin already outranks
  *                 every role, and blocking them would leave the bootstrap admin
  *                 unable to give themselves jcrc with no in-app path to fix it.
- *  G7 KEY         the target must be an E-format userID (I-1). Without this the
+ *  G7 KEY         the target must be an E-format userID (I-1), OR an `EXT:`
+ *                 allowlist pin WITH A LIVE AuthAllowlist ROW. Without this the
  *                 dashboard writes rows keyed on an A-format matric that no
  *                 session ever matches: the grant appears to succeed and does
- *                 nothing.
+ *                 nothing. It is a REACHABILITY guard, not an authorization one
+ *                 — which is why the EXT branch demands a row rather than a
+ *                 shape: a pin is admin-typed, so `EXT:TYPO` is a well-formed
+ *                 key that no session can produce, i.e. exactly the failure this
+ *                 guard exists to prevent. The `||` short-circuits, so an
+ *                 E-format target still pays nothing.
+ *  G8 EXCLUSION   the RESULTING set must not contain a mutually exclusive pair
+ *                 (EXCLUSIVE_ROLE_PAIRS in roles.ts — today, jcrc + scrc). The
+ *                 only guard here that constrains the SHAPE of the result
+ *                 rather than the actor or the delta, and the only one an
+ *                 ADMIN cannot override: an admin may grant either role to
+ *                 anyone, and still may not produce that combination in one
+ *                 person, because the hole it opens is not about who granted
+ *                 it. Read EXCLUSIVE_ROLE_PAIRS for what composes.
  *
  * It re-reads BOTH actor and target roles from the database rather than
  * trusting the session (I-5); this also closes the TOCTOU where the actor is
@@ -414,8 +601,33 @@ export async function assertCanMutateRoles(opts: {
     return forbid(reason);
   };
 
-  if (!isEFormatUserID(targetUserID)) await deny("NOT_A_CANONICAL_USERID"); // G7
-  if (!actorIsAdmin && !actorRoles.includes(JCRC_ROLE)) {
+  // G7 KEY. E-format, OR A PROVEN ALLOWLIST PIN.
+  //
+  // NOT A WIDER REGEX — A PROOF. G7 asks "can any session ever produce this
+  // target key" (see its entry in the guard table above): it is a REACHABILITY
+  // guard, not an authorization one, and it exists because a grant keyed on
+  // something no session matches SUCCEEDS AND DOES NOTHING, silently.
+  //
+  // An `EXT:` id does correspond to a session — but ONLY if an AuthAllowlist
+  // row exists, and the shape alone cannot tell you that: a pin is
+  // admin-supplied, so `EXT:NGOCANH_MIA` is a well-formed typo that would write
+  // a UserRole row no login ever reaches. So the EXT branch demands a LIVE ROW.
+  // That makes this branch strictly STRONGER than the shape test it sits beside,
+  // not weaker.
+  //
+  // COSTS NOTHING FOR EXISTING TRAFFIC: `||` short-circuits, so an E-format
+  // target never evaluates the right side and never issues the query. Same
+  // denyReason on failure, so no existing audit string moves and every historic
+  // NOT_A_CANONICAL_USERID row keeps meaning what it meant.
+  const targetKeyed =
+    isEFormatUserID(targetUserID) ||
+    (isExtUserID(targetUserID) && (await allowlistPinExists(db, targetUserID)));
+  if (!targetKeyed) await deny("NOT_A_CANONICAL_USERID"); // G7
+  if (
+    !actorIsAdmin &&
+    !actorRoles.includes(JCRC_ROLE) &&
+    !actorRoles.includes(SCRC_ROLE)
+  ) {
     await deny("NOT_A_ROLE_MANAGER"); // G1
   }
   for (const r of requestedRoles) {
@@ -426,6 +638,19 @@ export async function assertCanMutateRoles(opts: {
   }
 
   const requested = [...new Set(requestedRoles)] as GrantableRole[];
+
+  // G8 EXCLUSION. Evaluated on the RESULTING SET, not the delta: a payload that
+  // merely omits one half of a forbidden pair is still a payload that produces
+  // the other half, and a delta check would wave through a set that already
+  // contained both. Placed after G2 (so every member is known) and before G4 (so
+  // the answer is "that combination is forbidden" rather than a confusing
+  // "you may not grant jcrc" aimed at someone who may). See
+  // EXCLUSIVE_ROLE_PAIRS — this is the invariant that stops a jcrc+scrc holder
+  // reaching setUserRoles and bulkAssign with the scrc grant power attached and
+  // the scrc kill switch bypassed.
+  const combination = forbiddenRoleCombination(requested);
+  if (combination) await deny(combination); // G8
+
   const added = requested.filter((r) => !before.includes(r));
   const removed = before.filter((r) => !requested.includes(r));
 
@@ -529,6 +754,24 @@ export async function applyRoleChange(opts: {
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
       message: "NON_GRANTABLE_IN_REMOVAL",
+    });
+  }
+
+  // G8's backstop at the chokepoint, ASSERTED rather than assumed, exactly like
+  // the line above. `after` comes from assertCanMutateRoles, which already
+  // refused a forbidden pair — so this can only fire if someone adds a caller
+  // that skips the guard, which is precisely the mistake worth failing loudly
+  // on. Checking `after` is sufficient and not merely convenient: the written
+  // set below is (stored non-grantable) ∪ after, and both halves of every
+  // EXCLUSIVE_ROLE_PAIR are grantable, so nothing in the first term can
+  // reintroduce a pair. INTERNAL_SERVER_ERROR, not FORBIDDEN — a client cannot
+  // cause this, and calling it a permission problem would misdirect whoever
+  // reads the log.
+  const combination = forbiddenRoleCombination(after);
+  if (combination) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: `EXCLUSIVE_PAIR_AT_CHOKEPOINT:${combination}`,
     });
   }
 
@@ -824,6 +1067,12 @@ async function assertMayManageCcaHeadOf(
     });
     return forbid(reason);
   };
+  // G7, AND DELIBERATELY NOT WIDENED TO THE EXT NAMESPACE — unlike the copy in
+  // assertCanMutateRoles above. CCA-head grants stay E-format-only: the hall
+  // office must not become a CCA head (phase 1 non-goal #6), and `cca_head` is
+  // the role that hands out assertHeadsCca and with it every CCA write, the
+  // member directory and the attendee PII export. There is no requirement that
+  // an EXT principal ever head a CCA, so the narrower test stands.
   if (!isEFormatUserID(targetUserID)) await deny("NOT_A_CANONICAL_USERID"); // G7
   if (!actorRoles.includes(ADMIN_ROLE)) {
     const targetRoles = await getUserRoles(db, targetUserID);
@@ -919,6 +1168,12 @@ export const adminRouter = createTRPCRouter({
               displayName: u?.displayName ?? null,
               block: null as string | null,
               hasAccount: Boolean(u),
+              // Same field on both branches of this procedure, deliberately: a
+              // field present on one arm only turns the return type into a
+              // union and every client reader into a narrowing exercise. Here
+              // the key is read straight out of UserRole, so the namespace test
+              // is all that is needed.
+              pinned: isExtUserID(r.userID),
               eligible: true,
               keyMismatch: false,
               roles: redact(r.roles?.length ? r.roles : r.role ? [r.role] : []),
@@ -955,12 +1210,42 @@ export const adminRouter = createTRPCRouter({
       const nextCursor =
         users.length > limit ? (page[page.length - 1]?.id ?? null) : null;
 
+      /* ---- ALLOWLIST-PINNED ROWS ------------------------------------------
+       * WITHOUT THIS BLOCK AN ADMIN CANNOT GRANT `scrc` AT ALL, and the cause
+       * looks like a permissions bug rather than a missing lookup.
+       *
+       * `canonicalUserID(u.email)` is null for an @nus.edu.sg staff address, so
+       * the row below would render `canonicalUserID: null` -> UserRoleTable
+       * prints "—" and DISABLES its Manage-roles button (`disabled={!u.
+       * canonicalUserID}`), which is the only path to setUserRoles in the UI.
+       *
+       * Resolved as a BATCH, and only for the rows that actually failed to
+       * canonicalize — usually zero, occasionally a handful of legacy Google
+       * rows. One extra indexed `in` query per page, on a <=100-row admin-only
+       * page, skipped entirely when there is nothing to resolve. `cidOf` below
+       * is the single derivation both call sites use, so the row's
+       * `canonicalUserID`, `eligible` and `roles` cannot disagree about which
+       * key this account has.
+       *
+       * NOTE the pins go through pinnedUserIDsFor, which applies the SAME
+       * asExtUserID namespace filter per row (M2) that the session path does —
+       * so a poisoned row renders here exactly as it authorizes: as nothing.
+       */
+      const unresolved = page
+        .filter((u) => canonicalUserID(u.email) === null)
+        .map((u) => u.email);
+      const pins = unresolved.length
+        ? await pinnedUserIDsFor(ctx.db, unresolved)
+        : new Map<string, CanonicalUserID>();
+      const cidOf = (email: string): CanonicalUserID | null =>
+        canonicalUserID(email) ?? pins.get(normalizeEmail(email)) ?? null;
+
       // C9: `.filter(Boolean)` removed the absent ids at RUNTIME but not in the
       // type, so the `in:` filter below was typed as if it could carry one. A
       // type predicate makes the existing runtime behaviour checkable. No
       // runtime change: null was already dropped, exactly as "" was.
       const canonicalIDs = page
-        .map((u) => canonicalUserID(u.email))
+        .map((u) => cidOf(u.email))
         .filter((id): id is CanonicalUserID => id !== null);
       const roleRows = await ctx.db.userRole.findMany({
         where: { userID: { in: canonicalIDs } },
@@ -974,7 +1259,7 @@ export const adminRouter = createTRPCRouter({
 
       return {
         items: page.map((u) => {
-          const cid = canonicalUserID(u.email);
+          const cid = cidOf(u.email);
           return {
             id: u.id,
             canonicalUserID: cid, // the key ALL mutations must submit; null => none
@@ -983,6 +1268,14 @@ export const adminRouter = createTRPCRouter({
             displayName: u.displayName,
             block: u.block,
             hasAccount: true,
+            /**
+             * TRUE for an allowlist-pinned staff address, and that is now the
+             * CORRECT answer rather than a widening: such an account CAN sign
+             * in (maySignIn consults the same collection) and DOES hold a
+             * principal key. `keyMismatch` below stays false for them because
+             * provisioning writes `User.userID` = the pin.
+             */
+            pinned: cid !== null && isExtUserID(cid),
             eligible: cid !== null, // false => cannot sign in under D-7
             keyMismatch: Boolean(u.userID && u.userID !== cid),
             // C9: `byID.get(cid)` with an absent cid was the same S5 lookup as
@@ -1000,7 +1293,7 @@ export const adminRouter = createTRPCRouter({
 
   getStats: roleManagerProcedure.query(async ({ ctx }) => {
     const c = caps(ctx.session.user.roles);
-    const [totalUsers, jcrc, ccaHead, admins] = await Promise.all([
+    const [totalUsers, jcrc, ccaHead, scrc, admins] = await Promise.all([
       ctx.db.user.count(),
       ctx.db.userRole.count({
         where: { OR: [{ roles: { has: JCRC_ROLE } }, { role: JCRC_ROLE }] },
@@ -1010,6 +1303,16 @@ export const adminRouter = createTRPCRouter({
           OR: [{ roles: { has: CCA_HEAD_ROLE } }, { role: CCA_HEAD_ROLE }],
         },
       }),
+      // Hall office. A COUNT, visible to every manager, deliberately unlike
+      // `admins` below — the hall office is an appointed body whose size is
+      // ordinary operational information, not the `seeAdminIdentities` line.
+      // Counting it here is also the cheapest standing answer to "how many
+      // accounts can appoint the JCRC", which is the number worth watching.
+      // The legacy `role` scalar is included for symmetry only: `scrc` is
+      // absent from PRECEDENCE and so is never mirrored into it.
+      ctx.db.userRole.count({
+        where: { OR: [{ roles: { has: SCRC_ROLE } }, { role: SCRC_ROLE }] },
+      }),
       ctx.db.userRole.count({
         where: { OR: [{ roles: { has: ADMIN_ROLE } }, { role: ADMIN_ROLE }] },
       }),
@@ -1018,15 +1321,587 @@ export const adminRouter = createTRPCRouter({
       totalUsers,
       jcrc,
       ccaHead,
+      scrc,
       admins: c.seeAdminIdentities ? admins : null,
     };
   }),
+
+  /* ---------------------------------------------------------------------- */
+  /* HALL OFFICE (scrc) — the /scrc surface                                  */
+  /*                                                                         */
+  /* Three procedures, all on scrcProcedure (admin | scrc), all asserting    */
+  /* `manageJcrcRoster` AND the `scrc.enabled` kill switch. They exist as a  */
+  /* deliberately NARROW alternative to listUsers + setUserRoles, which the  */
+  /* hall office must not reach:                                            */
+  /*                                                                         */
+  /*   - listUsers pages the WHOLE HALL and returns email, displayName and   */
+  /*     block for every account. listJcrcRoster pages the small UserRole    */
+  /*     collection filtered to jcrc — a roster the hall office itself       */
+  /*     appoints — and DROPS admin-holding rows entirely.                   */
+  /*   - setUserRoles takes a client-supplied FINAL role set. setJcrcRole    */
+  /*     takes a boolean and constructs the set server-side from the         */
+  /*     target's current roles ± jcrc, so an scrc payload is INCAPABLE OF   */
+  /*     EXPRESSING the removal of any other role. G4 would catch that       */
+  /*     anyway; not being able to say it is stronger than being refused.    */
+  /*                                                                         */
+  /* setUserRoles, listUsers and roleManagerProcedure are all UNCHANGED —    */
+  /* zero regression risk for admin and jcrc is the whole point of adding    */
+  /* three procedures instead of widening two.                              */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * The current JCRC, for the hall office's revoke list.
+   *
+   * Pages `UserRole` (small) rather than `User` (the whole hall), legacy-tolerant
+   * on the singular `role` scalar exactly as listUsers' role-filtered branch is.
+   *
+   * ADMIN ROWS ARE DROPPED, NOT REDACTED (R14). An admin who also holds jcrc
+   * matches the filter, and returning them — even with the roles array stripped —
+   * would tell the hall office that someone is unusually privileged, which is the
+   * `seeAdminIdentities` line. Dropping them also means `scrc` is never shown a
+   * target that G3 (CANNOT_MODIFY_AN_ADMIN) would refuse.
+   *
+   * `roles` is NOT in the projection at all. There is nothing to redact if it
+   * never leaves.
+   *
+   * THIS IS THE ONE PLACE THE HALL OFFICE IS GIVEN CANONICAL IDS AND EMAILS ON
+   * PURPOSE, and it is worth being explicit since every other read-only surface
+   * strips them (cca.getRoster, cca.listHeads, event.getForOversight all redact
+   * identity for this tier). The exception is justified, not an oversight:
+   *   - the JCRC is an appointed body this role EXISTS to administer, and its
+   *     membership is effectively public in the hall;
+   *   - `canonicalUserID` is not decoration, it is the argument setJcrcRole
+   *     needs in order to revoke — without it the revoke button cannot work;
+   *   - it is bounded by construction. This lists holders of ONE role, admins
+   *     excluded, not the hall.
+   * Nothing here generalises to the other surfaces. Do not cite it as precedent
+   * for returning an id anywhere else on this tier.
+   */
+  listJcrcRoster: scrcProcedure
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(100).default(25),
+        cursor: z.string().optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      requireCapability(caps(ctx.session.user.roles), "manageJcrcRoster");
+      await assertScrcEnabled(ctx.db);
+
+      const { limit, cursor } = input;
+      const roleRows = await ctx.db.userRole.findMany({
+        where: { OR: [{ roles: { has: JCRC_ROLE } }, { role: JCRC_ROLE }] },
+        take: limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        orderBy: { id: "asc" },
+      });
+      const page = roleRows.slice(0, limit);
+      // Computed from the RAW page, before the admin filter below. If it were
+      // computed from the filtered list, a page consisting entirely of admins
+      // would return no cursor and the client would stop paging mid-roster.
+      const nextCursor =
+        roleRows.length > limit ? (page[page.length - 1]?.id ?? null) : null;
+
+      const visible = page.filter((r) => {
+        const stored = r.roles?.length ? r.roles : r.role ? [r.role] : [];
+        return !stored.includes(ADMIN_ROLE);
+      });
+
+      // Hydrate. There is no reverse E-format -> email Mongo query, so probe the
+      // conventional address and left-join in memory, exactly as listUsers does.
+      // A jcrc row with no User row (a claimed pending grant, a hand-seeded
+      // account) renders as a bare id — never as an omission, which would hide a
+      // live grant from the person whose job is to manage it.
+      const emails = visible.map((r) => `${r.userID.toLowerCase()}@u.nus.edu`);
+      const users = await ctx.db.user.findMany({
+        where: { email: { in: emails, mode: "insensitive" } },
+        // NEVER a bare findMany: passwordHash must not reach the client, and
+        // passwordHash-less Google-adapter rows throw on a full read (I-2).
+        select: { email: true, displayName: true },
+      });
+      // C9, copied verbatim from listUsers and load-bearing for the same reason:
+      // a key that canonicalizes to ABSENT is DROPPED rather than stored under
+      // "". Without this, `byCanonical.get("")` would match a ""-keyed UserRole
+      // row and attribute a stranger's email and displayName to that grant.
+      // Unreachable while no ""-keyed row exists; do not "simplify" it away.
+      const byCanonical = new Map<string, (typeof users)[number]>(
+        users.flatMap((u) => {
+          const cid = canonicalUserID(u.email);
+          return cid === null ? [] : [[cid, u] as const];
+        }),
+      );
+
+      return {
+        items: visible.map((r) => {
+          const u = byCanonical.get(r.userID);
+          return {
+            // Minted through the checked entry point so a ""-keyed row arrives
+            // at the client as ABSENT rather than as a usable grant target.
+            canonicalUserID: asStoredCanonicalUserID(r.userID),
+            email: u?.email ?? null,
+            displayName: u?.displayName ?? null,
+            hasAccount: Boolean(u),
+          };
+        }),
+        nextCursor,
+      };
+    }),
+
+  /**
+   * One identifier in, one person out — the hall office's GRANT target picker.
+   * It exists so that `scrc` never needs listUsers.
+   *
+   * TWO PROPERTIES, both of which this procedure got WRONG in its first form and
+   * both of which are the reason it is written the way it is now.
+   *
+   * 1. THE NEGATIVE ANSWER IS SINGLE-VALUED. It originally returned NOT_FOUND
+   *    for an unresolvable identifier, NOT_SIGNED_IN for a resolvable one with
+   *    no UserRole row, FOUND for an ordinary account, and NOT_FOUND again for a
+   *    target holding `admin`. Those four collapse to a three-way partition in
+   *    which "resolves, but answers NOT_FOUND" is TRUE EXACTLY WHEN THE TARGET
+   *    IS AN ADMIN. The clause written to conceal admins was the one that
+   *    identified them, and a loop over @u.nus.edu addresses enumerated the
+   *    admin roster precisely — the `seeAdminIdentities` line, crossed by the
+   *    role that has the least business crossing it.
+   *    So every negative now returns the SAME `{ status: "NOT_AVAILABLE" }`,
+   *    with no userID, no reason code and no shape difference. Read
+   *    JcrcCandidateResult's comment before adding anything to that branch.
+   *    KNOWN RESIDUAL, accepted: the three negatives still differ in how many
+   *    queries they run (0, 1 and 2), so they differ in latency. That is a
+   *    timing side channel over network jitter on a per-request audited surface,
+   *    not a status code; padding it would cost a fake query on every miss and
+   *    still not equalise it. Not worth it. Do not "fix" it by re-splitting the
+   *    status.
+   *
+   * 2. EVERY CALL IS AUDITED, INCLUDING THE MISSES. The audit write originally
+   *    sat below the early returns, so precisely the calls worth investigating —
+   *    the misses and the admin hits, i.e. an enumeration sweep — wrote NOTHING,
+   *    while the comment claimed otherwise. `record()` is now called on every
+   *    exit path, and it carries the probed identifier and the outcome CLASS
+   *    (which is recorded server-side and never returned; that asymmetry is the
+   *    entire design). Volume of `scrc.candidate.read` rows for one actor is the
+   *    detection signal, and it only exists if the misses are in there.
+   *
+   * The audit rows are written with `ok: true` even for a miss: `ok: false` is
+   * how the guards mark an AUTHORIZATION denial, and a lookup that found nobody
+   * is not one. Keeping them in one class is what makes "count this actor's
+   * probes" a single query.
+   *
+   * On the FOUND branch it returns displayName and email ONLY — never matric,
+   * telegramHandle or bio. Those live behind userAdmin.get, which is
+   * manager-level and separately guarded. The email is returned deliberately:
+   * the operator is about to hand someone JCRC access and has to eyeball WHO,
+   * this is one target at a time rather than an enumeration, and the audit row
+   * names exactly which target was disclosed.
+   */
+  resolveJcrcCandidate: scrcProcedure
+    .input(z.object({ identifier: z.string().trim().min(1).max(120) }))
+    .query(async ({ ctx, input }): Promise<JcrcCandidateResult> => {
+      requireCapability(caps(ctx.session.user.roles), "manageJcrcRoster");
+      await assertScrcEnabled(ctx.db);
+
+      const raw = input.identifier.trim();
+
+      /**
+       * The audit row, on EVERY exit path. `outcome` is the server-side truth
+       * the caller is NOT told: UNRESOLVED / AMBIGUOUS / NEVER_SIGNED_IN /
+       * TARGET_IS_ADMIN / TARGET_HOLDS_SCRC / FOUND. FOUR of those six are
+       * returned to the client as the same opaque NOT_AVAILABLE — the record is
+       * where the difference is allowed to exist, because only an admin can read
+       * it (`readAuditLog`).
+       *
+       * The probed string is recorded, truncated. It is the only way an admin
+       * investigating a sweep can see WHAT was swept; a row saying merely "a
+       * lookup happened" would not distinguish one operator doing their job
+       * from a dictionary attack. It is bounded at 120 chars by the input schema
+       * and sliced again here so a future schema change cannot grow the field.
+       */
+      const record = async (outcome: string, targetUserID?: string) =>
+        writeAudit(ctx.db, {
+          actorUserID: ctx.session.user.userID,
+          actorRoles: [...(ctx.session.user.roles ?? [])],
+          targetUserID,
+          action: "scrc.candidate.read",
+          reason: `probe=${raw.slice(0, 120)} outcome=${outcome}`,
+          ok: true,
+        });
+
+      // Resolve to a canonical userID by tier. Matric is the only tier that can
+      // be AMBIGUOUS, because it is looked up in a non-unique collection — and
+      // it is decided HERE, before any role or account read, which is what makes
+      // it safe to keep as a distinct status (see JcrcCandidateResult).
+      let candidateID: string | null = null;
+      if (raw.includes("@")) {
+        candidateID = canonicalUserID(raw); // email → canonical, or null
+      } else if (isEFormatUserID(raw.toUpperCase())) {
+        candidateID = raw.toUpperCase(); // NUSNET id is already canonical
+      } else if (MATRIC_RE.test(raw.toUpperCase())) {
+        const rows = await ctx.db.userMatric.findMany({
+          where: { matric: raw.toUpperCase() },
+          select: { userID: true },
+        });
+        if (rows.length > 1) {
+          await record("AMBIGUOUS");
+          return { status: "AMBIGUOUS" };
+        }
+        candidateID = rows[0]?.userID ?? null;
+      }
+
+      if (candidateID === null) {
+        await record("UNRESOLVED");
+        return { status: "NOT_AVAILABLE" };
+      }
+
+      // Must have signed in: a UserRole row is written at account creation and
+      // topped up every session, so "has a row" is a reliable proxy for "has
+      // logged in at least once". A grant to someone with no row would be keyed
+      // on an id no session ever matches — it would appear to succeed and do
+      // nothing (I-1).
+      const roleRow = await ctx.db.userRole.findUnique({
+        where: { userID: candidateID },
+        select: { roles: true, role: true },
+      });
+      if (!roleRow) {
+        // targetUserID IS recorded here even though the caller is told nothing:
+        // the id resolved, so the audit trail can say which one was probed.
+        await record("NEVER_SIGNED_IN", candidateID);
+        return { status: "NOT_AVAILABLE" };
+      }
+
+      const stored = roleRow.roles?.length
+        ? roleRow.roles
+        : roleRow.role
+          ? [roleRow.role]
+          : [];
+      if (stored.includes(ADMIN_ROLE)) {
+        await record("TARGET_IS_ADMIN", candidateID);
+        return { status: "NOT_AVAILABLE" };
+      }
+      // SCREENED FOR THE SAME REASON AS ADMIN, AND THE OMISSION WAS A HOLE THAT
+      // ONLY OPENED WHEN THE TWO PROCEDURES WERE COMPOSED. Each was safe alone:
+      // this one screened admins, and setJcrcRole collapsed five causes into one
+      // opaque SCRC_TARGET_UNAVAILABLE. But a caller could run both —
+      //
+      //   1. resolve(x) -> FOUND, holdsJcrc:false   rules out never-signed-in
+      //                                             (a row exists), admin
+      //                                             (screened) and already-jcrc
+      //   2. setJcrcRole(x, grant:true) -> UNAVAILABLE
+      //
+      // — and step 2 could then only mean TARGET_HOLDS_SCRC. The pair uniquely
+      // identified hall-office accounts, which PART 6 open question 3 decided
+      // this role must not be able to enumerate. Screening `scrc` here removes
+      // step 1's ability to rule the other causes out, so the two answers stop
+      // composing into a third.
+      //
+      // The lesson, worth more than the fix: an opaque failure is only opaque
+      // relative to what ELSE the caller can ask. Any new read added to this
+      // surface must be checked against setJcrcRole's cause set, not just on its
+      // own.
+      if (stored.includes(SCRC_ROLE)) {
+        await record("TARGET_HOLDS_SCRC", candidateID);
+        return { status: "NOT_AVAILABLE" };
+      }
+
+      // Best-effort display. There is no reverse canonical→User query, so guess
+      // the email like listUsers does, and fall back to the stored key.
+      const user = await ctx.db.user.findFirst({
+        where: {
+          OR: [
+            {
+              email: {
+                equals: `${candidateID.toLowerCase()}@u.nus.edu`,
+                mode: "insensitive",
+              },
+            },
+            { userID: candidateID },
+          ],
+        },
+        // Never a bare read: passwordHash must not leave the server, and a
+        // Google-adapter row lacking it throws on deserialization (I-2).
+        select: { displayName: true, email: true },
+      });
+
+      await record("FOUND", candidateID);
+
+      return {
+        status: "FOUND",
+        userID: candidateID,
+        displayName: user?.displayName ?? null,
+        email: user?.email ?? null,
+        holdsJcrc: stored.includes(JCRC_ROLE),
+      };
+    }),
+
+  /**
+   * THE hall-office write: add or remove `jcrc` on one account. Nothing else.
+   *
+   * It is a dedicated mutation rather than a widening of setUserRoles because
+   * the FINAL SET IS CONSTRUCTED SERVER-SIDE from the target's current roles ±
+   * jcrc. An scrc caller therefore cannot express the removal of another user's
+   * `cca_head`, `scrc` or `admin` — not "is refused when they try", but has no
+   * way to say it. setUserRoles' payload could say all of that and would then
+   * depend entirely on G4 to catch it, on a surface G4 has never had to defend.
+   *
+   * SELF-TARGETING IS REFUSED OUTRIGHT, before the guards. G6 already denies a
+   * non-admin self-granting a role they lack, so this is the second of two
+   * independent guards — but G6's condition is `!actorRoles.includes(r)`, so if
+   * a hall-office member is ever ALSO granted `jcrc` by an admin, G6 stops
+   * firing and self-targeting becomes reachable through exactly this surface.
+   * Belt and braces at the surface that created the risk. The denial is audited
+   * with its own denyReason so it is greppable independently of G6's.
+   *
+   * The `before` read below is DELIBERATELY ADVISORY. applyRoleChange's
+   * in-transaction compare-and-set (CONFLICT_ROLES_CHANGED) is the real
+   * protection against the TOCTOU between this read and the write; do not
+   * "optimise" the read away or reason as though it were authoritative.
+   *
+   * ------------------------------------------------------------------------
+   * THE OPAQUE-FAILURE RULE, and why this mutation is not just a write.
+   * ------------------------------------------------------------------------
+   * `sanitizeErrors` (trpc.ts) rewrites INTERNAL_SERVER_ERROR only — every
+   * FORBIDDEN message reaches the client verbatim, and its own comment says so.
+   * So a mutation that answers "why not" is an ORACLE, and this one sat next to
+   * resolveJcrcCandidate answering the same question the resolver had just been
+   * rewritten to stop answering:
+   *
+   *     setJcrcRole({ userID: "E1234567", grant: false })
+   *
+   * Revoking `jcrc` from somebody who does not hold it used to be a harmless
+   * SUCCESSFUL no-op, so the probe was non-destructive, repeatable and silent —
+   * and G3 answered `CANNOT_MODIFY_AN_ADMIN` for an admin. One call per target,
+   * perfectly reliable, and the admin roster falls out.
+   *
+   * TWO CHANGES CLOSE IT:
+   *
+   *  1. EVERY TARGET-DEPENDENT REFUSAL RETURNS ONE OPAQUE MESSAGE,
+   *     `SCRC_TARGET_UNAVAILABLE` — the same one for "no account", "never signed
+   *     in", "holds admin", "holds scrc" and "the change would be a no-op". The
+   *     REAL reason is written to the audit row every time, where only an admin
+   *     (`readAuditLog`) can read it. Client sees one bit; the record keeps five.
+   *  2. THE NO-OPS ARE FAILURES, NOT SUCCESSES. Success itself is a signal, so
+   *     granting `jcrc` to somebody who already holds it, and revoking it from
+   *     somebody who does not, both refuse. The ONLY distinguishable success is
+   *     therefore a genuine state change — which is loud, audited, reversible,
+   *     and visible in the roster the actor is already allowed to read.
+   *
+   * G3 IS NOT WEAKENED. It still fires, still audits, still refuses; this
+   * mutation simply pre-empts it with its own check and, as a backstop for the
+   * narrow race where a target gains `admin` mid-request, RE-MAPS the
+   * target-discriminating messages on the way out (TARGET_DISCRIMINATING below).
+   * Other callers of assertCanMutateRoles are untouched and still get the
+   * specific reason.
+   *
+   * HONEST RESIDUAL — what an `scrc` caller can STILL infer:
+   *
+   *  - Whether a target currently holds `jcrc`, to a certainty, in ONE call:
+   *    `grant: false` succeeding means they held it. That is not a leak — the
+   *    JCRC roster is exactly what listJcrcRoster hands this caller by design,
+   *    and it is the roster they are employed to manage.
+   *  - That a target is "unavailable" — i.e. SOME ONE of {no account, never
+   *    signed in, holds admin, holds scrc}. The partition is not resolvable
+   *    from the response: all four are one message, and all four are also what
+   *    resolveJcrcCandidate reports as NOT_AVAILABLE, so the two surfaces agree
+   *    and neither can be used to split the other's answer.
+   *
+   *    THAT AGREEMENT IS LOAD-BEARING AND WAS ONCE FALSE. While the resolver
+   *    still reported a hall-office account as FOUND, the PAIR of calls was a
+   *    sharper instrument than either one: a FOUND with holdsJcrc:false ruled
+   *    out never-signed-in, admin and already-jcrc, so a subsequent UNAVAILABLE
+   *    could only mean "holds scrc". Both surfaces must therefore screen the
+   *    SAME set. Before adding a read to this surface, check it against this
+   *    cause list — an opaque failure is only opaque relative to what else the
+   *    caller can ask.
+   *  - COST OF PROBING: unlike the resolver, every attempt here is a MUTATION
+   *    that writes a `denied` audit row naming the actor and the target. A sweep
+   *    of the hall is ~1200 rows under one actorUserID — the loudest thing this
+   *    role can do. That is the intended trade: the oracle is closed, and the
+   *    residual inference is expensive and self-reporting.
+   *  - NOT closed, and not closeable here: an actor who holds BOTH the hall
+   *    office and some other privilege could correlate. EXCLUSIVE_ROLE_PAIRS
+   *    already forbids the jcrc+scrc case, which is the one that mattered.
+   */
+  setJcrcRole: scrcProcedure
+    .input(
+      z.object({
+        userID: userIDSchema,
+        grant: z.boolean(),
+        reason: z.string().trim().max(500).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      requireCapability(caps(ctx.session.user.roles), "manageJcrcRoster");
+      await assertScrcEnabled(ctx.db);
+
+      const actorUserID = ctx.session.user.userID;
+      const actorSessionRoles = [...(ctx.session.user.roles ?? [])];
+
+      if (input.userID === actorUserID) {
+        await writeAudit(ctx.db, {
+          actorUserID,
+          actorRoles: actorSessionRoles,
+          targetUserID: input.userID,
+          action: "denied",
+          ok: false,
+          denyReason: "SCRC_CANNOT_SELF_TARGET",
+        });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "SCRC_CANNOT_SELF_TARGET",
+        });
+      }
+
+      /**
+       * Refuse opaquely, recording the REAL reason. `denyReason` is the
+       * server-side truth; the thrown message is the single bit the client gets.
+       * Deliberately mirrors resolveJcrcCandidate's record()/NOT_AVAILABLE
+       * split, so the two surfaces cannot be played against each other.
+       *
+       * RETURNS the error for the caller to `throw` rather than throwing
+       * itself: an `await`ed call typed `Promise<never>` does NOT narrow control
+       * flow in TypeScript, so `if (!row) await unavailable(...)` would leave
+       * `row` still nullable below and invite a `!` on exactly the lines that
+       * decide what this mutation does. `throw await unavailable(...)` narrows
+       * properly and keeps the audit write on the same statement.
+       */
+      const unavailable = async (denyReason: string): Promise<TRPCError> => {
+        await writeAudit(ctx.db, {
+          actorUserID,
+          actorRoles: actorSessionRoles,
+          targetUserID: input.userID,
+          action: "denied",
+          ok: false,
+          denyReason,
+          reason: input.reason,
+        });
+        return new TRPCError({
+          code: "FORBIDDEN",
+          message: "SCRC_TARGET_UNAVAILABLE",
+        });
+      };
+
+      // N2: THE EXISTENCE GATE, which resolveJcrcCandidate enforces and this
+      // mutation did not. applyRoleChange ends in an `upsert`, so without this
+      // `setJcrcRole({ userID: "E9999999", grant: true })` MINTS a UserRole row
+      // holding `jcrc` for an id no session will ever match — a phantom grant
+      // that reports success, does nothing forever, and shows up in the roster
+      // and in every jcrc count as if it were a person (I-1). A UserRole row is
+      // written at account creation and topped up every session, so "has a row"
+      // is the same has-signed-in proxy the resolver uses.
+      const targetRow = await ctx.db.userRole.findUnique({
+        where: { userID: input.userID },
+        select: { roles: true, role: true },
+      });
+      if (!targetRow) throw await unavailable("TARGET_NEVER_SIGNED_IN");
+
+      const storedAll = targetRow.roles?.length
+        ? targetRow.roles
+        : targetRow.role
+          ? [targetRow.role]
+          : [];
+
+      // G3's question, asked HERE so G3's ANSWER never reaches this client.
+      if (storedAll.includes(ADMIN_ROLE)) {
+        throw await unavailable("TARGET_IS_ADMIN");
+      }
+      // G8's question, likewise. Without this the exclusion invariant would
+      // itself become an oracle for "who holds scrc" — which open question 3
+      // decided this role must NOT be able to enumerate.
+      if (storedAll.includes(SCRC_ROLE)) {
+        throw await unavailable("TARGET_HOLDS_SCRC");
+      }
+
+      // THE NO-OPS. Both used to succeed, and a success that changes nothing is
+      // a free, silent read of the target's state. Refusing turns the only
+      // distinguishable success into a real, audited state change.
+      const holdsJcrc = storedAll.includes(JCRC_ROLE);
+      if (input.grant && holdsJcrc) {
+        throw await unavailable("TARGET_ALREADY_JCRC");
+      }
+      if (!input.grant && !holdsJcrc) {
+        throw await unavailable("TARGET_NOT_JCRC");
+      }
+
+      const before = (await getUserRoles(ctx.db, input.userID)).filter(
+        isGrantableRole,
+      );
+      const requestedRoles = input.grant
+        ? [...new Set<string>([...before, JCRC_ROLE])]
+        : before.filter((r) => r !== JCRC_ROLE);
+
+      try {
+        const {
+          actorRoles,
+          before: guardedBefore,
+          after,
+          added,
+          removed,
+        } = await assertCanMutateRoles({
+          db: ctx.db,
+          actorUserID,
+          targetUserID: input.userID,
+          requestedRoles,
+        });
+
+        // Same threading rule as setUserRoles: `added`/`removed` are the
+        // AUTHORISED delta and applyRoleChange asserts on `removed` (I-8c), so a
+        // caller must not be able to skip that by passing only `after`.
+        await applyRoleChange({
+          db: ctx.db,
+          actorUserID,
+          actorRoles,
+          targetUserID: input.userID,
+          before: guardedBefore,
+          after,
+          added,
+          removed,
+          reason: input.reason,
+        });
+        // DELIBERATELY NOT applyRoleChange's returned role set, which
+        // setUserRoles does return. That set is the target's full grantable
+        // roles, so it would disclose `cca_head` — re-linking a person to a CCA
+        // headship the read-only tier now has redacted ids for — as a side
+        // effect of an unrelated write. `grant` is echoed instead of read back:
+        // the mutation succeeded, so the target's jcrc state is exactly what was
+        // asked for, and the panel refetches listJcrcRoster anyway.
+        return { userID: input.userID, holdsJcrc: input.grant };
+      } catch (err) {
+        // THE RACE BACKSTOP. The four checks above read the target's roles in an
+        // EARLIER statement; if the target gains `admin` or `scrc` between that
+        // read and the guards, G3 or G8 fires and its specific message would
+        // escape to the client — restoring the oracle through a window the
+        // attacker cannot steer but does not need to. So any TARGET-DEPENDENT
+        // message is flattened on the way out.
+        //
+        // ALLOWLIST, not a blanket catch: the actor-dependent refusals
+        // (CANNOT_GRANT_JCRC, NOT_A_ROLE_MANAGER, CAPABILITY_REQUIRED:*) are
+        // identical for EVERY target, so they disclose nothing about anyone and
+        // are far more useful to the operator left intact. CONFLICT_ROLES_CHANGED
+        // likewise reports a race, not a property of the target.
+        //
+        // The guards have ALREADY written their own audit row before throwing
+        // (assertCanMutateRoles' deny() is audited outside any transaction,
+        // I-15), so the real reason is on the record without writing a second.
+        if (err instanceof TRPCError && TARGET_DISCRIMINATING.has(err.message)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "SCRC_TARGET_UNAVAILABLE",
+          });
+        }
+        throw err;
+      }
+    }),
 
   /** The one single-user role mutation. Takes the DESIRED FINAL grantable set. */
   setUserRoles: roleManagerProcedure
     .input(
       z.object({
-        userID: userIDSchema,
+        // roleTargetUserIDSchema, NOT userIDSchema: this is the ONE mutation
+        // through which the EXT namespace can receive a role, and it is the
+        // only way to grant `scrc` to an allowlist-pinned hall-office account.
+        // Everything downstream is unchanged — G1..G8 still run, G7 now demands
+        // a LIVE AuthAllowlist row for an EXT target (a proof, not a shape),
+        // and the write still goes through applyRoleChange's transaction.
+        userID: roleTargetUserIDSchema,
         roles: roleSchema.array().max(8),
         reason: z.string().trim().max(500).optional(),
       }),
@@ -1691,7 +2566,14 @@ export const adminRouter = createTRPCRouter({
    * user base.
    */
   explainAccess: roleManagerProcedure
-    .input(z.object({ userID: userIDSchema, facilityID: z.number().int() }))
+    // Widened to the EXT namespace: read-only, roleManagerProcedure, and
+    // already audited on every call. It is the ONLY tool for triaging "why
+    // can't the hall office book room N", so leaving it E-format-only would
+    // make the one account this phase exists for the one account nobody can
+    // debug.
+    .input(
+      z.object({ userID: roleTargetUserIDSchema, facilityID: z.number().int() }),
+    )
     .query(async ({ ctx, input }) => {
       const [decision, requiredRoles, roles] = await Promise.all([
         // No email argument, deliberately: this evaluates AS the target, and
@@ -1856,11 +2738,300 @@ export const adminRouter = createTRPCRouter({
       return { mode: input.mode };
     }),
 
+  /* ---------------------------------------------------------------------- */
+  /* THE D-7 BREAK-GLASS ALLOWLIST (AuthAllowlist)                           */
+  /*                                                                         */
+  /* THE MOST DANGEROUS SURFACE IN THIS FILE, and the only one that creates  */
+  /* an IDENTITY rather than moving a privilege around on top of one. A row  */
+  /* here is what lets a non-@u.nus.edu address hold a session key at all.   */
+  /*                                                                         */
+  /* Read services/authAllowlist.ts before changing anything below — it      */
+  /* states the attack (05-verification.md:164) and the four mechanisms.     */
+  /* These procedures are M4, the LAST of the four, and the weakest: they    */
+  /* only govern the writes they can see. M1 (the ':' making the namespaces  */
+  /* provably disjoint) and M2 (re-validation at every READ) are what make a */
+  /* row hand-typed into Atlas mint nothing. Do not weaken these on the      */
+  /* grounds that M2 exists, and do not weaken M2 on the grounds that these  */
+  /* exist.                                                                  */
+  /*                                                                         */
+  /* adminProcedure throughout — NOT roleManagerProcedure and NOT            */
+  /* scrcProcedure. An scrc holder must not see or edit the collection that  */
+  /* issued its own identity.                                                */
+  /*                                                                         */
+  /* THERE IS DELIBERATELY NO UPDATE MUTATION. A pin is immutable; changing  */
+  /* which address owns a key is remove-then-add, i.e. two audit rows and    */
+  /* two deliberate acts.                                                    */
+  /* ---------------------------------------------------------------------- */
+
+  listAuthAllowlist: adminProcedure.query(async ({ ctx }) => {
+    const rows = await ctx.db.authAllowlist.findMany({
+      orderBy: { addedAt: "desc" },
+      // No cursor. This collection is meant to hold single digits; if it ever
+      // needs paging, that fact is itself the alert. The cap is a bound, not a
+      // page size.
+      take: 100,
+    });
+
+    // Hydrate what the operator actually needs to answer "is this pin doing
+    // anything, and to whom" — WITHOUT which the panel is a list of opaque
+    // strings and the natural next step is to go poke at Mongo by hand.
+    const emails = rows.map((r) => r.email);
+    const [users, roleRows] = await Promise.all([
+      ctx.db.user.findMany({
+        where: { email: { in: emails, mode: "insensitive" } },
+        // NEVER a bare findMany — passwordHash must not reach the client, and a
+        // passwordHash-less row throws on a full read (I-2). Same rule as
+        // listUsers.
+        select: { email: true, displayName: true, userID: true },
+      }),
+      ctx.db.userRole.findMany({
+        where: { userID: { in: rows.map((r) => r.pinnedUserID) } },
+        select: { userID: true, roles: true, role: true },
+      }),
+    ]);
+    const byEmail = new Map(
+      users.map((u) => [normalizeEmail(u.email), u] as const),
+    );
+    const byPin = new Map(roleRows.map((r) => [r.userID, r] as const));
+
+    return {
+      items: rows.map((r) => {
+        const u = byEmail.get(normalizeEmail(r.email));
+        const rr = byPin.get(r.pinnedUserID);
+        return {
+          email: r.email,
+          pinnedUserID: r.pinnedUserID,
+          /**
+           * M2 SURFACED TO THE OPERATOR. A stored pin outside the namespace
+           * mints no identity — the session path drops it silently — so
+           * without this flag the panel would show a row that looks live and
+           * is not, and the only symptom would be a user who cannot log in.
+           * It can only arise from a hand edit in Atlas or a code path that
+           * bypassed the zod schema; either way the operator should see it.
+           */
+          namespaceViolation: !isExtUserID(r.pinnedUserID),
+          note: r.note,
+          addedBy: r.addedBy,
+          addedAt: r.addedAt,
+          hasUser: Boolean(u),
+          displayName: u?.displayName ?? null,
+          /**
+           * True when the provisioned `User.userID` does NOT hold the pin.
+           * Cosmetic-looking, load-bearing: facilitiesBooking joins
+           * booking -> owner on `User.userID`, so a mismatch renders every
+           * hall-office booking with a blank owner name.
+           */
+          keyMismatch: Boolean(u && u.userID !== r.pinnedUserID),
+          roles: rr?.roles?.length ? rr.roles : rr?.role ? [rr.role] : [],
+        };
+      }),
+    };
+  }),
+
+  addAuthAllowlistEntry: adminProcedure
+    .input(
+      z.object({
+        email: z
+          .string()
+          .trim()
+          .email()
+          .max(254)
+          // I-12: THE shared normalizer, applied at the boundary so the stored
+          // value matches `User.email` byte for byte. `email_unique_ci` folds
+          // CASE but not WHITESPACE, so a stray space here is a row that can
+          // never be joined to its account.
+          .transform(normalizeEmail),
+        pinnedUserID: extUserIDSchema,
+        note: z.string().trim().max(200).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const actorUserID = ctx.session.user.userID;
+      const actorRoles = ctx.session.user.roles ?? [];
+
+      const refuse = async (reason: string, code: TRPCError["code"]) => {
+        // Audited BEFORE throwing, on the same argument writeAudit's other
+        // callers make (I-15): there is no state change to lose, and a probing
+        // attempt at the IDENTITY-ISSUING surface is exactly what must leave a
+        // trail.
+        await writeAudit(ctx.db, {
+          actorUserID,
+          actorRoles,
+          targetUserID: input.pinnedUserID,
+          action: "denied",
+          reason: input.email,
+          ok: false,
+          denyReason: reason,
+        });
+        throw new TRPCError({ code, message: reason });
+      };
+
+      /* REFUSAL 1 — EMAIL_IS_CANONICAL.
+       * The address already HAS an identity: canonicalUserID derives one from
+       * it, and every UserRole/Booking/UserMatric row this human owns is filed
+       * under that. Pinning it to an EXT key would give ONE HUMAN TWO
+       * IDENTITIES, which is the duplicate-account failure the whole
+       * merge-by-canonical toolchain exists to clean up — except this time
+       * issued deliberately, by an admin, in one click.
+       *
+       * `isNusStudentEmail` rather than `canonicalUserID(...) !== null` because
+       * the two are exactly equivalent (asserted per fixture by the parity
+       * gate) and this reads as the question being asked. */
+      if (isNusStudentEmail(input.email)) {
+        await refuse("EMAIL_IS_CANONICAL", "BAD_REQUEST");
+      }
+
+      /* REFUSAL 2 — PIN_ALREADY_HAS_ROLES.
+       * DEFENCE IN DEPTH BEHIND M3. If a UserRole row already exists under
+       * this key, then either it is a live privileged identity (in which case
+       * this call is an attempt to re-aim it at a new address — THE attack,
+       * one namespace over) or it is residue from a removed pin (in which case
+       * the roles must be revoked through the audited role path first, so the
+       * new holder does not inherit them silently).
+       *
+       * The unique index (M3) already stops a SECOND row for the same pin.
+       * This refusal is what covers the case where the first row was deleted
+       * and its roles were not — the exact 07-cca-future.md §5 hazard that
+       * userAdmin's PINNED_ALLOWLIST_ACCOUNT refusal guards from the other
+       * direction. Two locks, opposite doors. */
+      if ((await getUserRoles(ctx.db, input.pinnedUserID)).length > 0) {
+        await refuse("PIN_ALREADY_HAS_ROLES", "CONFLICT");
+      }
+
+      /* REFUSAL 3 — the unique indexes, i.e. M3 SURFACING.
+       * Deliberately NOT a pre-read: a findFirst-then-create is a TOCTOU, and
+       * the index is the thing that actually decides. Catch P2002 and
+       * translate, so the operator gets a sentence instead of a Prisma dump —
+       * and so a MISSING index (create-auth-allowlist.mjs never run) shows up
+       * as "the second insert succeeded", which rbac-doctor's uniqueness check
+       * then reports from the data. */
+      try {
+        await ctx.db.authAllowlist.create({
+          data: {
+            email: input.email,
+            pinnedUserID: input.pinnedUserID,
+            note: input.note ?? null,
+            addedBy: actorUserID,
+          },
+        });
+      } catch (err) {
+        if ((err as { code?: string } | null)?.code !== "P2002") throw err;
+        // WHICH index rejected it is determined FROM THE DATA, not from
+        // `err.meta.target`. On the Mongo connector that field is unreliable —
+        // it can be the index name, the field list, or absent — and getting it
+        // wrong here means telling the operator to fix the wrong half of the
+        // row. Two indexed reads, on a path that has already failed and is
+        // about to throw, buys a message that is actually true.
+        const [emailTaken, pinTaken] = await Promise.all([
+          ctx.db.authAllowlist.findUnique({
+            where: { email: input.email },
+            select: { id: true },
+          }),
+          ctx.db.authAllowlist.findUnique({
+            where: { pinnedUserID: input.pinnedUserID },
+            select: { id: true },
+          }),
+        ]);
+        // If NEITHER probe finds a row, the conflicting document was removed
+        // between the failed insert and these reads. Refuse anyway — the write
+        // did not happen, and "retry" is the honest instruction.
+        await refuse(
+          emailTaken
+            ? "EMAIL_ALREADY_PINNED"
+            : pinTaken
+              ? "PIN_ALREADY_USED"
+              : "ALLOWLIST_CONFLICT",
+          "CONFLICT",
+        );
+      }
+
+      await writeAudit(ctx.db, {
+        actorUserID,
+        actorRoles,
+        targetUserID: input.pinnedUserID,
+        action: "authAllowlist.add",
+        // The pinned ADDRESS goes in `reason`: RoleAuditLog has no email
+        // column, and "which address was handed this key" is the one fact this
+        // row exists to preserve.
+        reason: input.email,
+      });
+
+      // WITHOUT THIS the new pin is invisible for up to 15 seconds — including
+      // to the very next page the operator loads — and the natural response is
+      // to click Add again.
+      resetAuthAllowlistCache();
+      return { email: input.email, pinnedUserID: input.pinnedUserID };
+    }),
+
+  removeAuthAllowlistEntry: adminProcedure
+    .input(
+      z.object({
+        pinnedUserID: extUserIDSchema,
+        reason: z.string().trim().max(500).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const actorUserID = ctx.session.user.userID;
+      const actorRoles = ctx.session.user.roles ?? [];
+
+      const refuse = async (reason: string, code: TRPCError["code"]) => {
+        await writeAudit(ctx.db, {
+          actorUserID,
+          actorRoles,
+          targetUserID: input.pinnedUserID,
+          action: "denied",
+          ok: false,
+          denyReason: reason,
+        });
+        throw new TRPCError({ code, message: reason });
+      };
+
+      const row = await ctx.db.authAllowlist.findUnique({
+        where: { pinnedUserID: input.pinnedUserID },
+      });
+      if (!row) await refuse("NO_SUCH_PIN", "NOT_FOUND");
+
+      /* PIN_STILL_HOLDS_ROLES.
+       * Removing the pin revokes the IDENTITY but leaves the UserRole document
+       * standing under that key. Re-issuing the same pin to a different address
+       * later — or re-creating a User row on the old one — would then hand the
+       * new holder the old holder's roles with no grant path and therefore no
+       * escalation guard firing. That is 07-cca-future.md §5's hazard, and it
+       * is the same shape as the attack this whole collection is designed
+       * against.
+       *
+       * The remedy is two ordered, separately audited acts: revoke the roles
+       * through admin.setUserRoles, THEN remove the pin. Refusing here is what
+       * forces that order. */
+      if ((await getUserRoles(ctx.db, input.pinnedUserID)).length > 0) {
+        await refuse("PIN_STILL_HOLDS_ROLES", "CONFLICT");
+      }
+
+      await ctx.db.authAllowlist.delete({
+        where: { pinnedUserID: input.pinnedUserID },
+      });
+      await writeAudit(ctx.db, {
+        actorUserID,
+        actorRoles,
+        targetUserID: input.pinnedUserID,
+        action: "authAllowlist.remove",
+        reason: input.reason ?? row?.email,
+      });
+      // Revocation must be LIVE. Without this the removed identity keeps
+      // resolving for up to 15 seconds after the operator was told it was gone.
+      resetAuthAllowlistCache();
+      return { pinnedUserID: input.pinnedUserID };
+    }),
+
   listAuditLog: adminProcedure
     .input(
       z.object({
-        targetUserID: userIDSchema.optional(),
-        actorUserID: userIDSchema.optional(),
+        // Widened to the EXT namespace. Read-only, adminProcedure. Without it
+        // the audit trail FOR the hall office cannot be filtered — on the one
+        // surface whose entire purpose is oversight of this role, and for the
+        // one principal whose identity was issued by hand.
+        targetUserID: roleTargetUserIDSchema.optional(),
+        actorUserID: roleTargetUserIDSchema.optional(),
         action: z.string().max(32).optional(),
         batchId: z.string().max(64).optional(),
         limit: z.number().int().min(1).max(100).default(25),
@@ -2640,6 +3811,17 @@ export const adminRouter = createTRPCRouter({
               : `CANNOT_GRANT_${bad.toUpperCase()}`,
             hit.userID,
           );
+          continue;
+        }
+        // G8 at the QUEUE. redeemPendingGrants re-checks this at redemption
+        // against the target's roles at the time — that is the authoritative
+        // check, since a target can acquire the other half of the pair between
+        // now and their first login. This one is here so a row that can NEVER
+        // redeem is refused while there is still a human looking at the result,
+        // rather than failing silently months later on a login nobody watches.
+        const combination = forbiddenRoleCombination(row.roles);
+        if (combination) {
+          await deny(combination, hit.userID);
           continue;
         }
         if (row.roles.includes(ADMIN_ROLE)) {

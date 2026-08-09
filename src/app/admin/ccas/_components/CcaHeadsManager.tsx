@@ -28,7 +28,16 @@ export default function CcaHeadsManager({ ccaID }: { ccaID: number }) {
   const grant = api.admin.grantCcaHead.useMutation({ onSuccess: refresh });
   const revoke = api.admin.revokeCcaHead.useMutation({ onSuccess: refresh });
 
-  const rows = heads.data?.heads ?? [];
+  // `userID` is typed `string | null` because cca.listHeads NULLS it for the
+  // read-only (hall office) tier — a canonical E-id is an email one derivation
+  // later, so that tier must not receive one. THIS page is manager-gated, so it
+  // always takes the untouched branch and never actually sees a null; the
+  // narrowing below is how that fact is stated to the compiler rather than
+  // asserted away with a `!`. A row without an id could not be Removed anyway,
+  // since `userID` is exactly what revokeCcaHead writes.
+  const rows = (heads.data?.heads ?? []).filter(
+    (h): h is typeof h & { userID: string } => h.userID !== null,
+  );
   const error = grant.error?.message ?? revoke.error?.message ?? null;
 
   return (

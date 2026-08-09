@@ -277,7 +277,7 @@ async function step5() {
   const template = {
     _comment: "facilityID -> requiredRoles. Facilities NOT listed here get [\"resident\"]. " +
       "facilityID -1 is the Calender_v2.tsx:306 sentinel and is excluded entirely. " +
-      "Allowed values: resident | jcrc | cca_head. NEVER \"admin\" — admin is an implicit bypass, never stored.",
+      "Allowed values: resident | jcrc | cca_head | scrc. NEVER \"admin\" — admin is an implicit bypass, never stored.",
     _reviewedBy: null,
     _reviewedAt: null,
     byFacilityID: Object.fromEntries(
