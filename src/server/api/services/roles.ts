@@ -274,6 +274,20 @@ export const AUDIT_ACTIONS = [
   // 18 and 21 characters, both under the 32-char cap.
   "authAllowlist.add",
   "authAllowlist.remove",
+  // IDENTITY RE-KEY (scripts/remediation/rekey-to-ext-identity.mjs). Written
+  // once per migrated account, and it is THE ONLY THING THAT TIES THE TWO KEYS
+  // TOGETHER.
+  //
+  // That matters more here than for any other action in this list, because
+  // `RoleAuditLog` is deliberately NOT re-keyed by that script — those rows
+  // state what was true at the time and rewriting them would make the log
+  // assert history that did not happen. The consequence is that an account's
+  // audit trail is SPLIT across its old key and its pin, and this row is the
+  // join: `rolesBefore: [<old key>]`, `rolesAfter: [<pin>]`, `targetUserID`
+  // the pin. Without it the pre-migration half of a person's history is
+  // unreachable by anyone who only knows their current id.
+  // 13 characters, well under the 32-char cap.
+  "identity.rekey",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
