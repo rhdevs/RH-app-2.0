@@ -208,15 +208,12 @@ is the short version.
 </td>
 <td valign="middle">
   <b>Patrick Steve Harrison</b><br />
-  <sub><b>Maintainer and administrator</b> · <a href="https://github.com/patrick-steve">@patrick-steve</a></sub><br />
-  <sub>Bookings · CCAs, applications and interviews · events · roles and permissions · the admin and hall-office surfaces · and the tRPC and identity layers they all sit on</sub>
+  <sub><b>Creator and maintainer</b> · <a href="https://github.com/patrick-steve">@patrick-steve</a></sub><br />
 </td>
 </tr>
 </table>
 
-<sub>Which is to say: most of what is in this repository. Everything before it is in the <a href="https://github.com/rhdevs/RH-app-2.0/graphs/contributors">contributor graph</a>.</sub>
-
 <div align="center">
 <br />
-<sub>Made for <b>Raffles Hall</b>, National University of Singapore · <a href="https://github.com/rhdevs">RHDevs</a></sub>
+<sub>Made for <b>Raffles Hall</b>, National University of Singapore by <a href="https://github.com/rhdevs">RHDevs</a></sub>
 </div>
