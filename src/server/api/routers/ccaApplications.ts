@@ -282,10 +282,58 @@ export const ccaApplicationsRouter = createTRPCRouter({
       const hasOpenApplication =
         latest !== null && !isTerminalStatus(latest.status);
       const isMember = membership !== null;
-      const heads = await resolveHeadContacts(
-        ctx.db,
-        headRows.map((h) => h.userID),
-      );
+
+      // The booked slot, fetched by slotID with NO endTime filter: `futureSlots`
+      // above is the "what can I still book" list, and a slot the resident has
+      // already booked must keep rendering after it has passed — that is exactly
+      // when they want to check what they turned up to. canceledAt is READ, never
+      // filtered on (a `canceledAt: null` WHERE clause misses rows where the
+      // field is ABSENT); it is a consistency guard rather than a live state,
+      // because ccaApplicationsHead.cancelSlot reverts every scheduled occupant
+      // to `submitted` and nulls the pointer in the same locked section, so a
+      // still-scheduled application should never point at a canceled slot.
+      //
+      // Runs alongside resolveHeadContacts rather than before it: both depend on
+      // the Promise.all above, and serialising them would add a round trip to
+      // every CCA page load.
+      const [bookedRaw, heads] = await Promise.all([
+        latest?.interviewSlotID != null
+          ? ctx.db.ccaInterviewSlot.findUnique({
+              where: { slotID: latest.interviewSlotID },
+              select: {
+                slotID: true,
+                startTime: true,
+                endTime: true,
+                location: true,
+                capacity: true,
+                canceledAt: true,
+              },
+            })
+          : Promise.resolve(null),
+        resolveHeadContacts(
+          ctx.db,
+          headRows.map((h) => h.userID),
+        ),
+      ]);
+      // Shaped exactly like myApplications' `slot` (plus capacity/seatsLeft/
+      // canceled) so BookedSlot can render either one. seatsLeft counts the
+      // caller's OWN seat as taken, matching availableSlots — the number means
+      // "seats still free", not "seats free besides yours", on both surfaces.
+      const bookedSlot = bookedRaw
+        ? {
+            slotID: bookedRaw.slotID,
+            startTime: bookedRaw.startTime,
+            endTime: bookedRaw.endTime,
+            location: bookedRaw.location,
+            capacity: slotCapacity(bookedRaw.capacity),
+            seatsLeft: Math.max(
+              0,
+              slotCapacity(bookedRaw.capacity) -
+                (occupancy.get(bookedRaw.slotID) ?? 0),
+            ),
+            canceled: bookedRaw.canceledAt !== null,
+          }
+        : null;
 
       return {
         ccaID: cca.ccaID,
@@ -295,7 +343,7 @@ export const ccaApplicationsRouter = createTRPCRouter({
         logoUrl: profile?.logoUrl ?? null,
         bannerUrl: profile?.bannerUrl ?? null,
         isMember,
-        application: latest,
+        application: latest ? { ...latest, slot: bookedSlot } : null,
         // The client still shows an Apply button and the server re-checks — this
         // just drives the default affordance.
         canApply: !isMember && !hasOpenApplication,
