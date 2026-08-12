@@ -203,18 +203,18 @@ is the short version.
 
 <table>
 <tr>
-<td width="60" align="center" valign="middle">
-  <a href="https://github.com/patrick-steve"><img src="https://github.com/patrick-steve.png" width="52" style="border-radius:50%" alt="" /></a>
+<td width="76" align="center" valign="middle">
+  <a href="https://github.com/patrick-steve"><img src="https://github.com/patrick-steve.png" width="64" alt="" /></a>
 </td>
 <td valign="middle">
   <b>Patrick Steve Harrison</b><br />
-  <sub>Maintainer — CCA applications & interviews, roles & permissions, events, remediation</sub><br />
-  <a href="https://github.com/patrick-steve">@patrick-steve</a>
+  <sub><b>Maintainer and administrator</b> · <a href="https://github.com/patrick-steve">@patrick-steve</a></sub><br />
+  <sub>Bookings · CCAs, applications and interviews · events · roles and permissions · the admin and hall-office surfaces · and the tRPC and identity layers they all sit on</sub>
 </td>
 </tr>
 </table>
 
-**Groundwork by** Zi Yang · Ernest · Chuan Xin · Keith
+<sub>Which is to say: most of what is in this repository. Everything before it is in the <a href="https://github.com/rhdevs/RH-app-2.0/graphs/contributors">contributor graph</a>.</sub>
 
 <div align="center">
 <br />
