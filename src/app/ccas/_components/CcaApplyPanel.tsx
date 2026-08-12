@@ -13,6 +13,7 @@ import {
   isTerminalStatus,
 } from "~/lib/schemas/ccaApplication";
 import { statusBadgeClass, residentStatusLabel } from "../_lib/status";
+import BookedSlot from "./BookedSlot";
 import SlotPicker from "./SlotPicker";
 import ImageLightbox from "~/app/_components/ImageLightbox";
 
@@ -314,6 +315,19 @@ function Card({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * /ccas/applications is otherwise reachable only from the avatar dropdown, which
+ * nobody finds — so every state that already shows scheduling controls offers it
+ * (submitted and scheduled alike), not just the booked one.
+ */
+function ViewAllApplicationsButton() {
+  return (
+    <Button variant="outline" asChild>
+      <Link href="/ccas/applications">View all applications</Link>
+    </Button>
+  );
+}
+
 type AppShape = RouterOutputs["ccaApplications"]["getCca"]["application"];
 
 /**
@@ -345,6 +359,17 @@ function ApplicationInProgress({
 }) {
   const scheduled = app.status === "interview_scheduled";
   const [picking, setPicking] = useState(false);
+  // Set the moment a booking lands so the panel can say "booked ✓" rather than
+  // the neutral "Your interview" — the confirmation the resident just did
+  // something, which the status pill alone doesn't give. It is deliberately not
+  // persisted: reopening the picker means they're changing their mind, so it
+  // clears there and on a plain page load.
+  const [justBooked, setJustBooked] = useState(false);
+
+  const openPicker = () => {
+    setJustBooked(false);
+    setPicking(true);
+  };
 
   return (
     <Card>
@@ -357,15 +382,22 @@ function ApplicationInProgress({
           >
             {residentStatusLabel(app.status)}
           </span>
-          <p className="mt-2 text-sm text-gray-600">
-            {app.status === "submitted" &&
-              (openSeatCount > 0
-                ? "Your application is in. Book an interview slot below."
-                : "Your application is in. The CCA will open interview slots soon.")}
-            {scheduled && "Your interview is booked."}
-            {app.status === "interviewed" &&
-              "Your interview's done — the CCA will be in touch with a decision."}
-          </p>
+          {/* The slot panel below carries the scheduled case, with the details a
+              bare sentence never had — but only if the slot row came back. It
+              can be missing (the pointer outlived the row), and that state used
+              to read "Your interview is booked.", so keep saying at least that
+              rather than leaving the pill on its own with no sentence at all. */}
+          {(!scheduled || !app.slot) && (
+            <p className="mt-2 text-sm text-gray-600">
+              {app.status === "submitted" &&
+                (openSeatCount > 0
+                  ? "Your application is in. Book an interview slot below."
+                  : "Your application is in. The CCA will open interview slots soon.")}
+              {scheduled && "Your interview is booked."}
+              {app.status === "interviewed" &&
+                "Your interview's done — the CCA will be in touch with a decision."}
+            </p>
+          )}
         </div>
         {!scheduled && (
           <button
@@ -378,13 +410,32 @@ function ApplicationInProgress({
         )}
       </div>
 
+      {/* What was booked. Only the status pill used to say anything at all, so a
+          resident had to go hunting for the date, time and room they had just
+          chosen; this is the same renderer My Applications uses. */}
+      {scheduled && app.slot && !picking && (
+        <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50/60 p-3">
+          <p
+            className={`text-[11px] font-medium uppercase tracking-wide ${
+              justBooked ? "text-emerald-700" : "text-gray-500"
+            }`}
+          >
+            {justBooked ? "Interview booked ✓" : "Your interview"}
+          </p>
+          <div className="mt-1.5">
+            <BookedSlot slot={app.slot} />
+          </div>
+        </div>
+      )}
+
       {(app.status === "submitted" || scheduled) && (
         <div className="mt-4 border-t border-gray-100 pt-4">
           {!picking ? (
             <div className="flex flex-wrap items-center gap-3">
               {scheduled ? (
                 <>
-                  <Button variant="outline" onClick={() => setPicking(true)}>
+                  <ViewAllApplicationsButton />
+                  <Button variant="outline" onClick={openPicker}>
                     Reschedule interview
                   </Button>
                   <button
@@ -396,16 +447,22 @@ function ApplicationInProgress({
                   </button>
                 </>
               ) : openSeatCount > 0 ? (
-                <Button
-                  onClick={() => setPicking(true)}
-                  className="inline-flex items-center gap-1.5"
-                >
-                  <CalendarClock className="h-4 w-4" /> Book an interview
-                </Button>
+                <>
+                  <Button
+                    onClick={openPicker}
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <CalendarClock className="h-4 w-4" /> Book an interview
+                  </Button>
+                  <ViewAllApplicationsButton />
+                </>
               ) : (
-                <p className="text-sm text-gray-500">
-                  No interview slots are open yet.
-                </p>
+                <>
+                  <p className="text-sm text-gray-500">
+                    No interview slots are open yet.
+                  </p>
+                  <ViewAllApplicationsButton />
+                </>
               )}
             </div>
           ) : (
@@ -413,9 +470,16 @@ function ApplicationInProgress({
               ccaID={ccaID}
               applicationID={app.applicationID}
               currentSlotID={app.interviewSlotID}
+              // Refetch BEFORE closing the picker. `app` is still the pre-book
+              // data until getCca comes back, so closing first shows the panel
+              // built from it: the OLD time under a green "Interview booked ✓"
+              // after a reschedule, or "Book an interview slot below" as if the
+              // booking never happened. react-query awaits a mutation's
+              // onSuccess, so the picker simply stays on "Booking…" instead.
               onDone={async () => {
-                setPicking(false);
                 await onChanged();
+                setPicking(false);
+                setJustBooked(true);
               }}
               onCancel={() => setPicking(false)}
             />

@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { CalendarClock, ChevronRight, MapPin } from "lucide-react";
+import { CalendarClock, ChevronRight } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
-import { formatSlot, statusBadgeClass, residentStatusLabel } from "../_lib/status";
+import { statusBadgeClass, residentStatusLabel } from "../_lib/status";
+import BookedSlot from "./BookedSlot";
 import SlotPicker from "./SlotPicker";
 
 type MyApp =
@@ -104,18 +105,9 @@ function MyApplicationRow({ app }: { app: MyApp }) {
 
       {/* Booked interview */}
       {scheduled && app.slot && (
-        <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
-          <span className="inline-flex items-center gap-1.5">
-            <CalendarClock className="h-4 w-4 text-gray-400" />
-            {formatSlot(app.slot.startTime, app.slot.endTime)}
-          </span>
-          {app.slot.location && (
-            <span className="inline-flex items-center gap-1">
-              <MapPin className="h-3.5 w-3.5 text-gray-400" />
-              {app.slot.location}
-            </span>
-          )}
-        </p>
+        <div className="mt-2">
+          <BookedSlot slot={app.slot} />
+        </div>
       )}
 
       {app.status === "rejected" && app.decisionReason && (
@@ -131,9 +123,15 @@ function MyApplicationRow({ app }: { app: MyApp }) {
               ccaID={app.ccaID}
               applicationID={app.applicationID}
               currentSlotID={app.interviewSlotID}
+              // Refetch BEFORE closing the picker, same ordering as the CCA
+              // detail panel: `app` is still the pre-book row until
+              // myApplications comes back, so closing first shows the OLD time
+              // under an unchanged "Interview booked" pill after a reschedule.
+              // react-query awaits a mutation's onSuccess, so the picker holds
+              // on "Booking…" through the refetch instead.
               onDone={async () => {
-                setPicking(false);
                 await refresh();
+                setPicking(false);
               }}
               onCancel={() => setPicking(false)}
             />
