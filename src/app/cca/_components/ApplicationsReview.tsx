@@ -178,76 +178,256 @@ function Stepper({ status }: { status: string | null }) {
 
 /* --------------------------------- rows ------------------------------------ */
 
+/**
+ * Every failure mode of `decide`, in the head's language.
+ *
+ * Named exhaustively rather than collapsed into one line because the Accept /
+ * Deny buttons now sit on the COLLAPSED card: a head who clicks one and sees
+ * nothing happen has no panel open and no other clue about why. "That didn't go
+ * through" is the fallback for an unrecognised code, not the default answer.
+ */
+function decideErrorMessage(code: string): string {
+  switch (code) {
+    case "ALREADY_DECIDED":
+      return "This application was already decided. Reload the page.";
+    case "NOT_A_HEAD_OF_THIS_CCA":
+      return "You can only decide applications for CCAs you head.";
+    case "CCA_APPLICATIONS_DISABLED":
+      return "CCA applications aren't open right now.";
+    case "CCA_BUSY":
+      return "Someone else is updating this CCA. Try again in a moment.";
+    case "MEMBERSHIP_WRITE_FAILED":
+      return "Couldn't add them to the roster, so the decision wasn't saved. Tell the RHApp team.";
+    case "NO_SUCH_APPLICATION":
+      return "This application no longer exists. Reload the page.";
+    default:
+      return "That didn't go through. Try again.";
+  }
+}
+
+/**
+ * Accept / Deny. Rendered in three places — inline on the card at `sm` and up,
+ * stacked under the applicant on a phone, and beside the reason box in the
+ * expanded panel — so the pair is defined once and cannot drift.
+ *
+ * `block` stretches both to equal halves of their row. That is the phone
+ * layout: sharing one line with the name squeezed "Ong Shao Aik" down to "O…"
+ * and folded the interview slot into a six-line stack.
+ */
+function DecisionButtons({
+  pending,
+  onDecide,
+  block = false,
+}: {
+  pending: boolean;
+  onDecide: (decision: "accepted" | "rejected") => void;
+  block?: boolean;
+}) {
+  return (
+    <>
+      <Button
+        disabled={pending}
+        onClick={() => onDecide("accepted")}
+        className={`inline-flex items-center justify-center gap-1.5 ${
+          block ? "flex-1" : ""
+        }`}
+      >
+        <Check className="h-4 w-4" />
+        {pending ? "Saving…" : "Accept"}
+      </Button>
+      <button
+        disabled={pending}
+        onClick={() => onDecide("rejected")}
+        className={`inline-flex items-center justify-center gap-1.5 rounded-md border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 ${
+          block ? "flex-1" : ""
+        }`}
+      >
+        <X className="h-4 w-4" />
+        Deny
+      </button>
+    </>
+  );
+}
+
+/**
+ * One application card.
+ *
+ * THE DECISION LIVES ON THE CARD, not only in the expanded panel. Accept / Deny
+ * used to render inside `ApplicationDetail`, so a head had to know to click a
+ * row before any button existed — a queue of 30 applicants looked like a
+ * read-only list, and at least one head reported being unable to decide at all.
+ * The panel keeps its own copy of the buttons because that is where the reason
+ * box is; both drive the SAME mutation and the SAME `reason` state, held here,
+ * so the two can never disagree about what is in flight.
+ *
+ * The header is a flex ROW of controls rather than one big `<button>` — a
+ * button cannot legally contain the decision buttons — so the expand toggle is
+ * the name region plus the chevron, and both carry `aria-expanded`.
+ */
 function ApplicationRow({ ccaID, app }: { ccaID: number; app: AppRow }) {
   const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const utils = api.useUtils();
   const name = app.applicant.displayName ?? app.userID;
+  const panelId = `application-${app.applicationID}`;
+
+  const decide = api.ccaApplicationsHead.decide.useMutation({
+    onSuccess: () =>
+      utils.ccaApplicationsHead.listApplications.invalidate({ ccaID }),
+  });
+
+  // Terminal is accepted / rejected / withdrawn — the three states with nothing
+  // left to decide. One check, so the card and the panel agree by construction.
+  const canDecide = !isTerminalStatus(app.status);
+  const toggle = () => setOpen((o) => !o);
+
+  const submit = (decision: "accepted" | "rejected") =>
+    decide.mutate({
+      ccaID,
+      applicationID: app.applicationID,
+      decision,
+      // Empty stays undefined: the reason is optional, and "" would be stored
+      // as a decision reason the head never wrote.
+      reason: reason.trim() || undefined,
+    });
 
   return (
     <li className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-3 p-4 text-left hover:bg-gray-50"
-      >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700">
-          {(name || "?").slice(0, 2).toUpperCase()}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate font-medium text-gray-900">{name}</span>
-            <span
-              className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${statusBadgeClass(
-                app.status,
-              )}`}
-            >
-              {statusLabel(app.status)}
-            </span>
-          </div>
-          <p className="mt-0.5 truncate text-xs text-gray-500">
-            {[app.applicant.matric, app.applicant.email]
-              .filter(Boolean)
-              .join(" · ") || app.userID}
-          </p>
-          {app.slot && app.status === "interview_scheduled" && (
-            <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-emerald-700">
-              <CalendarClock className="h-3.5 w-3.5" />
-              {formatSlot(app.slot.startTime, app.slot.endTime)}
-              {app.slot.location && (
-                <span className="inline-flex items-center gap-1 text-gray-500">
-                  <MapPin className="h-3 w-3" />
-                  {app.slot.location}
+      <div className="p-4 transition-colors hover:bg-gray-50">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={toggle}
+            aria-expanded={open}
+            aria-controls={panelId}
+            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          >
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700">
+              {(name || "?").slice(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate font-medium text-gray-900">
+                  {name}
+                </span>
+                <span
+                  className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${statusBadgeClass(
+                    app.status,
+                  )}`}
+                >
+                  {statusLabel(app.status)}
+                </span>
+              </div>
+              <p className="mt-0.5 truncate text-xs text-gray-500">
+                {[app.applicant.matric, app.applicant.email]
+                  .filter(Boolean)
+                  .join(" · ") || app.userID}
+              </p>
+              {app.slot && app.status === "interview_scheduled" && (
+                // flex-wrap, not inline-flex: the time and the room are two
+                // chunks that must break BETWEEN themselves on a narrow screen,
+                // not mid-phrase into a stack of single words.
+                <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-emerald-700">
+                  <span className="inline-flex items-center gap-1.5">
+                    <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+                    {formatSlot(app.slot.startTime, app.slot.endTime)}
+                  </span>
+                  {app.slot.location && (
+                    <span className="inline-flex items-center gap-1 text-gray-500">
+                      <MapPin className="h-3 w-3 shrink-0" />
+                      {app.slot.location}
+                    </span>
+                  )}
                 </span>
               )}
-            </p>
-          )}
-        </div>
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${
-            open ? "rotate-180" : ""
-          }`}
-        />
-      </button>
+            </div>
+          </button>
 
-      {open && <ApplicationDetail ccaID={ccaID} app={app} />}
+          {/* Inline on the right from `sm` up; the phone gets the stacked row
+              below instead. */}
+          {canDecide && (
+            <div className="hidden shrink-0 items-center gap-2 sm:flex">
+              <DecisionButtons pending={decide.isPending} onDecide={submit} />
+            </div>
+          )}
+
+          <button
+            onClick={toggle}
+            aria-expanded={open}
+            aria-controls={panelId}
+            aria-label={
+              open ? `Hide ${name}'s details` : `Show ${name}'s details`
+            }
+            className="shrink-0 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          >
+            <ChevronDown
+              className={`h-4 w-4 transition-transform ${
+                open ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+        </div>
+
+        {canDecide && (
+          <div className="mt-3 flex items-center gap-2 sm:hidden">
+            <DecisionButtons
+              pending={decide.isPending}
+              onDecide={submit}
+              block
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Card-level, so a quick decision that fails says why WITHOUT the head
+          having to expand the row to find out. */}
+      {decide.error && (
+        <p className="border-t border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700">
+          {decideErrorMessage(decide.error.message)}
+        </p>
+      )}
+
+      {open && (
+        <div id={panelId}>
+          <ApplicationDetail
+            ccaID={ccaID}
+            app={app}
+            reason={reason}
+            setReason={setReason}
+            onDecide={submit}
+            pending={decide.isPending}
+          />
+        </div>
+      )}
     </li>
   );
 }
 
 /** Expanded detail: progress, the applicant's full details + application notes,
  *  the interview notes (read-only — notes are added on the Interviews tab), and
- *  the Accept / Deny decision. */
-function ApplicationDetail({ ccaID, app }: { ccaID: number; app: AppRow }) {
-  const utils = api.useUtils();
+ *  the Accept / Deny decision WITH its optional reason.
+ *
+ *  The mutation and the `reason` string are owned by ApplicationRow and passed
+ *  in, so the buttons here and the ones on the card are the same action — see
+ *  the note on ApplicationRow. */
+function ApplicationDetail({
+  ccaID,
+  app,
+  reason,
+  setReason,
+  onDecide,
+  pending,
+}: {
+  ccaID: number;
+  app: AppRow;
+  reason: string;
+  setReason: (value: string) => void;
+  onDecide: (decision: "accepted" | "rejected") => void;
+  pending: boolean;
+}) {
   const detail = api.ccaApplicationsHead.getApplication.useQuery(
     { ccaID, applicationID: app.applicationID },
     { retry: false },
   );
-  const [reason, setReason] = useState("");
-
-  const decide = api.ccaApplicationsHead.decide.useMutation({
-    onSuccess: () =>
-      utils.ccaApplicationsHead.listApplications.invalidate({ ccaID }),
-  });
 
   const decided = isTerminalStatus(app.status);
   const withdrawn = app.status === "withdrawn";
@@ -309,44 +489,10 @@ function ApplicationDetail({ ccaID, app }: { ccaID: number; app: AppRow }) {
             placeholder="Reason (optional — shared with the applicant if you deny)"
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
           />
-          {decide.error && (
-            <p className="text-sm text-red-600">
-              {decide.error.message === "ALREADY_DECIDED"
-                ? "This application was already decided. Refresh."
-                : "That didn't go through. Try again."}
-            </p>
-          )}
+          {/* The error renders once, at card level, so it is visible whether or
+              not this panel is open. */}
           <div className="flex items-center gap-2">
-            <Button
-              disabled={decide.isPending}
-              onClick={() =>
-                decide.mutate({
-                  ccaID,
-                  applicationID: app.applicationID,
-                  decision: "accepted",
-                  reason: reason.trim() || undefined,
-                })
-              }
-              className="inline-flex items-center gap-1.5"
-            >
-              <Check className="h-4 w-4" />
-              {decide.isPending ? "Saving…" : "Accept"}
-            </Button>
-            <button
-              disabled={decide.isPending}
-              onClick={() =>
-                decide.mutate({
-                  ccaID,
-                  applicationID: app.applicationID,
-                  decision: "rejected",
-                  reason: reason.trim() || undefined,
-                })
-              }
-              className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-            >
-              <X className="h-4 w-4" />
-              Deny
-            </button>
+            <DecisionButtons pending={pending} onDecide={onDecide} />
           </div>
         </div>
       )}
