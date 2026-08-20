@@ -57,8 +57,12 @@ export default function RosterPanel({
   /**
    * Enables the click-to-expand member details and the "Export to Excel"
    * button by fetching cca.memberDirectory (the roster plus each member's full
-   * profile). Set ONLY by a head's own member list; the read-only /admin/ccas
-   * viewer leaves it off, so it makes no extra query and nothing is expandable.
+   * profile). Set by a head's own member list AND by /admin/ccas —
+   * memberDirectory's assertHeadsCca returns `via: "manageCcaHeads"` for admin
+   * and jcrc, so both surfaces are authorized for it by the same guard.
+   *
+   * Off by default, and left off wherever the extra query would buy nothing:
+   * unset, nothing is expandable and no second request is made.
    */
   enableDirectory = false,
 }: {
