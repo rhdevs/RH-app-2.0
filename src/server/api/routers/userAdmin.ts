@@ -39,6 +39,7 @@ import {
   TELEGRAM_RE,
   sanitizeName,
 } from "~/lib/schemas/profile";
+import { isExtUserID } from "~/lib/identity";
 
 /**
  * ADMIN CRUD OVER USER DETAILS — the /admin/users detail dialog.
@@ -415,7 +416,7 @@ export const userAdminRouter = createTRPCRouter({
       // account with no canonical id holds no canonical-keyed rows by
       // construction, so [] / null is both the safe answer and the true one
       // (the C9 reasoning in listUsers).
-      const [matricRow, roles, completionRow, collisions] = cid
+      const [matricRow, roles, completionRow, collisions, headRows] = cid
         ? await Promise.all([
             ctx.db.userMatric.findUnique({ where: { userID: cid } }),
             getUserRoles(ctx.db, cid),
@@ -430,10 +431,42 @@ export const userAdminRouter = createTRPCRouter({
             // OTHER account, so the dialog must say so before anyone types over
             // it. See findCanonicalIdCollisions.
             findCanonicalIdCollisions(ctx.db, cid, target.userObjectId),
+            /* WHICH CCAs THIS ACCOUNT HEADS. Read from CcaHead DIRECTLY and
+             * NEVER from roles.includes(CCA_HEAD_ROLE) — the same rule
+             * assertHeadsCca is built on. That string is scope-free by
+             * construction, so it answers "heads something", never "heads
+             * this", and rendering the scopes from it is not possible.
+             *
+             * Reading the rows rather than the string also makes the dialog a
+             * CH-1 drift detector for free: the invariant is "holds the
+             * cca_head string IFF >= 1 CcaHead row", MongoDB cannot enforce it,
+             * and the two halves are now visible side by side in one panel.
+             */
+            ctx.db.ccaHead.findMany({
+              where: { userID: cid },
+              select: { ccaID: true, grantedAt: true },
+              orderBy: { ccaID: "asc" },
+            }),
           ])
-        : [null, [] as string[], null, []];
+        : [null, [] as string[], null, [], []];
 
       const matric = matricRow?.matric ?? null;
+
+      /* Names for the headships above. A SECOND round trip because it depends
+       * on the first — but only when there are rows, so the overwhelmingly
+       * common case (an ordinary resident) still costs nothing. A CCA row that
+       * has since been deleted resolves to null and is rendered as the bare
+       * ccaID rather than dropped: a headship pointing at a CCA that no longer
+       * exists is exactly the kind of thing this panel should show.
+       */
+      const headCcas =
+        headRows.length === 0
+          ? []
+          : await ctx.db.cCA.findMany({
+              where: { ccaID: { in: headRows.map((h) => h.ccaID) } },
+              select: { ccaID: true, ccaName: true, category: true },
+            });
+      const headNameByID = new Map(headCcas.map((c) => [c.ccaID, c]));
 
       return {
         userObjectId: target.userObjectId,
@@ -443,6 +476,19 @@ export const userAdminRouter = createTRPCRouter({
         canonicalUserID: cid,
         /** The STORED legacy column — display and mismatch detection only. */
         legacyUserID: target.legacyUserID,
+        /**
+         * AN ALLOWLIST-PINNED STAFF ACCOUNT (the hall office / `scrc` tier).
+         *
+         * admin.listUsers already returns this and the table uses it; `get` did
+         * not, and the dialog was WRONG for exactly these accounts as a result.
+         * Their key comes from an AuthAllowlist pin, not from an address, so
+         * without this flag the panel labelled `EXT:VINCENT_KOH` as a "NUSNET
+         * id" and told the operator their identity "is derived from the part of
+         * the address before @u.nus.edu" — neither of which is true of a staff
+         * address. Computed the SAME way listUsers computes it, so the two
+         * surfaces cannot disagree about which accounts are pinned.
+         */
+        pinned: cid !== null && isExtUserID(cid),
         /** admin.listUsers' own flag, computed the same way, so the two agree. */
         keyMismatch: Boolean(
           target.legacyUserID && target.legacyUserID !== (cid as string | null),
@@ -463,6 +509,27 @@ export const userAdminRouter = createTRPCRouter({
          * only the account that was clicked.
          */
         sharedCanonicalID: collisions.length > 0,
+        /**
+         * The CCAs this account HEADS, from its CcaHead rows — scope the
+         * `cca_head` role string cannot carry.
+         *
+         * DISPLAY ONLY, like `roles`, and NOT redacted: headship is already
+         * public (every CCA page lists its heads via cca.listHeads), so there
+         * is nothing here a manager could not read from /ccas. That is why this
+         * field does not need the `seeAdminIdentities` treatment the role list
+         * gets — no admin-enumeration oracle exists in a list of CCA names.
+         *
+         * EMPTY does not mean "not a head" on its own: an account with no
+         * canonical id is skipped entirely above, the same as its matric and
+         * roles. Read it alongside the role badges, which is how the panel
+         * renders it.
+         */
+        headOf: headRows.map((h) => ({
+          ccaID: h.ccaID,
+          ccaName: headNameByID.get(h.ccaID)?.ccaName ?? null,
+          category: headNameByID.get(h.ccaID)?.category ?? null,
+          grantedAt: h.grantedAt,
+        })),
         /**
          * DISPLAY ONLY (I-5). Nothing here authorises anything on the client.
          *

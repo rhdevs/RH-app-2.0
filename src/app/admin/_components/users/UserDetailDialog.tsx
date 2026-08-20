@@ -539,19 +539,43 @@ function DetailBody({
                 <Lock className="h-3.5 w-3.5 shrink-0 text-gray-500" />
                 <span className="truncate">{record.email}</span>
               </p>
+              {/* TWO DIFFERENT TRUTHS, and the old copy told the resident one
+                  to everybody. A pinned staff account's identity does NOT come
+                  from its address — @nus.edu.sg does not canonicalise at all —
+                  it comes from the AuthAllowlist row, which is why removing the
+                  pin, not editing the address, is what breaks their sign-in. */}
               <p className="mt-1 text-xs text-gray-500">
-                Email cannot be changed. This account&rsquo;s identity — its
-                bookings, roles, CCA memberships and matric — is derived from
-                the part of the address before @u.nus.edu. Editing it would
-                create a second, empty account and orphan everything attached to
-                this one. To correct an address, ask a developer to run an
-                account merge.
+                {record.pinned ? (
+                  <>
+                    Email cannot be changed. This is an assigned staff address:
+                    it isn&rsquo;t an @u.nus.edu account, so its identity comes
+                    from the sign-in allowlist rather than from the address
+                    itself. Remove the allowlist entry and this account can no
+                    longer sign in — and its roles, which are keyed to the id
+                    below, stop resolving. Manage the entry in Admin →
+                    Allowlist.
+                  </>
+                ) : (
+                  <>
+                    Email cannot be changed. This account&rsquo;s identity — its
+                    bookings, roles, CCA memberships and matric — is derived
+                    from the part of the address before @u.nus.edu. Editing it
+                    would create a second, empty account and orphan everything
+                    attached to this one. To correct an address, ask a developer
+                    to run an account merge.
+                  </>
+                )}
               </p>
             </div>
           </div>
 
           <dl className="mt-3 grid grid-cols-[auto,1fr] items-center gap-x-3 gap-y-1 text-xs">
-            <dt className="text-gray-500">NUSNET id</dt>
+            {/* A pinned account's key is NOT a NUSNET id and must not be
+                labelled as one — `EXT:VINCENT_KOH` is an allowlist pin. Same
+                row, honest label. */}
+            <dt className="text-gray-500">
+              {record.pinned ? "Assigned sign-in id" : "NUSNET id"}
+            </dt>
             <dd className="font-mono text-xs text-gray-900">
               {record.canonicalUserID ?? (
                 <span className="font-sans text-gray-400">
@@ -585,8 +609,42 @@ function DetailBody({
               record.roles.map((r) => <RoleBadge key={r} role={r} />)
             )}
           </div>
+          {/* WHICH CCAs, not just THAT they head one. `cca_head` is scope-free
+              by construction, so the badge above can never say which — these
+              come from the account's CcaHead rows.
+
+              Rendered whenever there are rows, NOT gated on the role badge
+              being present: when the two disagree that IS the thing worth
+              seeing (CH-1 says they agree; MongoDB cannot enforce it). */}
+          {record.headOf.length > 0 && (
+            <div className="mt-2">
+              <p className="text-xs font-medium text-gray-500">
+                Heads {record.headOf.length === 1 ? "this CCA" : "these CCAs"}
+              </p>
+              <ul className="mt-1 flex flex-wrap gap-1.5">
+                {record.headOf.map((c) => (
+                  <li key={c.ccaID}>
+                    <span
+                      className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 ring-1 ring-inset ring-emerald-600/20"
+                      title={
+                        c.category
+                          ? `${c.category} · CCA #${c.ccaID}`
+                          : `CCA #${c.ccaID}`
+                      }
+                    >
+                      {/* A deleted CCA still shows, as its bare id — a headship
+                          pointing at nothing is worth surfacing, not hiding. */}
+                      {c.ccaName ?? `Unknown CCA (#${c.ccaID})`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="mt-1.5 text-xs text-gray-500">
             Roles are managed from Manage roles.
+            {record.headOf.length > 0 &&
+              " Headships are assigned in Admin → CCAs."}
           </p>
           {onManageRoles && record.canonicalUserID && (
             <Button
