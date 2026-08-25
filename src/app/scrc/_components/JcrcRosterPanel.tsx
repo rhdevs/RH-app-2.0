@@ -495,7 +495,7 @@ export default function JcrcRosterPanel() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pending?.grant
-                ? "They’ll be able to review event proposals, browse every CCA roster, and manage CCA heads. Nothing else about their account changes."
+                ? "They’ll be able to review and approve events, run the hall’s own events, browse every CCA roster, and manage CCA heads. Nothing else about their account changes."
                 : "They’ll lose the JCRC tools straight away. Nothing else about their account changes — any CCA headship they hold stays."}
             </AlertDialogDescription>
           </AlertDialogHeader>

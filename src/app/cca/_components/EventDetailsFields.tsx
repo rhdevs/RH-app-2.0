@@ -8,10 +8,15 @@ import {
 } from "~/lib/schemas/event";
 
 /**
- * The proposal fields a head fills in at application time. A controlled block
- * shared by the create form and the draft editor so they can't drift. Times are
- * held as <input type="datetime-local"> strings and capacity as a raw string;
- * the parent converts to epoch seconds / number on save.
+ * The event's own details — name, description, times, location, capacity. A
+ * controlled block shared by the create form and the editor so the two cannot
+ * drift. Times are held as <input type="datetime-local"> strings and capacity as
+ * a raw string; the parent converts to epoch seconds / number on save.
+ *
+ * These are the fields the JCRC reads when it reviews. The banner and the public
+ * description live in the manage page's editor beside this block, and are
+ * required BEFORE submission — the reviewer sees a finished event, not a
+ * proposal. There is no proposal PDF.
  */
 export type ProposalValue = {
   title: string;
@@ -59,7 +64,7 @@ export function facilityPayload(v: ProposalValue): {
   return { facilityID: Number(v.facilitySelection), location: undefined };
 }
 
-export default function EventProposalFields({
+export default function EventDetailsFields({
   value,
   onChange,
   disabled = false,
@@ -100,7 +105,7 @@ export default function EventProposalFields({
         </label>
         <p className="text-xs text-gray-500">
           What the event is, who it&rsquo;s for, and what happens. JCRC reads this
-          alongside your proposal.
+          when they review it.
         </p>
         <textarea
           value={value.description}
@@ -175,8 +180,8 @@ export default function EventProposalFields({
           )}
           {facilityChosen && (
             <p className="text-xs text-emerald-700">
-              A booking for this facility is created automatically once JCRC
-              approves — remember to set an end time.
+              If JCRC approves, this facility is booked automatically for the
+              times above — so set an end time.
             </p>
           )}
         </div>

@@ -228,7 +228,7 @@ export default function WhatsNewPage() {
               <p className="say">A brand-new events system connects CCAs, the JCRC, and residents.</p>
             </div>
             <ul className="points">
-              <li><b>CCAs propose, JCRC approves.</b> Events go through a quick review so the hall calendar stays coordinated and nothing clashes.</li>
+              <li><b>CCAs create, JCRC approves.</b> Fill in the whole event — details, banner, description — and JCRC reviews the finished thing. Approving puts it straight on the timeline.</li>
               <li><b>Rooms book themselves.</b> Approve an event using a hall facility and the room is reserved automatically — no separate step, no double-bookings.</li>
               <li><b>A beautiful timeline.</b> Scroll what&rsquo;s coming up with banners, dates and locations. Filter by upcoming, the ones you&rsquo;re going to, or past.</li>
               <li><b>One-tap sign-up.</b> Sign up or change your mind in a tap. Events fill up fairly, with no accidental double sign-ups.</li>
@@ -268,7 +268,7 @@ export default function WhatsNewPage() {
                   <p className="who">Hall committee</p>
                 </div>
                 <ul>
-                  <li><b>Approve events</b> proposed by CCAs, or send them back with feedback.</li>
+                  <li><b>Approve events</b> created by CCAs, send them back for changes, or decline them outright.</li>
                   <li><b>Rooms sorted automatically</b> when an event is approved — no chasing, no clashes.</li>
                   <li><b>See any CCA&rsquo;s roster</b> — heads and members, all in one place.</li>
                   <li><b>Manage who leads each CCA,</b> including onboarding a whole new committee at once.</li>
@@ -289,7 +289,7 @@ export default function WhatsNewPage() {
                   <li><b>Make your CCA look great</b> — logo, banner and description, all yours to edit.</li>
                   <li><b>Run recruitment end to end</b> — slots, interviews, notes, and accept straight into the CCA.</li>
                   <li><b>Manage your roster,</b> removing members singly or in bulk.</li>
-                  <li><b>Put on events</b> and, once approved, publish them with photos and details.</li>
+                  <li><b>Put on events</b> — add the details, banner and photos, and it goes live the moment JCRC approves.</li>
                   <li><b>Know your turnout</b> — sign-ups over time, by block, with a downloadable list.</li>
                   <li><b>Hand over cleanly</b> to the next committee when your term ends.</li>
                 </ul>
@@ -376,7 +376,7 @@ export default function WhatsNewPage() {
               <div className="glance-col">
                 <h4>Events</h4>
                 <ul>
-                  <li>CCAs propose, JCRC approves</li>
+                  <li>CCAs create, JCRC approves</li>
                   <li>Automatic room booking on approval</li>
                   <li>Scrolling events timeline</li>
                   <li>Upcoming / my events / past filters</li>

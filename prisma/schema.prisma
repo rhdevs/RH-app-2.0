@@ -684,14 +684,15 @@ model CcaInterviewNote {
   @@index([applicationID], map: "application")
 }
 
-/// A CCA event, from proposal through to a published, signup-able listing.
+/// An event — a CCA's, or the JCRC's own hall-wide one (ccaID null) — from
+/// first keystroke through to a published, signup-able listing.
 ///
 /// BRAND-NEW, UNVALIDATED collection (no $jsonSchema) — so, unlike CCA/User,
-/// fields may be added here freely. It deliberately holds BOTH the proposal
-/// (title/description/proposalUrl/start/end/location/capacity, entered at
-/// application time) AND the public content (publicDescription/bannerUrl/
-/// photoUrls, added by the head only AFTER JCRC approval). One row, one
-/// lifecycle, so there is no join to keep in step.
+/// fields may be added here freely. It deliberately holds BOTH the internal
+/// detail (title/description/start/end/location/capacity) AND the public content
+/// (publicDescription/bannerUrl/photoUrls). One row, one lifecycle, so there is
+/// no join to keep in step. Both halves are filled in BEFORE submission: the
+/// JCRC reviews a finished event and approval publishes it in one write.
 ///
 /// I-2: every scalar is NULLABLE and every list has a default. This collection
 /// is read on the resident timeline and the head/review portals; a row written
@@ -706,28 +707,49 @@ model CcaInterviewNote {
 /// `createdBy`/`decidedBy`/`updatedBy` are CANONICAL userIDs (I-1), the same key
 /// as session.user.userID and CcaHead.userID. NEVER User.userID.
 ///
-/// Authorisation is PER-EVENT via assertHeadsCca(db, actor, event.ccaID) — never
-/// a role check — because `cca_head` is scope-free. Times are UNIX epoch SECONDS
-/// (UTC), the same convention as Bookings.startTime.
+/// Authorisation is PER-EVENT and branches on the STORED ccaID: a non-null ccaID
+/// goes to assertHeadsCca(db, actor, event.ccaID) — never a role check, because
+/// `cca_head` is scope-free — and a null one requires the `manageHallEvents`
+/// capability. That branch lives in ONE place, loadOwnedEvent in
+/// routers/event.ts. Times are UNIX epoch SECONDS (UTC), the same convention as
+/// Bookings.startTime.
 ///
 /// status vocabulary (enforced in code, src/lib/schemas/event.ts):
-///   draft | submitted | approved | rejected | published | canceled
-/// `draft` exists so the proposal PDF (which needs an eventID in its blob path)
-/// can be uploaded before "Submit for review". `rejected` is editable and
-/// resubmittable; `canceled` is terminal.
+///   draft | submitted | published | changes_requested | declined | canceled
+/// `draft` is a TECHNICAL STAGING STATE ONLY: a row must exist before its banner
+/// can be uploaded, because the blob path is event/{eventID}/banner. No head is
+/// ever parked in it — the create form routes straight through, and the head
+/// surface labels it "Not submitted". `changes_requested` is editable and
+/// resubmittable. `declined` and `canceled` are TERMINAL. There is no `approved`:
+/// approval publishes in one write (event.decide), so an event is never in the
+/// state "allowed to happen but invisible".
 model Event {
   id                String    @id @default(auto()) @map("_id") @db.ObjectId
   eventID           Int       @unique(map: "eventID")
-  ccaID             Int
+  /// NULL means a HALL-WIDE event owned by the JCRC, not a CCA event.
+  ///
+  /// Safe as a nullable here and NOWHERE ELSE by default: this collection had
+  /// ZERO rows when the field was relaxed (measured 2026-08-26), so `null` is the
+  /// only absent value it will ever hold — every row is written by code that
+  /// knows about hall events. Do not copy this argument to a populated model.
+  ///
+  /// AUTHORISATION BRANCHES ON IT: a non-null value goes to assertHeadsCca; null
+  /// requires the `manageHallEvents` capability. See loadOwnedEvent in
+  /// routers/event.ts — never re-derive that branch inline.
+  ///
+  /// IT IS NOT THE BOOKING'S ccaID. A hall event's auto-created Bookings row
+  /// carries ccaID 0, the reserved "no CCA" sentinel (services/cascade.ts:47,
+  /// BookingModal.tsx). Bookings.ccaID is a required Int and MUST NOT become
+  /// nullable — two values meaning absent is the bug class this repo has already
+  /// remediated once.
+  ccaID             Int?
   createdBy         String
 
-  // Proposal — entered at application time.
+  // Details — entered up front; the JCRC reviews a FINISHED event, not a
+  // proposal. There is no proposal PDF: proposals are settled by email with RFS
+  // and the Hall Office and never moved into the app.
   title             String?
   description       String?
-  /// Vercel Blob URL of the proposal PDF. VALIDATED before persist
-  /// (isOwnEventBlobUrl), never trusted from the client. Reviewers + owning head
-  /// only — never returned to residents.
-  proposalUrl       String?
   /// UNIX epoch seconds, UTC (like Bookings). start required to submit.
   startTime         Int?
   endTime           Int?
@@ -756,13 +778,26 @@ model Event {
   /// event is still approved (approval is never blocked on a booking clash).
   autoBookFailed    Boolean?
 
-  // Public content — added by the head only after approval, shown to residents.
+  // Public content — entered BEFORE submission (bannerUrl and publicDescription
+  // are both required to leave draft), shown to residents once published.
   publicDescription String?
   /// Vercel Blob URLs, validated before persist (isOwnEventBlobUrl). photoUrls
   /// is the gallery; order is display order.
   bannerUrl         String?
   photoUrls         String[]  @default([])
   publishedAt       DateTime?
+
+  // ---- Reserved for the attendance phase. INERT: no procedure in
+  // routers/event.ts reads or writes any of these. They are added now so the
+  // attendance work needs no second schema pass. All nullable or defaulted (I-2).
+  /// UNIX epoch SECONDS, UTC — when the door scanner starts accepting check-ins.
+  attendanceOpensAt   Int?
+  /// UNIX epoch SECONDS, UTC — when it stops.
+  attendanceClosesAt  Int?
+  /// CANONICAL userIDs (I-1) permitted to scan at the door. Empty = nobody.
+  scannerUserIDs      String[]  @default([])
+  /// Set when this event's custom-question answers were purged. Null = not purged.
+  answersPurgedAt     DateTime?
 
   createdAt         DateTime? @default(now())
   updatedAt         DateTime?

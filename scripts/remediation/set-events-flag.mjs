@@ -13,8 +13,28 @@
  *   node scripts/remediation/set-events-flag.mjs on --commit # apply
  *   node scripts/remediation/set-events-flag.mjs off --commit
  *
- * Run `npx prisma db push` FIRST so the Event / EventSignup / EventLock
- * collections and their unique indexes exist before the feature is switched on.
+ * DO NOT RUN `prisma db push` BEFORE THIS SCRIPT.
+ *
+ * This header used to open with "Run `npx prisma db push` FIRST so the Event /
+ * EventSignup / EventLock collections and their unique indexes exist". That
+ * instruction was correct exactly once — before the feature first shipped, when
+ * those collections did not yet exist. It is now actively dangerous and is
+ * RETRACTED, not merely annotated: an operator skimming a header for the
+ * command to run will run the command the header names, and a note two
+ * paragraphs later saying "actually, don't" does not survive a skim.
+ *
+ * The collections and every unique index they need ALREADY EXIST — verified by
+ * scripts/remediation/index-census.mjs and verify-events-schema.mjs check [1].
+ * A push would create nothing and would DROP User.email_unique_ci, the
+ * case-insensitive unique index that is the duplicate-account guard, which is
+ * not representable in schema.prisma and which Prisma removes without warning.
+ * That is a live incident, not a theoretical one — see Appendix A of
+ * docs/plans/events/01-registration-rework.md for the restore one-liner.
+ *
+ * The database step for a field-only schema change is `prisma generate`, and
+ * nothing else. If you want to confirm the substrate before flipping the
+ * switch, run verify-events-schema.mjs — it is read-only and it checks the
+ * indexes this flag depends on.
  */
 import { PrismaClient } from "@prisma/client";
 import { inspectWriteReply, isCommit, abort, nowExt } from "./lib/rbac.mjs";

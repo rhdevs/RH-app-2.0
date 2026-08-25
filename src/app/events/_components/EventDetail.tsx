@@ -16,6 +16,7 @@ import {
   CarouselNext,
 } from "~/components/ui/carousel";
 import { formatDateRange } from "~/app/events/_lib/format";
+import { ownerLabel } from "~/lib/schemas/event";
 
 /**
  * The resident's event page: banner, photo gallery, description and signup.
@@ -110,9 +111,13 @@ export default function EventDetail({ eventID }: { eventID: number }) {
 
       <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
-          {e.ccaName && (
-            <p className="text-sm font-medium text-emerald-700">{e.ccaName}</p>
-          )}
+          {/* Unconditional: a hall-wide event has ccaName null, and the old
+              `{e.ccaName && (...)}` guard made the owner line silently
+              vanish instead of falling back to "Hall". ownerLabel always
+              returns a non-empty string. */}
+          <p className="text-sm font-medium text-emerald-700">
+            {ownerLabel(e.ccaID, e.ccaName)}
+          </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900">
             {e.title?.trim() || "Untitled event"}
           </h1>

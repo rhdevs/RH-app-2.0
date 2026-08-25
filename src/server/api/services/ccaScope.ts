@@ -81,7 +81,7 @@ export async function assertHeadsCca(
  *
  * assertHeadsCca is THE write guard: it also gates cca.updateProfile,
  * cca.removeMembers, cca.handoverHeads, cca.memberDirectory (matric/telegram/
- * bio) and event.publish / cancelEvent / exportAttendees. Widening it by one
+ * bio) and event.update / cancelEvent / exportAttendees. Widening it by one
  * capability would hand all of that to whoever holds that capability, which is
  * why the hall office got a SECOND function instead of a wider first one. The
  * two must stay separate even though branches 1 and 2 below are duplicated

@@ -30,7 +30,13 @@ export default async function AdminEventsLayout({
     redirect("/"); // fail closed, swallow — see admin/layout.tsx
   }
 
-  if (!computeCapabilities(roles).reviewEvents) redirect("/");
+  // Both capabilities, because this surface now carries both jobs: the review
+  // queue (reviewEvents) and the JCRC's own hall events (manageHallEvents).
+  // They are the identical set today — both are `manager` — so this is
+  // behaviour-identical, but naming both means widening one later cannot
+  // silently widen access to the other.
+  const caps = computeCapabilities(roles);
+  if (!caps.reviewEvents && !caps.manageHallEvents) redirect("/");
 
   return <>{children}</>;
 }

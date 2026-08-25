@@ -5,11 +5,12 @@ import { CalendarClock, ChevronRight } from "lucide-react";
 
 import { api } from "~/trpc/react";
 import { formatDateTime } from "~/app/events/_lib/format";
+import { ownerLabel } from "~/lib/schemas/event";
 
 /**
  * The JCRC review queue: events awaiting a decision, oldest first. Rows link to
- * the detail page where the proposal is read and approved/rejected. NOT a guard
- * — listForReview is roleManagerProcedure.
+ * the detail page where the full event is reviewed and approved, sent back for
+ * changes, or declined. NOT a guard — listForReview is roleManagerProcedure.
  */
 export default function EventReviewQueue() {
   const list = api.event.listForReview.useQuery(undefined, { retry: false });
@@ -65,7 +66,7 @@ export default function EventReviewQueue() {
                     {e.title?.trim() || "Untitled event"}
                   </p>
                   <p className="mt-0.5 text-xs text-gray-500">
-                    {e.ccaName ?? `CCA #${e.ccaID}`} · {formatDateTime(e.startTime)}
+                    {ownerLabel(e.ccaID, e.ccaName)} · {formatDateTime(e.startTime)}
                     {e.location ? ` · ${e.location}` : ""}
                   </p>
                 </div>
