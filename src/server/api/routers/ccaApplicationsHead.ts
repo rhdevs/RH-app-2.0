@@ -17,6 +17,10 @@ import {
   withCcaLock,
 } from "~/server/api/services/ccaApplications";
 import {
+  assertRecruitmentOpen,
+  isRecruitmentOpen,
+} from "~/server/api/services/ccaRecruitment";
+import {
   findFacilityConflict,
   nextBookingId,
   resolveFacility,
@@ -300,7 +304,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         orderBy: { applicationID: "desc" },
       });
 
-      const [people, slots] = await Promise.all([
+      const [people, slots, recruitmentOpen] = await Promise.all([
         resolveApplicants(ctx.db, apps.map((a) => a.userID)),
         (async () => {
           const slotIDs = apps
@@ -329,6 +333,13 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
           });
           return new Map<number, SlotRow>(rows.map((r) => [r.slotID, r]));
         })(),
+        // The hall-wide freeze, for the review screen's Accept button and its
+        // banner. COSMETIC and allowed to be up to 15s stale â€” the boundary is
+        // the assertRecruitmentOpen inside `decide`'s accepted branch, and a
+        // head who clicks Accept in that window gets RECRUITMENT_CLOSED, which
+        // is why that error's copy is written as an explanation rather than a
+        // scold.
+        isRecruitmentOpen(ctx.db),
       ]);
 
       return {
@@ -349,6 +360,7 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
             return s ? { ...s, capacity: slotCapacity(s.capacity) } : null;
           })(),
         })),
+        recruitmentOpen,
       };
     }),
 
@@ -1218,6 +1230,40 @@ export const ccaApplicationsHeadRouter = createTRPCRouter({
         const now = new Date();
 
         if (input.decision === "accepted") {
+          // THE FREEZE â€” this is the whole of "heads cannot accept new
+          // members", and it is HERE, on the accepted branch, rather than at
+          // the top of the procedure, for the reason that is the entire point
+          // of the feature: REJECTING MUST STAY POSSIBLE WHILE FROZEN. A gate
+          // on the whole of `decide` would leave every `submitted` applicant
+          // with no way to be told no for as long as the freeze lasted â€” the
+          // stranded-applicant failure this codebase already knows by name.
+          // Freezing intake is not a gag order. Do not hoist this line.
+          //
+          // INSIDE withCcaLock, and after acquisition rather than before it.
+          // Hoisting the check above the lock would let an accept that had
+          // already passed the flag read sit waiting on the per-CCA mutex while
+          // the JCRC froze the hall â€” and that wait is not small: withCcaLock
+          // retries up to LOCK_MAX_ATTEMPTS (50) times at LOCK_RETRY_MS (100ms)
+          // apart, so it can add ~5s on top of a flag read that was already up
+          // to 15s stale. Checking after acquisition bounds the window to this
+          // callback instead.
+          //
+          // The resident side (ccaApplications.submitApplication) reaches the
+          // same conclusion and checks in the same place; it ALSO checks once
+          // before the lock, purely to fail fast so a frozen hall does not
+          // generate a stampede of lock acquisitions that are all going to be
+          // refused. That early check is an optimisation there, not the gate.
+          // Do not read the two files as disagreeing â€” the load-bearing check
+          // is post-acquisition on both sides.
+          //
+          // Note it is also unconditional on the caller's roles: an admin who
+          // heads nothing and reaches this through assertHeadsCca's manager
+          // branch is refused exactly like a head (plan D7). A freeze is an
+          // operational state of the hall, not an authorisation tier, and an
+          // admin bypass would mean the person most likely to verify the
+          // freeze is the one person who cannot observe it working.
+          await assertRecruitmentOpen(ctx.db);
+
           // Resolve the applicant's key set the same way ccaAdmin.addMember
           // does, so we don't add a canonical row next to an existing legacy
           // one for the same person.

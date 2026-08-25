@@ -19,6 +19,10 @@ import {
   withCcaLock,
 } from "~/server/api/services/ccaApplications";
 import {
+  assertRecruitmentOpen,
+  isRecruitmentOpen,
+} from "~/server/api/services/ccaRecruitment";
+import {
   applyInput,
   applicationTargetInput,
   bookSlotInput,
@@ -113,12 +117,18 @@ async function resolveHeadContacts(
   for (const u of byEmail) {
     const cid = canonicalUserID(u.email);
     if (cid && !byKey.has(cid)) {
-      byKey.set(cid, { displayName: u.displayName, telegramHandle: u.telegramHandle });
+      byKey.set(cid, {
+        displayName: u.displayName,
+        telegramHandle: u.telegramHandle,
+      });
     }
   }
   for (const u of byStored) {
     if (u.userID && !byKey.has(u.userID)) {
-      byKey.set(u.userID, { displayName: u.displayName, telegramHandle: u.telegramHandle });
+      byKey.set(u.userID, {
+        displayName: u.displayName,
+        telegramHandle: u.telegramHandle,
+      });
     }
   }
   return keys.map((k) => ({
@@ -141,25 +151,31 @@ export const ccaApplicationsRouter = createTRPCRouter({
       userID,
     });
 
-    const [ccas, profiles, memberships, myApps] = await Promise.all([
-      ctx.db.cCA.findMany({
-        select: { ccaID: true, ccaName: true, category: true },
-      }),
-      ctx.db.ccaProfile.findMany({
-        select: { ccaID: true, description: true, logoUrl: true },
-      }),
-      ctx.db.userCCA.findMany({
-        where: { userID: { in: keys } },
-        select: { ccaID: true },
-      }),
-      // Applications are always written under the CANONICAL key, so one key
-      // suffices here (unlike membership, which is mixed-format).
-      ctx.db.ccaApplication.findMany({
-        where: { userID },
-        select: { ccaID: true, status: true },
-        orderBy: { applicationID: "desc" },
-      }),
-    ]);
+    const [ccas, profiles, memberships, myApps, recruitmentOpen] =
+      await Promise.all([
+        ctx.db.cCA.findMany({
+          select: { ccaID: true, ccaName: true, category: true },
+        }),
+        ctx.db.ccaProfile.findMany({
+          select: { ccaID: true, description: true, logoUrl: true },
+        }),
+        ctx.db.userCCA.findMany({
+          where: { userID: { in: keys } },
+          select: { ccaID: true },
+        }),
+        // Applications are always written under the CANONICAL key, so one key
+        // suffices here (unlike membership, which is mixed-format).
+        ctx.db.ccaApplication.findMany({
+          where: { userID },
+          select: { ccaID: true, status: true },
+          orderBy: { applicationID: "desc" },
+        }),
+        // Hall-wide freeze. Joins the Promise.all rather than preceding it —
+        // it is behind a 15s in-process cache, so on the overwhelming majority
+        // of requests it costs nothing at all, and on the one that refreshes it
+        // it costs no extra round trip.
+        isRecruitmentOpen(ctx.db),
+      ]);
 
     const profileByID = new Map(profiles.map((p) => [p.ccaID, p]));
     const memberOf = new Set(memberships.map((m) => m.ccaID));
@@ -188,7 +204,10 @@ export const ccaApplicationsRouter = createTRPCRouter({
         (a.category ?? "￿").localeCompare(b.category ?? "￿") ||
         a.ccaName.localeCompare(b.ccaName),
     );
-    return { ccas: rows };
+    // `recruitmentOpen` is COSMETIC and is allowed to be up to 15s stale — the
+    // server check inside submitApplication is the boundary. This only decides
+    // whether a card in the grid says "Apply →" or "Recruitment closed".
+    return { ccas: rows, recruitmentOpen };
   }),
 
   /**
@@ -222,6 +241,7 @@ export const ccaApplicationsRouter = createTRPCRouter({
         occupancy,
         headRows,
         memberRows,
+        recruitmentOpen,
       ] = await Promise.all([
         ctx.db.ccaProfile.findUnique({
           where: { ccaID: input.ccaID },
@@ -261,6 +281,9 @@ export const ccaApplicationsRouter = createTRPCRouter({
           where: { ccaID: input.ccaID },
           select: { id: true },
         }),
+        // The hall-wide freeze, reported BESIDE canApply rather than folded
+        // into it — see the return below for why.
+        isRecruitmentOpen(ctx.db),
       ]);
 
       // SEATS, not slots — one group slot with 4 free seats is 4 things a
@@ -346,7 +369,18 @@ export const ccaApplicationsRouter = createTRPCRouter({
         application: latest ? { ...latest, slot: bookedSlot } : null,
         // The client still shows an Apply button and the server re-checks — this
         // just drives the default affordance.
+        //
+        // `canApply` KEEPS ITS ORIGINAL MEANING — "nothing about YOU stops you"
+        // — and recruitmentOpen is reported alongside rather than ANDed into
+        // it. Folding the two would collapse two different messages ("you
+        // already applied" and "the hall is closed") into one boolean, and
+        // CcaApplyPanel has to say WHICH: the you-related cases render a panel
+        // that explains itself, while the hall-closed case needs a disabled
+        // Apply button with the reason next to it, or an absent button reads as
+        // "this CCA doesn't take members" and the resident goes and asks a head.
+        // The server refuses regardless of either field.
         canApply: !isMember && !hasOpenApplication,
+        recruitmentOpen,
         openSeatCount,
         heads,
         memberCount: memberRows.length,
@@ -418,21 +452,28 @@ export const ccaApplicationsRouter = createTRPCRouter({
     await assertApplicationsEnabled(ctx.db);
     const userID = ctx.session.user.userID;
 
-    const apps = await ctx.db.ccaApplication.findMany({
-      where: { userID },
-      select: {
-        applicationID: true,
-        ccaID: true,
-        status: true,
-        notes: true,
-        interviewSlotID: true,
-        decisionReason: true,
-        createdAt: true,
-        decidedAt: true,
-      },
-      orderBy: { applicationID: "desc" },
-    });
-    if (apps.length === 0) return { applications: [] };
+    // Fetched together, and `recruitmentOpen` must be on BOTH return paths
+    // below — the empty-list early return included. Omitting it there would
+    // make the procedure's return a UNION of two shapes, and every client
+    // reading `data.recruitmentOpen` would stop compiling.
+    const [apps, recruitmentOpen] = await Promise.all([
+      ctx.db.ccaApplication.findMany({
+        where: { userID },
+        select: {
+          applicationID: true,
+          ccaID: true,
+          status: true,
+          notes: true,
+          interviewSlotID: true,
+          decisionReason: true,
+          createdAt: true,
+          decidedAt: true,
+        },
+        orderBy: { applicationID: "desc" },
+      }),
+      isRecruitmentOpen(ctx.db),
+    ]);
+    if (apps.length === 0) return { applications: [], recruitmentOpen };
 
     const ccaIDs = [...new Set(apps.map((a) => a.ccaID))];
     const slotIDs = apps
@@ -469,6 +510,7 @@ export const ccaApplicationsRouter = createTRPCRouter({
             ? (slotByID.get(a.interviewSlotID) ?? null)
             : null,
       })),
+      recruitmentOpen,
     };
   }),
 
@@ -489,6 +531,36 @@ export const ccaApplicationsRouter = createTRPCRouter({
     .input(applyInput)
     .mutation(async ({ ctx, input }) => {
       await assertApplicationsEnabled(ctx.db);
+      // THE FREEZE — this is the whole of "residents cannot apply".
+      //
+      // SECOND, not first, and the order is a decision rather than an accident:
+      // a hall whose entire applications feature is switched off should say so
+      // (CCA_APPLICATIONS_DISABLED) rather than blame the JCRC's recruitment
+      // switch for it. Both statements would be true; the more fundamental one
+      // wins, so the resident is told the thing that actually explains what
+      // they are seeing. This also keeps the two flags from being conflated —
+      // `cca.applications.enabled = "off"` and `cca.recruitment = "closed"`
+      // both stop applications and mean completely different things.
+      //
+      // CHECKED TWICE, and this is the first of the two. THE SECOND ONE, INSIDE
+      // withCcaLock IMMEDIATELY BEFORE THE WRITE, IS THE ONE THAT IS LOAD-
+      // BEARING — do not delete it and keep only this one.
+      //
+      // This early call exists purely to FAIL FAST. When the hall is frozen,
+      // every resident who clicks Apply would otherwise queue for a per-CCA
+      // advisory lock, sleep in its retry loop, and be refused anyway; on a
+      // popular CCA that is a stampede of pointless BookingLock inserts to
+      // reach a foregone conclusion. Refusing here costs one cached boolean.
+      //
+      // It CANNOT be the only check, because the gap between it and the write
+      // is not bounded by the flag's 15s TTL: withCcaLock retries up to
+      // LOCK_MAX_ATTEMPTS (50) times at LOCK_RETRY_MS (100ms) apart, so a
+      // contended CCA can hold a request here for ~5 seconds AFTER a 14.9s-stale
+      // cached "open" was read. That is an application landing up to ~20s after
+      // the JCRC pressed Stop, against a design and a UI that both promise 15.
+      // The head side (ccaApplicationsHead.decide) makes exactly this argument
+      // and puts its only check after lock acquisition; the two sides now agree.
+      await assertRecruitmentOpen(ctx.db);
       const userID = ctx.session.user.userID;
       const email = ctx.session.user.email ?? "";
 
@@ -514,6 +586,20 @@ export const ccaApplicationsRouter = createTRPCRouter({
       }
 
       return withCcaLock(ctx.db, input.ccaID, async () => {
+        // THE LOAD-BEARING CHECK. Re-read AFTER acquiring the lock, so the
+        // window between "recruitment was open" and "the row exists" is the
+        // few milliseconds of this callback rather than that plus however long
+        // we spent waiting on the mutex. See the long note above the first
+        // call for why the early one cannot stand alone.
+        //
+        // The cost of doing it inside the mutex is essentially nil: the flag is
+        // behind a 15s in-process cache, so on the overwhelming majority of
+        // requests this is a comparison against a module-level variable and no
+        // round trip at all. On the rare request that does refresh the cache it
+        // is one findUnique — the same shape of read this callback already does
+        // three more of, all of them under the same lock.
+        await assertRecruitmentOpen(ctx.db);
+
         const keys = membershipKeysFor({ email, userID });
         const member = await ctx.db.userCCA.findFirst({
           where: { ccaID: input.ccaID, userID: { in: keys } },
@@ -647,18 +733,53 @@ export const ccaApplicationsRouter = createTRPCRouter({
    * The seat count and the claim happen in the SAME locked section. Counting
    * outside the lock and writing inside it is the over-book: two residents both
    * read "1 seat left" and both take it.
+   *
+   * GATED BY THE RECRUITMENT FREEZE since 2026-08-25. This procedure is the ONLY
+   * writer of a seat claim in the codebase — the sole place that sets
+   * `status: "interview_scheduled"` and a non-null `interviewSlotID`; every
+   * other write of those fields (cancelSlot here, the head's cancelSlot, the
+   * reject branch of decide) sets them back to `submitted`/null, i.e. releases.
+   * So one gate here closes booking completely.
+   *
+   * NOTE WHAT THAT COSTS, because it is a real consequence and not a detail:
+   * this is also the RESCHEDULE path, so during a freeze a resident cannot MOVE
+   * an interview they already hold. They can still cancel it (cancelSlot stays
+   * open — releasing a seat shrinks occupancy) but they cannot then re-book, so
+   * cancelling during a freeze is effectively one-way. That follows from
+   * treating "stops interview booking" literally rather than carving out an
+   * exception nobody asked for; if it turns out to be the wrong trade, the
+   * narrowing lives here and nowhere else.
    */
   bookSlot: identifiedProcedure
     .input(bookSlotInput)
     .mutation(async ({ ctx, input }) => {
       await assertApplicationsEnabled(ctx.db);
+      // THE FREEZE, fail-fast half. Same two-call discipline as
+      // submitApplication and for the same reasons: this one refuses a frozen
+      // hall before the request queues for a per-CCA advisory lock (and before
+      // the `pre` read below), so a freeze does not turn every waiting
+      // applicant into a pointless BookingLock insert; the one inside the lock
+      // is the load-bearing gate. Do not delete either and keep only the other.
+      await assertRecruitmentOpen(ctx.db);
       const userID = ctx.session.user.userID;
 
       // Read once outside the lock to learn the ccaID to lock on; everything is
       // re-read and re-checked inside.
-      const pre = await ownApplicationOr404(ctx.db, input.applicationID, userID);
+      const pre = await ownApplicationOr404(
+        ctx.db,
+        input.applicationID,
+        userID,
+      );
 
       return withCcaLock(ctx.db, pre.ccaID, async () => {
+        // THE LOAD-BEARING CHECK, re-read after acquiring the lock so the window
+        // between "recruitment was open" and "the seat is claimed" is this
+        // callback rather than that plus however long we waited on the mutex —
+        // withCcaLock retries 50 times at 100ms, so up to ~5s on a contended
+        // CCA, on top of a flag read that was already up to 15s stale. Costs a
+        // comparison against a module-level variable on almost every request.
+        await assertRecruitmentOpen(ctx.db);
+
         const app = await ownApplicationOr404(
           ctx.db,
           input.applicationID,
@@ -728,9 +849,42 @@ export const ccaApplicationsRouter = createTRPCRouter({
   cancelSlot: identifiedProcedure
     .input(applicationTargetInput)
     .mutation(async ({ ctx, input }) => {
+      // DELIBERATELY NOT GATED by the recruitment freeze, even though bookSlot
+      // now is — but NOT for the reason first written here, which was false and
+      // is corrected in place because someone will otherwise inherit it.
+      //
+      // THE FALSE REASON: "releasing a seat shrinks occupancy, and the freeze
+      // exists to stop the pool growing." That is the grow/shrink rule applied
+      // mechanically, and under the new gate the shrink buys NOBODY anything:
+      // while recruitment is closed nobody can claim a released seat, because
+      // bookSlot is gated for everyone. The freed seat simply sits empty. The
+      // bullet list on assertRecruitmentOpen makes exactly this argument one
+      // line away, where the head's slot creation is called harmless
+      // "precisely because this gate means nobody can claim them" — the same
+      // post-reversal world, reasoned about correctly there and not here.
+      //
+      // THE TRUE REASON: a resident must be able to give up a slot they cannot
+      // attend. Gating this would force them to hold an interview they know
+      // they will miss, and the head eats the no-show; their only escape would
+      // be withdrawing the whole application, which is a far larger loss than
+      // the one they were trying to avoid. That is a worse trap than the one
+      // gating would prevent, and BOTH directions strand somebody, so the
+      // decision is which harm to carry — not which rule to apply.
+      //
+      // THE HARM WE DO CARRY, stated so it is never a surprise in the code
+      // either: while frozen, cancelling is ONE-WAY, because re-booking is
+      // gated. The resident-facing surface makes that an informed choice rather
+      // than a discovery — see CancelInterviewButton, which requires an
+      // explicit confirmation naming the consequence, and names withdrawal as
+      // the other exit. Do not remove that confirmation without gating this, or
+      // the trap comes straight back.
       await assertApplicationsEnabled(ctx.db);
       const userID = ctx.session.user.userID;
-      const pre = await ownApplicationOr404(ctx.db, input.applicationID, userID);
+      const pre = await ownApplicationOr404(
+        ctx.db,
+        input.applicationID,
+        userID,
+      );
 
       return withCcaLock(ctx.db, pre.ccaID, async () => {
         const app = await ownApplicationOr404(
@@ -738,7 +892,10 @@ export const ccaApplicationsRouter = createTRPCRouter({
           input.applicationID,
           userID,
         );
-        if (app.status !== "interview_scheduled" || app.interviewSlotID === null) {
+        if (
+          app.status !== "interview_scheduled" ||
+          app.interviewSlotID === null
+        ) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "NO_SCHEDULED_INTERVIEW",
@@ -774,7 +931,11 @@ export const ccaApplicationsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       await assertApplicationsEnabled(ctx.db);
       const userID = ctx.session.user.userID;
-      const pre = await ownApplicationOr404(ctx.db, input.applicationID, userID);
+      const pre = await ownApplicationOr404(
+        ctx.db,
+        input.applicationID,
+        userID,
+      );
 
       return withCcaLock(ctx.db, pre.ccaID, async () => {
         const app = await ownApplicationOr404(

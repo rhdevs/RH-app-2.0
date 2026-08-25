@@ -206,6 +206,24 @@ export const AUDIT_ACTIONS = [
   // time, which reverts the applicant. The audit row carries the cleared count.
   "ccaInterviewSlot.clear",
   "ccaInterviewNote.add",
+  // The HALL-WIDE RECRUITMENT FREEZE (the `cca.recruitment` SystemFlag row).
+  // Written by admin or jcrc through ccaRecruitment.setState, which is the ONLY
+  // writer of that row from the app — scripts/remediation/set-cca-recruitment.mjs
+  // is the break-glass second one, and it stamps `script:` into updatedBy so the
+  // two stay distinguishable. `rolesAfter` carries the new state
+  // ("open" | "closed"), which is the same place admin.setEnforcementMode puts
+  // its mode, because RoleAuditLog has no column for a flag value; `reason`
+  // carries the operator's optional note.
+  //
+  // There is deliberately NO targetCcaID: the switch is hall-wide by
+  // construction, and stamping one CCA on it would assert a scope that was
+  // never chosen. Note also that this action does NOT record the freeze being
+  // ENFORCED — a refused application writes nothing at all, by design; the log
+  // records who changed the switch, not who bounced off it.
+  //
+  // 18 characters, under the 32-char cap admin.listAuditLog's
+  // `action: z.string().max(32)` filter imposes.
+  "ccaRecruitment.set",
   // Events feature. approve/reject are written by JCRC (reviewEvents); publish,
   // cancel and attendees.export are written by the owning head (assertHeadsCca).
   // attendees.export records a PII export (matric/block/telegram) and its
@@ -1104,6 +1122,31 @@ export type Capabilities = {
    */
   manageCcas: boolean;
   /**
+   * May START and STOP hall-wide CCA recruitment (the `cca.recruitment` flag).
+   *
+   * Manager-tier (admin + jcrc): running recruitment is JCRC work, and the
+   * control lives on /admin/ccas, a tab a jcrc already reaches.
+   *
+   * `scrc` is deliberately ABSENT. The hall office appoints the JCRC; it does
+   * not run recruitment. Granting it here would also drag a hall-wide write
+   * onto a surface that is itself behind the unrelated `scrc.enabled` switch,
+   * so a hall-office member's ability to freeze recruitment would depend on a
+   * flag about something else entirely.
+   *
+   * NOT `manageCcas` (admin-only): a jcrc must be able to use their own
+   * control. NOT folded into `viewAnyCcaRoster`, which is a READ capability —
+   * the tab gate and the write gate are different questions and must not share
+   * a field, or widening the tab silently widens the freeze.
+   *
+   * THIS IS NOT A LICENCE TO BYPASS THE FREEZE. Holding it lets you change the
+   * flag; it does not exempt you from it. An admin who accepts a member during
+   * a freeze is refused exactly like a head — a freeze is an operational state
+   * of the hall, not an authorisation tier, and a silent admin exemption would
+   * mean the one person most likely to verify the freeze is the one person who
+   * cannot observe it working.
+   */
+  manageCcaRecruitment: boolean;
+  /**
    * May act on a user who holds `admin` at all. D-2: admin only.
    *
    * ALSO covers a target whose authority cannot be EVALUATED, which is the same
@@ -1258,6 +1301,10 @@ export function computeCapabilities(roles: readonly string[]): Capabilities {
     viewSystemHealthDetail: admin,
     manageEnforcementFlag: admin,
     reviewEvents: manager,
+    // The hall-wide recruitment freeze. `manager`, not `admin`: the JCRC runs
+    // recruitment, so gating their own control behind admin would make the
+    // feature useless to the people it is for.
+    manageCcaRecruitment: manager,
     manageUserProfiles: manager,
     deleteUsers: admin,
     // SCRC_ROLE's first appearance in a capability. Admin is included in all
