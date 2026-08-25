@@ -7,6 +7,7 @@ import { ccaRouter } from "./routers/cca";
 import { ccaAdminRouter } from "./routers/ccaAdmin";
 import { ccaApplicationsRouter } from "./routers/ccaApplications";
 import { ccaApplicationsHeadRouter } from "./routers/ccaApplicationsHead";
+import { ccaRecruitmentRouter } from "./routers/ccaRecruitment";
 import { eventRouter } from "./routers/event";
 import { userAdminRouter } from "./routers/userAdmin";
 
@@ -36,6 +37,22 @@ export const appRouter = createTRPCRouter({
   ccaApplications: ccaApplicationsRouter,
   /** CCA-head review/interview/decide, object-scoped by assertHeadsCca. */
   ccaApplicationsHead: ccaApplicationsHeadRouter,
+  /**
+   * The JCRC's hall-wide recruitment freeze (admin + jcrc). Two procedures over
+   * ONE SystemFlag row; it does not enforce anything itself — the gate is five
+   * assertRecruitmentOpen calls across the two routers above: two in
+   * submitApplication and two in bookSlot (each a fail-fast check plus the
+   * load-bearing one inside the lock), and one on the accepted branch of the
+   * head's decide. Applying, booking an interview and accepting are the three
+   * points at which the pool grows.
+   *
+   * Note it is deliberately NOT behind `cca.applications.enabled` the way those
+   * two are: turning the applications feature off entirely and freezing
+   * recruitment are different statements, and a JCRC must be able to reopen
+   * recruitment even while an admin has the whole feature switched off.
+   * See services/ccaRecruitment.ts for the open-by-default reasoning.
+   */
+  ccaRecruitment: ccaRecruitmentRouter,
   /** Events: head authoring, JCRC review, resident timeline + signup. Behind
    * the events.enabled switch; object-scoped per event's ccaID. */
   event: eventRouter,

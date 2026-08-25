@@ -39,6 +39,14 @@ const ACTION_STYLE: Record<string, string> = {
   revoke: "border-amber-300 bg-amber-100 text-amber-800",
   denied: "border-red-300 bg-red-100 text-red-800",
   "booking.denied.shadow": "border-gray-300 bg-gray-100 text-gray-600",
+  // The hall-wide recruitment freeze. AMBER, sharing the `revoke` register
+  // rather than the emerald `grant`/`set` one, because it reads as an
+  // OPERATIONAL EVENT with hall-wide reach — both directions of it are worth
+  // spotting in a scroll, and colouring only the "closed" direction is not
+  // possible here: this map keys on the action, and the state lives in
+  // `rolesAfter`. Purely cosmetic — actionClass() already falls back to the
+  // neutral badge for anything unlisted, so this changes no behaviour.
+  "ccaRecruitment.set": "border-amber-300 bg-amber-100 text-amber-800",
 };
 
 function actionClass(action: string) {

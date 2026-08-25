@@ -15,6 +15,7 @@ import {
 import { statusBadgeClass, residentStatusLabel } from "../_lib/status";
 import BookedSlot from "./BookedSlot";
 import SlotPicker from "./SlotPicker";
+import CancelInterviewButton from "./CancelInterviewButton";
 import ImageLightbox from "~/app/_components/ImageLightbox";
 
 /** Friendly copy for the machine-readable error tokens the procedures throw. */
@@ -34,6 +35,15 @@ function applyErrorCopy(message: string | undefined): string | null {
       return "This CCA no longer exists.";
     case "CCA_APPLICATIONS_DISABLED":
       return "Applications aren't open right now.";
+    case "RECRUITMENT_CLOSED":
+      return "CCA recruitment is closed right now, so new applications aren’t being taken.";
+    // DISTINCT FROM THE LINE ABOVE, on purpose. RECRUITMENT_UNKNOWN means the
+    // server could not READ the recruitment flag — the database was
+    // unreachable — not that anybody closed anything. Showing the closed copy
+    // here would blame the JCRC for a decision they never made and send the
+    // resident off to ask them about it.
+    case "RECRUITMENT_UNKNOWN":
+      return "We couldn’t check whether recruitment is open. Try again in a moment.";
     default:
       return "That didn't go through. Try again.";
   }
@@ -45,6 +55,34 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
 
   const [notes, setNotes] = useState("");
   const [showApply, setShowApply] = useState(false);
+  /**
+   * R2-M2. The frozen Apply and Submit buttons are `aria-disabled` rather than
+   * natively disabled, so they stay focusable and their explanations stay
+   * reachable — which means a click now REACHES the handler and is refused by a
+   * guard. A guard that returns silently is its own defect: the resident presses
+   * the button and absolutely nothing happens.
+   *
+   * `aria-describedby` does not cover this. It is announced on FOCUS, not on
+   * activation, so a screen-reader user who has already tabbed past the
+   * description hears nothing at all when they press. This state is what the
+   * press itself says.
+   */
+  const [refused, setRefused] = useState<{
+    /**
+     * WHICH BRANCH produced it. `showApply` decides which of two entirely
+     * different panels is on screen, and each has its own guard with its own
+     * sentence, so an untagged string leaked across the swap: a Submit refusal
+     * ("recruitment closed WHILE YOU WERE WRITING") survived Cancel and
+     * rendered next to "Apply to join", with no form and no draft in existence.
+     * `refused` is cleared only by a successful press, so it persisted there.
+     *
+     * Same defect, same shape and same fix as `Refusal` on the head's review
+     * screen: bind each sentence to the condition that makes it true, and gate
+     * on that rather than on a disjunction of everything.
+     */
+    where: "reveal" | "form";
+    text: string;
+  } | null>(null);
 
   const refresh = async () => {
     await Promise.all([
@@ -60,6 +98,41 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
       setNotes("");
       await refresh();
     },
+    // H1. WITHOUT THIS, THE PAGE GOES ON INSISTING RECRUITMENT IS OPEN AFTER
+    // THE SERVER HAS REFUSED. `getCca` is cached with a 30s staleTime and no
+    // refetch interval, so a resident whose cached `recruitmentOpen: true`
+    // predates the JCRC's Stop sees an enabled Apply button, clicks it, gets
+    // RECRUITMENT_CLOSED — and the button stays enabled, because nothing
+    // re-fetched. They can sit there clicking it. The 15s propagation window
+    // guarantees this state happens at least once per Stop, which makes it the
+    // single most likely moment for the UI to lie about the very thing this
+    // feature exists to communicate.
+    //
+    // ONLY RECRUITMENT_CLOSED, and RECRUITMENT_UNKNOWN is deliberately absent.
+    //
+    // Round 2 had both, which was self-defeating: RECRUITMENT_UNKNOWN is thrown
+    // from exactly one place — the `catch` in services/ccaRecruitment.ts — and
+    // it means THE DATABASE COULD NOT BE REACHED. Refetching against a database
+    // that is down fails (the query is `retry: false`), and a failed fetch used
+    // to replace this whole panel with "This CCA couldn't be loaded",
+    // destroying the very "we couldn't check" message the sentinel exists to
+    // display. The `!cca.data` guard below now prevents that teardown, but the
+    // refetch is still pointless: nothing was decided, so there is nothing new
+    // to fetch.
+    //
+    // RECRUITMENT_CLOSED is the opposite case and does need it: the database is
+    // up, `recruitmentOpen` in the cache is merely stale, the refetch succeeds,
+    // and the Apply button correctly goes to its disabled state.
+    //
+    // Nothing else invalidates: ALREADY_MEMBER, APPLICATION_OPEN and the rest
+    // are answers about THIS request that a refetch cannot change, and
+    // re-fetching on every failure would turn a rejected submit into a request
+    // amplifier.
+    onError: async (e) => {
+      if (e.message === "RECRUITMENT_CLOSED") {
+        await refresh();
+      }
+    },
   });
   const withdraw = api.ccaApplications.withdraw.useMutation({
     onSuccess: refresh,
@@ -71,8 +144,13 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
   if (cca.isPending) {
     return <div className="h-64 animate-pulse rounded-lg bg-gray-200" />;
   }
-  if (cca.error) {
-    const disabled = cca.error.message === "CCA_APPLICATIONS_DISABLED";
+  // `!cca.data`, NOT `cca.error`. react-query KEEPS the last good `data` across
+  // a failed BACKGROUND refetch, and testing the error first replaced a working
+  // panel — including any half-written application in the form below — with a
+  // dead end, on nothing worse than a three-second network hiccup. Same
+  // reasoning and same fix as ApplicationsReview and the admin panel.
+  if (!cca.data) {
+    const disabled = cca.error?.message === "CCA_APPLICATIONS_DISABLED";
     return (
       <div className="rounded-lg border border-gray-200 bg-white px-4 py-10 text-center">
         <p className="text-sm font-medium text-gray-900">
@@ -215,6 +293,7 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
           }
           cancelingSlot={cancelSlot.isPending}
           onChanged={refresh}
+          recruitmentOpen={d.recruitmentOpen}
         />
       ) : (
         <Card>
@@ -237,26 +316,106 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
 
           {app?.status === "rejected" && app.decisionReason && (
             <p className="mb-3 text-sm text-gray-600">
-              <span className="font-medium text-gray-700">Note from the CCA:</span>{" "}
+              <span className="font-medium text-gray-700">
+                Note from the CCA:
+              </span>{" "}
               {app.decisionReason}
             </p>
           )}
 
           {!showApply ? (
             <div className="flex flex-wrap items-center gap-3">
-              <p className="text-sm text-gray-600">
-                {d.canApply
-                  ? "Interested? Apply to become a member."
-                  : "You can't apply right now."}
+              <p id="apply-why" className="text-sm text-gray-600">
+                {!d.recruitmentOpen
+                  ? "CCA recruitment is closed right now."
+                  : d.canApply
+                    ? "Interested? Apply to become a member."
+                    : "You can't apply right now."}
               </p>
-              {d.canApply && (
-                <Button onClick={() => setShowApply(true)}>Apply to join</Button>
+              {/* DELIBERATE DIVERGENCE from the two cases beside it. When the
+                  reason is about YOU — already a member, application already in
+                  flight — this branch never runs at all: the isMember and
+                  openApp branches above render a different panel that explains
+                  itself. "The hall is closed" has no such panel, so an ABSENT
+                  button would read as "this CCA doesn't take members", and the
+                  resident would go ask a head.
+
+                  `aria-disabled`, NOT the native `disabled` attribute, and that
+                  is the point rather than a nicety. A natively disabled button
+                  is removed from the tab order and cannot take focus, so a
+                  keyboard or screen-reader user never lands on it and never
+                  hears the aria-describedby text — the description would be
+                  wired to a control nobody can reach, which is the same dead
+                  end a `title` attribute produces. aria-disabled keeps the
+                  button focusable and announced as unavailable, and the guard
+                  in the handler is what actually refuses the click. (The server
+                  refuses regardless; this only decides what the resident is
+                  told.) */}
+              {(d.canApply || !d.recruitmentOpen) && (
+                <Button
+                  onClick={() => {
+                    // EVERY GUARD SPEAKS — see the `refused` state at the top.
+                    if (!d.recruitmentOpen) {
+                      // R3-L9: deliberately NOT a restatement of the
+                      // `#apply-why` line sitting beside it. That line says what
+                      // the STATE is; this answers the PRESS, which is the only
+                      // thing a screen reader hears on activation and the only
+                      // new information a sighted resident gains by clicking.
+                      setRefused({
+                        where: "reveal",
+                        text: "Nothing to apply to yet — the button turns back on when the JCRC reopens recruitment.",
+                      });
+                      return;
+                    }
+                    setRefused(null);
+                    setShowApply(true);
+                  }}
+                  // `|| undefined` so the attribute is ABSENT rather than
+                  // aria-disabled="false" when the button is live. A literal
+                  // "false" alongside no native `disabled` is just noise, and
+                  // where the two coexist (the Submit button below) it reads as
+                  // a contradiction of the native state.
+                  aria-disabled={!d.recruitmentOpen || undefined}
+                  aria-describedby="apply-why"
+                  className={
+                    d.recruitmentOpen
+                      ? undefined
+                      : "cursor-not-allowed opacity-50 hover:bg-primary"
+                  }
+                >
+                  Apply to join
+                </Button>
+              )}
+              {/* Gated on TWO things, both necessary. The freeze must still be
+                  in force — a refusal is true only while its cause is, so the
+                  moment recruitment reopens the sentence must stop being shown.
+                  And the refusal must have come from THIS branch, or the form's
+                  "while you were writing" sentence renders here after a Cancel,
+                  next to an Apply button and no form at all. */}
+              {refused?.where === "reveal" && !d.recruitmentOpen && (
+                <p role="alert" className="text-sm text-amber-800">
+                  {refused.text}
+                </p>
               )}
             </div>
           ) : (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
+                // The Submit button is aria-disabled rather than natively
+                // disabled while frozen (so it stays focusable and its
+                // explanation is announced), which means Enter and a click both
+                // still reach this handler. This is the refusal — and it SAYS
+                // so, because a silent return leaves the resident pressing
+                // Enter into nothing.
+                if (!d.recruitmentOpen) {
+                  setRefused({
+                    where: "form",
+                    text: "CCA recruitment closed while you were writing, so this can’t be submitted yet. Your notes are kept.",
+                  });
+                  return;
+                }
+                setRefused(null);
                 const parsed = applyInput.safeParse({ ccaID, notes });
                 if (!parsed.success) return;
                 apply.mutate(parsed.data);
@@ -282,13 +441,80 @@ export default function CcaApplyPanel({ ccaID }: { ccaID: number }) {
               <p className="text-right text-xs text-gray-400">
                 {notes.length}/{APPLICATION_NOTES_MAX}
               </p>
-              {apply.error && (
-                <p className="text-sm text-red-600">
-                  {applyErrorCopy(apply.error.message)}
+              {/* The grey "recruitment closed while you were writing" box
+                  below states this same fact in a calmer register, so a freeze
+                  refusal would otherwise be told twice, in two colours, one
+                  line apart. The grey box is the better of the two — it also
+                  explains what happens to the draft — so the red line stands
+                  down for exactly that one duplicate.
+
+                  RECRUITMENT_CLOSED ONLY, deliberately not RECRUITMENT_UNKNOWN.
+                  The two are not interchangeable here: the grey box asserts
+                  that recruitment closed, and on the UNKNOWN path nobody closed
+                  anything — the database was unreachable. Suppressing the red
+                  line there would leave only a sentence that is false. It can
+                  co-occur with the grey box (the cached read fails closed while
+                  the live read throws), and when it does the more accurate
+                  statement is the one that must survive. */}
+              {apply.error &&
+                !(
+                  !d.recruitmentOpen &&
+                  apply.error.message === "RECRUITMENT_CLOSED"
+                ) && (
+                  <p className="text-sm text-red-600">
+                    {applyErrorCopy(apply.error.message)}
+                  </p>
+                )}
+              {/* Same two conditions as the collapsed branch: the cause must
+                  still hold, and the refusal must belong to THIS branch. */}
+              {refused?.where === "form" && !d.recruitmentOpen && (
+                <p role="alert" className="text-sm text-amber-800">
+                  {refused.text}
+                </p>
+              )}
+              {/* `showApply` is cleared only on success and by Cancel, so a
+                  freeze that lands WHILE the resident is typing leaves them
+                  inside this form. The <p id="apply-why"> that explains a
+                  disabled Apply button lives in the OTHER branch of this
+                  ternary and is not in the DOM here at all, so without this
+                  line the resident gets a dead grey Submit and no explanation
+                  anywhere on the page.
+
+                  Deliberately NOT solved by resetting showApply: that would
+                  discard notes they may have spent minutes writing, to punish
+                  them for something a JCRC did. Keep the draft, explain the
+                  state, and let them submit the moment it reopens. */}
+              {!d.recruitmentOpen && (
+                <p
+                  id="apply-why-form"
+                  className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600"
+                >
+                  CCA recruitment closed while you were writing, so this can’t
+                  be submitted right now. Your notes are kept here — you can
+                  submit as soon as the JCRC reopens recruitment.
                 </p>
               )}
               <div className="flex items-center gap-3">
-                <Button type="submit" disabled={apply.isPending}>
+                {/* `disabled` for the in-flight case (a genuinely transient
+                    state where preventing a double submit matters more than
+                    focus), `aria-disabled` for the freeze (a state that can
+                    persist for days and MUST stay explainable to a screen
+                    reader — see the note on the reveal button above). The
+                    form's onSubmit carries the matching guard, since an
+                    aria-disabled submit button still submits. */}
+                <Button
+                  type="submit"
+                  disabled={apply.isPending}
+                  aria-disabled={!d.recruitmentOpen || undefined}
+                  aria-describedby={
+                    d.recruitmentOpen ? undefined : "apply-why-form"
+                  }
+                  className={
+                    d.recruitmentOpen
+                      ? undefined
+                      : "cursor-not-allowed opacity-50 hover:bg-primary"
+                  }
+                >
                   {apply.isPending ? "Submitting…" : "Submit application"}
                 </Button>
                 <button
@@ -347,6 +573,7 @@ function ApplicationInProgress({
   onCancelSlot,
   cancelingSlot,
   onChanged,
+  recruitmentOpen,
 }: {
   ccaID: number;
   app: NonNullable<AppShape>;
@@ -356,6 +583,8 @@ function ApplicationInProgress({
   onCancelSlot: () => void;
   cancelingSlot: boolean;
   onChanged: () => Promise<void>;
+  /** Hall-wide freeze; since 2026-08-25 it stops interview booking too. */
+  recruitmentOpen: boolean;
 }) {
   const scheduled = app.status === "interview_scheduled";
   const [picking, setPicking] = useState(false);
@@ -389,10 +618,16 @@ function ApplicationInProgress({
               rather than leaving the pill on its own with no sentence at all. */}
           {(!scheduled || !app.slot) && (
             <p className="mt-2 text-sm text-gray-600">
+              {/* The freeze is checked FIRST: with booking gated, "book a slot
+                  below" is an instruction the resident cannot follow, and
+                  "slots soon" implies they will be claimable. Both are false
+                  while closed, so neither is shown. */}
               {app.status === "submitted" &&
-                (openSeatCount > 0
-                  ? "Your application is in. Book an interview slot below."
-                  : "Your application is in. The CCA will open interview slots soon.")}
+                (!recruitmentOpen
+                  ? "Your application is in. Interview booking is paused while the JCRC has recruitment closed."
+                  : openSeatCount > 0
+                    ? "Your application is in. Book an interview slot below."
+                    : "Your application is in. The CCA will open interview slots soon.")}
               {scheduled && "Your interview is booked."}
               {app.status === "interviewed" &&
                 "Your interview's done — the CCA will be in touch with a decision."}
@@ -438,13 +673,11 @@ function ApplicationInProgress({
                   <Button variant="outline" onClick={openPicker}>
                     Reschedule interview
                   </Button>
-                  <button
-                    onClick={onCancelSlot}
-                    disabled={cancelingSlot}
-                    className="text-sm font-medium text-gray-500 hover:text-red-600 disabled:opacity-50"
-                  >
-                    {cancelingSlot ? "Cancelling…" : "Cancel interview"}
-                  </button>
+                  <CancelInterviewButton
+                    recruitmentOpen={recruitmentOpen}
+                    pending={cancelingSlot}
+                    onConfirm={onCancelSlot}
+                  />
                 </>
               ) : openSeatCount > 0 ? (
                 <>
@@ -470,6 +703,11 @@ function ApplicationInProgress({
               ccaID={ccaID}
               applicationID={app.applicationID}
               currentSlotID={app.interviewSlotID}
+              recruitmentOpen={recruitmentOpen}
+              // Refresh WITHOUT closing: if the server refuses because the
+              // freeze landed mid-session, the picker must stay open and
+              // re-render into its frozen state rather than vanish.
+              onRefresh={onChanged}
               // Refetch BEFORE closing the picker. `app` is still the pre-book
               // data until getCca comes back, so closing first shows the panel
               // built from it: the OLD time under a green "Interview booked ✓"

@@ -5,8 +5,10 @@ import { useState } from "react";
 import CcaPicker, {
   type CcaOption,
 } from "~/app/admin/_components/bulk/CcaPicker";
+import { useCapabilities } from "~/app/admin/_components/AdminCapabilityContext";
 import RosterPanel from "~/app/_components/RosterPanel";
 import CcaHeadsManager from "./_components/CcaHeadsManager";
+import RecruitmentControlPanel from "./_components/RecruitmentControlPanel";
 
 /**
  * Browse any CCA's roster, and assign/unassign its heads.
@@ -27,8 +29,15 @@ import CcaHeadsManager from "./_components/CcaHeadsManager";
  * branch is the HALL OFFICE (scrc) path and is untouched here; admin and jcrc
  * already read this CCA's roster unredacted through manageCcaHeads, so the
  * export widens no one's reach — it only saves them reading it off the screen.
+ *
+ * It also hosts the HALL-WIDE recruitment switch. This tab, not a new one: the
+ * control is one button, it belongs to CCA oversight, and the people who hold
+ * `manageCcaRecruitment` (admin + jcrc) are exactly the people who already have
+ * this tab and its layout guard (`layout.tsx:33`, a live `viewAnyCcaRoster`
+ * read).
  */
 export default function AdminCcasPage() {
+  const cap = useCapabilities();
   const [selected, setSelected] = useState<CcaOption | null>(null);
 
   return (
@@ -39,6 +48,15 @@ export default function AdminCcasPage() {
           Pick a CCA to see its heads and members.
         </p>
       </header>
+
+      {/* Hall-wide, and therefore ABOVE the per-CCA picker rather than inside
+          it: nothing about this control depends on which CCA is selected, and
+          putting it below the picker would read as a property of that CCA.
+          Rendering is gated on the capability, and that gate is COSMETIC — the
+          server re-checks `manageCcaRecruitment` on both `ccaRecruitment`
+          procedures. Hiding UI is never a guard (AdminCapabilityContext's own
+          header states the rule). */}
+      {cap.manageCcaRecruitment && <RecruitmentControlPanel />}
 
       <CcaPicker
         value={selected?.ccaID ?? null}
