@@ -30,15 +30,20 @@ export type ProposalValue = {
   capacity: string;
 };
 
-export const EMPTY_PROPOSAL: ProposalValue = {
-  title: "",
-  description: "",
-  startLocal: "",
-  endLocal: "",
-  facilitySelection: "",
-  location: "",
-  capacity: "",
-};
+/* EMPTY_PROPOSAL WAS HERE AND IS DELETED (plan 02 §6.1).
+ *
+ * Its only consumer was EventCreateForm, the create screen that no longer
+ * exists: it seeded a blank form that the head filled in before any row was
+ * allocated. There is no such moment any more — "New event" creates the row
+ * first, so DetailsEditor always seeds ProposalValue from a REAL Event
+ * (EventManage.tsx:162-174), field by field, and never from a blank constant.
+ *
+ * The TYPE stays; only the value goes. Leaving the constant exported would leave
+ * a second, drift-prone answer to "what does an empty event look like" beside
+ * BLANK_EVENT_CONTENT in routers/event.ts, which is now the one that decides it
+ * — and this one is spelled in EMPTY STRINGS while that one is spelled in
+ * NULLS, which is exactly the pairing that has already cost this feature two
+ * bugs. */
 
 /** Is the current selection a real facility (not unset / not "Other")? */
 export function isFacilitySelected(v: ProposalValue): boolean {
@@ -78,10 +83,12 @@ export default function EventDetailsFields({
    *
    * THIS BLOCK IS SHARED BY BOTH SURFACES, so every sentence in it that names
    * the JCRC as a REVIEWER is false on the hall one: a hall event is registered
-   * and published by its own author and never enters the review queue. The two
-   * components that render this block already branch their own copy on the same
-   * fact (EventCreateForm's footer, EventsListPanel's empty state) — the three
-   * strings below were the half of the same screen that did not, so a JCRC
+   * and published by its own author and never enters the review queue. The
+   * surfaces that render this block already branch their own copy on the same
+   * fact (EventManage's contract sentence and its "Register and publish"
+   * footer, EventsListPanel's empty state; the third was EventCreateForm's
+   * footer, deleted with that file) — the three strings below were the half of
+   * the same screen that did not, so a JCRC
    * member filling in their own event was told twice that the JCRC would review
    * it. Defaults false: a CCA head is the common case and the CCA surfaces pass
    * nothing.

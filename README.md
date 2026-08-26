@@ -146,6 +146,21 @@ npm run dev                          # → http://localhost:3000
 > `prisma generate` is what you actually want. New collections and indexes are
 > created explicitly with `$runCommandRaw`; see `scripts/remediation/README.md`.
 
+**Pointing at an empty database instead?** Then read this, because `prisma
+generate` deliberately does not do what `db push` did. On MongoDB, Prisma only
+ever pushes *indexes* — collections and scalar fields need nothing — so an empty
+database will come up with **no unique indexes at all**. That is not cosmetic:
+`Counter.key`, `BookingLock.key` and `EventLock.key` are what make the id
+allocator and the booking/signup locks safe, `Event.eventID` and
+`EventSignup[eventID, userID]` are what make a duplicate signup a `P2002` instead
+of a second row, and `User.email_unique_ci` is the duplicate-account guard. Create
+them explicitly with `createIndexes` via `$runCommandRaw` —
+`scripts/remediation/create-auth-allowlist.mjs` is the working precedent, and
+`scripts/remediation/README.md` Step 0 explains the approach. There is no
+one-command bootstrap script yet; it lands with the events Phase 2 index work.
+In practice every deployment so far shares one long-lived database where these
+indexes already exist, which is why this gap went unnoticed.
+
 **Before `npm run dev` will get you anywhere,** fill in two values in `.env`:
 
 | | |

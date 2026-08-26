@@ -897,9 +897,19 @@ function AutoBookingNotice({ event }: { event: OwnedEvent }) {
  * `manageHrefBase` are passed in rather than derived, because a hall event has
  * no /cca/{id} route to derive them from.
  *
- * `manageHrefBase` is a STRING, not a builder function, and must stay one — see
- * the same note on EventCreateForm. A function prop from these server-component
- * routes throws at render while every static check passes.
+ * `manageHrefBase` IS A STRING, NOT A BUILDER FUNCTION, AND MUST STAY ONE.
+ *
+ * This warning used to say "see the same note on EventCreateForm". That file is
+ * deleted, so the note now lives HERE and in EventsListPanel, and this is the
+ * copy the two server-component routes above are covered by (T-19: the comment
+ * moves with the deletion, it is not lost with it).
+ *
+ * React refuses to serialise a function across the server/client boundary
+ * ("Functions cannot be passed directly to Client Components"), and the throw
+ * happens at RENDER — so `tsc`, ESLint and `next build` all pass while every
+ * authoring route 500s. That is not hypothetical: it shipped in Phase 1 and
+ * killed all five of them past two review agents. Every manage URL is
+ * `base/{eventID}`, so a base STRING carries everything a closure would.
  *
  * WHICH SURFACE A STATUS GETS IS DRIVEN BY `editScope`, IMPORTED — not by a hand
  * re-derivation of the same branching. That duplication is what let the client

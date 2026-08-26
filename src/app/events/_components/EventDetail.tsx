@@ -49,7 +49,7 @@ export default function EventDetail({ eventID }: { eventID: number }) {
             ? "This event just filled up."
             : e.message === "SIGNUP_CLOSED"
               ? "Signups have closed for this event."
-              : "That didn't work. Try again.",
+              : "That didn’t work. Try again.",
       ),
   });
   const cancel = api.event.cancelSignup.useMutation({ onSuccess: invalidate });

@@ -359,7 +359,18 @@ model FoodOrder {
 }
 ```
 
-Validate against the DB `$jsonSchema` validators before `prisma db push`.
+Validate any such change against the DB `$jsonSchema` validators first — several
+of these collections have one, and a Prisma-side field that the validator
+rejects breaks writes at runtime, not at build time.
+
+> [!CAUTION]
+> This line used to end "…before `prisma db push`". **Retracted, per Step 0:** a
+> push drops every index absent from `schema.prisma`, including
+> `User.email_unique_ci`, which it has already destroyed once. Editing
+> `schema.prisma` for a MongoDB scalar or a Prisma-level relation needs
+> `npx prisma generate` and nothing more — Mongo has no column to add. If a
+> change genuinely needs a new INDEX, create it with `createIndexes` through
+> `$runCommandRaw`, the way `create-auth-allowlist.mjs` does.
 
 ## Step: sweep blank event drafts (maintenance, on demand) — `sweep-blank-event-drafts.mjs`
 

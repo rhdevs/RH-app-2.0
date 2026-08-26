@@ -130,7 +130,7 @@ export default function EventReviewDetail({ eventID }: { eventID: number }) {
           ? "This event has already been decided. Reload the page."
           : e.message.includes("reason")
             ? "A reason is required to request changes or decline."
-            : "That didn't go through. Try again.",
+            : "That didn’t go through. Try again.",
       );
     },
   });
