@@ -35,7 +35,7 @@ export default function EventReviewQueue() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Event review</h1>
+        <h2 className="text-2xl font-semibold text-gray-900">Event review</h2>
         <p className="mt-1 text-sm text-gray-500">
           {events.length === 0
             ? "Nothing waiting for review."

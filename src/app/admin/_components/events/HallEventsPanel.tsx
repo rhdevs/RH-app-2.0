@@ -15,16 +15,25 @@ export default function HallEventsPanel() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold text-gray-900">Hall events</h2>
+        {/*
+          Says "without waiting for a review", NOT "they don't go through the
+          review queue below" — which is what this used to say, and which is
+          false. "Register and publish" runs submit and decide as two calls; if
+          the second fails the event really does sit in the queue below, and the
+          step-2 error copy says so in as many words. Browser-verified: a
+          submitted-but-undecided hall event renders in BOTH panels of this one
+          page, so the old sentence was contradicted a few hundred pixels down.
+        */}
         <p className="mt-1 text-sm text-gray-500">
-          Events the JCRC runs itself. You register and publish them here —
-          they don&rsquo;t go through the review queue below.
+          Events the JCRC runs itself. Register and publish them here in one
+          step, without waiting for a review.
         </p>
       </div>
 
       <EventsListPanel
         ccaID={null}
         newHref="/admin/events/hall/new"
-        manageHref={(id) => `/admin/events/hall/${id}`}
+        manageHrefBase="/admin/events/hall"
       />
     </div>
   );

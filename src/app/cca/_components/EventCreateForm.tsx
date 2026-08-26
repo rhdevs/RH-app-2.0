@@ -27,17 +27,24 @@ import EventDetailsFields, {
  * `ccaID` null means a HALL-WIDE event, authored by the JCRC at
  * /admin/events/hall/new. The key is OMITTED from the payload in that case; the
  * server's create branches on its absence and requires `manageHallEvents`.
- * `backHref` / `manageHref` are passed in rather than derived, because a hall
- * event has no /cca/{id} route to derive them from.
+ * `backHref` / `manageHrefBase` are passed in rather than derived, because a
+ * hall event has no /cca/{id} route to derive them from.
+ *
+ * `manageHrefBase` is a STRING, not a builder function, and must stay one: both
+ * callers are server components, and React refuses to serialise a function
+ * across the server/client boundary ("Functions cannot be passed directly to
+ * Client Components"). That throw happens at RENDER, so tsc, lint and
+ * `next build` all pass while every authoring route 500s. Every manage URL is
+ * `base/{eventID}`, so a base path carries all the information a closure did.
  */
 export default function EventCreateForm({
   ccaID,
   backHref,
-  manageHref,
+  manageHrefBase,
 }: {
   ccaID: number | null;
   backHref: string;
-  manageHref: (eventID: number) => string;
+  manageHrefBase: string;
 }) {
   const router = useRouter();
   const [value, setValue] = useState<ProposalValue>(EMPTY_PROPOSAL);
@@ -45,7 +52,7 @@ export default function EventCreateForm({
 
   const create = api.event.create.useMutation({
     onSuccess: (res) => {
-      router.push(manageHref(res.eventID));
+      router.push(`${manageHrefBase}/${res.eventID}`);
     },
   });
 

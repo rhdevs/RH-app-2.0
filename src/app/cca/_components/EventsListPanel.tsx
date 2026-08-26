@@ -25,11 +25,11 @@ import { formatDateTime, STATUS_META } from "~/app/events/_lib/format";
 export default function EventsListPanel({
   ccaID,
   newHref,
-  manageHref,
+  manageHrefBase,
 }: {
   ccaID: number | null;
   newHref: string;
-  manageHref: (eventID: number) => string;
+  manageHrefBase: string;
 }) {
   const list = api.event.listForOwner.useQuery({ ccaID }, { retry: false });
 
@@ -97,7 +97,7 @@ export default function EventsListPanel({
             return (
               <li key={e.eventID}>
                 <Link
-                  href={manageHref(e.eventID)}
+                  href={`${manageHrefBase}/${e.eventID}`}
                   className="flex items-center gap-4 rounded-lg border border-gray-200 bg-white p-4 transition-colors hover:border-emerald-300 hover:bg-emerald-50/40"
                 >
                   <div className="min-w-0 flex-1">

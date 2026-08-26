@@ -642,11 +642,11 @@ function WithdrawButton({
  */
 function DuplicateButton({
   event,
-  manageHref,
+  manageHrefBase,
   backHref,
 }: {
   event: OwnedEvent;
-  manageHref?: (eventID: number) => string;
+  manageHrefBase?: string;
   backHref: string;
 }) {
   const router = useRouter();
@@ -656,7 +656,9 @@ function DuplicateButton({
     onSuccess: (res) => {
       // Straight to the copy's own manage page — the same interaction shape as
       // create. No toast.
-      router.push(manageHref ? manageHref(res.eventID) : backHref);
+      router.push(
+        manageHrefBase ? `${manageHrefBase}/${res.eventID}` : backHref,
+      );
     },
     onError: (e) => setError(mapError(e)),
   });
@@ -813,8 +815,12 @@ function AutoBookingNotice({ event }: { event: OwnedEvent }) {
  *
  * `ccaID` null means a HALL-WIDE event authored at /admin/events/hall/[eventID];
  * a number means a CCA event at /cca/[ccaID]/events/[eventID]. `backHref` and
- * `manageHref` are passed in rather than derived, because a hall event has no
- * /cca/{id} route to derive them from.
+ * `manageHrefBase` are passed in rather than derived, because a hall event has
+ * no /cca/{id} route to derive them from.
+ *
+ * `manageHrefBase` is a STRING, not a builder function, and must stay one — see
+ * the same note on EventCreateForm. A function prop from these server-component
+ * routes throws at render while every static check passes.
  *
  * WHICH SURFACE A STATUS GETS IS DRIVEN BY `editScope`, IMPORTED — not by a hand
  * re-derivation of the same branching. That duplication is what let the client
@@ -824,12 +830,12 @@ export default function EventManage({
   ccaID,
   eventID,
   backHref,
-  manageHref,
+  manageHrefBase,
 }: {
   ccaID: number | null;
   eventID: number;
   backHref: string;
-  manageHref?: (eventID: number) => string;
+  manageHrefBase?: string;
 }) {
   const utils = api.useUtils();
   const query = api.event.getForOwner.useQuery({ eventID }, { retry: false });
@@ -1027,7 +1033,7 @@ export default function EventManage({
           <div className="flex flex-wrap items-start gap-3 border-t border-gray-100 pt-4">
             <DuplicateButton
               event={event}
-              manageHref={manageHref}
+              manageHrefBase={manageHrefBase}
               backHref={backHref}
             />
             <CancelEventButton event={event} onInvalidate={invalidate} />
@@ -1057,7 +1063,7 @@ export default function EventManage({
           </div>
           <DuplicateButton
             event={event}
-            manageHref={manageHref}
+            manageHrefBase={manageHrefBase}
             backHref={backHref}
           />
         </div>
@@ -1079,7 +1085,7 @@ export default function EventManage({
           </div>
           <DuplicateButton
             event={event}
-            manageHref={manageHref}
+            manageHrefBase={manageHrefBase}
             backHref={backHref}
           />
         </div>

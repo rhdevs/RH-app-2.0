@@ -25,7 +25,7 @@ export default function ManageEventPage({
       ccaID={ccaID}
       eventID={eventID}
       backHref={`/cca/${ccaID}/events`}
-      manageHref={(id) => `/cca/${ccaID}/events/${id}`}
+      manageHrefBase={`/cca/${ccaID}/events`}
     />
   );
 }

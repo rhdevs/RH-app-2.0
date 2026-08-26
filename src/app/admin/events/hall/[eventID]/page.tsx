@@ -29,7 +29,7 @@ export default function ManageHallEventPage({
       // Duplicating lands on the COPY's own manage page, the same interaction
       // shape as create. Passed in because a hall event has no /cca/{id} route
       // to derive it from.
-      manageHref={(id) => `/admin/events/hall/${id}`}
+      manageHrefBase="/admin/events/hall"
     />
   );
 }

@@ -22,7 +22,7 @@ export default function CcaEventsPage({
     <EventsListPanel
       ccaID={ccaID}
       newHref={`/cca/${ccaID}/events/new`}
-      manageHref={(eventID) => `/cca/${ccaID}/events/${eventID}`}
+      manageHrefBase={`/cca/${ccaID}/events`}
     />
   );
 }

@@ -17,7 +17,7 @@ export default function NewEventPage({
       <EventCreateForm
         ccaID={ccaID}
         backHref={`/cca/${ccaID}/events`}
-        manageHref={(eventID) => `/cca/${ccaID}/events/${eventID}`}
+        manageHrefBase={`/cca/${ccaID}/events`}
       />
     </div>
   );
