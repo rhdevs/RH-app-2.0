@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import { CCA_BLOB_HOST } from "~/lib/schemas/cca";
+import {
+  answerValueSchema,
+  EVENT_MAX_QUESTIONS,
+} from "~/lib/schemas/eventQuestion";
 
 /**
  * Shared Events validation. Deliberately NOT under `src/server/`: the client
@@ -390,6 +394,32 @@ export function ownerLabel(
 }
 
 export const eventIdInput = z.object({ eventID: eventIDField });
+
+/**
+ * Sign up, optionally answering the event's custom questions.
+ *
+ * `answers` IS OPTIONAL AND THE SHAPE IS PERMISSIVE. Two separate reasons, and
+ * both matter:
+ *
+ *   - The client does not know the authoritative question list — it knows what
+ *     it last fetched, which a co-head may have changed since. Only the server,
+ *     holding the stored rows, can judge whether an answer is CORRECT, so this
+ *     schema judges only whether it is well-FORMED. Same posture, same
+ *     argument, as updateEventInput's docblock above.
+ *   - A retry that carries no answers at all — a stale tab, a re-fired mutation
+ *     after a network blip, any client that resends `{ eventID }` alone — must
+ *     still succeed for a resident who is ALREADY signed up. Making `answers`
+ *     required would turn that into a validation error about a form they have
+ *     already submitted. See D-43a.
+ *
+ * Content is checked by `validateAnswers` in schemas/eventQuestion.ts, against
+ * the STORED questions, inside withEventLock.
+ */
+export const eventSignupInput = z.object({
+  eventID: eventIDField,
+  answers: z.array(answerValueSchema).max(EVENT_MAX_QUESTIONS).optional(),
+});
+export type EventSignupInput = z.input<typeof eventSignupInput>;
 /**
  * The owner list key. `ccaID: null` selects the HALL-WIDE events. Nullable
  * rather than a separate procedure because listForOwner's `where` clause is

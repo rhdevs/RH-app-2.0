@@ -830,10 +830,119 @@ model EventSignup {
   eventID   Int
   userID    String
   createdAt DateTime? @default(now())
+  /// The resident's answers to this event's EventQuestion rows, if it has any.
+  ///
+  /// PURGED IN PLACE by scripts/remediation/purge-event-answers.mjs: this list
+  /// is emptied and Event.answersPurgedAt is stamped, while the ROW SURVIVES so
+  /// the signup and attendance COUNTS survive. That is the whole reason the
+  /// answers are embedded here rather than in a collection of their own — a
+  /// purge is one `$set answers: []` and the count is preserved by
+  /// construction, instead of being two facts to keep in step.
+  ///
+  /// WRITTEN EXPLICITLY, ALWAYS, even when empty (`answers: []`) — the T-12
+  /// rule, the same one the four Phase-2 Event fields follow.
+  ///
+  /// AND NOTE THE READ SIDE. Rows written BEFORE this field existed carry no
+  /// `answers` key at all. Prisma returns [] for an absent SCALAR list; for an
+  /// absent COMPOSITE list this repo has no precedent (all ten `type` blocks at
+  /// the top of this file are legacy introspection, none hand-authored). VERIFY
+  /// Prisma returns [] rather than throwing BEFORE the first signup lands — plan
+  /// 02 §13.2 step 2, which is BLOCKING. If it throws, the fallback is a
+  /// separate EventAnswer collection keyed [eventID, userID, questionID],
+  /// written inside the same withEventLock block. NOT a backfill.
+  answers   EventAnswer[]
 
   @@unique([eventID, userID], map: "event_user")
   @@index([eventID], map: "eventID")
   @@index([userID], map: "userID")
+}
+
+/// One answer to one EventQuestion. EMBEDDED on EventSignup, so the answer and
+/// the signup are ONE document: the capacity check, the signup row and the
+/// answers are a single write inside withEventLock and cannot half-apply. A
+/// second write would land after the P2002 swallow in `signup`, which returns
+/// success WITHOUT writing, so a retried submission's answers would be dropped
+/// while the caller was told it worked.
+///
+/// `values` is ALWAYS a string list, whatever the question's type. The
+/// serialisation of each type is defined in ANSWER_SERIALISATION in
+/// src/lib/schemas/eventQuestion.ts and NOWHERE ELSE — in particular a `date`
+/// answer is a CALENDAR DATE "YYYY-MM-DD", not an epoch, because a question
+/// about which day someone can make is not an instant and storing it as one
+/// makes the answer shift across timezones. An unanswered optional question is
+/// [], and there is one entry per stored question so the export's columns line
+/// up without a lookup.
+type EventAnswer {
+  questionID Int
+  values     String[]
+}
+
+/// One custom signup question on one event. A SEPARATE COLLECTION, never a
+/// column on Event, for three reasons:
+///
+///   1. getForOversight returns `{ ...event }` unredacted to a manager and
+///      `{ ...event, ...SCRC_HIDDEN_EVENT_FIELDS }` to the hall office, so EVERY
+///      new Event column is an SCRC disclosure decision by default, and the
+///      `satisfies` clause guarding that list catches a typo but never an
+///      omission (T-18, T-30). No oversight procedure queries this collection,
+///      so the redaction problem does not arise rather than being solved.
+///   2. Answers reference `questionID`. A stable, indexed, uniquely-constrained
+///      id is what stops an answer rebinding; an embedded list has no unique
+///      index to give it one.
+///   3. Event rows are read on the resident timeline and on every head, review
+///      and oversight page. Questions are read on exactly one screen. Putting
+///      them on Event would add weight to the hottest read in the feature for
+///      the benefit of the coldest.
+///
+/// `questionID` IS NEVER REUSED. It is allocated as max(existing) + 1 under
+/// withEventLock — max, not count, so a list whose ids are 1, 2 and 7 allocates
+/// 8. A deleted question's id is not recycled: an answer stored against question
+/// 3 would silently rebind to a different question 3 the moment one was
+/// re-added, and the answers live on a different document so nothing would flag
+/// it.
+///
+/// ITS UNIQUE INDEX DOES NOT EXIST UNTIL
+/// scripts/remediation/create-event-phase2-indexes.mjs RUNS. A Prisma @@unique
+/// on a Mongo model is a CLIENT-SIDE TYPE ASSERTION: until the index exists in
+/// the cluster the database enforces nothing, and the P2002 refusal that is
+/// supposed to catch a duplicate can never fire, because Mongo never raises it.
+/// Never `prisma db push` on this cluster — it drops `User.email_unique_ci`.
+///
+/// I-2: helpText, required, options, maxLength and createdAt are all nullable or
+/// defaulted. eventID, questionID, order, type and label are REQUIRED BY DESIGN
+/// — a question with no type or no label is not a question — and this is a
+/// brand-new collection with no legacy rows to break.
+///
+/// NO @@index([eventID]). The event_question unique index leads with eventID, so
+/// findMany({ where: { eventID }, orderBy: { order: "asc" } }) is covered by its
+/// prefix. One index, not two: an index not created is an index that cannot be
+/// dropped by accident.
+model EventQuestion {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  eventID    Int
+  /// Per-EVENT, allocated as max+1 under withEventLock. NEVER REUSED — an
+  /// answer references it, and reusing a deleted id would silently rebind an
+  /// old answer to a new question.
+  questionID Int
+  /// Display order, 0-based, DENSE. Rewritten wholesale on every save: a sparse
+  /// `order` makes orderBy stable but meaningless.
+  order      Int
+  /// One of EVENT_QUESTION_TYPES (src/lib/schemas/eventQuestion.ts). A String,
+  /// not an enum, for the same reason Event.status is: the DB cannot police it,
+  /// so the router does.
+  type       String
+  label      String
+  helpText   String?
+  required   Boolean?  @default(false)
+  /// Non-empty ONLY for single_choice / multi_choice. [] for every other type,
+  /// and written EXPLICITLY on every upsert (T-12).
+  options    String[]  @default([])
+  /// Character cap for short_text / long_text. Null elsewhere, and written
+  /// EXPLICITLY as null on every upsert (T-12).
+  maxLength  Int?
+  createdAt  DateTime? @default(now())
+
+  @@unique([eventID, questionID], map: "event_question")
 }
 
 /// Advisory mutex documents for per-event signup serialization, so a capacity

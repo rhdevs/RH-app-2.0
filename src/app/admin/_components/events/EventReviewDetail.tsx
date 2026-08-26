@@ -12,6 +12,11 @@ import {
   ownerLabel,
   type EventStatus,
 } from "~/lib/schemas/event";
+import {
+  QUESTION_TYPE_COPY,
+  isEventQuestionType,
+  typeHasOptions,
+} from "~/lib/schemas/eventQuestion";
 import { formatDateRange, STATUS_META } from "~/app/events/_lib/format";
 
 /**
@@ -105,6 +110,37 @@ function decidedLine(status: DecidedStatus, isHall: boolean): string {
   }
 }
 
+/**
+ * D-47 — a reviewer approving an event is approving what residents will be
+ * asked, including whether the head has put a health question on a hall form.
+ * Approving without seeing the questions would make the builder's PDPA
+ * warning advisory only. Read-only: the reviewer never edits an event.
+ */
+/**
+ * NAMES EVERY READER, and deliberately does not say "only".
+ *
+ * The previous wording promised the answers could be read by "only this CCA's
+ * heads" — untrue, and shown to a JCRC reviewer who can read them on that very
+ * screen. `assertHeadsCca` (ccaScope.ts:58) returns early for anyone holding
+ * `manageCcaHeads`, and `manageCcaHeads: manager` (roles.ts:1338) is admin OR
+ * jcrc, so both reach `getAttendees` / `exportAttendees` / `getSignupAnswers`
+ * for any CCA. A privacy assurance that understates its audience is the
+ * dangerous direction to be wrong in, and these answers can carry
+ * health-adjacent data the builder explicitly warns about.
+ */
+function questionsIntro(count: number, isHall: boolean): string {
+  return `${count} question${count === 1 ? "" : "s"}. Residents answer these when they sign up. ${
+    isHall ? "JCRC and admins" : "This CCA’s heads, JCRC and admins"
+  } can read the answers.`;
+}
+
+/** Falls back to the raw stored string for a hand-edited row outside the
+ * vocabulary — the same posture `validateAnswers`' own `default` case takes,
+ * since `EventQuestion.type` is a plain `String` in the schema. */
+function questionTypeLabel(type: string): string {
+  return isEventQuestionType(type) ? QUESTION_TYPE_COPY[type].label : type;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Page                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -156,7 +192,7 @@ export default function EventReviewDetail({ eventID }: { eventID: number }) {
     );
   }
 
-  const { event, ccaName } = query.data;
+  const { event, ccaName, questions } = query.data;
   const meta = STATUS_META[event.status];
   const branch = reviewBranch(event.status);
   // A hall-wide event has no CCA head. Copy that names one must branch on this.
@@ -212,6 +248,45 @@ export default function EventReviewDetail({ eventID }: { eventID: number }) {
           </p>
         </div>
       </div>
+
+      {questions.length > 0 && (
+        /* D-47 — read-only. The reviewer never edits an event. */
+        <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+          <h2 className="text-sm font-semibold text-gray-900">
+            What residents will be asked
+          </h2>
+          <p className="mt-1 text-sm text-gray-500">
+            {questionsIntro(questions.length, isHall)}
+          </p>
+          <ul className="mt-3 divide-y divide-gray-100">
+            {questions.map((q) => (
+              <li key={q.questionID} className="py-3 first:pt-0 last:pb-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium text-gray-900">
+                    {q.label}
+                  </p>
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                    {questionTypeLabel(q.type)}
+                  </span>
+                  <span className="text-xs text-gray-400">
+                    {q.required ? "Required" : "Optional"}
+                  </span>
+                </div>
+                {q.helpText && (
+                  <p className="mt-1 text-sm text-gray-500">{q.helpText}</p>
+                )}
+                {typeHasOptions(q.type) && q.options.length > 0 && (
+                  <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-sm text-gray-600">
+                    {q.options.map((o) => (
+                      <li key={o}>{o}</li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {branch.kind === "decide" ? (
         /* submitted — the one decidable state */

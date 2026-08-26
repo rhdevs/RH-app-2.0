@@ -18,6 +18,7 @@ import { assertScrcEnabled } from "~/server/api/services/scrcFlag";
 import { writeAudit } from "~/server/api/routers/admin";
 import {
   assertEventsEnabled,
+  assertQuestionsEditable,
   nextEventId,
   withEventLock,
 } from "~/server/api/services/events";
@@ -33,12 +34,18 @@ import {
   decideInput,
   reviewerCancelInput,
   eventIdInput,
+  eventSignupInput,
   ccaIdInput,
   normalizeStatus,
   editScope,
   EVENT_STATUSES,
   HALL_OWNER_LABEL,
 } from "~/lib/schemas/event";
+import {
+  answersAreRetained,
+  saveQuestionsInput,
+  validateAnswers,
+} from "~/lib/schemas/eventQuestion";
 
 /**
  * The Events feature.
@@ -449,6 +456,30 @@ const BLANK_EVENT_CONTENT = {
   capacity: null,
 } as const satisfies Partial<Record<keyof Event, null>>;
 
+/**
+ * WHAT ANYONE MAY SEE OF A QUESTION — one projection, used by getPublic (every
+ * authenticated resident on a published event), getForReview (the JCRC) and
+ * getQuestionsForOwner (the head).
+ *
+ * It is the whole row minus `id`, `eventID` and `createdAt`. THERE IS NO PII AND
+ * NO CANONICAL ID ON THIS MODEL AT ALL, which is why it needs no redaction list
+ * and why the same projection is safe for all three audiences. If a later phase
+ * puts an identity key on EventQuestion, this stops being true and the SCRC
+ * question (T-30) has to be asked again.
+ *
+ * `select`ed explicitly rather than spread, so a future column is opt-IN.
+ */
+const PUBLIC_QUESTION_FIELDS = {
+  questionID: true,
+  order: true,
+  type: true,
+  label: true,
+  helpText: true,
+  required: true,
+  options: true,
+  maxLength: true,
+} as const;
+
 /* resolveFacility lives in services/booking.ts — the interview-slot flow
  * resolves a facility the same way, and one definition is what keeps the two
  * agreeing about what a missing facility means. */
@@ -564,10 +595,54 @@ export const eventRouter = createTRPCRouter({
         // `equals: []` on a scalar list is a shape this repo has not used and
         // does not need, and the row is already in hand.
         if (existing && existing.photoUrls.length === 0) {
-          // RETURNS BEFORE nextEventId. Allocating an id and then discarding it
-          // burns a counter value for no reason, and nextEventId never goes
-          // backwards.
-          return { eventID: existing.eventID };
+          // D-39a — A DRAFT THAT ALREADY CARRIES QUESTIONS IS NOT BLANK.
+          //
+          // THIS CANNOT GO IN THE `where` ABOVE. BLANK_EVENT_CONTENT is
+          // `satisfies Partial<Record<keyof Event, null>>` and questions are a
+          // SEPARATE COLLECTION with no relation field on Event, so blankness
+          // as spelled there is structurally incapable of seeing them — not by
+          // oversight, but by construction. The `satisfies` guard that makes
+          // the filter safe against renamed columns is the same guard that
+          // makes it blind to anything that is not a column. Checked here, in
+          // JS, for exactly the same reason photoUrls is: the row is in hand.
+          //
+          // WHAT IT PREVENTS, and it is silent: a head presses New event,
+          // builds six questions, never types a title and leaves. Days later
+          // they press New event again, get this same row back with the six
+          // questions still attached, fill in the details, and — because the
+          // details editor is at the TOP of the screen and the builder is
+          // BELOW it — press Submit for review without scrolling. The JCRC
+          // then approves a form the head did not write this time, and the
+          // first signup freezes it. Nothing throws and nothing logs.
+          //
+          // FALL THROUGH RATHER THAN DELETING THE QUESTIONS. The head may be
+          // coming back TO those questions. Reuse exists to cap abandoned
+          // rows, which is housekeeping; it must never outrank
+          // not-destroying-work. The cost of falling through is one extra
+          // abandoned row and one counter value (D-39b) — and that row is then
+          // neither reusable here nor sweepable by
+          // sweep-blank-event-drafts.mjs, whose condition 7 refuses to delete
+          // a draft carrying questions. Both agree, deliberately; the sweep
+          // REPORTS such rows so an operator can delete them by judgement.
+          //
+          // NOT a relation field on Event instead. Two independent refusals: it
+          // would be a NEW Event COLUMN, which is an SCRC disclosure decision
+          // every time (T-30); and a Prisma relation is not `null`, so it could
+          // not satisfy Partial<Record<keyof Event, null>> and the guard would
+          // have to be loosened for every field to admit one.
+          //
+          // Costs one count on the event_question index's leading eventID
+          // prefix, only inside the isBareCreate branch and only when a
+          // candidate row was actually found.
+          const questionCount = await ctx.db.eventQuestion.count({
+            where: { eventID: existing.eventID },
+          });
+          if (questionCount === 0) {
+            // RETURNS BEFORE nextEventId. Allocating an id and then discarding
+            // it burns a counter value for no reason, and nextEventId never
+            // goes backwards.
+            return { eventID: existing.eventID };
+          }
         }
       }
 
@@ -1320,18 +1395,42 @@ export const eventRouter = createTRPCRouter({
       await assertEventsEnabled(ctx.db);
       const userID = ctx.session.user.userID;
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
-      await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
+      const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
 
-      const signups = await ctx.db.eventSignup.findMany({
-        where: { eventID: input.eventID },
-        select: { userID: true, createdAt: true },
-        orderBy: { createdAt: "asc" },
-      });
+      const [signups, questions] = await Promise.all([
+        ctx.db.eventSignup.findMany({
+          where: { eventID: input.eventID },
+          select: { userID: true, createdAt: true, answers: true },
+          orderBy: { createdAt: "asc" },
+        }),
+        ctx.db.eventQuestion.findMany({
+          where: { eventID: input.eventID },
+          orderBy: { order: "asc" },
+          select: PUBLIC_QUESTION_FIELDS,
+        }),
+      ]);
       const resolved = await resolveAttendees(
         ctx.db,
         signups.map((s) => s.userID),
       );
+      // D-52 LAYER 1 — THE READ CUTOFF, AND IT NEEDS NOBODY. Once sixty days
+      // have passed since (endTime ?? startTime) this returns no answers AT
+      // ALL, whether or not the rows still hold them and whether or not
+      // answersPurgedAt is set. That is what makes the retention promise true
+      // in the application on time, independently of any operator — layer 2,
+      // purge-event-answers.mjs, is a script a human runs and there is no cron
+      // in this repository. The questions themselves are still returned: the
+      // table and the CSV keep their columns and fill every answer cell with a
+      // literal em dash, because a BLANK cell says "this person didn't answer",
+      // which is a different and false claim (T-29).
+      const answersRetained = answersAreRetained(
+        event.endTime,
+        event.startTime,
+        Math.floor(Date.now() / 1000),
+      );
       return {
+        questions,
+        answersRetained,
         attendees: signups.map((s) => ({
           ...(resolved.get(s.userID) ?? {
             userID: s.userID,
@@ -1341,6 +1440,7 @@ export const eventRouter = createTRPCRouter({
             telegramHandle: null,
           }),
           signedUpAt: s.createdAt,
+          answers: answersRetained ? s.answers : [],
         })),
       };
     }),
@@ -1358,14 +1458,32 @@ export const eventRouter = createTRPCRouter({
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
       const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
 
-      const signups = await ctx.db.eventSignup.findMany({
-        where: { eventID: input.eventID },
-        select: { userID: true, createdAt: true },
-        orderBy: { createdAt: "asc" },
-      });
+      const [signups, questions] = await Promise.all([
+        ctx.db.eventSignup.findMany({
+          where: { eventID: input.eventID },
+          select: { userID: true, createdAt: true, answers: true },
+          orderBy: { createdAt: "asc" },
+        }),
+        ctx.db.eventQuestion.findMany({
+          where: { eventID: input.eventID },
+          orderBy: { order: "asc" },
+          select: PUBLIC_QUESTION_FIELDS,
+        }),
+      ]);
       const resolved = await resolveAttendees(
         ctx.db,
         signups.map((s) => s.userID),
+      );
+      // PII IS STILL JOINED LIVE. resolveAttendees is untouched: name, matric,
+      // block and telegram come from User/UserMatric at export time, never from
+      // a snapshot, so an export always reflects current profile data. THE
+      // ANSWERS ARE THE ONE THING THAT IS STORED on the signup, because they
+      // are an answer to a question at a moment, not a current fact about a
+      // person.
+      const answersRetained = answersAreRetained(
+        event.endTime,
+        event.startTime,
+        Math.floor(Date.now() / 1000),
       );
       const attendees = signups.map((s) => ({
         ...(resolved.get(s.userID) ?? {
@@ -1376,6 +1494,7 @@ export const eventRouter = createTRPCRouter({
           telegramHandle: null,
         }),
         signedUpAt: s.createdAt,
+        answers: answersRetained ? s.answers : [],
       }));
 
       await writeAudit(ctx.db, {
@@ -1384,9 +1503,234 @@ export const eventRouter = createTRPCRouter({
         targetCcaID: event.ccaID ?? undefined,
         targetEventID: event.eventID,
         action: "event.attendees.export",
-        reason: `${attendees.length} attendee(s)`,
+        // THE SAME AUDIT ROW, A STRICTLY LARGER PII PAYLOAD BEHIND IT. The
+        // column count is what lets the log distinguish "exported 40 names"
+        // from "exported 40 names and their answers" (D-53).
+        reason: `${attendees.length} attendee(s), ${answersRetained ? questions.length : 0} answer column(s)`,
       });
-      return { attendees, title: event.title, eventID: event.eventID };
+      return {
+        attendees,
+        questions,
+        answersRetained,
+        title: event.title,
+        eventID: event.eventID,
+      };
+    }),
+
+  /* ------------------------- HEAD: signup questions ---------------------- */
+
+  /**
+   * The builder's read. Returns the whole list plus the two facts the UI must
+   * NOT re-derive: `frozen` and `signupCount`.
+   *
+   * `frozen` IS COMPUTED SERVER-SIDE, from the same two conditions
+   * assertQuestionsEditable enforces, so the screen and the write cannot
+   * disagree about what is editable. A UI that re-derived it from `status`
+   * alone would miss the zero-signups half and offer a head a form that fails
+   * on save — which is T-35, and the reason QUESTIONS_FROZEN has its own
+   * non-retryable copy.
+   */
+  getQuestionsForOwner: identifiedProcedure
+    .input(eventIdInput)
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
+
+      const [questions, signupCount] = await Promise.all([
+        ctx.db.eventQuestion.findMany({
+          where: { eventID: input.eventID },
+          orderBy: { order: "asc" },
+          select: PUBLIC_QUESTION_FIELDS,
+        }),
+        ctx.db.eventSignup.count({ where: { eventID: input.eventID } }),
+      ]);
+      return {
+        questions,
+        signupCount,
+        frozen:
+          editScope(normalizeStatus(event.status)) === "none" ||
+          signupCount > 0,
+      };
+    }),
+
+  /**
+   * ONE WHOLE-LIST SAVE, under the lock, with never-reused ids.
+   *
+   * There is deliberately no per-question add / edit / delete / reorder
+   * mutation. Reordering is the operation a builder does most, and a
+   * per-question `order` patch is N writes that can half-apply. One list, one
+   * reconciliation, one lock.
+   *
+   * WHY withEventLock AND NOT A NEW LOCK. It is keyed `event:{eventID}` and it
+   * already serialises signup, so a question save and a signup CANNOT
+   * interleave — which is precisely the guarantee the freeze needs. The cost is
+   * T-38: a save can wait up to 5 s behind a burst of signups, or see "This
+   * event is busy right now". Acceptable; a head editing a form is not on a hot
+   * path, and a second mutex would be two locks that must be taken in a
+   * consistent order, which is a deadlock waiting for a maintainer.
+   *
+   * NO AUDIT ROW (C-3, D-53). State-machine transitions are audited; field
+   * saves are not, and questions are fields of an event. This fires on every
+   * builder save and would bury the handful of rows that describe what actually
+   * happened to an event.
+   */
+  saveQuestions: identifiedProcedure
+    .input(saveQuestionsInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      // THE ONLY OWNERSHIP BRANCH. Never a role check — `cca_head` is
+      // scope-free — and never re-derived inline.
+      const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
+
+      return withEventLock(ctx.db, input.eventID, async () => {
+        // INSIDE THE LOCK, NOT BEFORE IT. Outside, a signup can land between
+        // the check and the write, and the first answer is then validated
+        // against a form that changed.
+        await assertQuestionsEditable(ctx.db, event);
+
+        const existing = await ctx.db.eventQuestion.findMany({
+          where: { eventID: input.eventID },
+          select: { questionID: true },
+        });
+        const existingIDs = new Set(existing.map((q) => q.questionID));
+
+        // MAX OF WHAT EXISTS, NOT THE COUNT. A list of three questions whose
+        // ids are 1, 2 and 7 must allocate 8. And `maxID` keeps climbing across
+        // this call, so a deleted question's id is never recycled — an answer
+        // stored against question 3 would silently rebind to a different
+        // question 3 the moment one was re-added, on a document nothing here
+        // would flag.
+        let maxID = existing.reduce((m, q) => Math.max(m, q.questionID), 0);
+
+        const claimed = new Set<number>();
+        const resolved = input.questions.map((q, index) => {
+          let questionID: number;
+          if (q.questionID == null) {
+            questionID = ++maxID;
+          } else {
+            if (!existingIDs.has(q.questionID) || claimed.has(q.questionID)) {
+              // Either the id is not on this event, or the payload named it
+              // twice. Both mean the client is holding a list that is out of
+              // step with the server, and both are unfixable by retrying.
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "NO_SUCH_QUESTION",
+              });
+            }
+            questionID = q.questionID;
+          }
+          claimed.add(questionID);
+          const help = q.helpText?.trim() ?? "";
+          return {
+            questionID,
+            // ORDER IS THE ARRAY INDEX, rewritten for every kept question on
+            // every save. Dense, 0-based, no gaps — a sparse `order` makes
+            // orderBy stable but meaningless.
+            order: index,
+            type: q.type,
+            label: q.label,
+            helpText: help.length > 0 ? help : null,
+            required: q.required ?? false,
+            // EVERY FIELD WRITTEN EXPLICITLY, including the two that are empty
+            // for this type. T-12: `{ maxLength: null }` matches a STORED null
+            // and not an absent key, and leaving a stale `options` behind after
+            // a type change would hand validateAnswers a vocabulary the head
+            // can no longer see.
+            options: q.options ?? [],
+            maxLength: q.maxLength ?? null,
+          };
+        });
+
+        const keptIDs = resolved.map((q) => q.questionID);
+        // `notIn: []` matches everything, which is exactly right when the head
+        // has cleared the whole form.
+        await ctx.db.eventQuestion.deleteMany({
+          where: { eventID: input.eventID, questionID: { notIn: keptIDs } },
+        });
+
+        for (const q of resolved) {
+          const { questionID, ...fields } = q;
+          await ctx.db.eventQuestion.upsert({
+            where: {
+              eventID_questionID: { eventID: input.eventID, questionID },
+            },
+            create: {
+              eventID: input.eventID,
+              questionID,
+              ...fields,
+              createdAt: new Date(),
+            },
+            update: fields,
+          });
+        }
+
+        return { saved: keptIDs.length };
+      });
+    }),
+
+  /**
+   * One resident's answers, for the head's detail view.
+   *
+   * Owning head only — the access ceiling is head + JCRC, but a ceiling is not a
+   * mandate and the JCRC has stated no use for an answers screen (D-48). A
+   * nominated door scanner cannot reach this either: scanners scan.
+   *
+   * `userID` IS A PLAIN BOUNDED STRING, deliberately not canonicalUserIDSchema.
+   * That schema refuses the EXT namespace, and this lookup is already fenced to
+   * one event the caller owns — an unrecognised id simply finds no row, so
+   * there is nothing to enumerate that getAttendees does not already hand the
+   * same caller in full.
+   */
+  getSignupAnswers: identifiedProcedure
+    .input(
+      z.object({
+        eventID: z.number().int().positive(),
+        userID: z.string().trim().min(1).max(64),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const actorUserID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, actorUserID); // I-5 live read
+      const event = await loadOwnedEvent(
+        ctx.db,
+        actorUserID,
+        roles,
+        input.eventID,
+      );
+
+      const [signup, questions] = await Promise.all([
+        ctx.db.eventSignup.findUnique({
+          where: {
+            eventID_userID: { eventID: input.eventID, userID: input.userID },
+          },
+          select: { answers: true, createdAt: true },
+        }),
+        ctx.db.eventQuestion.findMany({
+          where: { eventID: input.eventID },
+          orderBy: { order: "asc" },
+          select: PUBLIC_QUESTION_FIELDS,
+        }),
+      ]);
+      if (!signup) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_SIGNUP" });
+      }
+      // The same unconditional read cutoff as getAttendees (D-52 layer 1).
+      const answersRetained = answersAreRetained(
+        event.endTime,
+        event.startTime,
+        Math.floor(Date.now() / 1000),
+      );
+      return {
+        questions,
+        answersRetained,
+        answers: answersRetained ? signup.answers : [],
+        signedUpAt: signup.createdAt,
+      };
     }),
 
   /* ------------------------------ REVIEWER ------------------------------- */
@@ -1431,9 +1775,19 @@ export const eventRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
       }
       const names = await attachCcaNames(ctx.db, nameableCcaIDs([event]));
+      // D-47 — A REVIEWER APPROVING AN EVENT IS APPROVING WHAT RESIDENTS WILL
+      // BE ASKED, including whether the head has put a health question on a
+      // hall form. Approving without seeing the questions would make the PDPA
+      // line in the builder advisory only. Read-only: the reviewer never edits.
+      const questions = await ctx.db.eventQuestion.findMany({
+        where: { eventID: input.eventID },
+        orderBy: { order: "asc" },
+        select: PUBLIC_QUESTION_FIELDS,
+      });
       return {
         event: { ...event, status: normalizeStatus(event.status) },
         ccaName: ownerName(event.ccaID, names),
+        questions,
       };
     }),
 
@@ -1904,7 +2258,15 @@ export const eventRouter = createTRPCRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
       }
 
-      const [names, signupCount, mine] = await Promise.all([
+      // T-40 — THE QUESTIONS ARE READ **AFTER** THE STATUS GUARD ABOVE, NEVER
+      // BEFORE IT. Fetching them first and then checking status would disclose
+      // a draft event's whole form to any authenticated resident who guessed an
+      // eventID. The guard is the boundary; everything below it is projection.
+      //
+      // A `canceled` event may also carry questions, and returning them is
+      // harmless because signup is closed — but the client must not render a
+      // form under "Signups are closed."
+      const [names, signupCount, mine, questions] = await Promise.all([
         attachCcaNames(ctx.db, nameableCcaIDs([event])),
         ctx.db.eventSignup.count({ where: { eventID: event.eventID } }),
         ctx.session.user.userID
@@ -1918,6 +2280,11 @@ export const eventRouter = createTRPCRouter({
               select: { eventID: true },
             })
           : Promise.resolve(null),
+        ctx.db.eventQuestion.findMany({
+          where: { eventID: event.eventID },
+          orderBy: { order: "asc" },
+          select: PUBLIC_QUESTION_FIELDS,
+        }),
       ]);
 
       const nowSec = Math.floor(Date.now() / 1000);
@@ -1933,12 +2300,35 @@ export const eventRouter = createTRPCRouter({
         full,
         // The client still shows the button; the server is the real gate.
         signupOpen: status === "published" && !started && !full,
+        // ADDED HERE AND **NOT** TO toPublicCard. That helper is shared by
+        // listPublished and listMySignups, so putting questions in it would
+        // ship every event's whole form to the resident timeline on every page
+        // load. getPublic is a single-event fetch and the only place the form
+        // is rendered.
+        questions,
       };
     }),
 
+  /**
+   * Sign up, answering the event's custom questions if it has any.
+   *
+   * THE ANSWERS RIDE ON THE EXISTING `eventSignup.create`. ONE DOCUMENT, ONE
+   * WRITE, INSIDE THE LOCK. There is no second write and there must never be
+   * one: a write placed after the P2002 catch below is SKIPPED on every retried
+   * submission while the caller is told it worked, and a write placed after the
+   * withEventLock callback is outside the mutex the capacity check needs.
+   *
+   * THE ORDER INSIDE THE LOCK IS LOAD-BEARING (D-43a). The already-signed-up
+   * check is FIRST, before validation, because there are TWO idempotent paths
+   * here and validating first would break both: a retry carrying no answers —
+   * a stale tab, a re-fired mutation after a network blip — would get
+   * ANSWERS_INVALID for an event the resident is already signed up for, which
+   * today returns success. It is also wasted work, since an already-signed-up
+   * caller's stored answers are deliberately left alone. First answer wins.
+   */
   signup: identifiedProcedure
     .use(requireMatric)
-    .input(eventIdInput)
+    .input(eventSignupInput)
     .mutation(async ({ ctx, input }) => {
       await assertEventsEnabled(ctx.db);
       const userID = ctx.session.user.userID;
@@ -1959,30 +2349,82 @@ export const eventRouter = createTRPCRouter({
       }
 
       return withEventLock(ctx.db, input.eventID, async () => {
+        // D-43a — ALREADY SIGNED UP? SUCCEED IMMEDIATELY, BEFORE ANY
+        // VALIDATION. One indexed findUnique on event_user, on a path that
+        // already does a count against the same collection inside the same
+        // lock.
+        //
+        // This makes "first answer wins" true BY CONSTRUCTION rather than as a
+        // side effect of the P2002 handler below, which is what enforces D-48's
+        // ruling that there is no answer-editing path in this phase. It also
+        // makes the capacity arm below simpler: its old inner findUnique and
+        // early return are now unreachable, because a caller cannot get there
+        // while already signed up.
+        const already = await ctx.db.eventSignup.findUnique({
+          where: { eventID_userID: { eventID: input.eventID, userID } },
+          select: { eventID: true },
+        });
+        if (already) return { signedUp: true as const };
+
+        // READ INSIDE THE LOCK, deliberately. The questions are the thing that
+        // can change while somebody is filling in the form, so a head must not
+        // be able to slip one in between the validation and the write. The
+        // freeze (assertQuestionsEditable) makes this near-vacuous once one
+        // signup exists; for the FIRST signup it is the only guard there is.
+        const questions = await ctx.db.eventQuestion.findMany({
+          where: { eventID: input.eventID },
+          orderBy: { order: "asc" },
+          select: {
+            questionID: true,
+            type: true,
+            required: true,
+            options: true,
+            maxLength: true,
+          },
+        });
+        const v = validateAnswers(questions, input.answers ?? []);
+        if (!v.ok) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "ANSWERS_INVALID",
+            // Per-question detail for the server log. The client does NOT rely
+            // on this reaching it: it runs the same validateAnswers itself and
+            // renders errors under the right fields, and tRPC does not ship
+            // `cause` to the browser.
+            cause: v.errors,
+          });
+        }
+
         if (event.capacity != null) {
           const count = await ctx.db.eventSignup.count({
             where: { eventID: input.eventID },
           });
-          // Already-signed-up callers pass (idempotent); genuinely-full block.
           if (count >= event.capacity) {
-            const already = await ctx.db.eventSignup.findUnique({
-              where: {
-                eventID_userID: { eventID: input.eventID, userID },
-              },
-              select: { eventID: true },
-            });
-            if (!already) {
-              throw new TRPCError({ code: "CONFLICT", message: "EVENT_FULL" });
-            }
-            return { signedUp: true as const };
+            throw new TRPCError({ code: "CONFLICT", message: "EVENT_FULL" });
           }
         }
         try {
           await ctx.db.eventSignup.create({
-            data: { eventID: input.eventID, userID, createdAt: new Date() },
+            data: {
+              eventID: input.eventID,
+              userID,
+              createdAt: new Date(),
+              // WRITTEN EXPLICITLY, even when the event has no questions and
+              // this is [] — T-12, the same rule create follows for the four
+              // inert Phase-2 Event fields.
+              answers: v.normalized,
+            },
           });
         } catch (err) {
           // Unique index is the double-submit backstop — idempotent success.
+          //
+          // DO NOT DELETE THIS CATCH. D-43a's early return above handles the
+          // ALREADY-SIGNED-UP case; this handles the genuine race — two tabs
+          // that both got past that findUnique before either wrote. They are
+          // different facts and both are needed. Note the consequence, which is
+          // correct but surprising: the loser's answers are DISCARDED and it is
+          // still told it succeeded. First answer wins, and the copy must not
+          // promise otherwise (T-23).
           if (
             !(
               typeof err === "object" &&
