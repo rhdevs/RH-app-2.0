@@ -216,6 +216,23 @@ export async function assertQuestionsEditable(
       message: "EVENT_LOCKED",
     });
   }
+  // UNREACHABLE TODAY, AND KEPT ON PURPOSE.
+  //
+  // Freezing at approval (above) made this branch dead: `signup` refuses
+  // anything but `published` (routers/event.ts:2340), `published` is not scope
+  // `"all"`, and no transition returns a published event to an editable scope
+  // — `withdraw` is submitted -> draft only. So an event that is editable here
+  // can never have a signup, and QUESTIONS_FROZEN cannot fire. Confirmed in a
+  // browser on 2026-08-27: saving questions on a published event with a real
+  // signup returns EVENT_LOCKED, not QUESTIONS_FROZEN.
+  //
+  // Left standing as defence in depth, because it is the guard that stops
+  // answers being invalidated under people who already gave them, and the
+  // status machine is exactly the kind of thing a later phase edits. Deleting
+  // it would silently transfer that protection to a rule three files away.
+  // Its user-facing copy and the T-35 "can never succeed on a retry" mapping
+  // are correspondingly unreachable — do not spend time tuning them, and do
+  // not treat their absence from the UI as a bug.
   const signups = await db.eventSignup.count({
     where: { eventID: event.eventID },
   });
