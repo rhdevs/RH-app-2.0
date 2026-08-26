@@ -839,8 +839,10 @@ model EventSignup {
 /// Advisory mutex documents for per-event signup serialization, so a capacity
 /// check and the subsequent create cannot interleave and overbook. Same shape
 /// and reclaim strategy as BookingLock; driven by withEventLock in
-/// services/events.ts. `prisma db push` must create the unique index on `key` —
-/// that index is what makes the lock safe.
+/// services/events.ts. The unique index on `key` is what makes the lock safe;
+/// it is created with `createIndexes` (see
+/// scripts/remediation/create-event-phase2-indexes.mjs) — never `prisma db push`
+/// on this cluster, it drops `User.email_unique_ci`.
 model EventLock {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   key       String   @unique

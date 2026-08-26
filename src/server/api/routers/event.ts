@@ -405,6 +405,50 @@ const SCRC_HIDDEN_EVENT_FIELDS = {
   scannerUserIDs: [],
 } as const satisfies Partial<Record<keyof Event, null | readonly string[]>>;
 
+/**
+ * WHAT "BLANK" MEANS ON AN EVENT ROW — ONE DEFINITION, USED TWICE.
+ *
+ * D-30's reuse rule needs two things to agree exactly: the `where` that FINDS a
+ * blank draft, and the `create` that MAKES one. While they were two hand-written
+ * lists in two places they drifted immediately — `create` omitted
+ * `publicDescription` and `bannerUrl` while the filter demanded both be null,
+ * and because Prisma's null match is the strict one (T-12) a row created here
+ * could never match the filter meant to find it. Reuse never fired once; every
+ * press of "New event" allocated a new id, silently, with a green build.
+ *
+ * THE TWO LISTS ARE NOW THE SAME OBJECT, so that drift is no longer a matter of
+ * discipline:
+ *   - spread into the reuse `where`, it IS the blankness condition;
+ *   - spread FIRST into `create`'s `data`, it guarantees every one of these keys
+ *     is written explicitly — later keys in the same object literal override it
+ *     with the caller's real values.
+ * Add a field here and both sides move together. Add one to the create only and
+ * the filter ignores it, which costs at worst one extra blank row. The dangerous
+ * direction — a filter key that the create never writes — can no longer be
+ * expressed at all.
+ *
+ * NOT the four inert Phase-2 fields (attendanceOpensAt, attendanceClosesAt,
+ * scannerUserIDs, answersPurgedAt). `create` must write those for the same T-12
+ * reason, but they are not part of BLANKNESS: nothing a head types sets them, so
+ * requiring them in the filter would be noise. They stay spelled out at the
+ * create site, with the comment that explains why.
+ *
+ * `satisfies Partial<Record<keyof Event, null>>` is the guard
+ * SCRC_HIDDEN_EVENT_FIELDS uses above: a renamed or deleted column fails the
+ * build here rather than quietly becoming a filter key that matches nothing.
+ */
+const BLANK_EVENT_CONTENT = {
+  title: null,
+  description: null,
+  publicDescription: null,
+  bannerUrl: null,
+  startTime: null,
+  endTime: null,
+  location: null,
+  facilityID: null,
+  capacity: null,
+} as const satisfies Partial<Record<keyof Event, null>>;
+
 /* resolveFacility lives in services/booking.ts — the interview-slot flow
  * resolves a facility the same way, and one definition is what keeps the two
  * agreeing about what a missing facility means. */
@@ -455,6 +499,78 @@ export const eventRouter = createTRPCRouter({
         ccaID = input.ccaID;
       }
 
+      // D-30 — REUSE THE CALLER'S EXISTING BLANK DRAFT instead of making a
+      // second one.
+      //
+      // D-29 turned "New event" from a link into a mutation BUTTON, so without
+      // this rule every stray press leaves a row behind and the number of
+      // abandoned blanks grows without bound. With it, the maximum number of
+      // live blank drafts is ONE per (owner scope, creator): press the button
+      // ten times and you land on the same row ten times.
+      //
+      // ONLY FOR A BARE CREATE. A payload carrying any content field allocates a
+      // fresh id exactly as it does today — `duplicate` and any future
+      // create-with-content path are unaffected.
+      //
+      // THE RACE IS REAL AND SELF-HEALS. Two tabs pressing the button at once
+      // both find nothing and both create. That leaves two blanks, the next
+      // press reuses one of them, and sweep-blank-event-drafts.mjs (D-33)
+      // removes the other. Serialising this behind withEventLock would be more
+      // machinery than the outcome justifies.
+      // DERIVED FROM THE INPUT OBJECT, NOT FROM A HAND-WRITTEN LIST OF FIELDS.
+      // The hand-written version listed the seven content fields
+      // createEventInput happens to carry TODAY. Add an eighth to the schema —
+      // Phase 2's question rows are the obvious candidate — and the old spelling
+      // would keep returning true for a payload that carried it, so the reuse
+      // branch below would hand back an existing row and DISCARD the new
+      // content, silently, with the caller told it succeeded. Enumerating the
+      // parsed input instead means a new field is covered the moment it is added
+      // to the schema, with no second edit here. `ccaID` is excluded because it
+      // is the OWNER SCOPE, not content: it is resolved above and is part of the
+      // reuse key, not of blankness.
+      const isBareCreate = Object.entries(input).every(
+        ([key, value]) => key === "ccaID" || value == null,
+      );
+      if (isBareCreate) {
+        const existing = await ctx.db.event.findFirst({
+          where: {
+            // WRITTEN EXPLICITLY, EVEN WHEN NULL — T-12, the same rule as the
+            // create below. `{ ccaID: null }` matches a STORED null and NOT an
+            // absent key, and the hall branch depends on exactly that. This is
+            // the RESOLVED local from the ownership branch above, which is
+            // `input.ccaID ?? null` by construction.
+            ccaID,
+            // createdBy is in the filter so a CCA with two heads never has head
+            // B silently adopt head A's abandoned blank. That would put B's
+            // edits on a row A believes is theirs, and `createdBy` would then
+            // name the wrong person on every audit row the event ever writes.
+            createdBy: userID,
+            status: "draft",
+            // EVERY content field is in the filter, not just `status`. A row
+            // with a title is not blank, and reusing it would silently discard
+            // whatever the head typed and saved earlier. The filter is
+            // DELIBERATELY OVER-STRICT: the worst case of a MISSED reuse is one
+            // extra blank row; the worst case of a WRONG reuse is lost work.
+            //
+            // SPREAD FROM THE SAME OBJECT THE CREATE BELOW SPREADS, which is
+            // what stops the two lists drifting apart again. See
+            // BLANK_EVENT_CONTENT.
+            ...BLANK_EVENT_CONTENT,
+          },
+          orderBy: { createdAt: "desc" },
+          select: { eventID: true, photoUrls: true },
+        });
+        // photoUrls is checked in JS and NOT in the `where`: Prisma+Mongo's
+        // `equals: []` on a scalar list is a shape this repo has not used and
+        // does not need, and the row is already in hand.
+        if (existing && existing.photoUrls.length === 0) {
+          // RETURNS BEFORE nextEventId. Allocating an id and then discarding it
+          // burns a counter value for no reason, and nextEventId never goes
+          // backwards.
+          return { eventID: existing.eventID };
+        }
+      }
+
       // A facility choice denormalizes its name into `location`; otherwise the
       // free-text location is used as-is.
       let location: string | null = input.location ?? null;
@@ -468,6 +584,13 @@ export const eventRouter = createTRPCRouter({
       const eventID = await nextEventId(ctx.db);
       await ctx.db.event.create({
         data: {
+          // FIRST, so every blankness key is written even if the explicit
+          // assignments below stop naming one of them. The keys that follow
+          // override these nulls with the caller's real values; any that stop
+          // being named stay explicitly null, which is exactly what the reuse
+          // filter above needs and what omitting them broke. See
+          // BLANK_EVENT_CONTENT.
+          ...BLANK_EVENT_CONTENT,
           eventID,
           // WRITTEN EXPLICITLY, EVEN WHEN NULL. `{ ccaID: null }` matches a
           // STORED null but NOT an absent field, and listForOwner's hall branch
@@ -484,6 +607,20 @@ export const eventRouter = createTRPCRouter({
           location,
           facilityID,
           capacity: input.capacity ?? null,
+          // THE TWO PUBLIC-CONTENT FIELDS, EXPLICITLY NULL — same rule as
+          // ccaID above, and omitting them was a REAL BUG found by pressing
+          // "New event" twice in a browser. The D-30 reuse filter asks for
+          // `publicDescription: null, bannerUrl: null` among its blankness
+          // conditions. Prisma's null match is the strict one (that is the
+          // whole premise of T-12), so a row created WITHOUT these keys does
+          // not match a filter asking for them to be null — and this create is
+          // the only thing that makes the rows the filter is meant to find.
+          // Reuse could therefore never fire: every press of the button
+          // allocated a new id, which is precisely the unbounded-blanks
+          // outcome D-30 exists to prevent. Nothing errored; the cap was
+          // simply never enforced.
+          publicDescription: null,
+          bannerUrl: null,
           status: "draft",
           // THE FOUR INERT PHASE-2 FIELDS, WRITTEN EXPLICITLY FOR THE SAME
           // REASON AS ccaID. Nothing reads them today, so omitting them is
@@ -551,8 +688,36 @@ export const eventRouter = createTRPCRouter({
       };
 
       // Public content — writable in BOTH scopes.
+      //
+      // AN EMPTY PUBLIC DESCRIPTION IS STORED AS `null`, NOT AS `""`.
+      //
+      // This is the only field on the row that can arrive as an empty string:
+      // title / description / location all carry `.min(1)` in the schema, so ""
+      // is rejected before it reaches here, and every other blank field is
+      // nullable. `publicDescription` deliberately has no `.min(1)` (partial
+      // progress must be savable), and DetailsEditor.buildPatch sends
+      // `publicDescription.trim()` UNCONDITIONALLY — so a head who presses "New
+      // event" and then "Save and finish later" without typing anything used to
+      // write `""` onto an otherwise untouched row.
+      //
+      // THAT DEFEATED D-30. The reuse filter asks for `publicDescription: null`,
+      // Prisma's null match is the strict one (T-12), and `"" !== null` — so
+      // that one save made the row permanently unreusable and the next press of
+      // "New event" allocated a fresh id. Pressing save on each new blank row in
+      // turn reproduced exactly the unbounded-blanks growth D-30 exists to
+      // prevent, one click further along than the bug that was already fixed in
+      // `create`.
+      //
+      // NORMALISING AT THE WRITE, NOT LOOSENING THE FILTER. Accepting
+      // `{ in: [null, ""] }` in the reuse filter would have made "" a second
+      // spelling of absent that every future reader has to know about — the
+      // two-values-meaning-absent class this repo has already remediated once
+      // (see the ccaID note on the Event model). Everything else that asks "is
+      // this blank" already trims: submitForReview's completeness check,
+      // isBlankDraft in EventManage, and the sweep script's isBlank. Storing
+      // null is what makes the strict filter agree with all three.
       if (input.publicDescription !== undefined)
-        data.publicDescription = input.publicDescription;
+        data.publicDescription = input.publicDescription.trim() || null;
       if (input.bannerUrl !== undefined) data.bannerUrl = input.bannerUrl;
       if (input.photoUrls !== undefined) data.photoUrls = input.photoUrls;
 
@@ -667,8 +832,35 @@ export const eventRouter = createTRPCRouter({
         });
       }
 
-      await ctx.db.event.update({
-        where: { eventID: input.eventID },
+      // ATOMIC STATUS WRITE (C-10 / D-37). This used to be a bare
+      // `update` keyed on eventID alone, with the status checked one round trip
+      // earlier against the row loadOwnedEvent read above. `cancelEvent` is
+      // reachable from `draft` and `changes_requested` — exactly the two states
+      // this procedure accepts — so that window admitted `canceled -> submitted`:
+      // a RESURRECTED event, back in the JCRC queue, that its owner believes
+      // they called off, with no cancellation trace on the row and an
+      // `event.cancel` audit row now describing something that did not stick.
+      // The same window admitted `declined -> submitted`, which the
+      // NOT_SUBMITTABLE copy on the client already describes but the write did
+      // not actually refuse.
+      //
+      // THE GUARD IS SPELLED NEGATIVELY, for the same reason cancelEvent's is:
+      // `normalizeStatus` maps null and anything unrecognised to "draft", which
+      // IS submittable, so only the negative form matches the editScope
+      // pre-check above row for row. A positive `in: ["draft",
+      // "changes_requested"]` would refuse a row whose stored status is null,
+      // which the pre-check accepted.
+      //
+      // The findUnique pre-check STAYS: it separates NO_SUCH_EVENT from a bad
+      // status, it supplies the row the audit write below needs, and it reports
+      // the ordinary uncontended case.
+      const applied = await ctx.db.event.updateMany({
+        where: {
+          eventID: input.eventID,
+          NOT: {
+            status: { in: ["submitted", "published", "declined", "canceled"] },
+          },
+        },
         data: {
           status: "submitted",
           // Clear a prior decision so the reviewer sees a clean submission.
@@ -679,6 +871,12 @@ export const eventRouter = createTRPCRouter({
           updatedBy: userID,
         },
       });
+      if (applied.count === 0) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_SUBMITTABLE",
+        });
+      }
       await writeAudit(ctx.db, {
         actorUserID: userID,
         actorRoles: roles,
