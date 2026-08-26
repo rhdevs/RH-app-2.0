@@ -1118,6 +1118,38 @@ export default function EventManage({
       {status === "published" && (
         <div className="space-y-8">
           <AutoBookingNotice event={event} />
+
+          {/*
+            THE WAY IN TO THE DOOR. Only on a published event, because there is
+            nobody to check in before that.
+
+            A plain link rather than a gated panel: `attendanceStatus` on the
+            door page itself is what decides whether this person may scan,
+            whether the window is open, and whether the feature is configured at
+            all — four states it renders honest copy for. Duplicating that
+            judgement here would be a second copy of the rule that can drift
+            from the first, and the failure would be a head told they cannot
+            open a door they can.
+
+            Nominated scanners are not heads and never see this screen; they get
+            sent the link. That is the intended shape — the door page is
+            self-contained and authorises its own visitor.
+          */}
+          <section>
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
+              At the door
+            </h3>
+            <a
+              href={`/events/${event.eventID}/door`}
+              className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-gray-50"
+            >
+              Open the door scanner
+            </a>
+            <p className="mt-2 text-sm text-gray-500">
+              Scan arrivals, or tick them off the list if a phone won&rsquo;t
+              cooperate. Send this link to whoever you put on the door.
+            </p>
+          </section>
           <section>
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
               Signups

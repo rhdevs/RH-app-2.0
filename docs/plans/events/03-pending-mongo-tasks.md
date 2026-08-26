@@ -270,6 +270,56 @@ implementation gates on `/^E\d{7}$/` anywhere, those people are locked out perma
 
 ---
 
+## T10 — Prove the door end to end, in this order
+
+Added after Part C was implemented. The order matters: each step makes the next
+one meaningful, and doing them out of order produces a green result that proves
+nothing.
+
+1. **T1 first** — the `EventAttendance` unique index, *proven to enforce*. Until
+   it exists, `checkIn`'s duplicate branch is unreachable: a second scan of the
+   same person writes a SECOND ROW, every headcount is silently wrong, and
+   nothing errors. `set-attendance-flag.mjs` refuses to turn the flag on without
+   it, but that guard is only as good as the proof behind it.
+2. **T3** — `EVENT_QR_SECRET` set in Vercel Production and **redeployed**. Env
+   changes do not apply to existing deployments. Without it every scan fails
+   closed with `ATTENDANCE_NOT_CONFIGURED`, which the door page renders as
+   "not set up on this deployment — this is not something you can fix from
+   here".
+3. **Then** `set-attendance-flag.mjs on --commit`. It also refuses if
+   `events.enabled` is not on.
+4. Only then a real door.
+
+**Turning it OFF is never blocked by any of these checks**, deliberately — a
+kill switch that requires a healthy database to pull is not a kill switch.
+
+- [ ] Run. Result:
+
+## T11 — What only a real door can tell you
+
+Static analysis and a passing build prove nothing here. Specifically unproven
+until someone stands at a door:
+
+- **Whether the camera opens on the committee's actual phones.** iOS Safari
+  refuses `getUserMedia` outside a user gesture, which is why starting the
+  camera is a button. In-app browsers — a link opened inside Telegram or
+  Instagram — commonly refuse the camera outright; the page detects the common
+  ones by user-agent and says "open this in Safari or Chrome", but that list is
+  a guess against a moving target and the fallback for a miss is the manual
+  list.
+- **Whether a rotating code scans across a window boundary.** The verifier
+  accepts the current AND previous 30-second window for exactly this, and that
+  path has never executed.
+- **Whether the resident being offline is as common as feared.** The rotating
+  design requires the resident online to hold a live code. If the manual list
+  carries most of a queue, that is the signal to revisit the design, not to
+  lengthen the token life.
+- **Whether a double scan is idempotent** — this is what T1 protects, and the
+  first real double scan is the only honest test of it.
+- **Whether a walk-in is recorded and reads as a walk-in afterwards.**
+
+- [ ] Done. Event used, and what actually broke:
+
 ## Notes for whoever runs this
 
 Everything in Part C was written against a database nobody could read. Treat
