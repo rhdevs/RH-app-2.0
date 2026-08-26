@@ -1709,6 +1709,107 @@ the one table whose purpose is "who did what".
 
 ## PART C — Phase 3: QR attendance
 
+### C-0 — RECONCILIATION NOTICE: Parts A and B have both SHIPPED. Read this before anything else.
+
+This Part was drafted before Part A and Part B were merged. Both are now on `main`
+(`9caf7aa`), and Part C mounts into code that moved underneath it. This section is the delta.
+Everything below it has been re-verified against the working tree at `9caf7aa` on **2026-08-27**;
+where a citation had rotted it has been corrected in place, and the corrections are listed here
+so a reviewer can see what changed rather than having to diff two plans.
+
+**1. `src/server/api/routers/event.ts` grew by roughly 600 lines, so nearly every line
+citation in the original Part C was stale.** The file is now 2483 lines. Corrected anchors,
+all verified:
+
+| Thing | Old citation | **Correct, verified `9caf7aa`** |
+|---|---|---|
+| `BLANK_EVENT_CONTENT` definition | — | **`event.ts:447-457`** (docblock `:415-446`) |
+| its two spreads | — | reuse `where` **`event.ts:589`**; `create` data, FIRST key, **`event.ts:668`** |
+| `SCRC_HIDDEN_EVENT_FIELDS` | `R:409`, `event.ts:399-406` | **`event.ts:406-413`**; `scannerUserIDs: []` is **`event.ts:412`**; applied at **`event.ts:2206`** |
+| `cancelSignup` (no time gate) | `event.ts:1802-1811` | **`event.ts:2442-2451`** |
+| `signup`'s P2002 backstop | `event.ts:1786-1797` | **`event.ts:2418-2437`** |
+| `getAttendees` is not audited | `event.ts:1117` | **`event.ts:1391`** (the docblock line itself) |
+| `exportAttendees` returns `userID` | `event.ts:1191` | **`event.ts:1488-1495`** (procedure at `:1453-1518`) |
+| `listForOversight` explicit `select` | `event.ts:1568-1577` | **`event.ts:2077`**, `select` at **`:2118-2120`** |
+| `getForOversight` | `event.ts:1618` | **`event.ts:2170`**, spread at **`:2206`** |
+| the head's attendee table | `EventAttendees.tsx:106` | **`EventAttendees.tsx:158-160`** |
+| `assertQuestionsEditable` | — | **`services/events.ts:192-245`**, not `event.ts` |
+| `withEventLock` | — | **`services/events.ts:125-159`** |
+| `membershipKeysFor` + its comment | `ccaMembers.ts:37-44` | **`ccaMembers.ts:36-53`** |
+| `assertHeadsCca`'s live-read rule | `ccaScope.ts:40-47` | **`ccaScope.ts:39-47`** |
+| the four inert `Event` fields | `schema.prisma:804-806` | **`schema.prisma:804`** (opens), **`:806`** (closes), **`:808`** (`scannerUserIDs`), **`:810`** (`answersPurgedAt`) |
+
+Citations that were **already correct and are re-confirmed**: `admin.ts:310-321` (`planSecret`),
+`admin.ts:352-365` (`signRow`, and it really does `.join("|")`), `admin.ts:367-373`
+(`tokenMatches`), `admin.ts:3035` (`action: z.string().max(32).optional()`), `env.js:82`
+(`emptyStringAsUndefined: true`), `services/roles.ts:261-268` (the `event.*` block of
+`AUDIT_ACTIONS`; the list itself spans `roles.ts:164-342`), `services/roles.ts:602` and `:646`
+(why a `node:crypto` module cannot be client-imported), `AuditLogTable.tsx:8`.
+
+**2. THREE OF THE FOUR SCRIPTS PART C PLANNED TO CREATE ALREADY EXIST.** They shipped with
+Part B and are tracked in git. §6.3 and §6.5 said **CREATE** for all of them and that is now
+wrong — see the corrected tables. Verified present and already Part-C-aware:
+
+- `scripts/remediation/create-event-phase2-indexes.mjs` — **already carries the
+  `EventAttendance` target** (`:139-141`, `{ eventID: 1, userID: 1 }`, `name: "event_attendee"`,
+  `unique: true`), already refuses to run without an explicit target (`:162-165`, `process.exit(2)`),
+  and its usage text already names the PR 3 invocation (`:152`). **Part C writes no code here at
+  all; it only RUNS it.**
+- `scripts/remediation/sweep-blank-event-drafts.mjs` — already counts `EventAttendance` under
+  condition c7 with `tolerateAbsent: true` (`:439`). **But see D-59a: its condition list does not
+  know about `scannerUserIDs`, and that is a real gap this Part must close.**
+- `scripts/remediation/index-census.mjs` — `EXPECTED` already contains `"EventAttendance"`
+  (`:133`). An absent collection prints `(absent)` and is **not** an error (`:63-64`, `:322-323`),
+  and `MUST_EXIST` (`:147`) deliberately excludes it, so the census is already correct both
+  before and after T1. D-82 is therefore **already done** — do not re-do it.
+- `scripts/remediation/verify-events-schema.mjs` — check `[9]` already exists and already prints
+  `INFO  EventAttendance does not exist. That is the EXPECTED state until PR 3` (`:558`).
+
+**Only `scripts/remediation/set-attendance-flag.mjs` is genuinely new.**
+
+**3. `EventAttendance` does not exist anywhere in `src/`.** Confirmed by repo-wide grep: no
+Prisma model, no `EVENT_QR_SECRET` in `src/env.js`, no `services/eventQr.ts`, no `checkIn`,
+`checkInManual`, `undoCheckIn`, `myCheckInToken`, `getDoorRoster` or `resolveWalkIn`. Part C is
+entirely unbuilt, and the pre-provisioned `Event` columns plus the script scaffolding above are
+the only things waiting for it. There is no half-finished state to reconcile against.
+
+**4. `createEventInput` is UNTOUCHED by Part C, and `isBareCreate` still behaves.** This is
+D-45a's argument, re-run for this Part and it still holds:
+
+- `createEventInput` (`src/lib/schemas/event.ts:248-263`) has **eight fields and ZERO
+  `.default()`** — every one is `.optional()`, three additionally `.nullable()`. A `.default()`
+  on any of them would make `Object.entries(input)` always yield a non-null value for that key,
+  `isBareCreate` (`event.ts:562-564`) would be **false forever**, and the D-30 reuse cap would
+  silently stop firing with a green build. **Part C must not add one, and must not add a field
+  to this schema at all.**
+- Part C's three door fields go into **`updateEventInput`**, never `createEventInput` — a door
+  window cannot be set on an event that does not exist yet. So `isBareCreate`'s derivation is
+  not disturbed.
+- The one `.default()` in this router's inputs is `limit: …default(25)` on `listForOversight`
+  (`event.ts:2083`), which is not `createEventInput` and does not matter here.
+
+**5. `assertQuestionsEditable` now requires `editScope === "all"`, and `QUESTIONS_FROZEN` is
+UNREACHABLE.** `services/events.ts:213-218` throws `EVENT_LOCKED` for any scope but `"all"`;
+the `QUESTIONS_FROZEN` branch (`services/events.ts:236-244`) is dead because a `published` event
+is scope `"public"`, and no transition returns a published event to `"all"`. The file says so at
+`services/events.ts:219-227`, including that it was confirmed in a browser on 2026-08-27.
+**DO NOT "FIX" THIS.** It is a user ruling — freeze at approval — and the dead branch is kept
+deliberately. Part C interacts with it only in one place, and benignly: D-65 makes the door
+window and the scanner list editable while `published`, which is scope `"public"`. That widens
+`update`'s public scope and **does not touch the questions freeze**, because
+`assertQuestionsEditable` is called from exactly one site — `saveQuestions` (`event.ts:1593`) —
+and Part C does not call it.
+
+**6. `update`'s write is a plain `update`, not an `updateMany`, and that is correct.**
+`event.ts:836`. Constraint 3 (`updateMany` + `count === 0`) governs **status-changing** writes.
+A field save changes no status, so it is exempt — the same reason it writes no audit row
+(`event.ts:737-738`). Part C's door-field writes ride on this existing `update` and inherit the
+exemption. **Part C's own status-free writes — `checkIn`, `checkInManual` — are `create`s
+guarded by a unique index, not `updateMany`s, and D-60 explains why that is the right primitive.**
+
+**7. The dependency figures in D-58 were RE-MEASURED on 2026-08-27** against the live npm
+registry and every one of them still holds. See D-58 for the exact byte counts.
+
 ### D-54 — The ORGANISER scans the RESIDENT. Not the other way round.
 
 The resident's phone shows a rotating code; a committee member's phone reads it.
@@ -1759,8 +1860,31 @@ export function verifyCheckInToken(userID: string, token: string, nowSec: number
 something, a token minted for one must not verify against the other. Putting the purpose first
 means no other payload can be constructed that collides with an `event-checkin` payload by
 rearranging its own fields. The separator is `|` because `EXT:` ids contain `:` (mistake ⑤,
-T-25) and neither namespace can contain `|` — the same choice `signRow` already made at
-`admin.ts:352-365`.
+T-25) — the same choice `signRow` already made at
+`admin.ts:352-365`, whose payload is literally `[…].join("|")` (`admin.ts:363`).
+
+**AND "neither namespace can contain `|`" IS NOW A PROOF, NOT AN ASSERTION.** The principal key
+space has exactly two halves, and both are regex-bounded in `src/lib/identity.ts`:
+
+| Half | Producer | Charset | Can contain `\|`? | Can contain `:`? |
+|---|---|---|---|---|
+| Canonical NUS id | `canonicalUserID` (`identity.ts:175-180`) returns capture group 1 of `NUS_STUDENT_EMAIL = /^([A-Z0-9._%-]+)@U\.NUS\.EDU$/` (`identity.ts:38`) | `[A-Z0-9._%-]` | **No** | **No** |
+| Allowlist pin | `EXT_ID = /^EXT:[A-Z0-9_]{3,32}$/` (`identity.ts:127`) | `EXT:` + `[A-Z0-9_]` | **No** | **YES — this is T-25** |
+
+So `|` cannot occur in either half and `:` occurs in one of them. **`|` is safe as a delimiter
+and `:` is not**, and that is now checkable against two regexes rather than taken on trust.
+`scripts/remediation/lib/identity.mjs` mirrors both patterns and `verify-identity-parity.mjs`
+gates the pair (`identity.ts:14-16`), so the proof cannot rot on one side only.
+
+**Corollary the coder must not miss: because `|` cannot occur in a userID, `split("|")` on a
+three-part payload is EXACT rather than heuristic**, which is what makes
+`parseCheckInPayload`'s `parts.length !== 3` check sound (D-57). If a later phase widens the id
+charset, this parser and the HMAC payload become ambiguous on the same day — which is why the
+charset is asserted here rather than assumed.
+
+**And note what the canonical charset actually is: NOT `/^E\d{7}$/`.** `g.s_samuel@u.nus.edu`
+canonicalises to `G.S_SAMUEL` and is a real row in this database (`identity.ts:166-173`).
+Nothing in Part C may gate on E-format — see D-68, and lockout mode **L-27**.
 
 **Why 192 bits and not the full 256.** The QR must stay small enough to decode from a phone
 screen across a table. 32 base64url characters plus a ~10-character userID plus a 3-character
@@ -1814,6 +1938,45 @@ function qrSecret(): string {
 }
 ```
 
+**The `BLOB_READ_WRITE_TOKEN` precedent is exact, and it is worth reading before arguing with
+this ruling.** `env.js:36-45` declares it `.optional()` and says why in the same breath:
+*"OPTIONAL, unlike `RESEND_API_KEY`, and deliberately so: it is needed by exactly one route, and
+making it required would stop the whole app building for any contributor who has not pulled it.
+The upload route fails loudly on its own if the token is missing, which localises the breakage
+to the feature that needs it."* Its `runtimeEnv` entry is `env.js:71`. `EVENT_QR_SECRET` is the
+same shape of thing and gets the same treatment.
+
+`src/env.js` offers four patterns and this one is deliberately the second:
+**REQUIRED** (`DATABASE_URL: z.string().url()`, `RESEND_API_KEY: z.string()`),
+**OPTIONAL + fail-loudly-at-the-feature** (`BLOB_READ_WRITE_TOKEN`, `APP_URL`, `GOOGLE_*`),
+**CONDITIONALLY REQUIRED** (`NEXTAUTH_SECRET`, ternary on `NODE_ENV`, `env.js:14-17`), and
+**DEFAULTED + COERCED** (`BCRYPT_ROUNDS`, `env.js:35`).
+
+**ADD IT TO `.env.example` TOO.** That file's own line 4 says *"When adding environment
+variables, update the schema in `/src/env.js` too"*, and the reverse obligation is the one that
+gets dropped — `BLOB_READ_WRITE_TOKEN` is in `env.js` and **missing** from `.env.example`
+today, which is exactly the gap that makes a new contributor's door page fail mysteriously.
+`.env.example` is committed and must carry **no secret**, so the entry is an empty placeholder
+with the generation command beside it:
+
+```
+# Signing key for event check-in QR codes (services/eventQr.ts).
+# Generate with:  openssl rand -base64 48
+# Optional at build time; the attendance feature fails closed without it.
+EVENT_QR_SECRET=""
+```
+
+> **WHY A SECRET AND NOT A FLAG — the repo has a standing argument the other way, and it does not
+> apply here.** `set-cca-flag.mjs:17-19` is explicit: *"A SystemFlag ROW, not an env var, for the
+> same reason as set-enforcement.mjs: Vercel snapshots env vars per deployment, so only a DB row
+> is a no-redeploy switch."* That argument is about **switches**, and it is why
+> `events.attendance.enabled` is a row (D-66). A **signing key** is not a switch: it must never be
+> readable by anything that can read the database's application tier, and rotating it is a
+> deliberate, redeploy-shaped act, not an operational toggle. The two live side by side on
+> purpose — **the row decides whether the door is open, the env var decides whether a token can
+> be forged** — and the rollout order in §12.4 exists precisely because the row must never be on
+> while the env var is absent.
+
 **Generate it with `openssl rand -base64 48`.** Rotating it invalidates every outstanding
 token, which is a 30-second inconvenience and never a data loss — `EventAttendance` rows do not
 reference the key.
@@ -1852,8 +2015,10 @@ for a marginal gain. What is actually leaked, and to whom:
   `@u.nus.edu` address one derivation later, the class this repo cares about — plus a token
   that is dead within 30 seconds.
 - That same userID is **already** visible to every CCA head who exports their attendee list
-  (`exportAttendees` returns `userID`, `event.ts:1191`) and to every head's on-screen table
-  (`EventAttendees.tsx:106`).
+  (`exportAttendees` returns `userID` in every row, `event.ts:1488-1495`; the procedure is
+  `event.ts:1453-1518`) and to every head's on-screen table, which falls back to rendering the
+  raw `userID` when a display name cannot be resolved (`EventAttendees.tsx:158-160`,
+  `{a.displayName ?? a.userID}`).
 
 So the marginal disclosure is a bystander at a door, not a new capability. It is recorded as a
 trap rather than solved. **`parseCheckInPayload` must not be used to look a person up for any
@@ -1863,12 +2028,22 @@ exist".
 
 ### D-58 — Two new dependencies, named, sized and justified
 
-Measured with `npm view <pkg> dist.unpackedSize` on 2026-08-26:
+**RE-MEASURED 2026-08-27** with `npm view <pkg> version dist.unpackedSize` against the live
+registry. **Every figure below is verified, not carried forward** — the registry was reachable
+even though the database was not, so unlike the production figures in §0.1 these are measured:
 
-| Role | Choice | Version | Unpacked | Rejected, and why |
+| Role | Choice | Version | Unpacked (exact bytes) | Rejected, and why |
 |---|---|---|---|---|
-| **Draw** a QR | **`qrcode.react`** | 4.2.0 | **115 KB** | `qrcode` (135 KB) is a canvas/Node API needing a wrapper; `qrcode.react` renders an SVG React component directly, which is what a client component wants and what scales cleanly on a phone. |
-| **Decode** from camera | **`jsqr`** | 1.4.0 | **280 KB** | `@zxing/browser` + `@zxing/library` = **17.6 MB** unpacked, for one QR format. `html5-qrcode` = 2.6 MB and owns the whole camera UI. `qr-scanner` = 524 KB and ships a worker. `jsqr` is a single pure-JS function over an `ImageData` — no worker, no wasm, no DOM opinions — so the door page owns its own `<video>`, its own permission gesture and its own error branches, which D-62 needs. |
+| **Draw** a QR | **`qrcode.react`** | 4.2.0 | **114,980 B ≈ 115 KB** | `qrcode` 1.5.4 (**135,364 B ≈ 135 KB**) is a canvas/Node API needing a wrapper; `qrcode.react` renders an SVG React component directly, which is what a client component wants and what scales cleanly on a phone. |
+| **Decode** from camera | **`jsqr`** | 1.4.0 | **279,741 B ≈ 280 KB** | `@zxing/browser` 0.2.1 (**5,800,976 B**) + `@zxing/library` 0.23.0 (**11,863,492 B**) = **17,664,468 B ≈ 17.6 MB** unpacked, for one QR format. `html5-qrcode` 2.3.8 = **2,627,746 B ≈ 2.6 MB** and owns the whole camera UI. `qr-scanner` 1.4.2 = **524,238 B ≈ 524 KB** and ships a worker. `jsqr` is a single pure-JS function over an `ImageData` — no worker, no wasm, no DOM opinions — so the door page owns its own `<video>`, its own permission gesture and its own error branches, which D-62 needs. |
+
+**`jsqr` 1.4.0 was last published in 2020 and is effectively unmaintained.** That is stated
+rather than hidden: it is a pure function with no network, no DOM and no dependencies, its input
+is an `ImageData` the door page produces itself, and its output is checked against an HMAC the
+server recomputes — so a decode bug is a failed scan, never a forged one. The manual list
+(D-64, T-33) is the standing fallback for the day it stops working. Prefer `BarcodeDetector`
+at runtime wherever it exists, which is what makes `jsqr` the *fallback* path rather than the
+primary one.
 
 **`BarcodeDetector` is preferred at runtime when it exists**, and `jsqr` is the fallback:
 
@@ -1911,8 +2086,10 @@ model EventAttendance {
   method      String?   @default("qr")
   /// Was this person on the signup list AT THE MOMENT THEY WERE SCANNED?
   /// SNAPSHOTTED, never re-derived: cancelSignup is a hard delete with no time
-  /// gate (event.ts:1802-1811), so a resident who checks in and then cancels
-  /// would otherwise retroactively become a walk-in. See T-36.
+  /// gate (event.ts:2442-2451 — ten lines, an unconditional deleteMany, no
+  /// status check, no startTime check, no lock and no audit row), so a resident
+  /// who checks in and then cancels would otherwise retroactively become a
+  /// walk-in. See T-36.
   wasSignedUp Boolean?  @default(false)
 
   @@unique([eventID, userID], map: "event_attendee")
@@ -1925,8 +2102,133 @@ read and the dashboards' `{ eventID: { in: [...] } }` are both served by its pre
 **The unique index is what makes a re-scan idempotent.** A second scan of the same person
 throws `P2002`, which `checkIn` catches and turns into `alreadyCheckedIn: true` carrying the
 **existing** row's `checkedInAt` — the same pattern as `signup`'s backstop
-(`event.ts:1786-1797`). Without the index (mistake ②) a double scan writes two rows and the
-count is wrong, silently.
+(`event.ts:2418-2437`, and note its comment "DO NOT DELETE THIS CATCH"). Without the index
+(mistake ②) a double scan writes two rows and the count is wrong, silently.
+
+**AND THE INDEX DOES NOT EXIST YET.** `EventAttendance` has no Prisma model and no collection;
+the index is created by running the already-shipped
+`scripts/remediation/create-event-phase2-indexes.mjs EventAttendance --commit` (§9, task **T1**).
+Until that has been run *and proven to enforce*, `checkIn`'s `P2002` branch is unreachable and
+every double scan writes a second row. **This is why the flag must not be switched on before T1
+and T2 pass** (D-66, §12.4).
+
+### D-59a — BLANKNESS vs THE DOOR FIELDS: what `create`'s reuse branch and the sweep must learn
+
+**This is the Part A/B interaction that Part C did not previously address, and one half of it
+is an authorisation defect, not a tidiness one.**
+
+D-30's reuse branch hands a head back their own abandoned blank draft instead of allocating a
+new `eventID`. "Blank" is defined once, by `BLANK_EVENT_CONTENT` (`event.ts:447-457`), spread
+into both the reuse `where` (`event.ts:589`) and — first — into `create`'s `data`
+(`event.ts:668`). D-65 and D-68 make three `Event` columns writable on a draft for the first
+time. **Each has to be classified against that definition, and they do not classify the same
+way.**
+
+#### The two window fields GO INTO `BLANK_EVENT_CONTENT`. The scanner list CANNOT.
+
+```ts
+const BLANK_EVENT_CONTENT = {
+  title: null, description: null, publicDescription: null, bannerUrl: null,
+  startTime: null, endTime: null, location: null, facilityID: null, capacity: null,
+  attendanceOpensAt: null,     // ADDED BY PART C
+  attendanceClosesAt: null,    // ADDED BY PART C
+} as const satisfies Partial<Record<keyof Event, null>>;
+```
+
+`attendanceOpensAt` and `attendanceClosesAt` are `Int?` (`schema.prisma:804`, `:806`), so `null`
+is a legal value for them and the `satisfies` guard accepts them. **`scannerUserIDs` is
+`String[] @default([])` (`schema.prisma:808`) — a non-nullable list. Its absent value is `[]`,
+not `null`, so it cannot satisfy `Partial<Record<keyof Event, null>>` and adding it does not
+compile.** That is the identical structural wall D-39a hit with questions, arriving from the
+opposite direction: questions are invisible to the filter because they are not a column at all,
+and `scannerUserIDs` is invisible because it is a column of the wrong *shape*. The `satisfies`
+clause that makes the filter safe against a renamed column is once again the thing that makes it
+blind.
+
+**Adding the two window fields is safe in the only direction that matters.** `create` has
+written both explicitly as `null` since Phase 1 (`event.ts:711-712`), and so does `duplicate`
+(`event.ts:1258-1259`), so every row the filter is meant to find already carries the keys and
+Prisma's strict null match (T-12) is satisfied. **If some row predates that — which cannot be
+checked without database access, see below — the filter simply fails to match it and the head
+gets one extra blank draft.** That is the benign direction, and it is the direction
+`event.ts:583-584` already commits to in writing: *"the worst case of a MISSED reuse is one extra
+blank row; the worst case of a WRONG reuse is lost work."*
+
+#### `scannerUserIDs` gets a JS-side check, beside the question count, and it FALLS THROUGH
+
+```ts
+if (existing && existing.photoUrls.length === 0) {
+  // D-59a — A DRAFT THAT ALREADY CARRIES NOMINATED SCANNERS IS NOT BLANK.
+  // Not expressible in the `where` above: scannerUserIDs is String[] and
+  // BLANK_EVENT_CONTENT is `satisfies Partial<Record<keyof Event, null>>`,
+  // so `[]` is not a value that object can hold. Same wall as D-39a, and
+  // checked in the same place for the same reason — the row is in hand.
+  const questionCount = await ctx.db.eventQuestion.count({
+    where: { eventID: existing.eventID },
+  });
+  if (questionCount === 0 && existing.scannerUserIDs.length === 0) {
+    return { eventID: existing.eventID };
+  }
+}
+```
+
+**Add `scannerUserIDs: true` to that `findFirst`'s `select`** (`event.ts:592`, currently
+`{ eventID: true, photoUrls: true }`). It costs nothing — the row is already being read.
+
+**WHY THIS ONE IS NOT HOUSEKEEPING.** Without it: a head presses "New event", scrolls to the
+Door section, nominates two committee members, never types a title, and leaves. Weeks later they
+press "New event" again, are handed that same row, fill in a real event, and submit it. **Two
+people they did not choose for this event now hold a door surface on it, and the head believes
+they nominated nobody.** The Door section sits *below* the questions builder (D-68), so the same
+"submit without scrolling" path that D-39a describes applies here verbatim.
+
+**The blast radius is bounded, and saying so honestly is part of the argument.** The reuse
+filter is scoped to the same `ccaID` and the same `createdBy` (`event.ts:573`, `:578`), and
+`assertMayScan` re-validates every nominee against live CCA membership (D-61). So the inherited
+scanner is necessarily a current member of the same CCA as the event. This is not a stranger at
+the door. It is still a person the head did not pick, holding a surface that writes rows
+asserting where residents physically were, with the head's screen showing an empty scanner list
+— and the fix is one clause in a condition that is already being evaluated.
+
+**FALL THROUGH; DO NOT CLEAR THE LIST.** Same ruling as D-39a. The head may be coming back to
+that nomination. Reuse is a cap on abandoned rows, which is housekeeping, and housekeeping must
+never outrank not-destroying-work. The cost is one extra abandoned row.
+
+#### The sweep script must agree, and today it does not
+
+`scripts/remediation/sweep-blank-event-drafts.mjs` **already ships** (Part B) and already counts
+`EventAttendance` under condition c7 (`:439`). But its conditions c2 and c3 enumerate text and
+schedule fields only (`:381-421`) and **nothing in it looks at `scannerUserIDs`**. As it stands,
+a 30-day-old draft carrying two nominations and nothing else is **deleted**, silently discarding
+the nomination.
+
+**Extend condition c3 to block on a non-empty `scannerUserIDs`, and REPORT the row rather than
+deleting it** — exactly the shape D-39b gave a draft carrying questions. The two mechanisms then
+agree by construction: a draft with scanners is neither reusable nor sweepable, it is reported,
+and an operator deletes it by judgement. A row that is reusable-but-not-sweepable, or the
+reverse, is the state that produces the surprises.
+
+**The window fields are deliberately NOT added to the sweep's blockers.** A head who set a door
+window and then abandoned the draft has expressed a preference about a minute of the day, not
+authored anything, and it costs nothing to re-set. Blocking on it would make the sweep refuse
+rows it exists to remove. Scanners are different because deleting them destroys a *decision
+about people*.
+
+#### `EventAttendance` needs no reuse rule at all
+
+A blank draft has status `draft`; `checkIn` refuses anything but `published` (D-60 step 4); so a
+blank draft structurally cannot carry an attendance row. The sweep's c7 check on
+`EventAttendance` is therefore belt-and-braces rather than load-bearing — which is the right way
+round, and it is already written.
+
+> **UNVERIFIED — REQUIRES DATABASE ACCESS (T7).** Whether every existing `Event` row actually
+> carries the `scannerUserIDs` key, and whether Prisma returns `[]` rather than `undefined` for a
+> row written before the column existed, **has not been measured** — TCP 27017 was firewalled
+> outbound when this was written. `existing.scannerUserIDs.length` and
+> `event.scannerUserIDs.includes(...)` in `assertMayScan` (D-61) both throw on `undefined`. This
+> is T-24's shape applied to a scalar list. **Task T7 in `03-pending-mongo-tasks.md` must be run
+> before the flag is switched on**, and until it is, treat "Prisma returns `[]`" as an assumption
+> and not a fact.
 
 ### D-60 — `event.checkIn` — the whole procedure
 
@@ -2012,15 +2314,93 @@ async function assertMayScan(db, userID, roles, event): Promise<void> {
 sets up the event. A nominee who leaves the CCA — or is removed from it — keeps their row in
 that array forever, because nothing sweeps it. Re-validating at scan time is the same argument
 `assertHeadsCca` makes for reading `CcaHead` live rather than trusting a role string
-(`ccaScope.ts:40-47`), and the same argument I-5 makes for `getUserRoles`.
+(`ccaScope.ts:39-47`: *"IT READS CcaHead DIRECTLY AND MUST NEVER CONSULT
+roles.includes(\"cca_head\")"*, and *"`actor.roles` MUST be a live getUserRoles() read (I-5)"*),
+and the same argument I-5 makes for `getUserRoles`.
 
 **`isLiveCcaMember` is a new helper in `services/ccaMembers.ts`, beside `membershipKeysFor`,
 and it must use ALL of a person's membership keys (T-32).** `UserCCA.userID` is mixed-format —
 a person can hold a legacy A-format row *and* a canonical row for the same CCA, which is
-exactly why `membershipKeysFor` exists and why its comment says *"REMOVAL MUST USE ALL OF
-THEM"* (`ccaMembers.ts:37-44`). A lookup on the canonical key alone reports "not a member" for
-anyone whose only row is the legacy one, and the failure mode is a committee member standing at
-a door being told they are not in their own CCA.
+exactly why `membershipKeysFor` (`ccaMembers.ts:44-53`) exists and why its docblock says
+verbatim: *"REMOVAL MUST USE ALL OF THEM. UserCCA.userID is mixed-format: a person can hold a
+legacy A-format row AND a canonical row for the same CCA"* (`ccaMembers.ts:36-43`). A lookup on
+the canonical key alone reports "not a member" for anyone whose only row is the legacy one, and
+the failure mode is a committee member standing at a door being told they are not in their own
+CCA.
+
+**Concretely: `isLiveCcaMember` MUST NOT take a bare `userID`.** `membershipKeysFor` needs
+`{ email, userID }`, because it derives the canonical key from the email
+(`canonicalUserID(u.email)`, `ccaMembers.ts:49`) and unions it with the stored `userID`
+(`:51`). So the helper resolves the person's `User` row first, builds the key set, and queries
+`UserCCA` with `{ ccaID, userID: { in: keys } }`. **A signature of
+`isLiveCcaMember(db, userID, ccaID)` is the bug**, because there is no second key to union at
+that point. Give it the shape that makes the mistake unspellable:
+
+> **AND THERE IS A THIRD SOURCE. `UserCCA` ALONE IS NOT MEMBERSHIP, AND QUERYING ONLY IT
+> LOCKS OUT ROUGHLY A THIRD OF EVERY CCA.**
+>
+> `services/ccaMembers.ts:102-111` states it outright: *"MEMBERSHIP LIVES IN THREE PLACES … 1.
+> UserCCA rows under the CANONICAL key 2. UserCCA rows under the LEGACY A-format key (same
+> person, other key) 3. the undeclared `User.userCCA` Int[] — a roster SOURCE."*
+>
+> `routers/user.ts:142-176` carries the measurement, against production, over the 116 users with
+> any CCA data at all:
+>
+> | | |
+> |---|---|
+> | 65 | both sources agree exactly |
+> | **37** | **ONLY in the embedded `User.userCCA` array** |
+> | 6 | ONLY in the `UserCCA` collection |
+> | 8 | in both, but the two sets DIFFER |
+>
+> and concludes: *"So this returns the UNION. Reading either source alone hides real memberships
+> for ~43 people."* `getMyCCAs` (`user.ts:212-226`) is the worked implementation.
+>
+> **A `UserCCA`-only `isLiveCcaMember` therefore tells 37 of 116 people they are not in their own
+> CCA.** That is T-32's failure mode arriving through a door T-32 does not name, and at a real
+> door it looks like the app is broken.
+
+```ts
+// services/ccaMembers.ts — beside membershipKeysFor, and it MUST reuse it.
+//
+// THE UNION OF ALL THREE SOURCES. Not UserCCA alone: user.ts:142-176 measured
+// 37 of 116 people as embedded-array-only, and 6 as collection-only. Reading
+// either side alone is a lockout, and this runs at a door where the person
+// affected is standing in front of someone.
+export async function isLiveCcaMember(
+  db: PrismaClient,
+  person: { email: string; userID: string | null },
+  ccaID: number,
+): Promise<boolean> {
+  const keys = membershipKeysFor(person);          // NEVER a single key — T-32
+  if (keys.length === 0) return false;             // fail closed
+
+  // Source B — the mixed-format collection.
+  const row = await db.userCCA.findFirst({
+    where: { ccaID, userID: { in: keys } },
+    select: { ccaID: true },
+  });
+  if (row) return true;
+
+  // Source A — the undeclared User.userCCA Int[]. It is NOT on the Prisma
+  // client (it is not in schema.prisma), so it is read the way getMyCCAs reads
+  // it, with $runCommandRaw. Do not "tidy" this into a typed read; the field
+  // being undeclared is the whole reason a typed read cannot see it.
+  //   → mirror routers/user.ts:176-206 exactly rather than inventing a variant.
+  return await embeddedUserCcaIncludes(db, person, ccaID);
+}
+```
+
+**`isLiveCcaMember` MUST NOT consult `CcaHead`.** A headship is already handled by
+`assertMayScan`'s first branch via `assertHeadsCca`; folding it in here would make the two
+branches overlap and would obscure which one admitted a scanner.
+
+**`User`, `CCA` and `UserCCA` all carry `$jsonSchema` validators (constraint 7), so this helper
+READS and never writes.** Nothing in Part C adds a field to any of them. Note in passing why
+that rule has teeth here: `addCcaMember` has to go through `$runCommandRaw` because Prisma
+serialises `Int` as a 64-bit `long` and the `UserCCA` validator declares `ccaID` as int32 and
+rejects it with code 121 (`ccaMembers.ts:65-100`). Part C writes no membership, so it never meets
+this — but a coder who "helpfully" adds a membership write will.
 
 **A hall event's nominee must hold `manageHallEvents`, and that is a real limitation.** There
 is no membership set to re-validate a hall nominee against, and "any resident the JCRC typed
@@ -2038,6 +2418,69 @@ construction, not by a check.
 Route `/cca/[ccaID]/events/[eventID]/door` and `/admin/events/hall/[eventID]/door`, both
 rendering one client component `EventDoorScanner`. **Props are `eventID: number` and
 `backHref: string`. No function props** (mistake ③, §13.1).
+
+#### THE EXACT PATTERN TO COPY, verified — constraint 2 is a live risk on this page
+
+This is the constraint that killed all five authoring routes past `tsc`, ESLint, `next build`
+and two review agents. The door page is the most interactive surface in the whole feature, so it
+is the most likely place to reintroduce it. **Copy the shipped shape literally.**
+
+**The rule's canonical statement now lives at `EventManage.tsx:920-936`** — it was moved there
+when `EventCreateForm` was deleted, precisely so the warning would not be lost with the file
+(T-19). Verbatim:
+
+> *"`manageHrefBase` IS A STRING, NOT A BUILDER FUNCTION, AND MUST STAY ONE. … React refuses to
+> serialise a function across the server/client boundary (\"Functions cannot be passed directly
+> to Client Components\"), and the throw happens at RENDER — so `tsc`, ESLint and `next build`
+> all pass while every authoring route 500s. That is not hypothetical: it shipped in Phase 1 and
+> killed all five of them past two review agents."*
+
+Two more copies exist, at `EventsListPanel.tsx:20-25` and `src/app/cca/[ccaID]/events/page.tsx:10-14`.
+
+**The two shipped server routes, and what they pass:**
+
+| Server route (**no `"use client"`**, line 1 is `import { notFound } from "next/navigation";`) | Props |
+|---|---|
+| `src/app/cca/[ccaID]/events/[eventID]/page.tsx` (`:24-29`) | `ccaID={ccaID}` `eventID={eventID}` `backHref={\`/cca/${ccaID}/events\`}` `manageHrefBase={…}` — four scalars |
+| `src/app/admin/events/hall/[eventID]/page.tsx` (`:25-33`) | `ccaID={null}` `eventID={eventID}` `backHref="/admin/events"` `manageHrefBase="/admin/events/hall"` |
+
+**So the door route is:**
+
+```tsx
+// src/app/cca/[ccaID]/events/[eventID]/door/page.tsx — SERVER COMPONENT.
+// NO "use client" HERE. Parse both segments with parseCcaID
+// (src/app/cca/_lib/ccaParam.ts — it rejects 0, which is why no route segment
+// can ever encode "hall"), notFound() on failure, and pass SCALARS ONLY.
+import { notFound } from "next/navigation";
+import EventDoorScanner from "../../../../_components/EventDoorScanner";
+import { parseCcaID } from "../../../../_lib/ccaParam";
+// …
+  <EventDoorScanner eventID={eventID} backHref={`/cca/${ccaID}/events/${eventID}`} />
+```
+
+**`EventDoorScanner` owns every callback, every `useState`, every tRPC hook and the whole camera
+lifecycle.** Nothing about the scanning loop, the decode callback, the undo handler or the
+`getUserMedia` gesture crosses a boundary, because there is no boundary inside it.
+
+**Function props are LEGAL client→client, and the door page will need them.** `DetailsEditor`
+takes `onInvalidate: () => Promise<void>` and `onHandoff: (message: string) => void`
+(`EventManage.tsx:154-173`) and that is fine — it is a module-local component inside a file that
+is already `"use client"` (`EventManage.tsx:1`). The nearest precedent for a *new* nested client
+component is `EventQuestionBuilder.tsx:113-125`, which states the rule for this exact situation:
+
+> *"Mounted as an ordinary child of `DetailsEditor` in EventManage.tsx — which is already
+> `\"use client\"` — so there is no server/client boundary being crossed here and nothing to pass
+> but a plain `eventID` number. **See EventManage.tsx's own warning on this before adding a
+> `page.tsx` anywhere near this component.**"*
+
+**The failure mode is a `page.tsx`, not a component.** Splitting `EventDoorScanner` into
+sub-components is free. Adding a route that renders one of them is where the boundary appears.
+**If the door page grows a second route, re-read `EventManage.tsx:920-936` before writing its
+props.**
+
+**And the same rule governs the "Door" section in `EventManage.tsx` (D-68):** it is being added
+*inside* an existing `"use client"` file, so the window editor and the scanner picker may take
+whatever callbacks they like from `DetailsEditor`. No new route, no new boundary, no new risk.
 
 What is on the page, top to bottom:
 
@@ -2075,7 +2518,9 @@ per signup:
 **`matricSuffix` is the last four characters** (rendered `••••567X`), never the full number.
 
 **Why.** `getAttendees` returns the full matric today and is not audited, on the stated grounds
-that "the head is already authorised to see it" (`event.ts:1117`). The door roster goes to a
+that "the head is already authorised to see it" — `getAttendees` is `event.ts:1392-1446`, and its
+docblock (`event.ts:1391`) reads in full *"Render-only attendee list for the head's monitor table
+(no audit)."* The door roster goes to a
 **wider audience**: every nominated scanner, who is any CCA member the head picked. Handing
 each of them the matriculation number of every person who signed up is a real widening of a PII
 surface for no operational gain — a committee member ticking someone off is reading a student
@@ -2109,8 +2554,13 @@ why the door must never refuse a real person standing in front of it.
 
 ### D-65 — The check-in window, and where its defaults live
 
-`attendanceOpensAt` / `attendanceClosesAt` already exist (`schema.prisma:804-806`) as epoch
-**seconds**, both null, both written explicitly as null by `create` and `duplicate`.
+`attendanceOpensAt` (`schema.prisma:804`) and `attendanceClosesAt` (`schema.prisma:806`) already
+exist as `Int?`, epoch **seconds**, both null, both written explicitly as null by `create`
+(`event.ts:711-712`) and `duplicate` (`event.ts:1258-1259`). The other two reserved columns are
+`scannerUserIDs` (`schema.prisma:808`, `String[] @default([])`) and `answersPurgedAt`
+(`schema.prisma:810`, `DateTime?`). **Part C adds NO new column to `model Event`** — see D-69,
+and note that D-59a adds the two window fields to `BLANK_EVENT_CONTENT`, which is a change to a
+*filter*, not to the schema.
 
 **Defaults are computed at READ time, in one exported function, never backfilled:**
 
@@ -2153,6 +2603,36 @@ const ATTENDANCE_FLAG_KEY = "events.attendance.enabled";
 export async function assertAttendanceEnabled(db: PrismaClient): Promise<void>
 ```
 
+**The model to copy is in the same file and is verified:** `EVENTS_FLAG_KEY = "events.enabled"`
+(`services/events.ts:22`), `FLAG_TTL_MS = 15_000` (`:23`), the module-level
+`let flagCache: { at: number; on: boolean } | null = null` (`:25`), `areEventsEnabled`
+(`:35-49`), the ops seam `resetEventsFlagCache` (`:52-54`), and `assertEventsEnabled`
+(`:60-67`). **Give the attendance flag its own separate cache variable** — sharing one would
+make either switch clear the other's TTL and turn two independent controls into one.
+
+Backing store: `model SystemFlag` (`prisma/schema.prisma:438-444`), `key String @unique`,
+`value String`. **Note this collection is not one of the validator-bearing ones (constraint 7),
+and Part C adds no field to it — it writes a row, not a column.**
+
+> **THERE IS NO `events.questions.enabled`, and the plan text elsewhere should not be read as
+> implying one.** Verified by grep: the complete flag inventory is `events.enabled`,
+> `scrc.enabled`, `cca.management.enabled`, `cca.applications.enabled`, `cca.recruitment`,
+> `rbac.booking.enforcement`, `rbac.matric.enforcement`, `rbac.auth.enforcement`,
+> `admin.userDelete.enabled`. Part B shipped **behind `events.enabled` only**. So
+> `events.attendance.enabled` is the **second** events flag ever, and `assertAttendanceEnabled`
+> nesting after `assertEventsEnabled` is what keeps them from racing.
+
+**`assertEventsEnabled` is the first line of all 25 procedures in the router** (`event.ts:506`,
+`743`, `878`, `1000`, `1066`, `1143`, `1219`, `1299`, `1339`, `1352`, `1395`, `1456`, `1536`,
+`1582`, `1696`, `1739`, `1770`, `1816`, `2088`, `2173`, `2214`, `2249`, `2333`, `2445`, `2454`),
+a convention stated at `event.ts:80`. Part C's seven procedures follow it, then add
+`assertAttendanceEnabled` on the next line.
+
+**For a non-tRPC Route Handler, if one is ever added, the shape is
+`if (!(await areEventsEnabled(db))) throw new Error("EVENTS_DISABLED");`** —
+`src/app/api/event/upload/route.ts:53-56`. Part C as specified needs no Route Handler; the door
+page talks to tRPC like everything else.
+
 It is the first line of `myCheckInToken`, `checkIn`, `checkInManual`, `undoCheckIn`,
 `getDoorRoster`, `resolveWalkIn` and `getAttendanceStats` — **after** `assertEventsEnabled`, so
 turning events off turns attendance off too and the two switches nest rather than race.
@@ -2181,8 +2661,13 @@ with `checkIn` accepting `w` and `w-1`, a scan is valid for between 30 and 60 se
 it was minted — which is what makes a queue at a door work.
 
 **The QR renders on the event's public page** (`/events/{eventID}`), inside the "You're going"
-branch (`EventDetail.tsx:147-163`) and, for a walk-in, inside a **"Show my check-in code"**
-disclosure that appears only while the door window is open. It is behind auth, on the
+branch of `src/app/events/_components/EventDetail.tsx` — the badge is at `EventDetail.tsx:200`
+(`<Check … /> You&rsquo;re going`) and the "Cancel signup" button at `:217`, so
+`<MyCheckInCode eventID={eventID} />` mounts between them — and, for a walk-in, inside a
+**"Show my check-in code"** disclosure that appears only while the door window is open.
+`EventDetail.tsx` is already `"use client"` (`:1`) and already calls
+`api.event.cancelSignup.useMutation` (`:85`), so the hook-based refetch loop has a home and no
+new client boundary is introduced. It is behind auth, on the
 resident's own device, and it is never rendered on any list.
 
 ### D-68 — Nominating scanners
@@ -2190,20 +2675,111 @@ resident's own device, and it is never rendered on any list.
 A **"Door"** section on the authoring screen, below the questions builder:
 
 - the window (D-65);
-- a **scanner picker**. For a CCA event it lists the CCA's own members —
-  `cca.memberDirectory` already exists behind `assertHeadsCca` and is the list the brief names.
-  For a hall event it uses `admin.resolveJcrcCandidate`, an existing per-target resolver that
-  is **already audited**, so a JCRC member typing an identifier leaves the same trace they
-  already leave.
+- a **scanner picker — FOR A CCA EVENT ONLY.** It lists the CCA's own members via
+  `cca.memberDirectory` (`routers/cca.ts:229`), which already sits behind `assertHeadsCca` and
+  is the list the brief names.
+
+> **CORRECTED — THE HALL-EVENT PICKER IS DELETED, NOT REBUILT. The original draft named
+> `admin.resolveJcrcCandidate`, and that procedure is unreachable by the very people who own
+> hall events.**
+>
+> Verified at `9caf7aa`:
+>
+> - `admin.resolveJcrcCandidate` is `scrcProcedure` (`admin.ts:1497`), i.e.
+>   `roleProcedure(SCRC_ROLE)` (`trpc.ts:414`). It then calls
+>   `requireCapability(caps(...), "manageJcrcRoster")` (`admin.ts:1500`) and
+>   `assertScrcEnabled(ctx.db)` (`admin.ts:1501`).
+> - `manageJcrcRoster` is `admin || scrc` (`roles.ts:1373`).
+> - Hall events are owned by `manageHallEvents`, which is `manager` (`roles.ts:1359`), and
+>   `manager = admin || roles.includes(JCRC_ROLE)` (`roles.ts:1325`).
+>
+> **A JCRC member therefore holds `manageHallEvents` and does NOT hold `manageJcrcRoster`, and
+> does not have the SCRC role.** The picker would have thrown `INSUFFICIENT_ROLE` for exactly
+> the audience it was built for, and for an admin it would additionally have been gated behind
+> `assertScrcEnabled` — an unrelated feature's kill switch silently deciding whether a door can
+> be staffed. `admin.listJcrcRoster` (`admin.ts:1380-1389`) is gated identically and is no
+> escape.
+>
+> **But the deeper point is that the hall picker has no work to do.** D-61 already rules that a
+> hall-event nominee must hold `manageHallEvents`. `assertMayScan`'s *first* branch already
+> returns for any `manageHallEvents` holder on a hall event. So the set the stored list could
+> admit is **exactly** the set that is already admitted without it: nominating a JCRC member
+> grants them nothing they did not have, and nominating anyone else fails the re-validation. The
+> list is inert for hall events by construction.
+>
+> **So: for a hall event, render no picker.** Render the sentence in §11.3 instead, and leave
+> `scannerUserIDs` empty. `assertMayScan`'s second-branch hall check stays as written — it is
+> cheap, it is defence in depth, and deleting it would make the helper's two branches
+> asymmetric for a reader. This also removes Part C's only dependency on an SCRC-tier procedure,
+> which is the right outcome under constraint 6 regardless.
 
 Written by `event.update` into `scannerUserIDs`, which requires adding it to
-`updateEventInput` with a **`canonicalUserIDSchema`-shaped element validator** —
-`src/lib/schemas/cca.ts:` already exports one, and a raw `z.string()` here would let a client
-write an arbitrary string into a canonical-id column.
+`updateEventInput` with a **canonical-id element validator, never a bare `z.string()`** — this
+column holds identity keys, and a bare string lets a client write arbitrary text into one.
+> **DO NOT USE `userIDSchema`, AND DO NOT USE `roleTargetUserIDSchema`. BOTH ARE WRONG HERE, FOR
+> DIFFERENT REASONS, AND THE FIRST ONE IS A DOCUMENTED LOCKOUT.**
+>
+> **`userIDSchema` (`roles.ts:610-614`) enforces `E_FORMAT = /^E\d{7}$/` (`roles.ts:593`), and a
+> canonical userID is NOT required to be E-format.** `identity.ts:166-173` says so in as many
+> words: *"the localpart is NOT required to be E-format. `g.s_samuel@u.nus.edu` exists in this
+> database and canonicalises to \"G.S_SAMUEL\". Never gate eligibility or the resident baseline on
+> `/^E\d{7}$/` — that is lockout mode **L-27**, and it is a real one."* `roles.ts:556` repeats it.
+> `userIDSchema` is legitimate for **grant targets** and nothing else; a scanner nomination is not
+> a grant target, it is a name picked out of a member directory. Using it would silently make
+> every non-E-format member un-nominatable — and `memberDirectory` would happily offer them.
+>
+> **`roleTargetUserIDSchema` (`roles.ts:661`) is `userIDSchema.or(extUserIDSchema)`, so it
+> inherits the same E-format problem for the non-EXT half**, and separately widens a containment
+> its own docblock is explicit about (`roles.ts:649-655`): *"The APPLICATION of it is enumerated,
+> and the enumeration is the containment … applied at exactly three server sites … Every other
+> target site … stays on the bare `userIDSchema`, so the EXT namespace is unreachable from a
+> pasted spreadsheet."* Part C must not become a fourth site in passing.
 
-**`scannerUserIDs` is already in `SCRC_HIDDEN_EVENT_FIELDS`** (`R:409`, blanked to `[]`)
-and **stays there**. That was T-18, landed while the field was inert; this is the phase that
-fills it in, and it is the phase where removing it would matter.
+**Use a STORED-CANONICAL SHAPE CHECK, mirroring `isCanonicalResidentID` (`identity.ts:220-226`),
+and let the live re-validation be the authorisation boundary:**
+
+```ts
+// src/lib/schemas/eventAttendance.ts — client-safe (~/lib/identity is PURE,
+// identity.ts:9-12, and is already imported by client components).
+export const scannerUserIDSchema = z
+  .string()
+  .trim()
+  .toUpperCase()                  // same normalisation order as userIDSchema
+  .min(1)
+  .max(64)
+  .refine((s) => !s.includes("@"), "Not a canonical userID")
+  .refine((s) => !s.includes("|"), "Reserved delimiter");
+```
+
+**Why a loose shape check is the RIGHT strength here, and not laziness.** `scannerUserIDs` is
+**not a grant**. It is a nomination that `assertMayScan` re-derives against live membership on
+every single scan (D-61). A junk string in the array authorises nothing — it fails
+`isLiveCcaMember` and the door says `NOT_A_SCANNER`. So the validator's job is to keep the column
+well-shaped and free of junk, **not** to be the security boundary; putting the boundary in a
+stored array is exactly the mistake D-61 exists to refuse. The two `.refine`s are the two
+characters that would actually cause trouble: `@` means somebody stored an email where a
+canonical id belongs, and `|` is the delimiter the QR payload and the HMAC both use (D-55, D-57).
+
+**The `|` exclusion is belt-and-braces, not the load-bearing guarantee** — see the charset proof
+in D-55, which shows neither namespace can produce a `|` in the first place.
+
+Cap the list: `.max(20)`. A door has a handful of people on it, and an unbounded identity array
+on a row the SCRC reads is not something to leave open.
+
+Keep the schema in `lib/schemas/eventAttendance.ts` (which imports only `zod` and the pure
+`~/lib/identity`), so the picker and the router share one predicate — I-12, one predicate and not
+two. **Do not import anything for this from `routers/admin.ts`**, which pulls `node:crypto` and
+`~/env` into the bundle (`AuditLogTable.tsx:7-13` is the worked precedent).
+
+Cap the list: `.max(20)`. A door has a handful of people on it, and an unbounded identity array
+on a row the SCRC reads is not something to leave open.
+
+**`scannerUserIDs` is already in `SCRC_HIDDEN_EVENT_FIELDS`** — `event.ts:412`, inside the
+object at `event.ts:406-413`, blanked to `[]` rather than `null` because it is a list and an
+empty scanner list is the honest redaction (the reasoning is written at `event.ts:383-385`) —
+and it **stays there**. That was T-18, landed while the field was inert; this is the phase that
+fills it in, and it is the phase where removing it would matter. It is applied by the spread at
+`event.ts:2206`.
 
 ### D-69 — What the SCRC sees of Phase 3: nothing new, and here is the proof
 
@@ -2215,8 +2791,20 @@ Stated as a line item so its absence from the diff is deliberate and reviewable:
   leak, and `SCRC_HIDDEN_EVENT_FIELDS` is complete as it stands.
 - **`EventQuestion`, `EventAttendance` and `EventSignup.answers` are unreachable from
   `oversightProcedure`** because no oversight procedure queries them. Verify by grep, not by
-  assumption: `listForOversight` (`event.ts:1568-1577`) uses an explicit `select` and
-  `getForOversight` (`:1618`) reads only `event`.
+  assumption: there are exactly two, `listForOversight` (`event.ts:2077`, explicit `select` at
+  `:2118-2120`) and `getForOversight` (`event.ts:2170`, whose only projection is the
+  `{ ...full, ...SCRC_HIDDEN_EVENT_FIELDS }` spread at `event.ts:2206`). Neither touches
+  `eventQuestion`, `eventAttendance` or `answers`.
+- **`EventAttendance.userID` and `checkedInBy` are canonical ids, and constraint 6 asks what
+  oversight may see of them. The answer is NOTHING, and it needs no redaction list — because
+  there is no oversight procedure that reads the collection.** `SCRC_HIDDEN_EVENT_FIELDS` is
+  `Partial<Record<keyof Event, …>>` (`event.ts:413`); it redacts columns of `Event` and is
+  structurally incapable of reaching a different collection. Adding entries for these two fields
+  would not compile, and would not mean anything if it did. **The containment is the absence of a
+  query, so the reviewable artefact is that absence** — which is why it is written here as a line
+  item rather than left implicit. **If a later phase gives the hall office any attendance
+  visibility, that is a new `oversightProcedure` and the redaction question is asked fresh, at
+  the `select`.**
 - The moment a later phase adds an `Event` column, **T-30 applies again** and the field must be
   classified against every projection the model already has.
 
@@ -2233,8 +2821,36 @@ event.ccaID ?? undefined, targetEventID, action: "event.checkin.undo", reason: e
 undefined })`. **`targetUserID` is set** — it is the one audit row in this feature that is
 *about* a specific resident, and `admin.listAuditLog` can filter on it.
 
-`AUDIT_ACTIONS` in `services/roles.ts:261-268` gains the one string. **No name is retired**, so
-§0.1's zero-row measurement is not load-bearing here the way D-22's was.
+`AUDIT_ACTIONS` in `services/roles.ts:261-268` — the `event.*` block of the list that spans
+`roles.ts:164-342` — gains the one string. **No name is retired**, so §0.1's zero-row measurement
+is not load-bearing here the way D-22's was.
+
+> **THERE IS A SECOND PLACE, AND IT IS EASY TO MISS.** The action vocabulary is **also**
+> enumerated in a doc comment on the model itself, `prisma/schema.prisma:332-340`:
+>
+> ```
+>   /// One of AUDIT_ACTIONS in src/server/api/services/roles.ts:
+>   /// grant | revoke | set | facilityAccess.set | denied | pending.create |
+>   /// … event.approve | event.reject | event.publish | event.cancel |
+>   /// event.attendees.export | …
+> ```
+>
+> **`event.checkin.undo` must be added there too.** Nothing enforces the pair — the comment is a
+> comment — so the two lists drift the moment one is edited alone, and the schema is where the
+> next person looks first. Note the comment is *already* stale in one respect (it still names
+> `event.reject` and `event.publish`, which `roles.ts:79-81` records as having been split into
+> `event.changes` / `event.decline` and folded into `event.approve`). **Do not fix that drift in
+> this PR** — it is unrelated, it would enlarge a diff that touches the audit vocabulary, and it
+> deserves its own line. Add the one string and leave the rest alone.
+
+**`writeAudit`'s signature is `(db: PrismaClient, e: AuditEntry)`** (`admin.ts:434-437`, type at
+`admin.ts:405-419`), and **`targetCcaID` is `number | undefined`, never `number | null`** — so
+the call site spells it `event.ccaID ?? undefined`. `?? null` does not compile and `as number`
+compiles and writes garbage; the warning is written out at `event.ts:958-960` and repeated at
+every audit site in that file. **`writeAudit` takes a `PrismaClient` and NEVER a transaction
+client** (I-15, `admin.ts:421-429`): an audit written inside the transaction it is describing is
+rolled back by the throw. `undoCheckIn`'s delete and its audit row are therefore two statements,
+in that order, on `ctx.db`.
 
 ---
 
@@ -2898,7 +3514,13 @@ wrong and it is worth two minutes to find out which.*
 **`scripts/remediation/sweep-blank-event-drafts.mjs` — NO CODE CHANGE** (D-39b). Its condition 7
 already refuses to delete a draft carrying `EventQuestion` rows. Do not "fix" it into a deletion.
 
-### 6.3 Part C — attendance (8 created, 8 modified)
+### 6.3 Part C — attendance (7 created, 10 modified)
+
+> **CORRECTED against `9caf7aa` (C-0).** The old count said "8 created" and included three
+> scripts that **already exist** — Part B shipped them, already carrying their `EventAttendance`
+> branches. Only `set-attendance-flag.mjs` is new. Two files gained rows: `event.ts` now also
+> changes `BLANK_EVENT_CONTENT` and the reuse branch (D-59a), and
+> `sweep-blank-event-drafts.mjs` needs its `scannerUserIDs` blocker (D-59a).
 
 | File | Change |
 |---|---|
@@ -2913,12 +3535,15 @@ already refuses to delete a draft carrying `EventQuestion` rows. Do not "fix" it
 | `src/server/api/services/events.ts` | `assertAttendanceEnabled` (D-66) |
 | `src/server/api/services/ccaMembers.ts` | `isLiveCcaMember` using **all** membership keys (D-61, T-32) |
 | `src/server/api/services/roles.ts` | `AUDIT_ACTIONS` `:261-268` gains `"event.checkin.undo"` (D-70) |
-| `src/server/api/routers/event.ts` | seven new procedures; `update` writes the three door fields in both scopes |
-| `src/app/cca/_components/EventManage.tsx` | the "Door" section — window editor, scanner picker, link to the door page (D-68) |
-| `src/app/events/_components/EventDetail.tsx` | mount `MyCheckInCode` in the "You're going" branch and behind the walk-in disclosure (D-67) |
+| `src/server/api/routers/event.ts` | seven new procedures; `update` writes the three door fields in both scopes; **`BLANK_EVENT_CONTENT` (`:447-457`) gains `attendanceOpensAt`/`attendanceClosesAt`; the reuse branch (`:597-646`) gains the `scannerUserIDs.length === 0` clause and `scannerUserIDs: true` in its `select` (`:592`) — D-59a** |
+| `src/app/cca/_components/EventManage.tsx` | the "Door" section — window editor, scanner picker **(CCA events only — D-68)**, link to the door page |
+| `src/app/events/_components/EventDetail.tsx` | mount `MyCheckInCode` between `:200` and `:217`, and behind the walk-in disclosure (D-67) |
 | `package.json` | `qrcode.react@^4.2.0`, `jsqr@^1.4.0` (D-58) |
-| `scripts/remediation/set-attendance-flag.mjs` | **CREATE** (D-66) |
-| `scripts/remediation/create-event-phase2-indexes.mjs` | **NO CHANGE — created in PR 2 (§6.2).** PR 3 only *runs* it, with the `EventAttendance` target (§9.2, §12.4) |
+| `scripts/remediation/set-attendance-flag.mjs` | **CREATE — the ONLY new script in Part C** (D-66) |
+| `scripts/remediation/sweep-blank-event-drafts.mjs` | **EDIT (was listed as NO CHANGE).** Condition c3 gains a `scannerUserIDs` blocker; the row is REPORTED, not deleted — D-59a. Its `EventAttendance` c7 check already ships (`:439`) |
+| `scripts/remediation/create-event-phase2-indexes.mjs` | **NO CHANGE — it already ships, with the `EventAttendance` target at `:139-141`.** PR 3 only *runs* it (§9.2, §12.4, task T1) |
+| `scripts/remediation/index-census.mjs` | **NO CHANGE — `EXPECTED` already contains `"EventAttendance"` (`:133`), and an absent collection is `(absent)`, not an error. D-82 is already done.** |
+| `scripts/remediation/verify-events-schema.mjs` | **NO CHANGE for Part C's code** — check `[9]` already ships and already flips from INFO to blocking when the collection appears (`:541-577`) |
 
 ### 6.4 Part D — dashboards (2 created, 3 modified)
 
@@ -2948,7 +3573,7 @@ already refuses to delete a draft carrying `EventQuestion` rows. Do not "fix" it
 So their absence from the diff is reviewable rather than an oversight:
 
 `prisma/schema.prisma` `model Event` (§3.4) · `model Bookings` (§3.5) ·
-`SCRC_HIDDEN_EVENT_FIELDS` (`event.ts:399-406`, D-69) · `toPublicCard` (`event.ts:270-298`,
+`SCRC_HIDDEN_EVENT_FIELDS` (`event.ts:406-413`, D-69) · `toPublicCard` (`event.ts:270-298`,
 D-46) · `services/ccaScope.ts` (`assertHeadsCca` must not learn about scanners — T-14) ·
 `src/app/scrc/_components/EventsOversightPanel.tsx` (D-69) · `format.ts`'s `STATUS_META` (§2) ·
 `src/app/admin/_components/AdminShell.tsx` (D-74) · `getSignupStats` (D-72) ·
@@ -3600,9 +4225,13 @@ Scanner picker:
 
 > Pick people from your CCA. They can scan at this event only, and only while they’re still in the CCA.
 
-For a hall event:
+**For a hall event there is NO picker** (D-68 — the stored list is inert for hall events, because
+`assertMayScan` already admits every `manageHallEvents` holder). Render this static line where
+the picker would have been, so its absence reads as a decision rather than a missing feature:
 
-> Pick JCRC members. They can scan at this event only.
+> Who can scan
+
+> Any JCRC member can scan at hall events. There’s nobody to add here.
 
 Link to the door page:
 
@@ -3929,6 +4558,24 @@ remember to turn on. The rollback lever is a Vercel revert.
 **Steps 1–2 before step 6, always.** In that order the flag can never be on while the secret is
 absent, which is the one state where the door looks available and cannot work.
 
+> **NONE OF STEPS 1–7 CAN BE DONE BY THE CODER.** Every one of them needs either a reachable
+> database or the Vercel dashboard, and the database is firewalled (TCP 27017 times out; the
+> Atlas SRV record resolves, so this is egress, not an IP allowlist). **The coder's job ends at a
+> merged PR with the flag absent.** Steps 1–7 are tracked as tasks in
+> `docs/plans/events/03-pending-mongo-tasks.md` and must be ticked off there, not here:
+>
+> | Step above | Task |
+> |---|---|
+> | 1–2 | **T3** — `EVENT_QR_SECRET` in Vercel, then redeploy |
+> | 3–4 | **T1** (create + prove the index enforces), **T2** (`verify-events-schema.mjs` check `[9]` flips from INFO to blocking) |
+> | 5–6 | **T8** — the switch-on sequence, in order |
+> | 7 | **T6** — the trial event |
+> | *(before 6)* | **T7** — `scannerUserIDs` reads as `[]`, not `undefined`; **T9** — `isLiveCcaMember` agrees with the picker |
+>
+> **Do not assume anything in that file has already been run.** It is written on the premise that
+> none of it has, and T5 exists so the first person with access re-measures rather than trusting
+> a number.
+
 ### 12.5 PR 4 — Part D
 
 `prisma generate`, typecheck, build, deploy. No schema, no index, no flag, no dependency.
@@ -3957,14 +4604,48 @@ user created, except `sweep-blank-event-drafts.mjs` (nine guards, D-33) and
 
 ### 13.1 What the coder verifies STATICALLY, before handing over
 
+> **THIS REPO HAS NO TEST FRAMEWORK. Verified against `package.json` at `9caf7aa`: there is no
+> jest, no vitest, no playwright, no test runner of any kind, and no `test` script.** So "the
+> tests pass" is not available as evidence for anything in this plan, and nothing below should be
+> written as if it were. The static gate is `tsc` + lint + `next build` + two read-only scripts,
+> and **§13.3 (a human, in a browser) is not optional polish — it is the only functional
+> verification that exists.** The five authoring routes that shipped broken passed every static
+> check in this block.
+
+> **AND THE LAST TWO COMMANDS NEED A DATABASE.** `verify-events-schema.mjs` and
+> `index-census.mjs` both open a Prisma connection; with TCP 27017 firewalled they fail on
+> connect and prove nothing. **The coder is expected NOT to have database access** — run the
+> first four, and record the last two as deferred to `03-pending-mongo-tasks.md` (**T1**, **T2**)
+> rather than reporting them as passed or as failures of the change.
+
 ```bash
 npx prisma generate          # must precede tsc — it writes the types
 npx tsc --noEmit             # ZERO errors
 npm run lint                 # ZERO new warnings
 npm run build                # next build must succeed
+
+# --- BOTH OF THESE REQUIRE A REACHABLE DATABASE. See T1/T2 if 27017 is blocked.
 node scripts/remediation/verify-events-schema.mjs     # exit 0
 node scripts/remediation/index-census.mjs > after.txt ; diff before.txt after.txt
 ```
+
+**NEVER run `npm run db:generate`, `prisma db push`, `prisma migrate dev` or
+`prisma migrate deploy`** — see §9.0 and Appendix A. `npx prisma generate` is the whole database
+step for a Mongo field-only change; the index comes from `createIndexes` through
+`$runCommandRaw` (§9.2, T1).
+
+**(0) THE D-59a CHECKS — new, and all four are greppable in under a minute:**
+
+1. `BLANK_EVENT_CONTENT` (`event.ts:447-457`) contains `attendanceOpensAt: null` and
+   `attendanceClosesAt: null`, and **still compiles** — the `satisfies Partial<Record<keyof
+   Event, null>>` clause is what proves both columns are genuinely nullable.
+2. It does **NOT** contain `scannerUserIDs`. If someone added it, the build fails; if they
+   "fixed" the build by loosening the `satisfies` clause, **that is the defect** — the guard is
+   load-bearing (`event.ts:401-402`).
+3. The reuse branch's `findFirst` `select` (`event.ts:592`) includes `scannerUserIDs: true`, and
+   the early return is gated on `questionCount === 0 && existing.scannerUserIDs.length === 0`.
+4. `sweep-blank-event-drafts.mjs` blocks on a non-empty `scannerUserIDs` and **reports** rather
+   than deleting.
 
 **A clean `tsc` is necessary and nowhere near sufficient.** These classes compile perfectly:
 
@@ -4521,6 +5202,16 @@ Recorded so nothing here is mistaken for an oversight.
   non-JCRC volunteer for a hall event. The right fix is a per-event, expiring nomination that
   carries its own revocation — **not** widening `assertMayScan`'s membership check, which would
   make "nominated" mean "trusted forever".
+- **An `EXT:` identity cannot be NOMINATED as a scanner** (D-68). `scannerUserIDSchema` is a
+  stored-canonical shape check that accepts any non-`@` id, so an `EXT:` pin is not *rejected* by
+  the shape — but `isLiveCcaMember` resolves through `membershipKeysFor`, which derives its
+  canonical key from an `@u.nus.edu` email (`ccaMembers.ts:49`), and an `EXT:` account has no
+  such email. So an `EXT:` staff member re-validates as "not a member" and is refused at the
+  door. They can still scan by heading the CCA, which routes through `assertHeadsCca` and never
+  consults this list. **Fixing it properly means deciding whether `EXT:` identities may hold CCA
+  membership at all** — a question about the allowlist's blast radius, not about attendance, and
+  one this plan deliberately does not answer in passing. See also the enumeration argument on
+  `roleTargetUserIDSchema` (`roles.ts:649-655`).
 - **No term model** (D-75). The hall-wide page takes a date range.
 - **No offline door.** The page is online-only with a pre-loaded roster (D-63); if the wifi dies
   the committee ticks people off the list, and those rows say `method: "manual"`. A genuinely

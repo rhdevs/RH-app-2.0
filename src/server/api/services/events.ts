@@ -67,6 +67,72 @@ export async function assertEventsEnabled(db: PrismaClient): Promise<void> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* The Attendance kill switch — a SECOND flag, on purpose                       */
+/* -------------------------------------------------------------------------- */
+
+const ATTENDANCE_FLAG_KEY = "events.attendance.enabled";
+
+let attendanceFlagCache: { at: number; on: boolean } | null = null;
+
+/**
+ * A SECOND FLAG, NESTED UNDER THE FIRST. Attendance is off unless BOTH
+ * `events.enabled` and `events.attendance.enabled` are on — every attendance
+ * procedure calls `assertEventsEnabled` first and this second.
+ *
+ * WHY A SEPARATE SWITCH. The door layer is the only part of Events that depends
+ * on a camera, on a phone the hall does not own, on a network at a venue, and
+ * on an env var that may not be set. It has to be switchable on for ONE trial
+ * event without turning it on hall-wide, and switchable off again from a phone
+ * while standing at a door that is not working. Bundling it under
+ * `events.enabled` would mean the only way to stop a misbehaving scanner is to
+ * take the entire events feature down, including timelines and signups people
+ * are already using.
+ *
+ * FAILS CLOSED, same as areEventsEnabled: an absent row is OFF, and a failed
+ * read is OFF and is NOT cached, so the next request retries rather than
+ * pinning "disabled" on a transient hiccup.
+ *
+ * IT MUST NOT BE SWITCHED ON BEFORE THE EventAttendance UNIQUE INDEX EXISTS AND
+ * HAS BEEN PROVEN TO ENFORCE (pending tasks T1/T2). A Prisma `@@unique` creates
+ * nothing on MongoDB; without the real index, `checkIn`'s P2002 branch is
+ * unreachable and every double scan writes a second row, silently.
+ */
+export async function isAttendanceEnabled(db: PrismaClient): Promise<boolean> {
+  if (attendanceFlagCache && Date.now() - attendanceFlagCache.at < FLAG_TTL_MS) {
+    return attendanceFlagCache.on;
+  }
+  try {
+    const row = await db.systemFlag.findUnique({
+      where: { key: ATTENDANCE_FLAG_KEY },
+    });
+    const on = row?.value === "on";
+    attendanceFlagCache = { at: Date.now(), on };
+    return on;
+  } catch {
+    return false;
+  }
+}
+
+/** Test/ops seam: drop the per-lambda cache so the next read hits the row. */
+export function resetAttendanceFlagCache(): void {
+  attendanceFlagCache = null;
+}
+
+/**
+ * Assert the door layer is on. Called at the top of EVERY attendance procedure,
+ * AFTER assertEventsEnabled — the page-level checks are cosmetic, these two are
+ * the boundary.
+ */
+export async function assertAttendanceEnabled(db: PrismaClient): Promise<void> {
+  if (!(await isAttendanceEnabled(db))) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "ATTENDANCE_DISABLED",
+    });
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* eventID allocation                                                          */
 /* -------------------------------------------------------------------------- */
 

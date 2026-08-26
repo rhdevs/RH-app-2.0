@@ -43,6 +43,22 @@ export const env = createEnv({
     // fails loudly on its own if the token is missing, which localises the
     // breakage to the feature that needs it.
     BLOB_READ_WRITE_TOKEN: z.string().optional(),
+    /**
+     * Signing key for the rotating event check-in QR token.
+     *
+     * DECLARED OPTIONAL, REQUIRED IN FACT — the same shape as
+     * BLOB_READ_WRITE_TOKEN above, and for the same reason: declaring it
+     * required stops the whole app building for every contributor who has not
+     * pulled it. Instead the ATTENDANCE FEATURE ALONE fails closed and loudly
+     * with ATTENDANCE_NOT_CONFIGURED, and everything else still runs.
+     *
+     * Generate with `openssl rand -base64 48`. Rotating it invalidates every
+     * outstanding token immediately, which is the correct response to a
+     * suspected leak. Never commit it, never log it, and it must never reach
+     * the browser — the token is minted server-side and only the signed result
+     * is sent.
+     */
+    EVENT_QR_SECRET: z.string().optional(),
   },
 
   /**
@@ -69,6 +85,7 @@ export const env = createEnv({
     APP_URL: process.env.APP_URL,
     BCRYPT_ROUNDS: process.env.BCRYPT_ROUNDS,
     BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
+    EVENT_QR_SECRET: process.env.EVENT_QR_SECRET,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

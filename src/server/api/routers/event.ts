@@ -14,6 +14,7 @@ import {
 import { getUserRoles } from "~/server/api/services/access";
 import { computeCapabilities } from "~/server/api/services/roles";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
+import { isLiveCcaMember } from "~/server/api/services/ccaMembers";
 import { assertScrcEnabled } from "~/server/api/services/scrcFlag";
 import { writeAudit } from "~/server/api/routers/admin";
 import {
@@ -127,6 +128,67 @@ async function loadOwnedEvent(
     await assertHeadsCca(db, { userID, roles }, event.ccaID);
   }
   return event;
+}
+
+/**
+ * WHO MAY SCAN AT THIS EVENT'S DOOR. Like `loadOwnedEvent`, THE BRANCH LIVES IN
+ * EXACTLY ONE PLACE — every check-in path goes through here.
+ *
+ * Two ways in: you own the event, or the head nominated you AND you are still a
+ * member. Nothing else, and no role string shortcut.
+ *
+ * THE STORED LIST IS NECESSARY, NEVER SUFFICIENT. `Event.scannerUserIDs` is
+ * written once, when the head sets the event up. A nominee who later leaves the
+ * CCA — or is removed from it — keeps their entry in that array forever,
+ * because nothing sweeps it. Re-validating against live membership is the same
+ * argument `assertHeadsCca` makes for reading `CcaHead` directly instead of
+ * trusting `roles.includes("cca_head")`, and the same one I-5 makes for
+ * `getUserRoles`.
+ *
+ * `isLiveCcaMember` checks all THREE places membership lives, not just the
+ * obvious `UserCCA` rows — see its docblock. A UserCCA-only check would deny
+ * roughly a third of every CCA, at a door, with a queue.
+ */
+async function assertMayScan(
+  db: PrismaClient,
+  userID: string,
+  roles: string[],
+  event: { ccaID: number | null; scannerUserIDs: string[] },
+): Promise<void> {
+  // 1. The owner always may — the same two ownership shapes as loadOwnedEvent.
+  if (event.ccaID == null) {
+    if (computeCapabilities(roles).manageHallEvents) return;
+  } else {
+    try {
+      await assertHeadsCca(db, { userID, roles }, event.ccaID);
+      return;
+    } catch {
+      // Not a head of this CCA. Fall through to the nominee branch rather than
+      // rethrowing: being nominated is a second, independent way in, and
+      // assertHeadsCca's FORBIDDEN would otherwise mask it.
+    }
+  }
+
+  // 2. A nominee.
+  if (!event.scannerUserIDs.includes(userID)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
+  }
+
+  if (event.ccaID == null) {
+    // A HALL EVENT HAS NO MEMBERSHIP SET TO RE-VALIDATE AGAINST. The only
+    // meaningful live check is the capability itself, re-read by the caller
+    // (I-5). In practice this branch is unreachable from the UI, because every
+    // hall nominee must hold manageHallEvents and branch 1 already admitted
+    // them — which is why no nominee picker is rendered for hall events at all.
+    if (!computeCapabilities(roles).manageHallEvents) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
+    }
+    return;
+  }
+
+  if (!(await isLiveCcaMember(db, event.ccaID, userID))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
+  }
 }
 
 /**
@@ -454,6 +516,23 @@ const BLANK_EVENT_CONTENT = {
   location: null,
   facilityID: null,
   capacity: null,
+  // ADDED BY PART C (D-59a). Both are Int?, so `null` is a legal value and the
+  // `satisfies` guard accepts them. Safe in the only direction that matters:
+  // `create` and `duplicate` have written both explicitly as null since they
+  // were added, so every row this filter is meant to find already carries the
+  // keys and Prisma's strict null match (T-12) is satisfied. A row predating
+  // that simply fails to match and the head gets one extra blank draft — the
+  // benign direction, and the one this branch already commits to in writing.
+  //
+  // scannerUserIDs IS DELIBERATELY ABSENT AND CANNOT BE ADDED. It is
+  // `String[] @default([])`, a non-nullable list whose absent value is `[]`,
+  // not `null`, so it does not satisfy Partial<Record<keyof Event, null>> and
+  // adding it does not compile. IF YOU HIT THAT BUILD ERROR, DO NOT LOOSEN THIS
+  // `satisfies` CLAUSE TO ADMIT IT — the clause is what keeps this filter safe
+  // against a renamed column, and loosening it IS the defect. It is checked in
+  // JS below instead, beside the question count, for the same reason.
+  attendanceOpensAt: null,
+  attendanceClosesAt: null,
 } as const satisfies Partial<Record<keyof Event, null>>;
 
 /**
@@ -589,7 +668,7 @@ export const eventRouter = createTRPCRouter({
             ...BLANK_EVENT_CONTENT,
           },
           orderBy: { createdAt: "desc" },
-          select: { eventID: true, photoUrls: true },
+          select: { eventID: true, photoUrls: true, scannerUserIDs: true },
         });
         // photoUrls is checked in JS and NOT in the `where`: Prisma+Mongo's
         // `equals: []` on a scalar list is a shape this repo has not used and
@@ -637,7 +716,30 @@ export const eventRouter = createTRPCRouter({
           const questionCount = await ctx.db.eventQuestion.count({
             where: { eventID: existing.eventID },
           });
-          if (questionCount === 0) {
+          // D-59a — AND A DRAFT THAT ALREADY CARRIES NOMINATED SCANNERS IS NOT
+          // BLANK EITHER. Same wall as the questions above, reached from the
+          // opposite direction: questions are invisible to the `where` because
+          // they are not a column at all, and scannerUserIDs is invisible
+          // because it is a column of the WRONG SHAPE — `String[]`, whose
+          // absent value is `[]` and not `null`. Free to check: the row is
+          // already in hand and the field is already selected.
+          //
+          // THIS ONE IS AN AUTHORISATION BUG, NOT HOUSEKEEPING. Without it: a
+          // head presses New event, scrolls to the Door section, nominates two
+          // committee members, never types a title, and leaves. Weeks later
+          // they press New event again, are handed that same row, fill in a
+          // real event and submit it — and two people they did not choose now
+          // hold a door surface that writes rows asserting where residents
+          // physically were, while the head's screen shows an empty scanner
+          // list. The Door section sits BELOW the questions builder, so the
+          // same submit-without-scrolling path applies verbatim.
+          //
+          // The blast radius is bounded and saying so is part of the argument:
+          // the filter is scoped to the same ccaID and the same createdBy, and
+          // assertMayScan re-validates every nominee against LIVE membership,
+          // so an inherited scanner is necessarily a current member of the same
+          // CCA. Not a stranger — but still not the head's choice.
+          if (questionCount === 0 && existing.scannerUserIDs.length === 0) {
             // RETURNS BEFORE nextEventId. Allocating an id and then discarding
             // it burns a counter value for no reason, and nextEventId never
             // goes backwards.
