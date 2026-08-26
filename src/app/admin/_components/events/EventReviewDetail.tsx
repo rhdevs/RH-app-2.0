@@ -224,7 +224,13 @@ export default function EventReviewDetail({ eventID }: { eventID: number }) {
                 {event.location ?? "the facility"}
               </span>{" "}
               for its times. If the room is already taken, the event still
-              publishes and the CCA head is told to book it themselves.
+              publishes and{" "}
+              {/* A hall-wide event has no CCA head to tell — the owner is the
+                  JCRC itself, quite possibly whoever is reading this. Same
+                  branch, same reason, as decidedLine and the withdrawn panel. */}
+              {isHall
+                ? "the JCRC is told to book it manually."
+                : "the CCA head is told to book it themselves."}
             </p>
           ) : (
             <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
@@ -344,7 +350,7 @@ export default function EventReviewDetail({ eventID }: { eventID: number }) {
           </div>
 
           {branch.status === "published" && (
-            <ReviewerCancelPanel eventID={eventID} />
+            <ReviewerCancelPanel eventID={eventID} isHall={isHall} />
           )}
         </>
       )}
@@ -385,7 +391,21 @@ function mapCancelError(message: string): string {
   if (message === "EVENTS_DISABLED") return "Events aren’t switched on yet.";
   return "That didn’t go through. Try again.";
 }
-function ReviewerCancelPanel({ eventID }: { eventID: number }) {
+function ReviewerCancelPanel({
+  eventID,
+  isHall,
+}: {
+  eventID: number;
+  /**
+   * THE THIRD hall-unaware string in this file, and the one that survived the
+   * first two being fixed. "The CCA head is not asked first" names a person who
+   * does not exist for a hall-wide event (`ccaID == null`): the owner IS the
+   * JCRC, so nobody is being overruled and the sentence describes a courtesy
+   * that is not being withheld. decidedLine and the withdrawn panel already
+   * branch on exactly this; this panel was simply never handed the flag.
+   */
+  isHall: boolean;
+}) {
   const utils = api.useUtils();
   const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState("");
@@ -425,8 +445,9 @@ function ReviewerCancelPanel({ eventID }: { eventID: number }) {
       </p>
       <p className="mt-1 text-sm text-red-800">
         It comes off the residents&rsquo; timeline, everyone who signed up loses
-        their place, and the facility booking is released. The CCA head is not
-        asked first. This can&rsquo;t be undone.
+        their place, and the facility booking is released.{" "}
+        {isHall ? "" : "The CCA head is not asked first. "}
+        This can&rsquo;t be undone.
       </p>
 
       <label className="mt-3 block text-sm font-medium text-red-900">

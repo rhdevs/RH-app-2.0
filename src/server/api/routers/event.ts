@@ -128,8 +128,25 @@ async function loadOwnedEvent(
  *
  * NON-FATAL by design — a missing booking (already deleted, or never made
  * because the slot clashed at approval) is a normal outcome, not an error, and
- * an event must not be left half-cancelled because a cleanup delete failed. The
- * caller has ALREADY nulled Event.bookingID before calling this.
+ * an event must not be left half-cancelled because a cleanup delete failed.
+ *
+ * IT RE-READS `bookingID` ITSELF, and takes an eventID rather than a row FOR
+ * EXACTLY THAT REASON. It used to be handed the row its caller had loaded
+ * before the status write, and to run AFTER the caller had already nulled
+ * Event.bookingID — which meant the cleanup decided what to free from a value
+ * read one or more round trips earlier, and threw away the only pointer to the
+ * booking before looking. `decide` stamps `bookingID` in a SEPARATE write after
+ * it publishes (the auto-book takes a facility lock first), so a cancel landing
+ * in that window read `bookingID: null`, freed nothing, and then had the
+ * booking written onto the row it had just cancelled: a canceled event holding
+ * a room, with no pointer left to find it by. Reading the CURRENT value after
+ * the status write closes that window.
+ *
+ * ORDER IS LOAD-BEARING: delete the Bookings row FIRST, null the pointer
+ * SECOND. The reverse loses the pointer if the delete fails, which is the
+ * orphan this function exists to prevent; this order at worst leaves a
+ * `bookingID` pointing at an already-deleted booking, which is inert and which
+ * a re-run cleans up.
  *
  * Shared by cancelEvent and reviewerCancel. Two cancels, one cleanup: the head
  * and the reviewer must not be able to leave the room booked in different
@@ -137,17 +154,22 @@ async function loadOwnedEvent(
  */
 async function releaseEventBooking(
   db: PrismaClient,
-  event: { eventID: number; bookingID: number | null },
+  eventID: number,
 ): Promise<void> {
-  if (event.bookingID == null) return;
   try {
-    await db.bookings.deleteMany({ where: { bookingID: event.bookingID } });
+    const fresh = await db.event.findUnique({
+      where: { eventID },
+      select: { bookingID: true },
+    });
+    const bookingID = fresh?.bookingID ?? null;
+    if (bookingID == null) return;
+    await db.bookings.deleteMany({ where: { bookingID } });
+    await db.event.update({ where: { eventID }, data: { bookingID: null } });
   } catch (err) {
     console.error(
       JSON.stringify({
         evt: "event_booking_delete_failed",
-        eventID: event.eventID,
-        bookingID: event.bookingID,
+        eventID,
         error: err instanceof Error ? err.message : String(err),
       }),
     );
@@ -340,13 +362,30 @@ function nameableCcaIDs(events: { ccaID: number | null }[]): number[] {
  *                   exists to avoid.
  *   updatedBy       whoever last touched the row.
  *
+ *   scannerUserIDs  the SAME canonical-id class, and the one that is easy to
+ *                   miss because it is INERT: D-17 landed it for the attendance
+ *                   phase and nothing reads or writes it yet, so leaving it out
+ *                   of this list costs nothing TODAY and leaks a list of every
+ *                   door scanner in the hall the day the attendance phase fills
+ *                   it in — silently, through a procedure whose whole
+ *                   description is "view events, read-only", with no diff to
+ *                   this file to notice. Exactly the argument `create` makes
+ *                   for writing the four inert fields explicitly: the cost of
+ *                   handling an inert field now is one line, and the cost of
+ *                   discovering the omission later is an incident. It is a
+ *                   LIST, so it blanks to `[]` rather than null — an empty
+ *                   scanner list means "nobody", which is the honest redaction
+ *                   here, and it keeps the field's TYPE intact for the client.
+ *
  * `ccaID` stays: it names an organisation, not a person, and the hall office
  * already has the full CCA list. `decidedAt`, `publishedAt`, `createdAt` and
  * `updatedAt` stay — "when did this move" is a pipeline fact and is the whole
- * point of watching the pipeline.
+ * point of watching the pipeline. The other three inert Phase-2 fields
+ * (attendanceOpensAt, attendanceClosesAt, answersPurgedAt) are TIMESTAMPS, not
+ * identities, and stay for the same reason the other timestamps do.
  *
- * Blanked to null rather than deleted, so the response SHAPE is identical for
- * both tiers and no client has to branch on field presence.
+ * Blanked rather than deleted, so the response SHAPE is identical for both
+ * tiers and no client has to branch on field presence.
  *
  * An OBJECT spread over the record, not a list of keys assigned in a loop:
  * `createdBy` is non-nullable in the schema (`String`, not `String?`), so a
@@ -363,7 +402,8 @@ const SCRC_HIDDEN_EVENT_FIELDS = {
   createdBy: null,
   decidedBy: null,
   updatedBy: null,
-} as const satisfies Partial<Record<keyof Event, null>>;
+  scannerUserIDs: [],
+} as const satisfies Partial<Record<keyof Event, null | readonly string[]>>;
 
 /* resolveFacility lives in services/booking.ts — the interview-slot flow
  * resolves a facility the same way, and one definition is what keeps the two
@@ -762,17 +802,42 @@ export const eventRouter = createTRPCRouter({
           message: "NOT_CANCELABLE",
         });
       }
-      await ctx.db.event.update({
-        where: { eventID: input.eventID },
+
+      // THE STATUS GOES IN THE `where`, exactly as in `decide` and `withdraw`.
+      // The read above and this write are two round trips, and `decide` is a
+      // mutation a reviewer can land in between them: a cancel that loaded a
+      // `submitted` row finds it `published` — with a room booked for it — by
+      // the time it writes. The old unscoped update went through anyway, and
+      // the cleanup below then freed nothing, because it was deciding from the
+      // pre-race row. A canceled event silently kept the facility.
+      //
+      // `NOT ... in` rather than `in`: normalizeStatus maps null and anything
+      // unrecognised to "draft", which IS cancelable, so the negative spelling
+      // is the one that matches the check above row for row. (A positive `in`
+      // list would refuse a null-status row that the check permits.)
+      //
+      // `bookingID` IS DELIBERATELY NOT NULLED HERE. releaseEventBooking now
+      // re-reads it after this write and clears it once the booking is gone —
+      // nulling it first is what threw away the pointer.
+      const applied = await ctx.db.event.updateMany({
+        where: {
+          eventID: input.eventID,
+          NOT: { status: { in: ["declined", "canceled"] } },
+        },
         data: {
           status: "canceled",
-          bookingID: null,
           updatedAt: new Date(),
           updatedBy: userID,
         },
       });
+      if (applied.count === 0) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_CANCELABLE",
+        });
+      }
 
-      await releaseEventBooking(ctx.db, event);
+      await releaseEventBooking(ctx.db, input.eventID);
 
       await writeAudit(ctx.db, {
         actorUserID: userID,
@@ -825,11 +890,14 @@ export const eventRouter = createTRPCRouter({
         });
       }
 
-      await ctx.db.event.update({
-        where: { eventID: input.eventID },
+      // Scoped on `published` for the same reason cancelEvent is scoped on
+      // "not terminal": the owning head can cancel, and `decide` can still be
+      // stamping this row's bookingID, between the read above and this write.
+      // Same atomic match, same NOT_CANCELABLE for the loser.
+      const applied = await ctx.db.event.updateMany({
+        where: { eventID: input.eventID, status: "published" },
         data: {
           status: "canceled",
-          bookingID: null,
           decisionReason: input.reason,
           decidedAt: new Date(),
           decidedBy: userID,
@@ -837,8 +905,14 @@ export const eventRouter = createTRPCRouter({
           updatedBy: userID,
         },
       });
+      if (applied.count === 0) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_CANCELABLE",
+        });
+      }
 
-      await releaseEventBooking(ctx.db, event);
+      await releaseEventBooking(ctx.db, input.eventID);
 
       await writeAudit(ctx.db, {
         actorUserID: userID,
@@ -1264,7 +1338,11 @@ export const eventRouter = createTRPCRouter({
       // withFacilityLock + conflict check + nextBookingId as createBooking. The
       // facility ROLE gate is intentionally skipped — JCRC approving the event IS
       // the authorization — but the physical time-conflict check is kept.
-      let autoBook: "booked" | "conflict" | "none" = "none";
+      // "released" = the slot was free and was booked, but the event stopped
+      // being published before the booking could be attached to it, so the
+      // booking was given straight back. Distinct from "conflict" (the slot was
+      // never free) because it is a different fact about the room.
+      let autoBook: "booked" | "conflict" | "released" | "none" = "none";
       if (
         input.decision === "approve" &&
         event.facilityID != null &&
@@ -1318,11 +1396,29 @@ export const eventRouter = createTRPCRouter({
             return { booked: true as const, bookingID };
           });
           if (result.booked) {
-            autoBook = "booked";
-            await ctx.db.event.update({
-              where: { eventID: input.eventID },
+            // SCOPED ON `published`, and the booking is GIVEN BACK if it does
+            // not apply. This write is several round trips after the status
+            // write above — a facility lock, a conflict scan and a create sit
+            // in between — and a cancel (the head's, or a reviewer's) lands in
+            // that window. Unscoped, it stamped a live bookingID onto a row
+            // that had just been CANCELED, after that cancel's cleanup had
+            // already looked and found nothing: the room stayed held for an
+            // event that is not happening, with the only pointer to it written
+            // onto a row nobody reads bookings off. Nothing may hold a facility
+            // for a non-published event, so if the match fails the Bookings row
+            // we just created is deleted rather than left behind.
+            const stamped = await ctx.db.event.updateMany({
+              where: { eventID: input.eventID, status: "published" },
               data: { bookingID: result.bookingID, autoBookFailed: false },
             });
+            if (stamped.count > 0) {
+              autoBook = "booked";
+            } else {
+              autoBook = "released";
+              await ctx.db.bookings
+                .deleteMany({ where: { bookingID: result.bookingID } })
+                .catch(() => undefined);
+            }
           } else {
             autoBook = "conflict";
             await ctx.db.event.update({
@@ -1367,7 +1463,9 @@ export const eventRouter = createTRPCRouter({
             ? `${input.reason ? input.reason + "; " : ""}auto-booked facility #${event.facilityID}`
             : autoBook === "conflict"
               ? `${input.reason ? input.reason + "; " : ""}facility #${event.facilityID} clash — not booked`
-              : (input.reason ?? undefined),
+              : autoBook === "released"
+                ? `${input.reason ? input.reason + "; " : ""}facility #${event.facilityID} booked then released — event no longer published`
+                : (input.reason ?? undefined),
       });
       return {
         status: nextStatus as "published" | "changes_requested" | "declined",
@@ -1507,7 +1605,9 @@ export const eventRouter = createTRPCRouter({
    * One event's record, for the oversight detail view.
    *
    * A MANAGER GETS getForReview'S ANSWER, BYTE FOR BYTE. A hall-office caller
-   * gets the same record with four fields removed — see SCRC_HIDDEN_EVENT_FIELDS
+   * gets the same record with the identity-bearing fields blanked — the count is
+   * deliberately NOT written out here, because it was written out, drifted, and
+   * then disagreed with the list it describes; read SCRC_HIDDEN_EVENT_FIELDS
    * below. The body was originally identical for both, which meant `scrc` was
    * handed the head's internal description and the private decision trail, from
    * a capability whose entire description is "view events, read-only".

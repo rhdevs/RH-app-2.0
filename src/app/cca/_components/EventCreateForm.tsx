@@ -101,6 +101,7 @@ export default function EventCreateForm({
         value={value}
         onChange={(patch) => setValue((v) => ({ ...v, ...patch }))}
         disabled={create.isPending}
+        isHall={ccaID == null}
       />
 
       {/* HALL-AWARE, for the same reason as EventsListPanel's empty state: a

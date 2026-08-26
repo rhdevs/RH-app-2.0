@@ -281,13 +281,15 @@ export default function EventsOversightPanel() {
       {/* KNOWN, and the server documents it: listForOversight filters the RAW
           `status` column, while the status it returns is normalizeStatus'd.
           Event.status is a nullable String, and normalizeStatus maps null to
-          "draft" — so a row stored as null reads "Draft" in this list but will
-          NOT appear under the Draft filter. Left alone deliberately upstream;
+          "draft" — so a row stored as null reads "Not submitted" in this list
+          (STATUS_META relabelled draft; the word "Draft" is no longer shown
+          anywhere) but will NOT appear under that filter. Left alone deliberately upstream;
           said out loud here so the next person does not file it as a bug. */}
       {status === "draft" && (
         <p className="text-xs text-gray-400">
-          Older events with no status recorded show as drafts in the full list,
-          but don’t match this filter. Choose “All statuses” to see them.
+          Older events with no status recorded show as “Not submitted” in the
+          full list, but don’t match this filter. Choose “All statuses” to see
+          them.
         </p>
       )}
 
@@ -311,9 +313,14 @@ export default function EventsOversightPanel() {
             Nothing to show
           </p>
           <p className="mt-1 text-sm text-gray-500">
+            {/* The label is a STATE NAME, not an adjective — "Not submitted",
+                "Changes needed", "In review" — so the old "No events are
+                {label} right now" produced "No events are not submitted right
+                now", a double negative that reads as its own opposite. Quote
+                the label instead of trying to inflect it. */}
             {status === ALL
               ? "No events have been created yet."
-              : `No events are ${STATUS_META[status].label.toLowerCase()} right now.`}
+              : `No events are in the “${STATUS_META[status].label}” state right now.`}
           </p>
         </div>
       )}

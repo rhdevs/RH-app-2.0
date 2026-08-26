@@ -69,6 +69,16 @@ function mapError(e: unknown): string {
   // string is unreachable there in practice.
   if (message === "EVENT_LOCKED")
     return "This event is in the review queue. Withdraw it first to make changes.";
+  // submitForReview refuses anything whose editScope is not "all". Same
+  // argument as NOT_CANCELABLE below, and the same two roles: the head's second
+  // tab submits first, or a reviewer decides a `changes_requested` event back to
+  // `declined` while its editor is open. Retrying cannot succeed from any of the
+  // refusing states — submitted needs a withdraw, declined and canceled are
+  // terminal — so the generic "Try again" told them to repeat an action that is
+  // guaranteed to fail. This string was the one gap left in the error map after
+  // NOT_CANCELABLE was added.
+  if (message === "NOT_SUBMITTABLE")
+    return "This event can't be submitted from its current state — it's already in the queue, or it's been decided. Reload the page.";
   if (message === "NOT_WITHDRAWABLE")
     return "This event isn't in the review queue. Reload the page.";
   if (message === "NOT_UNDER_REVIEW")
@@ -102,10 +112,21 @@ function DetailsEditor({
   event,
   isHallEvent,
   onInvalidate,
+  onHandoff,
 }: {
   event: OwnedEvent;
   isHallEvent: boolean;
   onInvalidate: () => Promise<void>;
+  /**
+   * Report a failure that leaves the event in a status THIS COMPONENT DOES NOT
+   * RENDER — currently only registerAndPublish's step 2, which lands the event
+   * at `submitted`. Local `error` state cannot carry such a message: the
+   * `onInvalidate()` that follows flips the status, `editScope` stops being
+   * "all", and this whole subtree unmounts with the message inside it. The
+   * parent holds it instead and renders it beside the panel the head actually
+   * lands on.
+   */
+  onHandoff: (message: string) => void;
 }) {
   const [value, setValue] = useState<ProposalValue>({
     title: event.title ?? "",
@@ -227,10 +248,16 @@ function DetailsEditor({
     } catch (e) {
       // The event is now `submitted`, and the copy must say so rather than
       // implying nothing happened.
-      setError(
+      //
+      // HANDED TO THE PARENT, NOT `setError`. The invalidate on the next line
+      // moves the status to `submitted`, which unmounts this editor — local
+      // error state would be destroyed by the very refetch that makes the
+      // message true, so the head would see the submitted panel and no
+      // explanation at all. The parent renders it there instead.
+      onHandoff(
         `Your event was registered but couldn't be published: ${mapError(e)} ` +
-          `It's sitting in the review queue now. Try publishing again, or leave it ` +
-          `for another JCRC member to approve.`,
+          `It's sitting in the review queue now — open it in the queue to ` +
+          `approve it, or leave it for another JCRC member.`,
       );
     }
     await onInvalidate();
@@ -247,6 +274,7 @@ function DetailsEditor({
           setSaved(false);
         }}
         disabled={busy}
+        isHall={isHallEvent}
       />
 
       <div className="space-y-5 border-t border-gray-100 pt-5">
@@ -760,7 +788,7 @@ function AutoBookingNotice({ event }: { event: OwnedEvent }) {
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
         <span className="font-medium">Facility booked automatically</span>
         {event.location ? ` — ${event.location}` : ""}. It appears in the
-        bookings calendar under your name.
+        bookings calendar.
       </div>
     );
   }
@@ -807,8 +835,12 @@ export default function EventManage({
   const query = api.event.getForOwner.useQuery({ eventID }, { retry: false });
   // Keep the collapsible public editor state across refetches.
   const [editingPublic, setEditingPublic] = useState(false);
+  // A message from a step that left the event in a status the reporting
+  // component no longer renders — see DetailsEditor's `onHandoff`.
+  const [handoffError, setHandoffError] = useState<string | null>(null);
   useEffect(() => {
     setEditingPublic(false);
+    setHandoffError(null);
   }, [eventID]);
 
   async function invalidate() {
@@ -902,6 +934,7 @@ export default function EventManage({
             event={event}
             isHallEvent={isHallEvent}
             onInvalidate={invalidate}
+            onHandoff={setHandoffError}
           />
           <div className="border-t border-gray-100 pt-4">
             <CancelEventButton event={event} onInvalidate={invalidate} />
@@ -914,6 +947,25 @@ export default function EventManage({
           form the server refuses every save from, with EVENT_LOCKED. */}
       {status === "submitted" && (
         <div className="space-y-4">
+          {/* The half-completed "Register and publish" (hall events). It is
+              reported HERE rather than in DetailsEditor because DetailsEditor
+              is gone by the time it is true — see its `onHandoff` prop. The
+              link is not decoration: this panel offers Withdraw and Cancel and
+              NO publish control, so "try publishing again" has to point
+              somewhere that actually has the button. */}
+          {handoffError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+              <p className="text-sm text-red-800">{handoffError}</p>
+              {isHallEvent && (
+                <Link
+                  href={`/admin/events/${event.eventID}`}
+                  className="mt-1 inline-block text-sm font-medium text-red-900 underline"
+                >
+                  Open it in the review queue
+                </Link>
+              )}
+            </div>
+          )}
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-6">
             <p className="text-sm font-medium text-amber-900">
               Submitted — waiting for JCRC review.

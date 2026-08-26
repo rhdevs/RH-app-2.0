@@ -983,9 +983,12 @@ total was wrong, so the built set is correct — verified against the router.)*
 5. event = findUnique({ eventID }); NOT_FOUND if absent
 6. if (normalizeStatus(event.status) !== "submitted") PRECONDITION_FAILED NOT_UNDER_REVIEW
 7. nextStatus = approve ? "published" : request_changes ? "changes_requested" : "declined"
-8. update: { status: nextStatus, decidedAt: now, decidedBy: userID,
-             decisionReason: input.reason ?? null,
-             ...(approve ? { publishedAt: new Date() } : {}) }
+8. updateMany scoped on the status — NOT a bare `update`; see T-10 point 4:
+     where: { eventID, status: "submitted" }
+     data:  { status: nextStatus, decidedAt: now, decidedBy: userID,
+              decisionReason: input.reason ?? null,
+              ...(approve ? { publishedAt: new Date() } : {}) }
+   if count === 0 -> PRECONDITION_FAILED NOT_UNDER_REVIEW
 9. if (approve && facilityID != null && startTime != null && endTime != null):
      the EXISTING block from :874-944, verbatim, with ONE edit:
         ccaID: event.ccaID ?? 0        // D-8
@@ -1152,14 +1155,20 @@ withdraw: identifiedProcedure.input(eventIdInput).mutation(async ({ ctx, input }
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "NOT_WITHDRAWABLE" });
   }
 
-  await ctx.db.event.update({
-    where: { eventID: input.eventID },
+  // SUPERSEDED BY T-10 POINT 4 — this block used to read `event.update({ where:
+  // { eventID } })`, which is the check-then-act T-10 exists to remove. The
+  // status goes in the `where`.
+  const applied = await ctx.db.event.updateMany({
+    where: { eventID: input.eventID, status: "submitted" },
     data: {
       status: "draft",
       decidedAt: null, decidedBy: null, decisionReason: null,
       updatedAt: new Date(), updatedBy: userID,
     },
   });
+  if (applied.count === 0) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "NOT_WITHDRAWABLE" });
+  }
 
   await writeAudit(ctx.db, {
     actorUserID: userID, actorRoles: roles,
@@ -1293,7 +1302,9 @@ returning `ccaID`, so the client can still call `ownerLabel` itself. Callers to 
 
 ## 6. File-by-file change list
 
-**29 files touched: 5 created, 22 modified, 2 deleted.** The post-adjudication additions
+**30 files touched: 5 created, 23 modified, 2 deleted.** (`JcrcRosterPanel.tsx` is the
+23rd modified file: its JCRC grant-consent copy described the old proposal review and now
+names the `manageHallEvents` power too — see §8.16.) The post-adjudication additions
 (`withdraw`, "Register and publish", the withdrawn-review panel) all land inside files
 already on this list — `routers/event.ts`, `services/roles.ts`, `lib/schemas/event.ts`,
 `EventManage.tsx`, `EventsListPanel.tsx`, `EventReviewDetail.tsx` — so the count is
@@ -1805,11 +1816,22 @@ signed up, and `exportAttendees` still needs them.
 | `CAPABILITY_REQUIRED:manageHallEvents` | You can't manage hall events. |
 | `CAPABILITY_REQUIRED:reviewEvents` | You can't review events. |
 | `EVENT_LOCKED` | This event is in the review queue. Withdraw it first to make changes. |
+| `NOT_SUBMITTABLE` | This event can't be submitted from its current state — it's already in the queue, or it's been decided. Reload the page. |
 | `NOT_WITHDRAWABLE` | This event isn't in the review queue. Reload the page. |
 | `NOT_UNDER_REVIEW` | Someone has already decided this event. Reload the page. |
 | `NOT_CANCELABLE` | This event is already declined or cancelled, so there's nothing to cancel. Reload the page. |
 | `NO_SUCH_EVENT` | This event no longer exists. *(already at `:460`)* |
 | *(fallback)* | That didn't save. Try again. *(unchanged)* |
+
+**`NOT_SUBMITTABLE` was missing from this table too, and the second review pass
+had to add it.** It is the identical defect to `NOT_CANCELABLE` below, in the
+identical procedure family, and it survived the pass that fixed `NOT_CANCELABLE`.
+`submitForReview` throws it whenever `editScope` is not `"all"` — a second tab
+that submitted first, or a reviewer declining a `changes_requested` event while
+its editor is open. Retrying can never succeed from any of the three refusing
+states: `submitted` needs a withdraw, and `declined` and `canceled` are terminal.
+The test for whether a code belongs in this table is not "is it common" but
+**"can retrying ever work?"** — if not, the fallback is lying.
 
 **`NOT_CANCELABLE` was missing from this table and had to be added during
 review.** `cancelEvent` throws it whenever the row is already `declined` or
@@ -2073,14 +2095,15 @@ it fails, the remedy is Appendix A's restore one-liner, executed deliberately by
 
 ### 9.5 One-line edit to `set-events-flag.mjs`
 
-Its header (`:16-17`) currently reads *"Run `npx prisma db push` FIRST"*. Append:
+Its header (`:16-17`) used to read *"Run `npx prisma db push` FIRST"*.
 
-```
- * (As of the registration rework: the Event collections and every index they
- * need already exist — see scripts/remediation/index-census.mjs and
- * verify-events-schema.mjs. `prisma generate` is enough for a field-only schema
- * change; a `db push` on this cluster drops User.email_unique_ci.)
-```
+**REVISED DURING REVIEW — the instruction is DELETED AND RETRACTED, not appended to.**
+An operator skimming a header for the command to run will run the command the header
+names; a qualifying note two paragraphs below it does not survive a skim. The header now
+opens with `DO NOT RUN `prisma db push` BEFORE THIS SCRIPT.` and explains that the
+collections and indexes already exist, that a push would drop `User.email_unique_ci`, and
+that `prisma generate` is the whole database step. The appended-parenthetical text this
+section originally specified appears nowhere in the repo, deliberately.
 
 ### 9.6 Deploy
 
@@ -2106,7 +2129,7 @@ Three independent levers, cheapest first.
    ```bash
    node scripts/remediation/set-events-flag.mjs off --commit
    ```
-   `assertEventsEnabled` is the first line of every procedure (`event.ts:296` and 20
+   `assertEventsEnabled` is the first line of all 22 procedures (`event.ts:296` and 21
    others) and of the upload route (`route.ts:44`), so the whole surface goes inert
    within the 15-second flag cache TTL (`services/events.ts:19`). This is the correct
    first move for any events-specific incident.
@@ -2603,6 +2626,88 @@ argues at length that widening it hands all of that to whoever gains the new bra
 null case belongs in `loadOwnedEvent` (§5.4) and **nowhere else** — including the upload
 route, which gets its own copy of the branch on purpose, right next to the `select` that
 produced the nullable value.
+
+### T-15 — the cancels are the OTHER half of T-10, and they hold the room
+
+**Added by the SECOND review pass.** T-10 made `decide` and `withdraw` atomic and stopped
+there. `cancelEvent` and `reviewerCancel` are the same check-then-act shape over the same
+rows, and they are worse, because they are the two procedures that free a facility:
+
+1. `cancelEvent` loaded the row, checked the status, then wrote `status: "canceled",
+   bookingID: null` with an unscoped `update`. A reviewer approving in that window turned
+   a `submitted` row into a `published` one with a Bookings row attached — and the cancel
+   then wrote over it and freed nothing, because the cleanup was deciding from the
+   pre-race row it had loaded. **A canceled event silently kept the room, with the only
+   pointer to the booking nulled out.**
+2. `releaseEventBooking` took the caller's already-loaded row, and ran *after* the caller
+   had nulled `bookingID`. It now takes an `eventID`, re-reads `bookingID` after the
+   status write, deletes the Bookings row, and nulls the pointer **second** — that order
+   is load-bearing, because the reverse loses the pointer when the delete fails.
+3. `decide` stamps `bookingID` in a **separate write** after it publishes: the auto-book
+   takes a facility lock, scans for conflicts and creates the row first. A cancel landing
+   in that window was handed a live `bookingID` written onto an already-canceled event.
+   That write is now scoped on `status: "published"`, and if it does not apply the booking
+   just created is **deleted** — nothing may hold a facility for a non-published event.
+   This is the new `autoBook: "released"` outcome, distinct from `"conflict"` (the slot was
+   never free) because it is a different fact about the room, and it has its own audit
+   reason.
+
+Rule: **every write in this router that changes `status` puts the status it requires in the
+`where`.** There are now five (`decide`, `withdraw`, `cancelEvent`, `reviewerCancel`, and
+`decide`'s booking stamp). `cancelEvent` spells its guard as `NOT: { status: { in:
+["declined", "canceled"] } }` rather than a positive `in` list, because `normalizeStatus`
+maps null and anything unrecognised to `"draft"`, which IS cancelable — the negative
+spelling is the one that matches the pre-check row for row.
+
+### T-16 — an error message cannot live in a component the error unmounts
+
+**Added by the SECOND review pass.** `registerAndPublish`'s step-2 failure copy (§8.13) was
+written into `DetailsEditor`'s local `error` state and then followed by `onInvalidate()`.
+That refetch is what makes the message TRUE — it moves the event to `submitted` — and it is
+also what destroys it: `editScope` stops being `"all"`, and the editor unmounts with the
+message inside it. The head saw the submitted panel and **no explanation at all**, which is
+the exact failure the carefully-worded string was written to prevent.
+
+The message is hoisted to `EventManage` (`onHandoff`) and rendered beside the submitted
+panel. The copy also changed: the frozen text said *"Try publishing again"*, and that panel
+offers Withdraw and Cancel and **no publish control** — so it now links to
+`/admin/events/{eventID}`, which is where "Approve & publish" actually lives.
+
+Generalise it: **a message about a transition must be rendered by a component that survives
+the transition.**
+
+### T-17 — a shared block's copy is part of the surface that reuses it
+
+**Added by the SECOND review pass.** §8.2 hall-branched `EventCreateForm`'s footer and
+`EventsListPanel`'s empty state. Both of those components render `EventDetailsFields`
+directly above the sentence they fixed, and that block still carried three strings naming
+the JCRC as a REVIEWER — *"JCRC reads this when they review it"*, *"Tell JCRC about your
+event…"*, *"If JCRC approves, this facility is booked automatically"*. A JCRC member
+filling in their own hall event was told twice on one screen that the JCRC would review it.
+Two further sites in `EventReviewDetail.tsx` had the same defect one screen over: the
+approve notice's *"the CCA head is told to book it themselves"* and `ReviewerCancelPanel`'s
+*"The CCA head is not asked first"* — the latter roughly sixty lines below the withdrawn
+panel §8.11 had already corrected.
+
+The rule §8.11 states for one string applies to **every** string on a surface that a
+hall event can reach: if it names a CCA head, it must branch on `isHall`. The count of such
+sites is five, not two.
+
+### T-18 — an inert field is still a field the redaction list has to know about
+
+**Added by the SECOND review pass.** D-17 lands four Phase-2 fields, and `scannerUserIDs`
+holds CANONICAL userIDs — the same class as `createdBy` / `decidedBy` / `updatedBy`, whose
+whole reason for being in `SCRC_HIDDEN_EVENT_FIELDS` is that a canonical id is an email
+address one derivation later. It was not in the list. Inert today, so it costs nothing
+today; the day the attendance phase populates it, `getForOversight` hands the hall office a
+directory of every door scanner in the hall, **with no diff to `routers/event.ts` to
+notice**. It is now blanked — to `[]` rather than null, because it is a list and "nobody" is
+the honest empty value, and because that keeps the field's type intact for the client.
+
+This is D-17's own argument (write the inert fields explicitly *because* omitting them is
+harmless today) applied to the read side, and it generalises: **when a field is added to a
+model, it must be classified against every projection that model already has.** The other
+three Phase-2 fields are timestamps, not identities, and stay.
 
 ---
 

@@ -787,9 +787,19 @@ model Event {
   photoUrls         String[]  @default([])
   publishedAt       DateTime?
 
-  // ---- Reserved for the attendance phase. INERT: no procedure in
-  // routers/event.ts reads or writes any of these. They are added now so the
-  // attendance work needs no second schema pass. All nullable or defaulted (I-2).
+  // ---- Reserved for the attendance phase. NO PROCEDURE ACTS ON THEIR VALUES:
+  // nothing branches on them, filters by them or shows them to anyone. They are
+  // added now so the attendance work needs no second schema pass. All nullable
+  // or defaulted (I-2).
+  //
+  // THEY ARE NOT UNWRITTEN, and the earlier "no procedure reads or writes any of
+  // these" was false the moment that was fixed. `create` and `duplicate` write
+  // all four EXPLICITLY, because `{ answersPurgedAt: null }` matches a STORED
+  // null and NOT an absent key — a Phase-1 row created without the key would be
+  // invisible to the purge query that is the whole point of the field. And
+  // `scannerUserIDs` holds CANONICAL userIDs, so getForOversight blanks it for
+  // the hall-office tier alongside createdBy / decidedBy / updatedBy. An
+  // attendance-phase author who trusts the word INERT will re-derive both.
   /// UNIX epoch SECONDS, UTC — when the door scanner starts accepting check-ins.
   attendanceOpensAt   Int?
   /// UNIX epoch SECONDS, UTC — when it stops.

@@ -68,10 +68,25 @@ export default function EventDetailsFields({
   value,
   onChange,
   disabled = false,
+  isHall = false,
 }: {
   value: ProposalValue;
   onChange: (patch: Partial<ProposalValue>) => void;
   disabled?: boolean;
+  /**
+   * A HALL-WIDE event (`ccaID == null`), authored by the JCRC itself.
+   *
+   * THIS BLOCK IS SHARED BY BOTH SURFACES, so every sentence in it that names
+   * the JCRC as a REVIEWER is false on the hall one: a hall event is registered
+   * and published by its own author and never enters the review queue. The two
+   * components that render this block already branch their own copy on the same
+   * fact (EventCreateForm's footer, EventsListPanel's empty state) — the three
+   * strings below were the half of the same screen that did not, so a JCRC
+   * member filling in their own event was told twice that the JCRC would review
+   * it. Defaults false: a CCA head is the common case and the CCA surfaces pass
+   * nothing.
+   */
+  isHall?: boolean;
 }) {
   const field =
     "mt-1 w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-gray-50";
@@ -104,8 +119,10 @@ export default function EventDetailsFields({
           Detailed description
         </label>
         <p className="text-xs text-gray-500">
-          What the event is, who it&rsquo;s for, and what happens. JCRC reads this
-          when they review it.
+          What the event is, who it&rsquo;s for, and what happens.{" "}
+          {isHall
+            ? "This is the internal record — residents read the public description instead."
+            : "JCRC reads this when they review it."}
         </p>
         <textarea
           value={value.description}
@@ -114,7 +131,11 @@ export default function EventDetailsFields({
           disabled={disabled}
           onChange={(e) => onChange({ description: e.target.value })}
           className={field}
-          placeholder="Tell JCRC about your event…"
+          placeholder={
+            isHall
+              ? "What this event is, for the record…"
+              : "Tell JCRC about your event…"
+          }
         />
         <p className="text-right text-xs text-gray-500">
           {value.description.length}/{EVENT_DESCRIPTION_MAX}
@@ -180,8 +201,9 @@ export default function EventDetailsFields({
           )}
           {facilityChosen && (
             <p className="text-xs text-emerald-700">
-              If JCRC approves, this facility is booked automatically for the
-              times above — so set an end time.
+              {isHall
+                ? "This facility is booked automatically when the event is published — so set an end time."
+                : "If JCRC approves, this facility is booked automatically for the times above — so set an end time."}
             </p>
           )}
         </div>
