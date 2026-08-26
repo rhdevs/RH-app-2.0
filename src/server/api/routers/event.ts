@@ -19,6 +19,7 @@ import {
   checkInInput,
   manualCheckInInput,
   undoCheckInInput,
+  saveScannersInput,
   parseCheckInPayload,
   resolveAttendanceWindow,
 } from "~/lib/schemas/eventAttendance";
@@ -2851,6 +2852,136 @@ export const eventRouter = createTRPCRouter({
           nowSec <= attWindow.closesAt,
         count,
       };
+    }),
+
+  /**
+   * THE PRE-LOADED ROSTER for the manual fallback. Same `assertMayScan` gate as
+   * the scan itself.
+   *
+   * `matricSuffix` IS THE LAST FOUR CHARACTERS, NEVER THE FULL NUMBER, and the
+   * reason is the audience rather than the data. `getAttendees` hands the head a
+   * full matric on the stated grounds that the head is already authorised to see
+   * it. This list goes to EVERY NOMINATED SCANNER — any CCA member the head
+   * picked — so shipping full matriculation numbers to all of them widens a PII
+   * surface for no operational gain. A committee member ticking someone off is
+   * reading a student card and needs to tell two similar names apart, which four
+   * characters do.
+   *
+   * Nothing is taken from anyone who had it: the head still gets the full matric
+   * through `getAttendees` and the audited `exportAttendees`.
+   *
+   * Search is CLIENT-SIDE over displayName and matricSuffix, which is what makes
+   * the list usable when the network is the thing that failed.
+   *
+   * WALK-INS ARE NOT HERE, by definition — they did not sign up. They are
+   * checked in by QR, or by a head who knows their account id.
+   */
+  getDoorRoster: identifiedProcedure
+    .input(eventIdInput)
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      await assertAttendanceEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+
+      const event = await ctx.db.event.findUnique({
+        where: { eventID: input.eventID },
+      });
+      if (!event) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
+      }
+      await assertMayScan(ctx.db, userID, roles, event);
+
+      const [signups, attendance] = await Promise.all([
+        ctx.db.eventSignup.findMany({
+          where: { eventID: input.eventID },
+          select: { userID: true },
+        }),
+        ctx.db.eventAttendance.findMany({
+          where: { eventID: input.eventID },
+          select: { userID: true },
+        }),
+      ]);
+
+      const checkedIn = new Set(attendance.map((a) => a.userID));
+      const resolved = await resolveAttendees(
+        ctx.db,
+        signups.map((s) => s.userID),
+      );
+
+      return {
+        rows: signups.map((s) => {
+          const r = resolved.get(s.userID);
+          const matric = r?.matric ?? null;
+          return {
+            userID: s.userID,
+            displayName: r?.displayName ?? null,
+            block: r?.block ?? null,
+            // LAST FOUR ONLY. Rendered as ••••567X.
+            matricSuffix: matric ? matric.slice(-4) : null,
+            signedUp: true as const,
+            checkedIn: checkedIn.has(s.userID),
+          };
+        }),
+        checkedInCount: attendance.length,
+      };
+    }),
+
+  /**
+   * NOMINATE SCANNERS. Owner-only — being a scanner does not let you appoint
+   * more scanners.
+   *
+   * VALIDATED AGAINST LIVE MEMBERSHIP AT WRITE TIME so the head gets told
+   * immediately, rather than discovering at a door that a name they typed was
+   * never eligible. That validation is a COURTESY, NOT THE BOUNDARY:
+   * `assertMayScan` re-checks every nominee at scan time (I-5), because this
+   * list is written once and nothing sweeps it when someone leaves the CCA.
+   *
+   * NO PICKER IS OFFERED FOR HALL EVENTS and this refuses them. A hall event has
+   * no membership set to validate against, and every person who could
+   * legitimately scan one already holds `manageHallEvents`, which
+   * `assertMayScan`'s first branch admits outright — so a nomination list there
+   * would be a control that changes nothing.
+   */
+  saveScanners: identifiedProcedure
+    .input(saveScannersInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
+
+      if (event.ccaID == null) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "HALL_EVENT_HAS_NO_SCANNERS",
+        });
+      }
+
+      // De-duplicate before validating: the same person named twice is a slip,
+      // not an error worth refusing over.
+      const wanted = [...new Set(input.scannerUserIDs)];
+      const ccaID = event.ccaID;
+      const checks = await Promise.all(
+        wanted.map(async (candidate) => ({
+          candidate,
+          ok: await isLiveCcaMember(ctx.db, ccaID, candidate),
+        })),
+      );
+      const notMembers = checks.filter((c) => !c.ok).map((c) => c.candidate);
+      if (notMembers.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `NOT_MEMBERS:${notMembers.join(",")}`,
+        });
+      }
+
+      await ctx.db.event.updateMany({
+        where: { eventID: input.eventID },
+        data: { scannerUserIDs: wanted },
+      });
+
+      return { ok: true as const, scannerUserIDs: wanted };
     }),
 });
 
