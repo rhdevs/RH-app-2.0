@@ -334,7 +334,7 @@ model RoleAuditLog {
   /// pending.claim | pending.revoke | booking.denied.shadow |
   /// ccaHead.grant | ccaHead.revoke | ccaHead.transfer |
   /// event.approve | event.reject | event.publish | event.cancel |
-  /// event.attendees.export |
+  /// event.attendees.export | event.checkin.undo |
   /// user.detail.read | user.profile.update | user.delete |
   /// scrc.candidate.read |
   /// authAllowlist.add | authAllowlist.remove | identity.rekey

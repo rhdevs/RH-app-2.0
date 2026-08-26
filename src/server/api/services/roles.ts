@@ -266,6 +266,12 @@ export const AUDIT_ACTIONS = [
   "event.cancel",
   "event.duplicate",
   "event.attendees.export",
+  // Part C. A CHECK-IN IS NOT AUDITED — the EventAttendance row IS the
+  // record and carries who, when and by whom; a parallel audit row would
+  // duplicate it in a table that pages 25 at a time. AN UNDO IS, because it
+  // ERASES a claim about where a person physically was, and after it there
+  // is no row left to carry that fact.
+  "event.checkin.undo",
   // Admin CRUD over USER DETAILS (/admin/users detail dialog). NOTE what is
   // absent: no "user.create" (signup + PendingRoleGrant own onboarding) and no
   // role action — these endpoints are NOT a second writer of UserRole.roles
