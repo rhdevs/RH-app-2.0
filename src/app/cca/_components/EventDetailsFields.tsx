@@ -8,10 +8,15 @@ import {
 } from "~/lib/schemas/event";
 
 /**
- * The proposal fields a head fills in at application time. A controlled block
- * shared by the create form and the draft editor so they can't drift. Times are
- * held as <input type="datetime-local"> strings and capacity as a raw string;
- * the parent converts to epoch seconds / number on save.
+ * The event's own details — name, description, times, location, capacity. A
+ * controlled block shared by the create form and the editor so the two cannot
+ * drift. Times are held as <input type="datetime-local"> strings and capacity as
+ * a raw string; the parent converts to epoch seconds / number on save.
+ *
+ * These are the fields the JCRC reads when it reviews. The banner and the public
+ * description live in the manage page's editor beside this block, and are
+ * required BEFORE submission — the reviewer sees a finished event, not a
+ * proposal. There is no proposal PDF.
  */
 export type ProposalValue = {
   title: string;
@@ -59,14 +64,29 @@ export function facilityPayload(v: ProposalValue): {
   return { facilityID: Number(v.facilitySelection), location: undefined };
 }
 
-export default function EventProposalFields({
+export default function EventDetailsFields({
   value,
   onChange,
   disabled = false,
+  isHall = false,
 }: {
   value: ProposalValue;
   onChange: (patch: Partial<ProposalValue>) => void;
   disabled?: boolean;
+  /**
+   * A HALL-WIDE event (`ccaID == null`), authored by the JCRC itself.
+   *
+   * THIS BLOCK IS SHARED BY BOTH SURFACES, so every sentence in it that names
+   * the JCRC as a REVIEWER is false on the hall one: a hall event is registered
+   * and published by its own author and never enters the review queue. The two
+   * components that render this block already branch their own copy on the same
+   * fact (EventCreateForm's footer, EventsListPanel's empty state) — the three
+   * strings below were the half of the same screen that did not, so a JCRC
+   * member filling in their own event was told twice that the JCRC would review
+   * it. Defaults false: a CCA head is the common case and the CCA surfaces pass
+   * nothing.
+   */
+  isHall?: boolean;
 }) {
   const field =
     "mt-1 w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-gray-50";
@@ -99,8 +119,10 @@ export default function EventProposalFields({
           Detailed description
         </label>
         <p className="text-xs text-gray-500">
-          What the event is, who it&rsquo;s for, and what happens. JCRC reads this
-          alongside your proposal.
+          What the event is, who it&rsquo;s for, and what happens.{" "}
+          {isHall
+            ? "This is the internal record — residents read the public description instead."
+            : "JCRC reads this when they review it."}
         </p>
         <textarea
           value={value.description}
@@ -109,7 +131,11 @@ export default function EventProposalFields({
           disabled={disabled}
           onChange={(e) => onChange({ description: e.target.value })}
           className={field}
-          placeholder="Tell JCRC about your event…"
+          placeholder={
+            isHall
+              ? "What this event is, for the record…"
+              : "Tell JCRC about your event…"
+          }
         />
         <p className="text-right text-xs text-gray-500">
           {value.description.length}/{EVENT_DESCRIPTION_MAX}
@@ -175,8 +201,9 @@ export default function EventProposalFields({
           )}
           {facilityChosen && (
             <p className="text-xs text-emerald-700">
-              A booking for this facility is created automatically once JCRC
-              approves — remember to set an end time.
+              {isHall
+                ? "This facility is booked automatically when the event is published — so set an end time."
+                : "If JCRC approves, this facility is booked automatically for the times above — so set an end time."}
             </p>
           )}
         </div>

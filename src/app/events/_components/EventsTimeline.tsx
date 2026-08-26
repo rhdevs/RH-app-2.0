@@ -13,6 +13,7 @@ import {
   dayKey,
   nowSec,
 } from "~/app/events/_lib/format";
+import { ownerLabel } from "~/lib/schemas/event";
 
 type PublicEvent = RouterOutputs["event"]["listPublished"]["events"][number];
 
@@ -186,11 +187,13 @@ function EventCard({ event: e }: { event: PublicEvent }) {
                 </span>
               )}
             </div>
-            {e.ccaName && (
-              <p className="mt-0.5 text-xs font-medium text-emerald-700">
-                {e.ccaName}
-              </p>
-            )}
+            {/* Unconditional: a hall-wide event has ccaName null, and the old
+                `{e.ccaName && (...)}` guard made the owner line silently
+                vanish instead of falling back to "Hall". ownerLabel always
+                returns a non-empty string. */}
+            <p className="mt-0.5 text-xs font-medium text-emerald-700">
+              {ownerLabel(e.ccaID, e.ccaName)}
+            </p>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
               <span className="inline-flex items-center gap-1">
                 <CalendarDays className="h-3.5 w-3.5" />

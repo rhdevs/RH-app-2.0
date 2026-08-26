@@ -5,28 +5,54 @@ import { useRouter } from "next/navigation";
 
 import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
-import { createDraftInput } from "~/lib/schemas/event";
+import { createEventInput } from "~/lib/schemas/event";
 import { localInputToEpoch } from "~/app/events/_lib/format";
-import EventProposalFields, {
+import EventDetailsFields, {
   EMPTY_PROPOSAL,
   facilityPayload,
   type ProposalValue,
-} from "./EventProposalFields";
+} from "./EventDetailsFields";
 
 /**
- * New-event form. Saving creates a DRAFT and redirects to the manage page,
- * where the proposal PDF (which needs the event's id in its blob path) is
- * attached and the event is submitted for review. Fields are optional at draft
- * time; completeness is enforced at submit.
+ * New-event form. Creating the row and routing straight to the manage page is
+ * ONE interaction: the primary button says "Continue", not "Save draft", and
+ * the word "draft" appears nowhere on this screen.
+ *
+ * That is deliberate. `draft` survives only as a TECHNICAL staging state — a row
+ * has to exist before a banner can be uploaded, because the blob path is
+ * event/{eventID}/banner — and a head must never be parked in it thinking they
+ * have finished. The banner and the public description are collected on the next
+ * screen and are BOTH required to submit.
+ *
+ * `ccaID` null means a HALL-WIDE event, authored by the JCRC at
+ * /admin/events/hall/new. The key is OMITTED from the payload in that case; the
+ * server's create branches on its absence and requires `manageHallEvents`.
+ * `backHref` / `manageHrefBase` are passed in rather than derived, because a
+ * hall event has no /cca/{id} route to derive them from.
+ *
+ * `manageHrefBase` is a STRING, not a builder function, and must stay one: both
+ * callers are server components, and React refuses to serialise a function
+ * across the server/client boundary ("Functions cannot be passed directly to
+ * Client Components"). That throw happens at RENDER, so tsc, lint and
+ * `next build` all pass while every authoring route 500s. Every manage URL is
+ * `base/{eventID}`, so a base path carries all the information a closure did.
  */
-export default function EventCreateForm({ ccaID }: { ccaID: number }) {
+export default function EventCreateForm({
+  ccaID,
+  backHref,
+  manageHrefBase,
+}: {
+  ccaID: number | null;
+  backHref: string;
+  manageHrefBase: string;
+}) {
   const router = useRouter();
   const [value, setValue] = useState<ProposalValue>(EMPTY_PROPOSAL);
   const [fieldError, setFieldError] = useState<string | null>(null);
 
-  const create = api.event.createDraft.useMutation({
+  const create = api.event.create.useMutation({
     onSuccess: (res) => {
-      router.push(`/cca/${ccaID}/events/${res.eventID}`);
+      router.push(`${manageHrefBase}/${res.eventID}`);
     },
   });
 
@@ -34,13 +60,15 @@ export default function EventCreateForm({ ccaID }: { ccaID: number }) {
     e.preventDefault();
     setFieldError(null);
 
-    // Only send non-empty fields — the schema treats them as optional at draft
+    // Only send non-empty fields — the schema treats them as optional at create
     // time, and empty strings would fail the min-length rules.
     const start = localInputToEpoch(value.startLocal);
     const end = localInputToEpoch(value.endLocal);
     const fp = facilityPayload(value);
     const payload = {
-      ccaID,
+      // Omitted entirely for a hall event. The schema accepts absent OR null;
+      // the SERVER is what turns that into a stored `ccaID: null`.
+      ...(ccaID == null ? {} : { ccaID }),
       title: value.title.trim() || undefined,
       description: value.description.trim() || undefined,
       startTime: start ?? undefined,
@@ -49,7 +77,7 @@ export default function EventCreateForm({ ccaID }: { ccaID: number }) {
       facilityID: fp.facilityID,
       capacity: value.capacity.trim() ? Number(value.capacity) : undefined,
     };
-    const parsed = createDraftInput.safeParse(payload);
+    const parsed = createEventInput.safeParse(payload);
     if (!parsed.success) {
       setFieldError(
         parsed.error.issues[0]?.message ?? "Please check the fields.",
@@ -64,9 +92,11 @@ export default function EventCreateForm({ ccaID }: { ccaID: number }) {
       ? "This CCA no longer exists."
       : create.error.message === "NOT_A_HEAD_OF_THIS_CCA"
         ? "You're no longer a head of this CCA."
-        : create.error.message === "EVENTS_DISABLED"
-          ? "Events aren't switched on yet."
-          : "That didn't save. Try again."
+        : create.error.message === "CAPABILITY_REQUIRED:manageHallEvents"
+          ? "You can't manage hall events."
+          : create.error.message === "EVENTS_DISABLED"
+            ? "Events aren't switched on yet."
+            : "That didn't save. Try again."
     : null;
 
   return (
@@ -74,15 +104,20 @@ export default function EventCreateForm({ ccaID }: { ccaID: number }) {
       onSubmit={submit}
       className="max-w-3xl space-y-5 rounded-lg border border-gray-200 bg-white p-5"
     >
-      <EventProposalFields
+      <EventDetailsFields
         value={value}
         onChange={(patch) => setValue((v) => ({ ...v, ...patch }))}
         disabled={create.isPending}
+        isHall={ccaID == null}
       />
 
+      {/* HALL-AWARE, for the same reason as EventsListPanel's empty state: a
+          hall event (ccaID null) never goes for review, so "submit it for
+          review" describes something that will not happen on this surface. */}
       <p className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
-        Save the draft first — then you can attach the proposal PDF and submit it
-        for review.
+        Fill in what you know now. You&rsquo;ll add the banner and the
+        description residents see on the next screen, then{" "}
+        {ccaID == null ? "register and publish it" : "submit it for review"}.
       </p>
 
       {fieldError && <p className="text-sm text-red-600">{fieldError}</p>}
@@ -90,13 +125,13 @@ export default function EventCreateForm({ ccaID }: { ccaID: number }) {
 
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={create.isPending}>
-          {create.isPending ? "Saving…" : "Save draft"}
+          {create.isPending ? "Saving…" : "Continue"}
         </Button>
         <Button
           type="button"
           variant="ghost"
           disabled={create.isPending}
-          onClick={() => router.push(`/cca/${ccaID}/events`)}
+          onClick={() => router.push(backHref)}
         >
           Cancel
         </Button>

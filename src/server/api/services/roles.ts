@@ -224,14 +224,47 @@ export const AUDIT_ACTIONS = [
   // 18 characters, under the 32-char cap admin.listAuditLog's
   // `action: z.string().max(32)` filter imposes.
   "ccaRecruitment.set",
-  // Events feature. approve/reject are written by JCRC (reviewEvents); publish,
-  // cancel and attendees.export are written by the owning head (assertHeadsCca).
-  // attendees.export records a PII export (matric/block/telegram) and its
-  // audit row carries the exported attendee count in `reason`.
+  // Events feature. THE RULE, applied without exception: STATE-MACHINE
+  // TRANSITIONS ARE AUDITED, FIELD SAVES ARE NOT. `event.create` and
+  // `event.update` therefore write nothing — `update` fires on every save, and a
+  // row per save would bury the handful that describe what actually HAPPENED to
+  // an event under hundreds that describe someone typing, in a table whose
+  // stated purpose is "who was handed a privilege, by whom, when" and which
+  // admin.listAuditLog pages 25 rows at a time.
+  //
+  // WHO WRITES WHICH. approve/changes/decline are written by the JCRC
+  // (reviewEvents, re-read live in `decide`); submit, withdraw, duplicate,
+  // cancel and attendees.export are written by the OWNER — the CCA head via
+  // assertHeadsCca, or a manageHallEvents holder for a hall-wide event.
+  // attendees.export records a PII export (matric/block/telegram) and its audit
+  // row carries the exported attendee count in `reason`.
+  //
+  // THERE IS NO `event.reject` OR `event.publish`. Rejection split into
+  // `event.changes` (reopens the event, resubmittable) and `event.decline`
+  // (terminal); publishing folded into `event.approve`, because approval now
+  // publishes in one write. Both strings were retired while the collection held
+  // ZERO rows carrying them, so no stored row became unfilterable.
+  //
+  // THERE IS DELIBERATELY NO `event.cancel.jcrc`: writeAudit denormalises
+  // actorRoles onto the row, so `actorRoles contains "jcrc"` already selects a
+  // reviewer cancellation — the same argument the scrc role changes make below.
+  //
+  // A HALL EVENT PUBLISHED BY ITS OWN AUTHOR WRITES TWO ROWS — `event.submit`
+  // then `event.approve`, same actorUserID, same targetEventID, seconds apart.
+  // That pairing IS the audit record of a self-approval and it must stay
+  // legible: do not collapse the two calls into one row, and do not suppress the
+  // submit row because "nobody reviewed it". Two rows with one actor is
+  // precisely the fact an auditor needs to see.
+  //
+  // All are under the 32-char cap admin.listAuditLog's
+  // `action: z.string().max(32)` filter imposes.
+  "event.submit",
+  "event.withdraw",
   "event.approve",
-  "event.reject",
-  "event.publish",
+  "event.changes",
+  "event.decline",
   "event.cancel",
+  "event.duplicate",
   "event.attendees.export",
   // Admin CRUD over USER DETAILS (/admin/users detail dialog). NOTE what is
   // absent: no "user.create" (signup + PendingRoleGrant own onboarding) and no
@@ -1173,12 +1206,30 @@ export type Capabilities = {
   viewSystemHealthDetail: boolean;
   manageEnforcementFlag: boolean;
   /**
-   * May review submitted events and approve/reject them (the /admin/events
-   * tab). Manager-level (admin + jcrc), matching the JCRC review role. Heads
-   * reach their OWN events surface via reachCcaDashboard + per-event
-   * assertHeadsCca, not this.
+   * May review submitted events and approve / request changes / decline them
+   * (the /admin/events tab). Manager-level (admin + jcrc), matching the JCRC
+   * review role. Heads reach their OWN events surface via reachCcaDashboard +
+   * per-event assertHeadsCca, not this.
    */
   reviewEvents: boolean;
+  /**
+   * May AUTHOR a HALL-WIDE event — one with `Event.ccaID == null`, owned by the
+   * JCRC rather than by any CCA. Read by loadOwnedEvent (routers/event.ts) as
+   * the null arm of the ownership branch, by `create` when no ccaID is supplied,
+   * and by listForOwner's hall branch.
+   *
+   * `scrc` IS DELIBERATELY ABSENT. The hall office's whole events reach is
+   * `viewEventsReadOnly`, described in its own comment as "view events,
+   * read-only". Authorship is not read-only, and oversightProcedure must not
+   * gain a write.
+   *
+   * A SEPARATE FIELD RATHER THAN REUSING `reviewEvents`, even though the two are
+   * the same tier today. Reviewing and authoring are different powers over the
+   * same object; sharing one field means the day someone widens the review queue
+   * by one role, they hand out hall-wide authorship as a side effect. Same
+   * argument as keeping manageCcaRecruitment off manageCcas.
+   */
+  manageHallEvents: boolean;
   /**
    * May open a user's detail record and EDIT their profile fields
    * (displayName / block / telegramHandle / bio / matric). Manager-level:
@@ -1301,6 +1352,11 @@ export function computeCapabilities(roles: readonly string[]): Capabilities {
     viewSystemHealthDetail: admin,
     manageEnforcementFlag: admin,
     reviewEvents: manager,
+    // Authoring the JCRC's own hall-wide events. `manager`, matching
+    // reviewEvents exactly today — the two are kept as separate FIELDS so that
+    // widening one later does not silently widen the other. `scrc` is absent by
+    // design: see the Capabilities declaration.
+    manageHallEvents: manager,
     // The hall-wide recruitment freeze. `manager`, not `admin`: the JCRC runs
     // recruitment, so gating their own control behind admin would make the
     // feature useless to the people it is for.

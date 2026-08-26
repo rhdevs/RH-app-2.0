@@ -90,16 +90,22 @@ export function nowSec(): number {
 /* Status display                                                              */
 /* -------------------------------------------------------------------------- */
 
+// Two deliberate spelling quirks — do not "fix" either:
+//   - the KEY is "canceled" (one l), matching the stored DB convention; the
+//     LABEL is "Cancelled" (two), matching the rest of the UI's British
+//     spelling ("Cancelling…", "This event was cancelled.").
+//   - draft's label is "Not submitted", not "Draft" — a head is never parked
+//     in draft, and the word "Draft" must not appear on any head-facing surface.
 export const STATUS_META: Record<
   EventStatus,
   { label: string; className: string }
 > = {
-  draft: { label: "Draft", className: "bg-gray-100 text-gray-700" },
-  submitted: { label: "In review", className: "bg-amber-100 text-amber-800" },
-  approved: { label: "Approved", className: "bg-sky-100 text-sky-800" },
-  rejected: { label: "Rejected", className: "bg-red-100 text-red-700" },
-  published: { label: "Published", className: "bg-emerald-100 text-emerald-800" },
-  canceled: { label: "Canceled", className: "bg-gray-200 text-gray-500" },
+  draft:              { label: "Not submitted",   className: "bg-gray-100 text-gray-700" },
+  submitted:          { label: "In review",       className: "bg-amber-100 text-amber-800" },
+  changes_requested:  { label: "Changes needed",  className: "bg-orange-100 text-orange-800" },
+  published:          { label: "Published",       className: "bg-emerald-100 text-emerald-800" },
+  declined:           { label: "Declined",        className: "bg-red-100 text-red-700" },
+  canceled:           { label: "Cancelled",       className: "bg-gray-200 text-gray-500" },
 };
 
 /* -------------------------------------------------------------------------- */

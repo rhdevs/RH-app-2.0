@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import { EVENT_STATUSES, type EventStatus } from "~/lib/schemas/event";
+import { EVENT_STATUSES, ownerLabel, type EventStatus } from "~/lib/schemas/event";
 import {
   formatDateRange,
   formatDateTime,
@@ -58,13 +58,13 @@ function StatusPill({ status }: { status: EventStatus }) {
 /**
  * TWO LAYERS, AND BOTH ARE MEANT TO HOLD.
  *
- * The SERVER is the boundary: `event.getForOversight` nulls six fields for the
- * hall-office tier — `description`, `proposalUrl`, `decisionReason`,
- * `createdBy`, `decidedBy`, `updatedBy` (SCRC_HIDDEN_EVENT_FIELDS in
- * routers/event.ts). The first three are the internal proposal and the
- * reviewer's private feedback; the last three each hold a canonical E-format
- * userID, which is an email address one derivation later. An admin viewing this
- * same page is a manager and receives them unredacted.
+ * The SERVER is the boundary: `event.getForOversight` nulls five fields for the
+ * hall-office tier — `description`, `decisionReason`, `createdBy`, `decidedBy`,
+ * `updatedBy` (SCRC_HIDDEN_EVENT_FIELDS in routers/event.ts). The first two are
+ * the head's internal write-up and the reviewer's private feedback; the last
+ * three each hold a canonical E-format userID, which is an email address one
+ * derivation later. An admin viewing this same page is a manager and receives
+ * them unredacted.
  *
  * This component is the SECOND layer, and it names every field it renders rather
  * than spreading the record, so a field that is un-redacted server-side later —
@@ -143,7 +143,7 @@ function EventOversightDetail({
           <StatusPill status={event.status} />
         </div>
         <p className="mt-1 text-sm text-gray-500">
-          {ccaName ?? `CCA #${event.ccaID}`}
+          {ownerLabel(event.ccaID, ccaName)}
         </p>
 
         <dl className="mt-4 grid gap-3 border-t border-gray-100 pt-4 text-sm sm:grid-cols-2">
@@ -186,8 +186,8 @@ function EventOversightDetail({
           </div>
         </dl>
 
-        {/* The RESIDENT-FACING blurb (publicDescription), never the internal
-            proposal `description`. Only exists once a head has published. */}
+        {/* The RESIDENT-FACING blurb (publicDescription), never the head's
+            internal `description`. Only exists once a head has published. */}
         {event.publicDescription?.trim() && (
           <div className="mt-4 border-t border-gray-100 pt-4">
             <p className="text-sm text-gray-500">What residents see</p>
@@ -199,8 +199,8 @@ function EventOversightDetail({
       </div>
 
       <p className="text-xs text-gray-400">
-        This is a read-only view. Approving, rejecting, publishing and cancelling
-        stay with the JCRC and the CCA head.
+        This is a read-only view. Approving, requesting changes, declining and
+        cancelling stay with the JCRC and the CCA head.
       </p>
     </div>
   );
@@ -281,13 +281,15 @@ export default function EventsOversightPanel() {
       {/* KNOWN, and the server documents it: listForOversight filters the RAW
           `status` column, while the status it returns is normalizeStatus'd.
           Event.status is a nullable String, and normalizeStatus maps null to
-          "draft" — so a row stored as null reads "Draft" in this list but will
-          NOT appear under the Draft filter. Left alone deliberately upstream;
+          "draft" — so a row stored as null reads "Not submitted" in this list
+          (STATUS_META relabelled draft; the word "Draft" is no longer shown
+          anywhere) but will NOT appear under that filter. Left alone deliberately upstream;
           said out loud here so the next person does not file it as a bug. */}
       {status === "draft" && (
         <p className="text-xs text-gray-400">
-          Older events with no status recorded show as drafts in the full list,
-          but don’t match this filter. Choose “All statuses” to see them.
+          Older events with no status recorded show as “Not submitted” in the
+          full list, but don’t match this filter. Choose “All statuses” to see
+          them.
         </p>
       )}
 
@@ -311,9 +313,14 @@ export default function EventsOversightPanel() {
             Nothing to show
           </p>
           <p className="mt-1 text-sm text-gray-500">
+            {/* The label is a STATE NAME, not an adjective — "Not submitted",
+                "Changes needed", "In review" — so the old "No events are
+                {label} right now" produced "No events are not submitted right
+                now", a double negative that reads as its own opposite. Quote
+                the label instead of trying to inflect it. */}
             {status === ALL
               ? "No events have been created yet."
-              : `No events are ${STATUS_META[status].label.toLowerCase()} right now.`}
+              : `No events are in the “${STATUS_META[status].label}” state right now.`}
           </p>
         </div>
       )}
@@ -335,7 +342,7 @@ export default function EventsOversightPanel() {
                     <StatusPill status={e.status} />
                   </p>
                   <p className="mt-0.5 text-xs text-gray-500">
-                    {e.ccaName ?? `CCA #${e.ccaID}`} ·{" "}
+                    {ownerLabel(e.ccaID, e.ccaName)} ·{" "}
                     {/* epoch SECONDS — formatDateTime does the ×1000. */}
                     {formatDateTime(e.startTime)}
                     {e.location ? ` · ${e.location}` : ""}

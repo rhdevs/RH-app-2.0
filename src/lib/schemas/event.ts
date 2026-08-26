@@ -19,27 +19,68 @@ import { CCA_BLOB_HOST } from "~/lib/schemas/cca";
  * with a default in the schema (I-2), never a DB enum. The DB cannot police it,
  * so every transition is checked in the router.
  *
- *   draft      — created, proposal being filled; PDF uploadable (needs eventID)
- *   submitted  — sent to JCRC, awaiting a decision
- *   approved   — JCRC said yes; head may now add public content
- *   rejected   — JCRC said no; editable and resubmittable
- *   published  — head added banner/photos/desc and published; visible to all
- *   canceled   — head withdrew a published/approved event; TERMINAL
+ *   draft              — a TECHNICAL STAGING STATE. A row must exist before its
+ *                        banner can be uploaded (the blob path is
+ *                        event/{eventID}/banner), so `create` writes one and
+ *                        routes straight to the editor. No head is ever parked
+ *                        here: the head surface labels it "Not submitted".
+ *   submitted          — with the JCRC, awaiting a decision. LOCKED: no field
+ *                        save is accepted. The way out is `withdraw`.
+ *   published          — approved AND live on the residents' timeline, in one
+ *                        write. Banner / photos / public description stay
+ *                        editable; the date, location and capacity do not.
+ *   changes_requested  — the JCRC wants edits; editable and resubmittable.
+ *   declined           — the JCRC said no. TERMINAL, not resubmittable.
+ *   canceled           — the event is not happening. TERMINAL.
+ *
+ * There is NO `approved`. Approval publishes, so an event is never in the state
+ * "allowed to happen but invisible, waiting on a second button".
  */
 export const EVENT_STATUSES = [
   "draft",
   "submitted",
-  "approved",
-  "rejected",
   "published",
+  "changes_requested",
+  "declined",
   "canceled",
 ] as const;
 export type EventStatus = (typeof EVENT_STATUSES)[number];
 
-/** A head may edit the proposal fields only in these states. */
-export const PROPOSAL_EDITABLE: readonly EventStatus[] = ["draft", "rejected"];
-/** A head may edit the public content only in these states. */
-export const PUBLIC_EDITABLE: readonly EventStatus[] = ["approved", "published"];
+/** What a head may edit in a given status. */
+export type EventEditScope = "all" | "public" | "none";
+
+/**
+ * The ONE rule about what is writable, replacing the old PROPOSAL_EDITABLE /
+ * PUBLIC_EDITABLE array pair.
+ *
+ * A FUNCTION, NOT TWO ARRAYS, for two reasons. (1) The `switch` below is
+ * exhaustive over EventStatus with NO `default`, so adding a status later is a
+ * compile error here rather than a silently-empty array somewhere. (2) It is one
+ * exported value the CLIENT can import, which kills a live drift pair: the head
+ * UI used to re-derive this branching by hand (`draft || rejected`, `approved`,
+ * `published`) while the server enforced the arrays, and nothing made the two
+ * agree.
+ *
+ * `submitted` IS "none", AND THAT IS THE WHOLE POINT. An event in the review
+ * queue is frozen: the reviewer must never approve words that changed under
+ * them five seconds earlier. A head who needs to fix a typo calls
+ * `event.withdraw` first, which pulls it out of the queue visibly. Writing
+ * "all" here compiles, passes every type check, and silently reinstates the
+ * moving-target bug this rule exists to remove.
+ */
+export function editScope(status: EventStatus): EventEditScope {
+  switch (status) {
+    case "draft":
+    case "changes_requested":
+      return "all";
+    case "published":
+      return "public";
+    case "submitted":
+    case "declined":
+    case "canceled":
+      return "none";
+  }
+}
 
 export function normalizeStatus(raw: string | null | undefined): EventStatus {
   return (EVENT_STATUSES as readonly string[]).includes(raw ?? "")
@@ -82,7 +123,7 @@ const capacityField = z.number().int().positive().max(EVENT_CAPACITY_MAX);
  */
 export const EVENT_BLOB_HOST = CCA_BLOB_HOST;
 
-export const EVENT_UPLOAD_KINDS = ["proposal", "banner", "photo"] as const;
+export const EVENT_UPLOAD_KINDS = ["banner", "photo"] as const;
 export type EventUploadKind = (typeof EVENT_UPLOAD_KINDS)[number];
 
 export const EVENT_IMAGE_CONTENT_TYPES = [
@@ -90,27 +131,22 @@ export const EVENT_IMAGE_CONTENT_TYPES = [
   "image/png",
   "image/jpeg",
 ] as const;
-export const EVENT_PDF_CONTENT_TYPES = ["application/pdf"] as const;
 
 /** Images are client-downscaled to WebP; the cap stops a crafted upload. */
 export const EVENT_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
-/** Proposals are real PDFs, so a larger ceiling — still bounded. */
-export const EVENT_PDF_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
  * The upload constraints Vercel enforces when it mints a token, chosen by kind.
  * The route passes these straight into `onBeforeGenerateToken`.
+ *
+ * Both remaining kinds are images, so this is currently a single return. The
+ * FUNCTION is kept rather than inlined: the route calls it by name, and the next
+ * kind that is not an image needs the branch back.
  */
-export function eventUploadConstraints(kind: EventUploadKind): {
+export function eventUploadConstraints(_kind: EventUploadKind): {
   allowedContentTypes: string[];
   maximumSizeInBytes: number;
 } {
-  if (kind === "proposal") {
-    return {
-      allowedContentTypes: [...EVENT_PDF_CONTENT_TYPES],
-      maximumSizeInBytes: EVENT_PDF_MAX_BYTES,
-    };
-  }
   return {
     allowedContentTypes: [...EVENT_IMAGE_CONTENT_TYPES],
     maximumSizeInBytes: EVENT_IMAGE_MAX_BYTES,
@@ -137,7 +173,7 @@ export function eventUploadPath(eventID: number, kind: EventUploadKind): string 
 export function parseEventUploadPath(
   pathname: string,
 ): { eventID: number; kind: EventUploadKind } | null {
-  const m = /^event\/(\d+)\/(proposal|banner|photo)$/.exec(pathname);
+  const m = /^event\/(\d+)\/(banner|photo)$/.exec(pathname);
   if (!m) return null;
   const eventID = Number(m[1]);
   if (!Number.isSafeInteger(eventID) || eventID <= 0) return null;
@@ -194,19 +230,25 @@ function refineTimes(
 }
 
 /**
- * Create a draft. Only `ccaID` is required — a draft is work-in-progress and
- * everything else is filled in and validated for completeness at submit time.
- * Returning an eventID immediately is what lets the proposal PDF (whose blob
- * path needs the id) be uploaded next.
+ * Create an event. EVERY field is optional, including `ccaID` — the form saves
+ * whatever the head has typed so far and completeness is a SUBMIT-time check
+ * (see submitForReview). A row has to exist before a banner can be uploaded at
+ * all, because the blob path is event/{eventID}/banner.
+ *
+ * `ccaID` ABSENT OR NULL MEANS HALL-WIDE, owned by the JCRC. The server branches
+ * on it: null requires the `manageHallEvents` capability, a number goes to
+ * assertHeadsCca. Note that `ccaIDField` is `.positive()`, so 0 is not even
+ * expressible here — the Bookings "no CCA" sentinel and the Event "no CCA" null
+ * cannot be confused by a client.
  */
-export const createDraftInput = z
+export const createEventInput = z
   .object({
-    ccaID: ccaIDField,
+    ccaID: ccaIDField.nullable().optional(),
     title: titleField.optional(),
     description: descriptionField.optional(),
     startTime: epochSecondsField.optional(),
     endTime: epochSecondsField.optional(),
-    // Location is EITHER a facility (facilityID set → server denormalizes the
+    // Location is EITHER a facility (facilityID set -> server denormalizes the
     // name into `location`) OR free text (`location`, facilityID null). null
     // facilityID clears a previous facility choice.
     location: locationField.optional(),
@@ -214,14 +256,27 @@ export const createDraftInput = z
     capacity: capacityField.nullable().optional(),
   })
   .superRefine(refineTimes);
-export type CreateDraftInput = z.input<typeof createDraftInput>;
+export type CreateEventInput = z.input<typeof createEventInput>;
 
 /**
- * Patch a draft's proposal fields (and attach the proposal PDF URL). All
- * optional — the form saves partial progress. proposalUrl is validated against
- * this event's own blob prefix; null clears it.
+ * Patch an event. ONE schema for every field, replacing the old
+ * updateDraftInput / updatePublicContentInput pair. All optional — the form
+ * saves partial progress.
+ *
+ * THE SCHEMA DELIBERATELY DOES NOT ENCODE THE PER-STATUS FIELD SUBSET. Zod runs
+ * on the client too, and the client does not know the STORED status at parse
+ * time (it knows what it last fetched, which may be stale). Permissive schema +
+ * strict server means the server is the only authority: `update` reads the row,
+ * asks `editScope`, and writes only the fields that scope permits — silently
+ * ignoring the rest rather than erroring, so a head does not lose a banner edit
+ * to a status race.
+ *
+ * The isOwnEventBlobUrl superRefines below are THE security boundary for
+ * client-supplied URLs. Do not loosen them, and do not "generalise" them to
+ * accept any event/* path — that would let a head attach another CCA's private
+ * image to their own event by URL.
  */
-export const updateDraftInput = z
+export const updateEventInput = z
   .object({
     eventID: eventIDField,
     title: titleField.optional(),
@@ -231,31 +286,6 @@ export const updateDraftInput = z
     location: locationField.optional(),
     facilityID: z.number().int().positive().nullable().optional(),
     capacity: capacityField.nullable().optional(),
-    proposalUrl: z.string().url().nullable().optional(),
-  })
-  .superRefine((val, ctx) => {
-    refineTimes(val, ctx);
-    if (
-      typeof val.proposalUrl === "string" &&
-      !isOwnEventBlobUrl(val.proposalUrl, val.eventID, "proposal")
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["proposalUrl"],
-        message: "NOT_A_VALID_EVENT_BLOB_URL",
-      });
-    }
-  });
-export type UpdateDraftInput = z.input<typeof updateDraftInput>;
-
-/**
- * The public content a head adds after approval. bannerUrl / photoUrls are
- * validated against this event's own blob prefix, exactly like ccaProfileInput.
- * null bannerUrl removes the banner; an empty photoUrls array clears the gallery.
- */
-export const updatePublicContentInput = z
-  .object({
-    eventID: eventIDField,
     publicDescription: z
       .string()
       .trim()
@@ -265,6 +295,7 @@ export const updatePublicContentInput = z
     photoUrls: z.array(z.string().url()).max(EVENT_MAX_PHOTOS).optional(),
   })
   .superRefine((val, ctx) => {
+    refineTimes(val, ctx);
     if (
       typeof val.bannerUrl === "string" &&
       !isOwnEventBlobUrl(val.bannerUrl, val.eventID, "banner")
@@ -287,25 +318,83 @@ export const updatePublicContentInput = z
       });
     }
   });
-export type UpdatePublicContentInput = z.input<typeof updatePublicContentInput>;
+export type UpdateEventInput = z.input<typeof updateEventInput>;
 
-/** JCRC decision. A rejection must carry a reason; approval's reason is optional. */
+/**
+ * The JCRC decision. THREE outcomes, not two: `request_changes` reopens the
+ * event for editing and is resubmittable, `decline` is terminal. "Rejected" used
+ * to mean both, which left a genuine no sitting in a permanently re-submittable
+ * state. Both non-approve outcomes require a reason — it is the only feedback
+ * channel the head has, because a reviewer never edits an event.
+ */
 export const decideInput = z
   .object({
     eventID: eventIDField,
-    decision: z.enum(["approve", "reject"]),
+    decision: z.enum(["approve", "request_changes", "decline"]),
     reason: z.string().trim().max(EVENT_DECISION_REASON_MAX).optional(),
   })
   .superRefine((val, ctx) => {
-    if (val.decision === "reject" && !val.reason) {
+    if (val.decision !== "approve" && !val.reason) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["reason"],
-        message: "A reason is required when rejecting",
+        message: "A reason is required to request changes or decline",
       });
     }
   });
 export type DecideInput = z.input<typeof decideInput>;
 
+/**
+ * The reviewer cancelling a PUBLISHED event. A reason is mandatory here and
+ * optional nowhere: the owning head is not asked first, so the record must say
+ * why. `event.withdraw` needs no schema of its own — it reuses eventIdInput.
+ */
+export const reviewerCancelInput = z.object({
+  eventID: eventIDField,
+  reason: z.string().trim().min(1).max(EVENT_DECISION_REASON_MAX),
+});
+export type ReviewerCancelInput = z.input<typeof reviewerCancelInput>;
+
+/* -------------------------------------------------------------------------- */
+/* Owner display                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The label a hall-wide event's owner line renders. Exactly "Hall" — not
+ * "Hall-wide", not "Raffles Hall", not "JCRC". Defined once, here, so the six
+ * display sites cannot drift.
+ */
+export const HALL_OWNER_LABEL = "Hall";
+
+/**
+ * The owner label for an event. THE ONLY WAY to render an event's owner.
+ *
+ * IT KEYS ON ccaID, NEVER ON ccaName, and that is the whole reason it takes both
+ * arguments. "Hall-wide" and "the CCA was deleted" are different facts that both
+ * produce a null ccaName: deleteCcaCascade does not remove a CCA's events, so an
+ * orphaned event already resolves ccaName null today. If a null NAME meant
+ * "Hall", an orphan would be silently relabelled as a JCRC event. A null ID
+ * means Hall; a present id with no name falls through to `CCA #{id}`.
+ *
+ * Use it UNCONDITIONALLY — never `{ccaName && <span>{ccaName}</span>}`. That
+ * guard renders NOTHING for a hall event: no error, no warning, no tsc
+ * complaint, just an owner line missing from the DOM. `ownerLabel` always
+ * returns a non-empty string, so the guard is retired rather than relocated.
+ */
+export function ownerLabel(
+  ccaID: number | null,
+  ccaName: string | null,
+): string {
+  if (ccaID == null) return HALL_OWNER_LABEL;
+  return ccaName ?? `CCA #${ccaID}`;
+}
+
 export const eventIdInput = z.object({ eventID: eventIDField });
-export const ccaIdInput = z.object({ ccaID: ccaIDField });
+/**
+ * The owner list key. `ccaID: null` selects the HALL-WIDE events. Nullable
+ * rather than a separate procedure because listForOwner's `where` clause is
+ * literally `{ ccaID: input.ccaID }` and Prisma renders null as a null match —
+ * which is exactly why every writer must set the field EXPLICITLY (a document
+ * with no ccaID key at all matches nothing).
+ */
+export const ccaIdInput = z.object({ ccaID: ccaIDField.nullable() });

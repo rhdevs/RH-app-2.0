@@ -14,7 +14,11 @@ export default function NewEventPage({
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold text-gray-900">New event</h2>
-      <EventCreateForm ccaID={ccaID} />
+      <EventCreateForm
+        ccaID={ccaID}
+        backHref={`/cca/${ccaID}/events`}
+        manageHrefBase={`/cca/${ccaID}/events`}
+      />
     </div>
   );
 }
