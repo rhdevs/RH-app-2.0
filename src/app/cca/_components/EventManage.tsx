@@ -94,6 +94,36 @@ function mapError(e: unknown): string {
   return "That didn't save. Try again.";
 }
 
+/**
+ * A row created by the "New event" button and never filled in (D-29, D-31).
+ *
+ * Mirrors the server's reuse filter in `event.create` (D-30) field for field,
+ * plus `photoUrls`, which that filter checks in JS for the same reason: there is
+ * no tested Prisma+Mongo spelling for `equals: []` on a scalar list. Keep the
+ * two in step — if a field is added to one, add it to the other, or the head can
+ * be told a row is empty that the server would refuse to reuse.
+ *
+ * Only ever used to make copy QUIETER. Every string it gates has a variant
+ * behind it that is true of every row, so a false negative costs nothing and a
+ * false positive would print "there's nothing in it" over somebody's work.
+ */
+function isBlankDraft(event: OwnedEvent): boolean {
+  return (
+    event.status === "draft" &&
+    !event.title?.trim() &&
+    !event.description?.trim() &&
+    !event.publicDescription?.trim() &&
+    !event.bannerUrl &&
+    event.photoUrls.length === 0 &&
+    event.startTime == null &&
+    event.endTime == null &&
+    !event.location?.trim() &&
+    event.facilityID == null &&
+    event.capacity == null &&
+    event.bookingID == null
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Details editor (draft / changes_requested)                                  */
 /* -------------------------------------------------------------------------- */
@@ -331,6 +361,38 @@ function DetailsEditor({
       </p>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
+
+      {/* THE CONTRACT SENTENCE (D-34). This is the ONE authoring screen now —
+          /new and EventCreateForm are gone — so everything the head keys in is
+          here, and this is the last thing they read before the primary action.
+
+          The button is NOT relabelled "Publish", even though the ruling calls
+          the head's action publishing. It does not publish; it submits, and a
+          button is a promise about what is about to happen. What was actually
+          missing from this screen was never the word — it was the sentence that
+          closes the loop the head's mental model already contains: once reviewed
+          and accepted, it is done, and nothing further is needed from them.
+          Grep the head-facing surface before this line existed and that promise
+          is nowhere; the reviewer is told (EventReviewDetail), the head was not.
+
+          HALL-AWARE, like the empty state in EventsListPanel: on that surface
+          "Register and publish" really does publish, because it runs
+          submitForReview then decide(approve) back to back, so a sentence about
+          a JCRC approving later would describe something that will not happen. */}
+      <p className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
+        {isHallEvent ? (
+          <>
+            This is the whole event. Register and publish puts it on the
+            residents&rsquo; timeline straight away.
+          </>
+        ) : (
+          <>
+            This is everything JCRC sees. When they approve it, it goes live on
+            the residents&rsquo; timeline straight away &mdash; there&rsquo;s
+            nothing more for you to do.
+          </>
+        )}
+      </p>
 
       <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
         <Button type="button" variant="outline" disabled={busy} onClick={save}>
@@ -744,14 +806,31 @@ function CancelEventButton({
   return (
     <div className="space-y-2 rounded-md border border-red-200 bg-red-50 p-3">
       <p className="text-sm font-medium text-red-900">Cancel this event?</p>
-      {/* TWO VARIANTS, because the consequences genuinely differ. A published
+      {/* THREE VARIANTS, because the consequences genuinely differ. A published
           event has signups and a room held for it; an unpublished one has
           neither, and promising a resident's place was lost when nobody had one
-          is the copy-drift class this repo has paid for four times. */}
+          is the copy-drift class this repo has paid for four times.
+
+          THE THIRD IS NEW (D-32). Cancel is the only way a head gets rid of a
+          row — D-21 stands, there is still no hard delete reachable from the
+          app — and now that "New event" creates a row on click (D-29), the row
+          being cancelled is quite often one with nothing in it at all. Telling
+          someone it "won't go ahead and can't be resubmitted" is true but
+          heavy-handed for an empty row they pressed a button by mistake.
+
+          GATED ON THE ROW BEING GENUINELY EMPTY, not merely untitled. "There's
+          nothing in it yet, so nothing is lost" must never be shown to a head
+          who has uploaded a banner and written a public description but not yet
+          named the event. This is deliberately NARROWER than "a draft with no
+          title": narrowing can only fall back to the second variant, which is
+          still true of every row it catches, whereas widening would print a
+          falsehood over somebody's work. */}
       <p className="text-sm text-red-800">
         {event.status === "published"
           ? "It comes off the residents’ timeline, everyone who signed up loses their place, and the facility booking is released. This can’t be undone."
-          : "It won’t go ahead and can’t be resubmitted. This can’t be undone."}
+          : isBlankDraft(event)
+            ? "There’s nothing in it yet, so nothing is lost. It stays on your list as cancelled."
+            : "It won’t go ahead and can’t be resubmitted. This can’t be undone."}
       </p>
       {error && <p className="text-sm text-red-700">{error}</p>}
       <div className="flex items-center gap-2">

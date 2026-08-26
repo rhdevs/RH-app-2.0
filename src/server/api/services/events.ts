@@ -6,9 +6,11 @@ import type { PrismaClient } from "@prisma/client";
  * per-event signup lock. Modelled on services/booking.ts (nextBookingId /
  * withFacilityLock) and services/ccaScope.ts (isCcaManagementEnabled).
  *
- * Requires `prisma db push` so the unique indexes on `EventLock.key`,
- * `Counter.key` and `Event.eventID` exist — those indexes are what make the
- * lock, the counter and the id allocation safe.
+ * Depends on unique indexes on `EventLock.key`, `Counter.key` and
+ * `Event.eventID` — those indexes are what make the lock, the counter and the
+ * id allocation safe. They are created with `createIndexes`; see
+ * scripts/remediation/create-event-phase2-indexes.mjs. Never `prisma db push`
+ * on this cluster — it drops `User.email_unique_ci`.
  */
 
 /* -------------------------------------------------------------------------- */

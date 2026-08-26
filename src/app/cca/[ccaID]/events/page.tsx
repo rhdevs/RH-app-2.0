@@ -7,8 +7,14 @@ import { parseCcaID } from "../../_lib/ccaParam";
  * The CCA's events. No server guard — listForOwner carries the object-scoped
  * check (I-7), the same policy as the details section.
  *
- * The hrefs are passed IN because EventsListPanel also serves the hall-wide
- * surface at /admin/events, where there is no ccaID to build a path from.
+ * `manageHrefBase` is passed IN because EventsListPanel also serves the
+ * hall-wide surface at /admin/events, where there is no ccaID to build a path
+ * from. It is a STRING and must stay one: this is a SERVER component, and React
+ * refuses to serialise a function across the boundary — the throw happens at
+ * RENDER, so tsc, lint and `next build` all pass while the route 500s.
+ *
+ * There is no `newHref`. "New event" is a mutation button inside the panel now
+ * (D-29); the /new route is gone.
  */
 export default function CcaEventsPage({
   params,
@@ -21,7 +27,6 @@ export default function CcaEventsPage({
   return (
     <EventsListPanel
       ccaID={ccaID}
-      newHref={`/cca/${ccaID}/events/new`}
       manageHrefBase={`/cca/${ccaID}/events`}
     />
   );

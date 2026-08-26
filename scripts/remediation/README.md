@@ -14,17 +14,30 @@ npm i -D mongodb
 
 ---
 
-## Step 0 — Create the new collections + indexes (REQUIRED)
+## Step 0 — Create new collections + indexes (NEVER with `prisma db push`)
 
 The code already added safe new collections to `schema.prisma`
 (`RateLimit`, `Counter`, `BookingLock`, `UserRole`, `FacilityAccess`, and
-`PasswordResetSession.used`). Push them so their **unique indexes** exist — the
-booking lock and counter are only safe once `BookingLock.key` / `Counter.key`
-are unique:
+`PasswordResetSession.used`). Their **unique indexes** need to exist before
+anything that depends on them is safe to run — the booking lock and counter
+are only safe once `BookingLock.key` / `Counter.key` are unique.
 
-```bash
-npx prisma db push
-```
+This step used to say to run `npx prisma db push` here. That instruction is
+retracted, not annotated: `prisma db push` silently drops
+`User.email_unique_ci`, the case-insensitive unique index on `email` that is
+the duplicate-account guard. Prisma cannot represent a collation index in
+`schema.prisma`, so every `db push` sees it as not-in-schema and removes it —
+with no warning and without `--accept-data-loss`. Do not run it against this
+cluster, here or anywhere else in this file.
+
+Indexes on this cluster are created with `createIndexes` through
+`$runCommandRaw`, never through `db push`. `create-auth-allowlist.mjs` is the
+working precedent: it created the `AuthAllowlist` collection and its two
+unique indexes this way, and they exist today by that route and no other.
+The equivalent script for the Events Phase 2/3 indexes (`EventLock.key`,
+`Counter.key`, `Event.eventID`) is `create-event-phase2-indexes.mjs` — it
+does not exist yet, it arrives with PR 2. Do not run `prisma db push` in its
+place while you wait for it.
 
 ## Step 1 — Seed RBAC so "SCRC Room" stays restricted (#23)
 
@@ -95,11 +108,15 @@ upserts are stable, and index creation is a no-op if present.
 
 ### Prerequisites (in order)
 
-1. **`npx prisma db push`** — creates the `UserMatric` collection + its `userID`
-   unique index and regenerates the client. `src/server/auth.ts` already reads
-   `db.userMatric`, so this is required before the app (and the gate) run.
-   (The migration itself writes `UserMatric` via `$runCommandRaw`, so it does not
-   depend on the regenerated delegate — but the app does.)
+1. ~~**`npx prisma db push`** — creates the `UserMatric` collection + its
+   `userID` unique index and regenerates the client.~~
+   **HISTORICAL — DO NOT RUN.** This migration already ran; `UserMatric` and its
+   index exist. The instruction is left visible rather than deleted so the record
+   of what was actually done stays honest, but `db push` is retracted repo-wide
+   (see Step 0): it silently drops indexes absent from `schema.prisma`, and it
+   has cost this database `email_unique_ci` once. Were this run again today, the
+   collection and index would be created with `$runCommandRaw` and the client
+   regenerated with `npx prisma generate`.
 2. **Deploy the login-gate code first** (auth session lookup, `matricProcedure`,
    `MatricGate`, `/onboarding/matric`, `user.setMatric`) so freshly-merged users
    who have no matric can actually clear the gate.
@@ -109,7 +126,9 @@ upserts are stable, and index creation is a no-op if present.
 ### Run order
 
 ```bash
-npx prisma db push                                  # create UserMatric (prereq)
+# HISTORICAL run order — this migration has already been applied.
+# The first line WAS `npx prisma db push`. Retracted: see the prerequisites
+# above and Step 0. Do not run it; UserMatric and its index already exist.
 node scripts/remediation/merge-accounts.mjs         # DRY RUN — review output
 # ...review: 58 mixed groups expected; check flags, matric picks, deletes,
 #    before/after conservation lines, and the IDENTITY_MISMATCH_FOLLOWUP list...
@@ -221,7 +240,10 @@ survives.
 ### Run order
 
 ```bash
-npx prisma db push                                          # create ProfileCompletion + its unique index
+# HISTORICAL run order — already applied; ProfileCompletion and its unique
+# index exist. The first line WAS `npx prisma db push`. Retracted (see Step 0):
+# a push drops indexes absent from schema.prisma and has cost this database
+# email_unique_ci once. Create collections/indexes with $runCommandRaw instead.
 node scripts/remediation/merge-by-canonical.mjs             # DRY RUN — review the full change set
 # ...review: per-group AGREE/ABSENT/CONFLICT per field, the matric decision,
 #    reassignment counts, the ProfileCompletion flags, and the email
@@ -338,6 +360,23 @@ model FoodOrder {
 ```
 
 Validate against the DB `$jsonSchema` validators before `prisma db push`.
+
+## Step: sweep blank event drafts (maintenance, on demand) — `sweep-blank-event-drafts.mjs`
+
+Nobody runs this automatically; run it when the events list gets noisy. It is
+a dry-run-by-default remediation script (`--commit` to act) that deletes an
+`Event` row only when it is a `draft` with nothing typed in it, no gallery, no
+room booking, no signups, no child rows, and no audit row naming it, and it is
+older than 30 days. It is the only place an `Event` row is ever deleted, and
+it is not reachable from the application. It does not touch `Counter`.
+
+Like the other standalone scripts in this repo, it needs the environment
+loaded first — Prisma no longer auto-loads `.env`:
+
+```bash
+set -a && . ./.env >/dev/null 2>&1 && set +a && node scripts/remediation/sweep-blank-event-drafts.mjs             # preview
+set -a && . ./.env >/dev/null 2>&1 && set +a && node scripts/remediation/sweep-blank-event-drafts.mjs --commit    # apply
+```
 
 ---
 

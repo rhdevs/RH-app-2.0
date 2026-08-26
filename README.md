@@ -132,9 +132,19 @@ cd RH-app-2.0
 npm install
 
 cp .env.example .env                 # then open it — see below
-npx prisma db push                   # shape the database
+npx prisma generate                  # generate the Prisma client
 npm run dev                          # → http://localhost:3000
 ```
+
+> [!CAUTION]
+> **Do not run `prisma db push`, `prisma migrate dev`, or `prisma migrate deploy`
+> against a database anyone else is using.** This line used to say `db push`, and
+> that was wrong: on MongoDB, Prisma only pushes *indexes* — adding or removing a
+> scalar field needs nothing — while a push silently **drops any index that is
+> not in `schema.prisma`**. This database relies on several that aren't, including
+> the case-insensitive `email_unique_ci`, which a push has already destroyed once.
+> `prisma generate` is what you actually want. New collections and indexes are
+> created explicitly with `$runCommandRaw`; see `scripts/remediation/README.md`.
 
 **Before `npm run dev` will get you anywhere,** fill in two values in `.env`:
 
@@ -154,8 +164,11 @@ npx tsc --noEmit      # typecheck — CI will, so you should
 ```
 
 > [!WARNING]
-> `prisma db push` silently drops indexes that aren't in `schema.prisma`.
-> Check what exists before and after, especially against a shared database.
+> `prisma db push` silently drops indexes that aren't in `schema.prisma`, and it
+> has already cost this database `email_unique_ci` once. It is not part of any
+> normal workflow here — see the caution above. The `db:push` / `db:generate` /
+> `db:migrate` npm scripts were removed for the same reason: `db:generate` ran
+> `prisma migrate dev`, so the script whose name said "generate" ran a migration.
 
 ---
 

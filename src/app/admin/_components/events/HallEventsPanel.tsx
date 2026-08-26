@@ -30,11 +30,11 @@ export default function HallEventsPanel() {
         </p>
       </div>
 
-      <EventsListPanel
-        ccaID={null}
-        newHref="/admin/events/hall/new"
-        manageHrefBase="/admin/events/hall"
-      />
+      {/* No `newHref`: "New event" is a mutation button inside the panel now
+          (D-29), and /admin/events/hall/new is gone. `ccaID` null is what makes
+          the created row hall-owned — the server branches on its absence and
+          requires manageHallEvents. */}
+      <EventsListPanel ccaID={null} manageHrefBase="/admin/events/hall" />
     </div>
   );
 }

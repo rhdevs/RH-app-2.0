@@ -382,7 +382,15 @@ export default function WhatsNewPage() {
                   <li>Upcoming / my events / past filters</li>
                   <li>One-tap sign-up with fair limits</li>
                   <li>Event pages with photo galleries</li>
-                  <li>Turnout stats for heads</li>
+                  {/*
+                    "Signup stats", NOT "Turnout stats". EventAnalytics charts
+                    cumulative SIGNUPS and a by-block breakdown; turnout means
+                    who actually showed up, and attendance does not exist yet.
+                    This line claimed it while shipping, which is a drift of the
+                    worst kind — a public page promising a feature to the people
+                    who would go looking for it.
+                  */}
+                  <li>Signup stats for heads</li>
                 </ul>
               </div>
               <div className="glance-col">
