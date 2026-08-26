@@ -57,8 +57,16 @@ export const env = createEnv({
      * suspected leak. Never commit it, never log it, and it must never reach
      * the browser — the token is minted server-side and only the signed result
      * is sent.
+     *
+     * `.min(32)` IS NOT DECORATION. Nothing else in the system inspects this
+     * value's strength: `qrSecret()` checks only that it is non-empty, and an
+     * HMAC keyed on `changeme` produces tags that verify perfectly and forge
+     * trivially. A truncated paste or a placeholder someone meant to replace
+     * would otherwise boot a door that looks entirely healthy. Empty string is
+     * already `undefined` here (`emptyStringAsUndefined` below), so this bounds
+     * the only remaining bad value.
      */
-    EVENT_QR_SECRET: z.string().optional(),
+    EVENT_QR_SECRET: z.string().min(32).optional(),
   },
 
   /**

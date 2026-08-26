@@ -329,3 +329,108 @@ re-measuring over trusting a number written here or in the plan.
 A passing `tsc`, lint and `next build` prove nothing about whether a page
 renders — this repo's own precedent is five authoring routes that passed all
 three plus two adversarial review agents and still threw at render.
+
+---
+
+# Added by the adversarial review of Part C (2026-08-27)
+
+These four come out of the review pass on `events-qr-attendance`. T12 and T13
+are consequences of defects the review FIXED in the working tree; the fixes are
+correct on their face and unmeasurable without a cluster, so each carries the
+measurement that would confirm it. T14 and T15 are properties that were
+tightened and now need a real reading to confirm the tightening does not refuse
+something legitimate.
+
+## T12 — Measure the scanner key mismatch, and confirm the fix closes it
+
+**What this protects against:** the same failure T9 names, arriving one line
+earlier and through a different mechanism — a committee member who was
+correctly nominated, is correctly still a member, and is still told
+`NOT_A_SCANNER` at the door.
+
+The review found that the two sides of the nomination used **different key
+spaces**, statically and provably:
+
+- `EventScannerPicker` stores `cca.memberDirectory`'s `userID` field, which is
+  `e.storedUserID` — the **`User.userID` COLUMN** (`services/ccaRoster.ts`).
+- `assertMayScan` matched `event.scannerUserIDs.includes(session.user.userID)`,
+  and `session.user.userID` is **`canonicalUserID(email)`**.
+
+`prisma/schema.prisma` states above `UserMatric`: *"NEVER key on `User.userID`:
+~515 users have an A-format matric there (invariant I-1)."* For every one of
+those rows the two strings cannot match. The fix compares the caller's WHOLE key
+set (`membershipKeysForKey`) instead of the canonical id alone.
+
+With access, measure it rather than trusting the fix:
+
+1. For the CCA used for the trial event, list `cca.memberDirectory`.
+2. For each resolved entry, compare its `userID` (the stored column) against
+   `canonicalUserID(email)`. **Record how many differ.** That count is the
+   number of people the pre-fix code would have refused at a door.
+3. Nominate at least one person from the differing set, and have them open the
+   door page. Expect the scanner UI, not "You're not on this event's door list".
+4. If ANY entry has a null `storedUserID`, note it: the picker drops those rows
+   entirely, so those members cannot be nominated at all by any path. That is a
+   separate, unfixed gap.
+
+- [ ] Run. Directory count: ___ · stored ≠ canonical: ___ · null stored: ___ ·
+      nominated-and-scanned OK: ___
+
+## T13 — Prove `SystemFlag.key` actually has a unique index
+
+**What this protects against:** the kill switch reading "off" while the door is
+live.
+
+`set-attendance-flag.mjs` now **refuses** if more than one `SystemFlag` row
+shares a key, because a Prisma `@unique` creates nothing on MongoDB — the same
+fact the script's own header states about `EventAttendance`, applied to the row
+it writes itself. With two rows under one key, the script's `find` and the app's
+`findUnique` can read different documents.
+
+```bash
+node scripts/remediation/index-census.mjs | grep -A5 SystemFlag
+```
+
+Confirm a unique index on `{ key: 1 }` exists. Then count the rows per key:
+any key with more than one row must be reconciled by hand **before** the
+switch-on sequence in T8, because the script will now (correctly) refuse.
+
+- [ ] Run. `SystemFlag` unique index present: ___ · duplicate keys found: ___
+
+## T14 — Record the EventAttendance index OPTIONS, not just its existence
+
+`set-attendance-flag.mjs`'s gate now rejects a unique index that is
+`partial`, `sparse`, or `collated`. A unique index with
+`partialFilterExpression: { method: "qr" }` satisfies "unique on
+`{eventID,userID}`" while letting a MANUAL check-in of someone already
+QR-scanned write a second row — silently, which is the exact failure the gate
+exists to prevent.
+
+When T1 runs, **paste the full `listIndexes` entry** for `event_attendee` into
+the result line below, not just "present". If it carries any of those three
+options, the index is wrong and must be dropped and rebuilt, not worked around
+by loosening the gate.
+
+- [ ] Run. Full index document:
+
+## T15 — The door under a real load, now that decoding is throttled
+
+The review found the scan loop running a full-sensor `drawImage` +
+`getImageData` + a pure-JS `jsQR` scan on **every animation frame**, and
+throttled decoding to 10 Hz. That is a code-level fix to a code-level problem;
+whether the door now keeps up is a question only a phone can answer.
+
+At the trial event (T6), on the oldest phone the committee actually has:
+
+- Does the camera preview stay smooth while decoding, or still stutter?
+- Time from holding a code up to the confirmation card appearing. Anything over
+  about two seconds will produce a queue.
+- Does the phone get hot, or the battery drop sharply, over twenty minutes?
+
+If it still struggles, the next lever is `BarcodeDetector` — hardware-accelerated
+and present on Chromium/Android — with `jsQR` kept as the Safari fallback, plus a
+lazy `await import("jsqr")`. Both were specified in the plan (D-58) and neither
+was implemented; they are deliberately NOT being added blind, because a decode
+path that cannot be tested here is a worse risk than a slow one that works.
+
+- [ ] Run. Phone/OS: ___ · preview smooth: ___ · scan-to-card: ___ s

@@ -31,6 +31,8 @@ function mapDoorError(e: { message?: string } | null | undefined): string {
     return "Check-in hasn't opened for this event yet. It opens an hour before the start time unless the head changed it.";
   if (m === "DOOR_CLOSED")
     return "Check-in has closed for this event.";
+  if (m === "NO_DOOR_WINDOW")
+    return "This event has no check-in window — it needs a start time, and a check-in close that comes after its open. The head can fix that on the event page. Take names on paper for now.";
   if (m === "BAD_QR")
     return "That code didn't work. It may have expired — ask them to let it refresh, or tick them off the list instead.";
   if (m === "NOT_CHECKED_IN")
@@ -42,6 +44,13 @@ function mapDoorError(e: { message?: string } | null | undefined): string {
 /* -------------------------------------------------------------------------- */
 /* Camera                                                                      */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * How often the frame is actually DECODED, as opposed to how often the browser
+ * paints. 100ms is ten attempts a second — well inside the time a QR spends in
+ * front of a lens, and a sixth of the work a per-frame decode does.
+ */
+const DECODE_INTERVAL_MS = 100;
 
 type CameraState =
   | { kind: "idle" }
@@ -96,6 +105,11 @@ export default function DoorScanner({ eventID }: { eventID: number }) {
    */
   const inFlightRef = useRef(false);
   const lastPayloadRef = useRef<{ value: string; at: number } | null>(null);
+  /**
+   * When the last DECODE ran, so decoding is throttled independently of the
+   * animation frame. See DECODE_INTERVAL_MS.
+   */
+  const lastDecodeRef = useRef(0);
 
   const checkIn = api.event.checkIn.useMutation({
     onSuccess: async (res, vars) => {
@@ -165,6 +179,23 @@ export default function DoorScanner({ eventID }: { eventID: number }) {
       rafRef.current = requestAnimationFrame(scanFrame);
       return;
     }
+
+    // THROTTLED, AND THIS IS A CORRECTNESS PROBLEM WEARING PERFORMANCE CLOTHES.
+    // Decoding on EVERY animation frame means, sixty times a second: a
+    // full-sensor drawImage, a getImageData that copies ~2M pixels out of the
+    // GPU, and a pure-JS jsQR scan over all of them — all on the main thread,
+    // on a committee member's mid-range phone. The visible result is not "a bit
+    // slow": the preview drops to a slideshow, the aim-the-camera feedback loop
+    // breaks, and the door gets slower the harder someone tries to use it.
+    // Ten decodes a second is far more than a person holding up a phone needs,
+    // and it leaves the frames in between for rendering the video.
+    const nowMs = Date.now();
+    if (nowMs - lastDecodeRef.current < DECODE_INTERVAL_MS) {
+      rafRef.current = requestAnimationFrame(scanFrame);
+      return;
+    }
+    lastDecodeRef.current = nowMs;
+
     const w = video.videoWidth;
     const h = video.videoHeight;
     if (w === 0 || h === 0) {
@@ -316,11 +347,18 @@ export default function DoorScanner({ eventID }: { eventID: number }) {
 
       {!s.open && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+          {/* THREE STATES, NOT TWO. A null opensAt means the event has no
+              derivable window at all — no start time, or a close that is not
+              after its open — which is neither "not yet" nor "closed", and
+              saying either of those sends the committee to wait for a door that
+              is never going to open. It is also the only one of the three that
+              somebody can actually go and fix. */}
           <p className="text-sm text-amber-900">
-            {s.opensAt !== null &&
-            Math.floor(Date.now() / 1000) < s.opensAt
-              ? "Check-in hasn't opened yet. It opens an hour before the start time unless the head changed it."
-              : "Check-in has closed for this event."}
+            {s.opensAt === null || s.closesAt === null
+              ? "This event has no check-in window. It needs a start time, and a check-in close that comes after its open — the head can set that on the event page. Take names on paper for now."
+              : Math.floor(Date.now() / 1000) < s.opensAt
+                ? "Check-in hasn't opened yet. It opens an hour before the start time unless the head changed it."
+                : "Check-in has closed for this event."}
           </p>
         </div>
       )}

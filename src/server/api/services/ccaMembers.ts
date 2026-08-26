@@ -72,18 +72,69 @@ export function membershipKeysFor(u: {
  * rather than trusting the stored `Event.scannerUserIDs` list, which was
  * written when the event was created and may name someone who has since left.
  */
+/**
+ * Find the `User` row behind a key that may be EITHER a canonical id OR the
+ * legacy A-format value stored in `User.userID`.
+ *
+ * A `findFirst({ where: { userID } })` IS THE BUG THIS EXISTS TO PREVENT.
+ * `schema.prisma` says it outright above `UserMatric`: *"NEVER key on
+ * User.userID: ~515 users have an A-format matric there (invariant I-1)."*
+ * `session.user.userID` is `canonicalUserID(email)`, so for every one of those
+ * rows a lookup by the canonical key on the `userID` COLUMN matches nothing —
+ * and a caller that then gives up has silently skipped the embedded
+ * `User.userCCA` array, which is the ONLY membership source for ~37 of 116
+ * measured users.
+ *
+ * So this matches the way `resolveAttendees` (routers/event.ts) already does:
+ * the guessed `@u.nus.edu` address OR the stored column, whichever lands.
+ */
+export async function findUserByAnyKey(
+  db: PrismaClient,
+  key: string,
+): Promise<{ id: string; email: string; userID: string | null } | null> {
+  // Never a bare read: passwordHash must not be selected (a Google-adapter row
+  // lacking it throws on deserialization — I-2), so the select is explicit.
+  const select = { id: true, email: true, userID: true } as const;
+  return await db.user.findFirst({
+    where: {
+      OR: [
+        { email: { equals: `${key.toLowerCase()}@u.nus.edu`, mode: "insensitive" } },
+        { userID: key },
+      ],
+    },
+    select,
+  });
+}
+
+/**
+ * EVERY KEY THAT NAMES THIS PERSON, from any one of them.
+ *
+ * `membershipKeysFor` needs a `{ email, userID }` pair; this is the lookup that
+ * gets there from a bare key, and it is what any caller comparing a
+ * client-supplied or stored identity against a session identity must use. The
+ * two are NOT interchangeable strings: one is `canonicalUserID(email)` and the
+ * other is whatever `User.userID` happens to hold.
+ *
+ * Falls back to the key itself when no `User` row resolves, so an orphaned
+ * membership row is still checkable rather than being treated as absent.
+ */
+export async function membershipKeysForKey(
+  db: PrismaClient,
+  key: string,
+): Promise<string[]> {
+  const u = await findUserByAnyKey(db, key);
+  return u ? membershipKeysFor(u) : [key];
+}
+
 export async function isLiveCcaMember(
   db: PrismaClient,
   ccaID: number,
   userID: string,
 ): Promise<boolean> {
-  // Resolve the person first, so (2) and (3) are reachable at all. Never a bare
-  // findUnique on User: passwordHash must not be read (a Google-adapter row
-  // lacking it throws on deserialization — I-2), so the select is explicit.
-  const u = await db.user.findFirst({
-    where: { userID },
-    select: { id: true, email: true, userID: true },
-  });
+  // Resolve the person first, so (2) and (3) are reachable at all — and resolve
+  // them by EITHER key, because `userID` here may be the canonical session id
+  // while the row stores an A-format matric, or the exact reverse.
+  const u = await findUserByAnyKey(db, userID);
 
   // (1) + (2). With a User row we can check BOTH keys; without one, the given
   // key is all there is — an unresolved key is still worth checking directly

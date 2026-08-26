@@ -60,13 +60,53 @@ const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
 const MODE = positional[0];
 const COMMIT = isCommit();
 
+/**
+ * THREE STATES, NEVER TWO: read-ok-with-a-row, read-ok-with-no-row, and
+ * COULD-NOT-READ.
+ *
+ * `$runCommandRaw` does not have one error convention. A command the server
+ * rejects can come back as DATA (`{ ok: 0, code, errmsg }`) or as a thrown
+ * `PrismaClientKnownRequestError`, depending on the failure — the rule is
+ * written out in full in `index-census.mjs`, and a reader that only catches, or
+ * only inspects `ok`, mistakes one of them for success.
+ *
+ * COLLAPSING "COULD NOT READ" INTO "NO ROW" INVERTS THE POST-WRITE VERIFY.
+ * If the write lands and the read-back then fails as data, a two-state reader
+ * returns null, VERIFY reports `read-back mismatch: expected on, got null`, and
+ * the operator walks away believing the door is off. It is on. That is the one
+ * outcome this script's whole ceremony exists to prevent.
+ *
+ * Returns `{ ok: true, row }` | `{ ok: false, why }`.
+ */
 async function flag(key) {
-  const r = await db.$runCommandRaw({
-    find: "SystemFlag",
-    filter: { key },
-    limit: 1,
-  });
-  return r?.cursor?.firstBatch?.[0] ?? null;
+  let r;
+  try {
+    r = await db.$runCommandRaw({
+      find: "SystemFlag",
+      filter: { key },
+      limit: 1,
+    });
+  } catch (e) {
+    return { ok: false, why: e?.message ?? String(e) };
+  }
+  if (!r || r.ok !== 1 || !r.cursor) {
+    return {
+      ok: false,
+      why: `unexpected reply: ${JSON.stringify(r?.errmsg ?? r?.ok ?? null)}`,
+    };
+  }
+  const batch = Array.isArray(r.cursor.firstBatch) ? r.cursor.firstBatch : [];
+  // `SystemFlag.key` carries a Prisma `@unique`, AND A PRISMA `@unique` CREATES
+  // NOTHING ON MONGODB — the same fact this script's own header states about
+  // EventAttendance, applied to the row it writes itself. With two rows under
+  // one key, this `find` and the app's `findUnique` can read DIFFERENT
+  // documents: the script would print "off" while the door stayed live. Refuse
+  // rather than silently pick one. Same countermeasure as
+  // verify-recruitment-gate.mjs.
+  if (batch.length > 1) {
+    return { ok: false, why: `${batch.length} rows share key "${key}"` };
+  }
+  return { ok: true, row: batch[0] ?? null };
 }
 
 async function indexEnforcing() {
@@ -80,7 +120,20 @@ async function indexEnforcing() {
     return ix.some(
       (i) =>
         i.unique === true &&
-        Object.keys(i.key ?? {}).join(",") === "eventID,userID",
+        // Key NAMES and their ORDER, which for a compound index is its meaning.
+        // The index's own `name` is deliberately NOT checked: `db push` and a
+        // hand-run `createIndexes` produce different names for the same index,
+        // so a name match reports a false failure.
+        Object.keys(i.key ?? {}).join(",") === "eventID,userID" &&
+        // AND IT MUST ENFORCE OVER THE WHOLE COLLECTION. A unique index that is
+        // partial, sparse, or collated satisfies both checks above while
+        // enforcing almost nothing: `partialFilterExpression: { method: "qr" }`
+        // would let a MANUAL check-in of someone already QR-scanned write a
+        // second row — silently, which is the precise failure this gate exists
+        // to prevent. Anything carrying one of these is not the index we need.
+        i.partialFilterExpression === undefined &&
+        i.sparse !== true &&
+        i.collation === undefined,
     );
   } catch {
     // NamespaceNotFound is the ordinary pre-rollout state, and any other read
@@ -92,17 +145,36 @@ async function indexEnforcing() {
 async function main() {
   console.log(`\n=== set-attendance-flag.mjs ===`);
 
-  const [before, parent, hasIndex] = await Promise.all([
+  const [beforeR, parentR, hasIndex] = await Promise.all([
     flag(KEY),
     flag(PARENT_KEY),
     indexEnforcing(),
   ]);
 
+  // A FAILED READ IS RENDERED AS A FAILED READ, never as "(no row)". That is
+  // the fabricated-zero class index-census.mjs names: an unreadable flag shown
+  // as absent reads as "the door is off" to the person deciding whether it is
+  // safe to walk away from it.
+  const before = beforeR.ok ? beforeR.row : null;
+  const parent = parentR.ok ? parentR.row : null;
+
   console.log(
-    `current: ${before ? JSON.stringify(before.value) : "(no row — the door is OFF)"}`,
+    `current: ${
+      !beforeR.ok
+        ? `UNREADABLE — ${beforeR.why}`
+        : before
+          ? JSON.stringify(before.value)
+          : "(no row — the door is OFF)"
+    }`,
   );
   console.log(
-    `parent ${PARENT_KEY}: ${parent ? JSON.stringify(parent.value) : "(no row — OFF)"}`,
+    `parent ${PARENT_KEY}: ${
+      !parentR.ok
+        ? `UNREADABLE — ${parentR.why}`
+        : parent
+          ? JSON.stringify(parent.value)
+          : "(no row — OFF)"
+    }`,
   );
   console.log(
     `EventAttendance unique index: ${hasIndex ? "PRESENT" : "NOT PRESENT"}`,
@@ -133,6 +205,17 @@ async function main() {
         `    node scripts/remediation/create-event-phase2-indexes.mjs EventAttendance --commit\n` +
         `    node scripts/remediation/verify-events-schema.mjs\n\n` +
         `  (Turning the flag OFF is never blocked by this check.)`,
+    );
+  }
+
+  // TURNING ON REQUIRES A SUCCESSFUL READ OF THE PARENT, not merely a read that
+  // came back falsy. Turning OFF requires nothing at all: a kill switch that
+  // needs a healthy database to pull is not a kill switch, so an unreadable
+  // parent must never stand between an operator and `off`.
+  if (MODE === "on" && !parentR.ok) {
+    return abort(
+      `could not read ${PARENT_KEY} (${parentR.why}), so it cannot be proven on.\n` +
+        `  Refusing to turn the door on against a flag nobody can read.`,
     );
   }
 
@@ -175,8 +258,22 @@ async function main() {
     return abort(`the flag was NOT changed.`);
   }
 
-  const after = await flag(KEY);
+  const afterR = await flag(KEY);
   console.log(`\n=== VERIFY ===`);
+  // THE WRITE HAS ALREADY LANDED BY THIS POINT, so an unreadable read-back is
+  // NOT a mismatch and must not be reported as one. "read-back mismatch:
+  // expected on, got null" sends the operator away believing the door is off
+  // while it is live — the exact inversion this VERIFY exists to catch. Say
+  // what is actually true: the change was sent, and could not be confirmed.
+  if (!afterR.ok) {
+    console.log(`${KEY} = UNREADABLE — ${afterR.why}`);
+    return abort(
+      `THE WRITE WAS SENT AND MAY WELL HAVE APPLIED — the read-back failed, so\n` +
+        `  this script cannot confirm it either way. DO NOT assume the flag is\n` +
+        `  unchanged. Re-run WITHOUT --commit to read it again.`,
+    );
+  }
+  const after = afterR.row;
   console.log(`${KEY} = ${JSON.stringify(after?.value ?? null)}`);
   if (after?.value !== MODE) {
     return abort(
@@ -193,7 +290,15 @@ async function main() {
 }
 
 main()
-  .then(() => console.log("\nDone."))
+  // CONDITIONAL ON THE EXIT CODE. Every refusal in this file is
+  // `return abort(...)`, and abort() sets process.exitCode and RETURNS — it
+  // does not throw — so main() resolves and this .then fires on all of them.
+  // Printing "Done." underneath an ABORT banner is how an operator skim-reads a
+  // refusal as a success, on a phone, in the dark, beside a door that is not
+  // working. Same fix and same reason as create-event-phase2-indexes.mjs.
+  .then(() =>
+    console.log(process.exitCode ? "\nAborted — see above." : "\nDone."),
+  )
   .catch((e) => {
     console.error(e);
     process.exitCode = 1;

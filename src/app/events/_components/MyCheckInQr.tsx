@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { api } from "~/trpc/react";
@@ -30,31 +29,35 @@ export default function MyCheckInQr({ className }: { className?: string }) {
     // Refetch a little before the 30-second window closes. The verifier also
     // accepts the PREVIOUS window, so a scan landing in the gap still works and
     // a slow round trip is not a failed check-in.
-    refetchInterval: QR_REFRESH_MS,
+    //
+    // AND STOP POLLING ONCE IT HAS FAILED. Both kill switches are asserted
+    // server-side on every call, so on a deployment where the door layer is off
+    // — which is the state this feature SHIPS IN — a fixed interval would poll
+    // a guaranteed refusal three times a minute, forever, on the busiest screen
+    // in the app, and each refusal costs two uncached SystemFlag reads because
+    // the flag cache's TTL is shorter than the interval.
+    refetchInterval: (q) => (q.state.error ? false : QR_REFRESH_MS),
     refetchOnWindowFocus: true,
     retry: false,
   });
 
-  // Re-render on a timer purely to age the "refreshes in Ns" line. The QR
-  // itself only changes when the query returns a new token.
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  if (token.isPending) {
-    return (
-      <div className={className}>
-        <div className="h-[200px] w-[200px] animate-pulse rounded-md bg-gray-100" />
-      </div>
-    );
-  }
+  // NOTHING WHILE IT LOADS, deliberately: a 200px placeholder that appears and
+  // then vanishes on every deployment where attendance is off is a worse
+  // artefact than the code arriving a moment late.
+  if (token.isPending) return null;
 
   if (token.error || !token.data) {
-    // ATTENDANCE_NOT_CONFIGURED and ATTENDANCE_DISABLED both land here, and both
-    // are honest states rather than faults the resident can act on — so the copy
-    // does not tell them to try again or to report anything.
+    const why = token.error?.message ?? "";
+    // THE FEATURE BEING OFF IS NOT AN ERROR AND MUST RENDER NOTHING. It ships
+    // dark: the flag row is absent until somebody deliberately creates it, so
+    // this branch is the DEFAULT state at merge, on the event page of every
+    // resident who is signed up for anything. Telling all of them about a
+    // check-in code that does not exist yet is a feature announcing itself
+    // while switched off — the same ruling the analytics side already carries.
+    if (why === "ATTENDANCE_DISABLED" || why === "EVENTS_DISABLED") return null;
+    // A CONFIGURATION FAULT IS DIFFERENT and does get a line: the flag is ON,
+    // so there may well be somebody at a door expecting to scan them, and they
+    // need to know to ask for the list instead.
     return (
       <div className={className}>
         <p className="text-sm text-gray-500">
@@ -65,8 +68,7 @@ export default function MyCheckInQr({ className }: { className?: string }) {
     );
   }
 
-  const { userID, token: tag, expiresAt } = token.data;
-  const secondsLeft = Math.max(0, expiresAt - Math.floor(Date.now() / 1000));
+  const { userID, token: tag } = token.data;
 
   return (
     <div className={className}>
@@ -88,10 +90,13 @@ export default function MyCheckInQr({ className }: { className?: string }) {
         <p className="text-center text-sm text-gray-600">
           Show this to whoever is on the door.
         </p>
+        {/* NO COUNTDOWN, AND THAT IS THE POINT. A ticking number invites people
+            to snatch the phone back and wait for a "fresh" code, which is the
+            one thing that makes a queue stall. The refresh is silent and the
+            scanner accepts the previous window anyway, so a code that looks old
+            still works. */}
         <p className="text-center text-xs text-gray-400">
-          {secondsLeft > 0
-            ? `Refreshes in ${secondsLeft}s — that's normal.`
-            : "Refreshing…"}
+          It refreshes every few seconds — that&rsquo;s normal.
         </p>
       </div>
     </div>

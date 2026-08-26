@@ -14,7 +14,10 @@ import {
 import { getUserRoles } from "~/server/api/services/access";
 import { computeCapabilities } from "~/server/api/services/roles";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
-import { isLiveCcaMember } from "~/server/api/services/ccaMembers";
+import {
+  isLiveCcaMember,
+  membershipKeysForKey,
+} from "~/server/api/services/ccaMembers";
 import {
   checkInInput,
   manualCheckInInput,
@@ -185,7 +188,27 @@ async function assertMayScan(
   }
 
   // 2. A nominee.
-  if (!event.scannerUserIDs.includes(userID)) {
+  //
+  // MATCHED ACROSS THE WHOLE KEY SPACE, NOT ON THE CANONICAL ID ALONE, and this
+  // is load-bearing rather than defensive. `userID` here is
+  // `session.user.userID` = `canonicalUserID(email)`. What is STORED in
+  // `scannerUserIDs` came out of `cca.memberDirectory`, whose `userID` field is
+  // `e.storedUserID` = the `User.userID` COLUMN (services/ccaRoster.ts) — and
+  // `schema.prisma` states above `UserMatric` that ~515 rows hold an A-format
+  // matric there. A bare `.includes(userID)` therefore compares two DIFFERENT
+  // key spaces and returns false for every nominee whose stored column is not
+  // the canonical id: the head picks them out of the live directory, the save
+  // succeeds, and then the door tells them they are not on the list. That is
+  // precisely the failure the live-membership re-validation below exists to
+  // avoid, arriving one line earlier through the key instead of the source.
+  //
+  // THIS DOES NOT WIDEN THE GRANT. `membershipKeysForKey` derives both keys
+  // from the caller's OWN `User` row (their session email and their stored
+  // column); nothing here is client-supplied, so the set of PEOPLE admitted is
+  // unchanged — only the set of SPELLINGS that names them. Being on the list is
+  // still necessary and never sufficient: live membership is re-checked below.
+  const callerKeys = await membershipKeysForKey(db, userID);
+  if (!callerKeys.some((k) => event.scannerUserIDs.includes(k))) {
     throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
   }
 
@@ -2652,7 +2675,21 @@ export const eventRouter = createTRPCRouter({
 
       const nowSec = Math.floor(Date.now() / 1000);
       const attWindow = resolveAttendanceWindow(event);
-      if (!attWindow || nowSec < attWindow.opensAt) {
+      // NO DERIVABLE WINDOW IS ITS OWN STATE, and it gets its own code.
+      // `resolveAttendanceWindow` returns null for an event with no startTime
+      // and for an override whose close is not after its open — neither of
+      // which is "not open yet" or "closed". Folding it into DOOR_NOT_OPEN told
+      // the scanner "it opens an hour before the start time" for an event that
+      // has no start time, while the page beside them said "check-in has
+      // closed": two different untruths about one state, and neither names the
+      // thing the head has to go and fix.
+      if (!attWindow) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NO_DOOR_WINDOW",
+        });
+      }
+      if (nowSec < attWindow.opensAt) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "DOOR_NOT_OPEN",
@@ -2717,7 +2754,21 @@ export const eventRouter = createTRPCRouter({
 
       const nowSec = Math.floor(Date.now() / 1000);
       const attWindow = resolveAttendanceWindow(event);
-      if (!attWindow || nowSec < attWindow.opensAt) {
+      // NO DERIVABLE WINDOW IS ITS OWN STATE, and it gets its own code.
+      // `resolveAttendanceWindow` returns null for an event with no startTime
+      // and for an override whose close is not after its open — neither of
+      // which is "not open yet" or "closed". Folding it into DOOR_NOT_OPEN told
+      // the scanner "it opens an hour before the start time" for an event that
+      // has no start time, while the page beside them said "check-in has
+      // closed": two different untruths about one state, and neither names the
+      // thing the head has to go and fix.
+      if (!attWindow) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NO_DOOR_WINDOW",
+        });
+      }
+      if (nowSec < attWindow.opensAt) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "DOOR_NOT_OPEN",
@@ -2775,6 +2826,13 @@ export const eventRouter = createTRPCRouter({
       await writeAudit(ctx.db, {
         actorUserID: userID,
         actorRoles: roles,
+        // THE ONE AUDIT ROW IN THIS FEATURE THAT IS ABOUT A SPECIFIC RESIDENT,
+        // so it goes in the COLUMN and not only in the reason string.
+        // `admin.listAuditLog` filters on `targetUserID`; an undo recorded only
+        // inside free text is invisible to the one query that would ever look
+        // for it — "what happened to this person's check-in" is exactly the
+        // question this row exists to answer.
+        targetUserID: input.userID,
         // `?? undefined`, never `?? null`: the column is Int? and `?? null`
         // does not compile against writeAudit's signature.
         targetCcaID: event.ccaID ?? undefined,
@@ -3049,7 +3107,17 @@ async function recordCheckIn(
     // file imports only TYPES from @prisma/client; pulling in the runtime
     // `Prisma` namespace just to name an error class would be a new runtime
     // dependency in a module the client tree can reach.
-    if ((err as { code?: string }).code !== "P2002") {
+    // The `typeof`/`!== null` guard is not padding: `(err as …).code` on a
+    // thrown `null` or `undefined` throws a TypeError of its own and REPLACES
+    // the original error, so the same shape the `signup` catch above uses is
+    // used here verbatim rather than a shortened variant of it.
+    if (
+      !(
+        typeof err === "object" &&
+        err !== null &&
+        (err as { code?: string }).code === "P2002"
+      )
+    ) {
       throw err;
     }
     alreadyCheckedIn = true;
