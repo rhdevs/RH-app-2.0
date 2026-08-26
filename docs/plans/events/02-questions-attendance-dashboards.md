@@ -78,7 +78,7 @@ This plan creates **three** new route/component pairs. Every one is checked by n
 
 ### 4. The answers write goes INSIDE `withEventLock`, in the same `create` call
 
-`event.ts:1763-1799`. The capacity count and the signup create are already serialised by
+`R:1961-1997`. The capacity count and the signup create are already serialised by
 `withEventLock`. The answers must ride on the **same `eventSignup.create`** — one document,
 one write — not a second write after it. A second write can be reached after the P2002
 swallow at `:1786-1797`, which returns success **without** writing, so the answers of a
@@ -113,8 +113,34 @@ Topology: { Type: ReplicaSetNoPrimary, Set Name: atlas-aldpli-shard-0,
   A census with a failed read is a PARTIAL census.
 ```
 
-That is an Atlas IP-allowlist refusal, not a broken cluster: `npm view` reached the public
-network from the same shell in the same session.
+> **RE-MEASURED 2026-08-26, THIRD ATTEMPT (Part B reconciliation pass). STILL UNREACHABLE —
+> AND THE DIAGNOSIS ABOVE WAS WRONG.**
+>
+> The earlier text called this "an Atlas IP-allowlist refusal". **It is not.** That was
+> inferred, not tested, and acting on it costs a wasted cycle: adding an IP to the Atlas
+> allowlist will not fix it. Isolated by probing rather than guessing:
+>
+> | Probe | Result |
+> |---|---|
+> | DNS SRV for the cluster | resolves — all three shard hosts returned |
+> | ICMP ping `cluster0-shard-00-00` (34.126.102.172) | **succeeds** — packets reach Atlas |
+> | TCP to that host **:27017** | times out |
+> | TCP to `portquiz.net:27017` (an unrelated host that accepts any port) | **times out** |
+> | TCP to `portquiz.net:80` and `:8080` | 200 OK |
+> | `https://www.google.com` | 200 OK, 0.17 s |
+> | `api.ipify.org` | DNS-sinkholed to `sinkhole.nus.edu.sg` (10.2.32.196) |
+>
+> General internet works; **port 27017 fails to _every_ host, not just Atlas.** The DNS
+> sinkhole identifies this machine as on the **NUS campus network**. So the block is an
+> **egress firewall rule on 27017**, upstream of Atlas entirely — not the allowlist, not the
+> credentials, not the cluster. Re-running with the sandbox disabled gave the identical
+> timeout, so it is not a sandbox artifact either.
+>
+> **What actually unblocks it:** run from any non-NUS network (a phone hotspot is enough), or
+> from Vercel. The census script needs no changes.
+>
+> **No writes of any kind reached the database during this pass.** The only commands
+> dispatched were `ping` and `listCollections`, and both failed at server selection.
 
 **Consequence, stated so nobody reads past it:** every production *count* below is
 **carried forward from plan 01's measurement of 2026-08-26 and is UNVERIFIED by this plan.**
@@ -144,6 +170,32 @@ The brief states production has **0 Event rows** — a month after the feature w
 and a day after PR #97 landed. Parts B, C and D are therefore being built onto a feature
 nobody has used once. **That is the strongest possible argument for doing Part A first**, and
 for not letting it be deferred as "polish".
+
+> **⚠ THE "0 Event rows" FIGURE IS NOW KNOWN TO BE FALSE, AND IT WAS LOAD-BEARING.**
+>
+> **`eventID 1` is a REAL user event** — published, `ccaID: 50`, and it holds a facility
+> booking. It is **READ-ONLY for every part of this plan and every script in it: never modify
+> it, never sweep it, never use it as a test row.**
+>
+> So `Event` is **not** empty, and three things that leaned on emptiness must be re-read:
+>
+> | Leaned on "0 rows" | Now |
+> |---|---|
+> | §0.1's row above | **stale.** Real count UNVERIFIED — could not measure (§0.0). |
+> | D-49 / T-24 — "the embedded answers list lands on an empty collection, so the absent-key hazard has no legacy population" | **NO LONGER SAFE TO ASSUME.** `EventSignup` may hold real rows for `eventID 1`, each with **no `answers` key**. T-24 stops being theoretical the moment that is true, which is why §13.2 step 2 is BLOCKING and must run **before** PR 2 deploys. |
+> | `schema.prisma:731-733` — the doc comment justifying nullable `Event.ccaID` with *"this collection had ZERO rows when the field was relaxed (measured 2026-08-26)"* | **contradicted by its own date.** The comment is stamped today and `eventID 1` exists today. Either the measurement predates the event or the claim is stale. Not this plan's to fix, but flagged: the comment uses "zero rows" as the safety argument for a nullable column, and that argument is weaker than it reads. |
+>
+> Note also that `EventQuestion` and `EventAttendance` **do not exist in `prisma/schema.prisma`
+> at this commit at all** — the only references are the `tolerateAbsent: true` probes in
+> `sweep-blank-event-drafts.mjs:438-439`. Whether the collections exist on the cluster is
+> UNVERIFIED, but nothing on this branch would have created them.
+>
+> **`User.email_unique_ci` could not be confirmed present, and it is the one that matters
+> most.** It is a collation index Prisma cannot represent, so it is invisible to the schema and
+> is exactly what `prisma db push` silently drops (§9, Appendix A). It has been dropped and
+> restored on this cluster before. **Do not run anything on the strength of an unverified
+> assumption that it is there** — `index-census.mjs` exists to prove it, and it could not run
+> today either.
 
 ### 0.2 What Phase 1 actually shipped
 
@@ -385,7 +437,7 @@ index on `key`."*
 ### C-14 — `whats-new/page.tsx:385` already claims a feature that does not exist
 
 Line 385, in the "At a glance → Events" column: **"Turnout stats for heads"**. There are no
-turnout stats. `getSignupStats` (`event.ts:1076-1115`) returns signups by day and by block —
+turnout stats. `getSignupStats` (`R:1274-1314`) returns signups by day and by block —
 who *registered*, never who *turned up*. Nothing in shipped code knows whether anyone attended
 anything.
 
@@ -424,6 +476,19 @@ Numbering continues from plan 01. **D-1…D-27 remain binding; D-14 is overruled
 - Part C — Phase 3, QR attendance: **D-54 … D-70**
 - Part D — Phase 4, dashboards: **D-71 … D-77**
 - Cross-cutting, rollout, hygiene: **D-78 … D-83**
+
+**Added by the Part B reconciliation pass** (2026-08-26, against shipped Part A — read **B-0**
+first). Lettered suffixes rather than new numbers, so every existing cross-reference in this
+document and in plan 01 still resolves:
+
+| # | Decision | Why it exists |
+|---|---|---|
+| **D-39a** | The blank-draft reuse branch must not return a draft that already has questions | `BLANK_EVENT_CONTENT` is `keyof Event`-typed and **structurally cannot** see a separate collection. **The highest-risk item in Part B.** |
+| **D-39b** | Such a draft is neither reusable nor sweepable — the honest cost | Amends D-31's cap claim rather than letting it quietly become false |
+| **D-40a** | The builder mounts inside `DetailsEditor`; **no new `page.tsx`** | Binding constraint 2, restated where it will actually be violated |
+| **D-43a** | The already-signed-up check moves to the top of the lock, before validation | Reading the shipped code showed the drafted step order regresses retry idempotency |
+| **D-45a** | `createEventInput` is untouched, and must never gain a `.default()` | zod defaults would silently make `isBareCreate` false forever — the `195b063` bug in a new disguise |
+| **D-50a** | CSV injection: the correct file path, and the fix does **not** reach the roster export | The original claimed a second export was fixed for free; it is a different serialiser and is already immune |
 
 ---
 
@@ -525,6 +590,18 @@ Three consequences, none hidden:
    are harmless and the counter never goes backwards. Nothing reads eventIDs as contiguous.
 2. **A row in the owner's list.** It renders as `Untitled event` (`EventsListPanel.tsx:106`)
    with the badge "Not submitted". D-30 caps this at one per creator per scope.
+
+   > **⚠ AMENDED BY PART B (D-39b). The "one per creator per scope" cap is narrowed.**
+   >
+   > D-39a stops the reuse branch handing back a blank draft that already carries
+   > `EventQuestion` rows, and the sweep script's condition 7 already refuses to delete one. So
+   > after Part B a draft with questions is **neither reusable nor sweepable**, and the real cap
+   > reads: **one reusable blank draft, plus one row per abandoned question-building session.**
+   > The second number is bounded by head behaviour and by nothing in the code.
+   >
+   > Accepted deliberately — the alternatives are destroying a head's authored questions, or
+   > shipping the wrong form to the JCRC. See D-39b for the full argument. The sweep **reports**
+   > these rows as skipped so the accumulation is visible.
 3. **A possible orphaned blob.** *Pre-existing and unchanged*: `EventImageField.tsx:17-18`
    already says "Uploads on SELECT; abandoning the form leaves an orphaned blob (accepted,
    reconcilable by diffing `list()` against Event rows)." There is no reaper today — `list()`
@@ -681,6 +758,104 @@ If Part A and Part B land together, the builder is built into a form that is abo
 
 ## PART B — Phase 2: custom signup questions
 
+### B-0 — RECONCILIATION NOTICE: this Part was written BEFORE Part A shipped. Read this first.
+
+**Status as of 2026-08-26.** Part A is implemented on branch `events-single-screen-authoring`
+(commits `f8c9ffd`, `195b063`; PR #98, **UNMERGED**). This plan document was committed *inside*
+`f8c9ffd` itself, which means **every `src/server/api/routers/event.ts` line number written into
+Part B below was computed against the PRE-Part-A file** and is now stale by roughly +200 lines.
+They have been rebased in place. This subsection records the rebase so a reviewer can tell a
+correction from an error.
+
+**A coder must re-verify any citation before trusting it.** `event.ts` is 2000+ lines and Part B
+edits it heavily; the numbers below are correct against the working tree at the commit named
+above and nothing else.
+
+#### B-0.1 — Citation rebase table (Part B claims only)
+
+`R` = `src/server/api/routers/event.ts`. `S` = `src/lib/schemas/event.ts`. Both were written as
+bare "`event.ts`" in the original draft, which is ambiguous because **both files have a line
+309**; they are disambiguated here and throughout.
+
+| Claim | Was | **Now** | Note |
+|---|---|---|---|
+| `signup` procedure | `event.ts:1741` | **`R:1939`** | also gained `.use(requireMatric)` at `R:1940` |
+| `signup` published/startTime guards | `:1747-1760` | **`R:1945-1959`** | unchanged behaviour |
+| `signup` capacity check | `:1764-1781` | **`R:1961-1981`** | inside `withEventLock`, opened at `R:1961` |
+| `signup` already-signed-up branch | `:1772-1779` | **`R:1966-1978`** | reached ONLY when capacity is full — see D-43a |
+| `signup`'s `eventSignup.create` | — | **`R:1982-1985`** | the ONE write the answers ride on |
+| P2002 swallow | — | **`R:1986-1997`** | T-23's whole subject |
+| `getPublic` | `:1694` | **`R:1892`** | |
+| `listPublished` | `:1661` / `:1686` | **`R:1859`** / **`R:1884`** | |
+| `listMySignups` | `:1834` | **`R:2011`** | |
+| `getForReview` | `:1225` | **`R:1423`** | |
+| `getForOversight` redaction branch | `:1645-1656` | **`R:1842-1855`** | |
+| `SCRC_HIDDEN_EVENT_FIELDS` | `:399` | **`R:403-411`** | unchanged; Part B adds nothing to it |
+| `exportAttendees` | `:1155` | **`R:1353`** | |
+| `exportAttendees` audit row | `:1183-1190` | **`R:1381-1388`** | `reason` at `R:1387` |
+| `resolveAttendees` | `:190-250` | **`R:194-252`** | untouched by Part B |
+| `toPublicCard` | `:270-298` | **`R:270-298`** | ✅ still correct |
+| `create` | `:428` | **`R:472`** | |
+| `create`'s explicit-null block | `:488-499` | **`R:610-640`** | `answersPurgedAt: null` at **`R:639`** |
+| indexed zod issue `path` precedent | `event.ts:309-318` | **`S:309-318`** | it was always `schemas/`, not the router |
+| `createEventInput` | `S:244-258` | **`S:244-258`** | ✅ still correct |
+| `updateEventInput` rationale comment | `S:265-278` | **`S:265-278`** | ✅ still correct |
+| `csvField` | `src/lib/format.ts:115-121` | **`src/app/events/_lib/format.ts:116-121`** | **wrong path** — see D-50a |
+| `Event.startTime` epoch-seconds comment | `schema.prisma:748` | **`schema.prisma:753-754`** | |
+| the I-2 deserialization quote | `schema.prisma:735-740` | **`schema.prisma:700`** | (siblings at `:529`, `:890`, `:1008`) |
+| `EventSignup` live-PII-join comment | `schema.prisma:815-820` | **`schema.prisma:821-825`** | `model EventSignup` itself at **`:828`** |
+| `Event.answersPurgedAt` | `schema.prisma:810` | **`schema.prisma:810`** | ✅ still correct |
+| the ten legacy `type` blocks | `schema.prisma:11-76` | **`schema.prisma:11-76`** | ✅ still correct |
+| lock staleness constant | `services/events.ts:108` | **`services/events.ts:110`** | `LOCK_STALE_MS = 30_000` |
+| stale-lock reclaim | `services/events.ts:136-138` | **`services/events.ts:137-140`** | |
+| `writeAudit` requires `actorUserID` | `admin.ts:406` | **`admin.ts:434-441`** | |
+| `completeProfileInput` precedent | `schemas/profile.ts:157-183` | **`schemas/profile.ts:169-184`** | |
+| `schemas/profile.ts` no-Prisma rule | `:3-10` | **`:3-10`** | ✅ still correct |
+| `EventAttendees.tsx` CSV header build | `:31-40` | **`:31-40`** | ✅ still correct |
+| `EventAttendees.tsx` pluralisation shape | `:66` | **`:66`** | ✅ still correct |
+| `EventAttendees.tsx` export button / warning | `:74-75` / `:79-84` | **`:74-75`** / **`:79-84`** | ✅ still correct |
+| second pluralisation precedent | `EventsListPanel.tsx:65` | **`EventsListPanel.tsx:114`** | `:65` is the `create` mutation |
+| `EventDetail.tsx` "You're going" branch | `:147-163` | **`:147-163`** | ✅ still correct |
+| `EventDetail.tsx` sign-up button branch | `:180-189` | **`:178-190`** | |
+| `EventManage.tsx` `submitted` panel | `:951-989` | **`:1043-1078`** | |
+| `EventManage.tsx` `DetailsEditor` | `:111-361` | **`:141-432`** | Submit button at **`:416`** |
+
+**Scope of this rebase.** Every citation in **Part B and in the shared sections Part B relies on**
+(§0, §3, §4, §5, §6.2, §7.3, §9, §11.2, §12.3, §13, and the Part B traps in §14) has been
+corrected against the working tree. **Citations inside the Part C and Part D sections have NOT
+been rebased** — this pass was scoped to Part B, and rewriting them would have meant re-verifying
+attendance and dashboard code that has not been designed against yet. **They are stale by the
+same ~+200 lines.** Eight known survivors, all Part C/D, at the time of writing:
+
+```
+event.ts:1191   event.ts:1802-1811   event.ts:1786-1797   event.ts:1117 (×2)
+event.ts:1568-1577   event.ts:1268-1275   event.ts:1728-1738
+```
+
+**Whoever plans Part C must redo B-0.1 for those sections.** Do not treat a Part C/D `event.ts`
+line number in this document as verified.
+
+#### B-0.2 — What Part A shipped that Part B must now build ON, not around
+
+| Shipped fact | Where | What it does to Part B |
+|---|---|---|
+| `/cca/[ccaID]/events/new`, `/admin/events/hall/new` and `EventCreateForm.tsx` are **DELETED** | `f8c9ffd` | The builder has exactly ONE mount point. D-46's "one screen" is now a fact, not a plan. |
+| ONE authoring screen: `EventManage` → `DetailsEditor` | `EventManage.tsx:141-432` | **`EventManage.tsx:1` is `"use client"`.** The builder is a child of an existing client component — see D-40a. |
+| "New event" is a mutation **button** | `EventsListPanel.tsx:63-69` | No route creates a row; nothing to hook. |
+| `BLANK_EVENT_CONTENT` spread into the reuse `where` AND first into `create`'s `data` | `R:440-450`, `R:553-559`, `R:592-593` | **Part B breaks this. See D-39a — the single most important new decision in this pass.** |
+| `isBareCreate` derived from `Object.entries(input)` | `R:531-533` | Safe for Part B *because Part B adds no field to `createEventInput`*. D-45a states the condition under which that stops being true. |
+| `update` normalises `publicDescription` with `.trim() \|\| null` | `R:719-720` | Precedent: Part B's `label`/`helpText` trim in zod, not in the router. Already the case (D-41). |
+| `submitForReview` is atomic (`updateMany` + `count === 0`) | `R:800-840` | C-10/D-37 are **done**. Part B adds no status write, so constraint 3 is satisfied vacuously — stated so no reviewer looks for a missing one. |
+| The four dangerous `db:*` scripts are **gone**; only `db:studio` remains | `package.json` | C-11/D-80 are **done**. §9 is now the only way an index gets created. |
+| `EventLock`'s doc comment already forward-references `create-event-phase2-indexes.mjs` | `schema.prisma:841-844` | **Part A shipped a reference to a script Part B must deliver.** §9.2 is not optional; the schema already promises it exists. |
+| `sweep-blank-event-drafts.mjs` already refuses to delete a draft with `EventQuestion` rows | `sweep-blank-event-drafts.mjs:41`, `:438` | Condition 7. The sweep is already Part-B-aware; `create`'s reuse branch is **not**. That asymmetry is D-39a. |
+
+#### B-0.3 — What this pass could NOT verify
+
+Listed here rather than buried, because a previous pass carried figures forward as though
+measured and a reviewer correctly called that blocking. See §0.0 and §12.1 — **every production
+figure in §0.1 remains UNVERIFIED and must be re-measured before PR 2 ships.**
+
 ### D-39 — A new collection, `EventQuestion`. Questions never live on `Event`.
 
 ```prisma
@@ -713,14 +888,14 @@ model EventQuestion {
 **Why a collection and not an embedded list on `Event`.** Three reasons:
 
 1. `getForOversight` returns `{ ...event }` **unredacted** to a manager and
-   `{ ...event, ...SCRC_HIDDEN_EVENT_FIELDS }` to the hall office (`event.ts:1645-1656`).
+   `{ ...event, ...SCRC_HIDDEN_EVENT_FIELDS }` to the hall office (`R:1842-1855`).
    **Any new `Event` column leaks to the SCRC tier by default**, and the `satisfies` clause
    only catches typos, never omissions (T-18, T-30). A separate collection is unreachable from
    `oversightProcedure` because no oversight procedure queries it — the redaction problem does
    not arise rather than being solved.
 2. Answers reference `questionID`. A stable, indexed, uniquely-constrained id is what stops an
    answer rebinding, and an embedded list has no unique index to give it one.
-3. `Event` rows are read on the resident timeline (`listPublished`, `event.ts:1661`) and on
+3. `Event` rows are read on the resident timeline (`listPublished`, `R:1859`) and on
    every head/review/oversight page. Questions are read on exactly one screen. Putting them on
    `Event` would add weight to the hottest read in the feature for the benefit of the coldest.
 
@@ -728,7 +903,124 @@ model EventQuestion {
 `findMany({ where: { eventID }, orderBy: { order: "asc" } })` is covered by its prefix. One
 index, not two (C-6).
 
-### D-40 — Seven types, declared once, in a client-safe module
+### D-39a — THE BLANK-DRAFT REUSE BRANCH MUST NOT HAND BACK A DRAFT THAT ALREADY HAS QUESTIONS
+
+**This is the one place Part B actively breaks something Part A shipped, and it is silent.**
+Nothing throws, nothing logs, `tsc` is clean, and the wrong outcome renders as a perfectly
+normal screen. Read this before writing any other Part B code.
+
+**The mechanism.** Part A's `create` (`R:472`) reuses the caller's existing blank draft rather
+than allocating a new id (D-30). "Blank" is defined by `BLANK_EVENT_CONTENT` (`R:440-450`),
+spread into the reuse `where` at `R:558` and first into `create`'s `data` at `R:593`. Its type is:
+
+```ts
+} as const satisfies Partial<Record<keyof Event, null>>;
+```
+
+**`keyof Event`.** Questions are a separate collection (D-39) with no relation field on `Event`,
+so **"has no questions" is not expressible in `BLANK_EVENT_CONTENT` at all** — not by oversight,
+but by construction. The `satisfies` guard that makes the filter safe against renamed columns is
+the same guard that makes it blind to anything not a column.
+
+**The outcome, step by step:**
+
+1. Head presses **New event** → `create` allocates eventID 42, a `draft` with every content
+   field null.
+2. Head lands on `EventManage`, scrolls past the details, and builds six signup questions.
+   `saveQuestions` writes six `EventQuestion` rows against eventID 42. **It touches no `Event`
+   column** — correctly, per D-39 and D-53.
+3. Head never types a title, and leaves.
+4. Head returns another day and presses **New event**. `isBareCreate` is true. The reuse filter
+   matches: every `BLANK_EVENT_CONTENT` key is still null and `photoUrls` is still empty.
+5. `create` returns `{ eventID: 42 }`. **The head is now looking at a screen they believe is a
+   brand-new event, carrying six questions they wrote for a different one.**
+
+**How bad, honestly.** `createdBy: userID` is in the reuse filter (`R:546`), so the resurrected
+draft is always the caller's **own** abandoned work — this is not one head inheriting another
+head's questions, and the plan should not be read as claiming that. The real damage is narrower
+and still real: the details editor is at the top of the screen and the builder is below it, so a
+head who fills in the details and presses **Submit for review** without scrolling ships a form
+they did not write this time. **The JCRC then approves those questions** (D-47), and once the
+event publishes and one resident signs up, D-44 **freezes them**. The cheapest correction at that
+point is cancel-and-duplicate.
+
+> **RULING.** The reuse branch gains a question count, checked in JS after the row is in hand,
+> exactly mirroring the `photoUrls` check Part A already put there for the same class of reason.
+
+```ts
+// R:566 today:
+//   if (existing && existing.photoUrls.length === 0) {
+//     return { eventID: existing.eventID };
+//   }
+// becomes:
+if (existing && existing.photoUrls.length === 0) {
+  // D-39a — A DRAFT THAT ALREADY CARRIES QUESTIONS IS NOT BLANK.
+  //
+  // This CANNOT go in the `where` above. BLANK_EVENT_CONTENT is
+  // `satisfies Partial<Record<keyof Event, null>>` and questions are a
+  // separate collection with no relation field on Event, so blankness as
+  // spelled there is structurally incapable of seeing them. Checked here, in
+  // JS, for the same reason photoUrls is: the row is already in hand.
+  //
+  // FALL THROUGH rather than deleting the questions. Silently discarding a
+  // head's work to keep a draft-count invariant tidy is the worse trade; the
+  // cost of falling through is one extra abandoned row (D-39b).
+  const questionCount = await ctx.db.eventQuestion.count({
+    where: { eventID: existing.eventID },
+  });
+  if (questionCount === 0) {
+    // RETURNS BEFORE nextEventId — unchanged from Part A.
+    return { eventID: existing.eventID };
+  }
+}
+```
+
+**Why not delete the questions on reuse.** Because the head may be coming back *to* those
+questions. Reuse exists to cap abandoned rows, which is a housekeeping goal; it must never
+outrank not-destroying-work. Falling through costs one counter value.
+
+**Why not add a relation field to `Event`.** Two independent refusals. It would be a **new
+`Event` column**, which is an SCRC disclosure decision every time (T-30) and would force a
+`SCRC_HIDDEN_EVENT_FIELDS` review that D-47 currently gets to skip. And a Prisma relation is not
+`null`, so it could not satisfy `Partial<Record<keyof Event, null>>` — the guard would have to be
+loosened for every field to admit one.
+
+**Cost of the extra query.** One `count` on `EventQuestion`, on the `event_question` index's
+leading `eventID` prefix, on the bare-create path only — a path a head hits by pressing a button,
+not a hot read. Note it **runs only inside the `isBareCreate` branch and only when a candidate row
+was actually found**, so the common "no blank draft exists" case is unchanged.
+
+**This is one of the two things §13.3 says MUST be checked in a browser.** A unit test cannot
+reach it: it needs a real row, abandoned, with real question rows, and a second button press.
+
+### D-39b — The honest cost: a draft with questions is neither reusable NOR sweepable
+
+D-39a's fall-through and the sweep script's existing condition 7 point the same way, and together
+they leave a gap that must be written down rather than discovered.
+
+`sweep-blank-event-drafts.mjs` — which **Part A already shipped** — refuses to delete any draft
+with `EventQuestion` rows (`sweep-blank-event-drafts.mjs:41` declares condition 7,
+`:438` implements it, and `:103-111` explains the deliberate tolerance for the collection not
+existing yet). It was written Part-B-aware. `create`'s reuse branch was not. After D-39a, both
+agree, and the consequence is:
+
+**A blank draft carrying questions is not reused (D-39a) and not swept (condition 7). It stays
+until a human deletes it.**
+
+> **D-31'S CAP CLAIM IS NARROWED BY THIS, AND D-31 IS AMENDED TO SAY SO.** Part A states the
+> number of live blank drafts caps at **one per (owner scope, creator)**. After Part B that reads:
+> **one reusable blank draft, plus one row per abandoned question-building session.** The second
+> number is bounded by head behaviour and by nothing in the code.
+
+**Accepted, not solved, and here is why.** The alternatives are worse in the direction that
+matters: sweeping such a draft destroys authored questions with no undo, and reusing it ships the
+wrong form to the JCRC. Leaving a row costs one document. The sweep script **reports** these rows
+as skipped with the condition that blocked them, so the operator can see the accumulation and
+delete deliberately — which is the correct place for that judgement.
+
+**The sweep script needs no code change for Part B.** Stated as a line item so no coder "fixes"
+condition 7 into a deletion. Its only Part B edit is the one D-81 already schedules for its
+header text.
 
 `src/lib/schemas/eventQuestion.ts` — a **new file**, not an addition to `event.ts` (already
 400 lines, and the repo keeps one schema module per feature area: `cca.ts`,
@@ -756,6 +1048,57 @@ Caps live beside them: `EVENT_MAX_QUESTIONS = 20`, `EVENT_QUESTION_LABEL_MAX = 2
 **Why 20 questions and 20 options.** Arbitrary, and stated as arbitrary. They exist so a
 crafted payload cannot make one signup document unbounded, and so the CSV export cannot grow
 a hundred columns. Change them here, in one place, if a real event needs more.
+
+### D-40a — WHERE THE BUILDER MOUNTS, AND THE ONE RULE THAT KILLED FIVE ROUTES
+
+Restating **binding constraint 2** at the exact place a coder is about to violate it.
+
+> **A SERVER COMPONENT MUST NEVER PASS A FUNCTION PROP TO A CLIENT COMPONENT.** It is not a
+> type error, ESLint does not see it, and it survives `next build`. It 500s the route at
+> request time. It has already taken out all five authoring routes in this feature once, past
+> `tsc`, lint, a green build and two review agents (T-19). The builder is the most interactive
+> thing in the plan, so this is live risk, not a historical note.
+
+**What Part A leaves us, and why it is safe.** After `f8c9ffd` there is exactly one authoring
+screen. Its mount points are server components that pass **only serialisable props**:
+
+```tsx
+// src/app/cca/[ccaID]/events/[eventID]/page.tsx:14-30  (a server component)
+<EventManage
+  ccaID={ccaID}                                  // number
+  eventID={eventID}                              // number
+  backHref={`/cca/${ccaID}/events`}              // string
+  manageHrefBase={`/cca/${ccaID}/events`}        // string
+/>
+```
+
+and the hall-wide counterpart `src/app/admin/events/hall/[eventID]/page.tsx:25` does the same
+with `ccaID={null}`. **`EventManage.tsx:1` is `"use client"`**, so everything below it —
+`DetailsEditor` (`EventManage.tsx:141-432`) included — is already client code.
+
+> **RULING. `EventQuestionBuilder` mounts INSIDE `DetailsEditor`, as an ordinary child of an
+> existing client component. It gets NO route of its own, NO `page.tsx`, and NO new
+> server/client boundary.** That is the whole reason constraint 2 is satisfiable here without
+> care: there is no boundary left to cross.
+
+**The failure mode to refuse, spelled out** — because "put the builder on its own tab/page"
+is a natural instinct and it is the trap:
+
+```tsx
+// src/app/cca/[ccaID]/events/[eventID]/questions/page.tsx   ← DO NOT CREATE THIS FILE
+export default function QuestionsPage({ params }) {          //   server component by default
+  return <EventQuestionBuilder onSave={(qs) => save(qs)} />;  //   ← 500s the route. Every time.
+}
+```
+
+If a later phase genuinely needs a separate route, the page passes **`eventID` and strings
+only**, and the component owns its own mutation hook — the shape every existing route already
+uses. **A new `page.tsx` under `src/app/` is, by itself, reason enough for a reviewer to stop
+and check this.**
+
+**Where in `DetailsEditor`.** Below the public description and the gallery, above the footer
+actions (`EventManage.tsx:401-416`), so the head reads the contract sentence at
+`EventManage.tsx:385` and the primary action **after** the questions rather than before them.
 
 ### D-41 — ONE zod schema shared by client and server, PLUS one shared validator function
 
@@ -806,7 +1149,7 @@ export const saveQuestionsInput = z.object({
 });
 ```
 
-The indexed `path: ["options", i]` is the shape `event.ts:309-318` already uses for
+The indexed `path: ["options", i]` is the shape `S:309-318` already uses for
 `photoUrls`, and it is what lets the builder show an error on the right row.
 
 **(b) The ANSWER CONTENT — a pure function, `validateAnswers`, not a runtime-built schema.**
@@ -830,7 +1173,7 @@ export function validateAnswers(
    which a co-head may have changed since. A client-built schema validates against questions
    that may no longer exist. This is the identical argument `updateEventInput` already makes
    for not encoding the per-status field subset (`schemas/event.ts:265-278`), and the
-   identical posture `completeProfileInput` takes (`schemas/profile.ts:157-183`): permissive
+   identical posture `completeProfileInput` takes (`schemas/profile.ts:169-184`): permissive
    payload schema, server re-intersects against stored state.
 3. **Errors need to be keyed by `questionID`, not by array index.** A `Record<number, string>`
    renders directly under the right field; a zod issue path over a sparse array does not.
@@ -861,7 +1204,7 @@ discriminated read at every consumer. One list has one empty value (`[]`) and on
 serialisation (`values.join("; ")`).
 
 **Why `date` is a calendar date and not an epoch.** `Event.startTime` is epoch **seconds**
-(`schema.prisma:748`) because it names an instant. A question like "which day can you make?"
+(`schema.prisma:753-754`) because it names an instant. A question like "which day can you make?"
 names a *date*, and storing it as an instant makes it shift across timezones — the answer a
 resident typed on 3 March reads back as 2 March for a reader an hour west. Every other date
 in this repo is an instant; this one deliberately is not, and the schema comment must say so.
@@ -871,7 +1214,8 @@ error, message in §11.2.
 
 ### D-43 — `event.signup` gains `answers`, validated and written INSIDE `withEventLock`
 
-`signup` (`event.ts:1741`) input becomes:
+`signup` (**`R:1939`**) input becomes — note it currently takes the shared `eventIdInput`
+(`R:1941`) and carries `.use(requireMatric)` (`R:1940`), which **stays**:
 
 ```ts
 export const eventSignupInput = z.object({
@@ -884,29 +1228,75 @@ Permissive by design (D-41 reason 2). The procedure:
 
 ```
 1. assertEventsEnabled
-2. event = findUnique(...) ; must be published ; startTime not passed   [unchanged, :1747-1760]
+2. event = findUnique(...) ; must be published ; startTime not passed   [unchanged, R:1945-1959]
 3. return withEventLock(db, eventID, async () => {
-     3a. questions = await db.eventQuestion.findMany({ where: { eventID }, orderBy: { order: "asc" } })
+     3a. already = await db.eventSignup.findUnique({
+           where: { eventID_userID: { eventID, userID } }, select: { eventID: true },
+         })
+         if (already) return { signedUp: true as const }   // D-43a — BEFORE validation
+     3b. questions = await db.eventQuestion.findMany({ where: { eventID }, orderBy: { order: "asc" } })
          // INSIDE the lock, so a head cannot slip a question in between the
          // validation and the write. The freeze (D-44) makes this near-vacuous
          // once one signup exists; for the FIRST signup it is the only guard.
-     3b. const v = validateAnswers(questions, input.answers ?? []);
+     3c. const v = validateAnswers(questions, input.answers ?? []);
          if (!v.ok) throw BAD_REQUEST "ANSWERS_INVALID"   // detail in `cause`, §11.2
-     3c. capacity check                                    [unchanged, :1764-1781]
-     3d. await db.eventSignup.create({
+     3d. capacity check                                   [R:1961-1981, SIMPLIFIED — see D-43a]
+     3e. await db.eventSignup.create({
            data: { eventID, userID, createdAt: new Date(), answers: v.normalized },
-         })                                                // ONE document, ONE write
+         })                                               // ONE document, ONE write
          // P2002 -> idempotent success, EXACTLY as today. See T-23.
    })
 ```
 
 **The answers ride on the existing `create`.** There is no second write. Read mistake ④.
 
-**The already-signed-up branch at `:1772-1779` is unchanged and does NOT update answers.** A
-caller who is already on the list gets `{ signedUp: true }` and their stored answers are left
-alone. That is the correct behaviour — first answer wins, and a capacity-full retry must not
-be able to rewrite an answer — but the *copy* must not promise otherwise (§11.2), and there is
-deliberately **no** "edit my answers" path in this phase (D-48).
+### D-43a — THE ALREADY-SIGNED-UP CHECK MOVES TO THE TOP OF THE LOCK
+
+The original draft of D-43 put answer validation at step 3b, **before** the already-signed-up
+early return. Reading the shipped code shows that ordering is wrong, in a way that only bites a
+retry — so it would have passed every happy-path test.
+
+**What the shipped code actually does.** There are **two** idempotent paths today, not one, and
+the plan's `:1772-1779` citation only ever described the first:
+
+| Situation | Path today | Result |
+|---|---|---|
+| already signed up, event **full** | explicit `findUnique` + early return, **`R:1966-1978`** | `{ signedUp: true }` |
+| already signed up, event **not full** | falls through to `create` → **P2002** → swallowed at **`R:1986-1997`** | `{ signedUp: true }` |
+
+Both succeed. The explicit branch exists only *inside the capacity-full arm*; the ordinary case
+is idempotent by exception.
+
+**What validating first would break.** Both paths would now have to produce valid answers before
+reaching their early return. A retry that carries **no** answers — a stale tab, a re-fired
+mutation after a network blip, any client that resends `{ eventID }` alone — would get
+`ANSWERS_INVALID` on an event the resident is **already signed up for**. Today that returns
+success. It is a regression, it is only reachable on a retry, and the user-visible symptom is an
+error message about a form they already submitted.
+
+It is also **wasted work**: D-43 rules that an already-signed-up caller's stored answers are left
+alone, so the payload being validated is discarded either way.
+
+> **RULING.** One `findUnique` on the `event_user` index at the top of the lock, returning
+> `{ signedUp: true }` immediately. Validation and the capacity check both sit after it.
+
+**What this buys, beyond fixing the regression:**
+
+1. **"First answer wins" becomes true by construction** rather than by falling through to a
+   P2002 swallow. D-48 point 2 (no answer editing) is then enforced by the shape of the
+   procedure, not by an exception handler's side effect.
+2. **The capacity-full arm gets simpler.** Its inner `findUnique` at `R:1968-1975` and its early
+   return at `R:1977` are now dead — the caller cannot reach that arm while already signed up.
+   Delete them; the arm reduces to `if (count >= capacity) throw CONFLICT "EVENT_FULL"`.
+3. **T-23 is unaffected.** The P2002 swallow at `R:1986-1997` **stays exactly as it is**. It is
+   the genuine-race backstop — two tabs both passing step 3a — and D-43a does not replace it.
+   **Do not delete the catch.**
+
+**Cost.** One indexed `findUnique` on every signup, on a path that already does a `count`
+against the same collection inside the same lock.
+
+**The copy must not promise otherwise** (§11.2), and there is deliberately **no** "edit my
+answers" path in this phase (D-48).
 
 ### D-44 — Questions freeze on the first signup, AND respect `editScope`
 
@@ -977,7 +1367,7 @@ against question 3 would silently rebind to a different question 3 the moment on
 re-added — the answers are on a different document and nothing would flag it.
 
 **The unique index is the backstop, not the mechanism.** The lock is advisory: `EventLock`
-rows are reclaimed after 30 s of staleness (`services/events.ts:108,136-138`), so a pathological
+rows are reclaimed after 30 s of staleness (`services/events.ts:110,137-140`), so a pathological
 pause can produce two holders. `@@unique([eventID, questionID])` is what turns that into a
 `P2002` instead of a duplicate id — and it **only exists if `createIndexes` ran** (mistake ②).
 
@@ -985,6 +1375,47 @@ pause can produce two holders. `@@unique([eventID, questionID])` is what turns t
 serialises signup. Sharing it means a question save and a signup **cannot** interleave, which
 is precisely the guarantee D-44 needs. The cost is T-38: a question save can wait up to 5 s
 behind a burst of signups. Acceptable — a head editing a form is not on a hot path.
+
+### D-45a — `createEventInput` IS NOT TOUCHED, AND `isBareCreate` STILL BEHAVES. Verified, with the condition that would break it.
+
+Part A rewrote `isBareCreate` (`R:531-533`) to derive blankness **from the parsed input object**
+rather than from a hand-written field list, and the comment above it (`R:520-530`) names
+*"Phase 2's question rows"* as the exact future field it was hardened against. That hardening is
+now checked against what Part B actually does.
+
+```ts
+const isBareCreate = Object.entries(input).every(
+  ([key, value]) => key === "ccaID" || value == null,
+);
+```
+
+**Part B adds NO field to `createEventInput`.** Questions are written by `saveQuestions` (D-45),
+a separate mutation, against an event that already exists — an event has to exist before it can
+have questions, so there was never a reason to carry them on create. `createEventInput`
+(`S:244-258`) is unchanged, and §5.1's table already records it as unchanged. **`isBareCreate` is
+therefore correct as shipped and needs no edit.**
+
+**Verified, not assumed —** the derivation is only safe because of a property of the schema that
+nothing states, so it is stated here:
+
+- Every field of `createEventInput` is `.optional()` (`S:246-256`). A field the caller **omits is
+  absent from the parsed object entirely**, so it never appears in `Object.entries(input)` and
+  cannot make `every` false. A field present-but-null passes `value == null`. Both cases work.
+- **There is no `.default()` anywhere in `src/lib/schemas/event.ts`** — grepped, zero hits.
+
+> **THE ONE CHANGE THAT WOULD SILENTLY BREAK IT: adding a `.default()` to `createEventInput`.**
+>
+> zod **populates** a defaulted field in its output even when the caller omitted it. A
+> `questions: z.array(...).default([])` would put `questions: []` into every parsed payload;
+> `[] == null` is false; **`isBareCreate` would be false for every bare create, forever.** Reuse
+> would then never fire, every press of "New event" would allocate a fresh id, and the unbounded
+> blank-draft outcome D-30 exists to prevent would come straight back — **with no error, a green
+> build, and a passing test suite.** That is precisely the bug `195b063` was written to fix, in
+> a new disguise.
+>
+> **Rule for any future phase: fields on `createEventInput` are `.optional()`, never
+> `.default()`.** If a default is genuinely needed, apply it in the router after the reuse
+> branch, not in the schema. §13.1 carries this as a static check.
 
 ### D-46 — `event.getQuestionsForOwner` and the resident's read path
 
@@ -994,7 +1425,7 @@ behind a burst of signups. Acceptable — a head editing a form is not on a hot 
 | `getPublic` (existing, `:1694`) | `protectedProcedure` | **gains `questions`** | see below |
 
 **`questions` is added to `getPublic`'s return and NOT to `toPublicCard`.** `toPublicCard`
-(`event.ts:270-298`) is shared by `listPublished` (`:1686`) and `listMySignups` (`:1834`), so
+(`R:270-298`) is shared by `listPublished` (`R:1884`) and `listMySignups` (`R:2011`), so
 putting questions there would ship every event's whole form to the timeline on every page
 load. `getPublic` is a single-event fetch and is the only place the form is rendered.
 
@@ -1005,7 +1436,7 @@ no redaction list.
 
 ### D-47 — The JCRC reviews the questions; the SCRC never sees the answers
 
-**Reviewer.** `getForReview` (`event.ts:1225`) gains the question list, and
+**Reviewer.** `getForReview` (`R:1423`) gains the question list, and
 `EventReviewDetail` renders it read-only above the decision buttons. A reviewer approving an
 event is approving what residents will be asked — including, per D-51, whether the head has
 put a health question on a hall form. Approving without seeing the questions would make the
@@ -1073,7 +1504,7 @@ blocks (`:11-76`) and every one is legacy introspection on Food/Gym/Supper, none
 hand-authored, and **none has a zod schema mirroring it**. If Prisma throws instead of
 returning `[]`, invariant I-2's exact failure mode fires: *"a row written by a script or a
 partial hand-fix that omitted a required scalar would break Prisma deserialization for every
-subsequent reader"* (`schema.prisma:735-740`).
+subsequent reader"* (`schema.prisma:700`).
 
 **The verification is §13.2 step 2 and it is BLOCKING**: create an `EventSignup` row with no
 `answers` key, then read it through `db.eventSignup.findMany`. Production has 0 signups
@@ -1083,36 +1514,106 @@ separate `EventAnswer` collection keyed `[eventID, userID, questionID]`, written
 `withEventLock` block**, and §13.2 says so rather than leaving the coder to invent one.
 
 Every writer sets `answers` **explicitly** (`answers: []` when there are none) — T-12, and the
-same rule `create` already follows for the four Phase-2 `Event` fields (`event.ts:488-499`).
+same rule `create` already follows for the four Phase-2 `Event` fields (`R:610-640`).
 
 ### D-50 — `exportAttendees` gains one column per question, and keeps joining PII live
 
-`exportAttendees` (`event.ts:1155`) returns `questions` alongside `attendees`, and each
+`exportAttendees` (`R:1353`) returns `questions` alongside `attendees`, and each
 attendee gains `answers`. `EventAttendees.tsx:31-40` builds the header as:
 
 ```
 ["Name", "Matric", "Block", "Telegram", "Signed up at", ...questions.map(q => q.label)]
 ```
 
-**PII is still joined live.** `resolveAttendees` (`event.ts:190-250`) is untouched: name,
+**PII is still joined live.** `resolveAttendees` (`R:194-252`) is untouched: name,
 matric, block and telegram come from `User`/`UserMatric` at export time, never from a snapshot,
 so an export always reflects current profile data. That is stated in the `EventSignup` doc
-comment (`schema.prisma:815-820`) and stays true. **The answers are the one thing that IS
+comment (`schema.prisma:821-825`) and stays true. **The answers are the one thing that IS
 stored on the signup**, because they are an answer to a question at a moment, not a current
 fact about a person.
 
 **Two traps, both in §14.**
 
-- **T-28 — CSV formula injection.** `csvField` (`format.ts:115-121`) quotes a field containing
-  `"`, `,`, `\r` or `\n`. It does **not** neutralise a leading `=`, `+`, `-` or `@`, which
-  Excel and Sheets execute. Until now every CSV cell came from a controlled vocabulary or a
-  name; a **question label** and a **free-text answer** are both attacker-authored. `csvField`
-  gains a leading-`'` prefix for those four characters, and because it is the one shared
-  serialiser the CCA roster export gets the fix too.
+- **T-28 — CSV formula injection.** See **D-50a**, which corrects both the file path and the
+  blast-radius claim the original draft made here.
 - **T-29 — a purged event must export `—`, not blank.** After `answersPurgedAt` is set, an
   empty answer cell is indistinguishable from "nobody answered". The export renders the literal
   string in §11.2 for every answer cell of a purged event, and the head's table says so once at
   the top.
+
+### D-50a — CSV injection: the right file, and the fix does NOT reach the roster export
+
+The original T-28 bullet in D-50 got two things wrong. Both are corrected here, because a coder
+following the old text would edit a file that does not exist and would then believe a second
+export had been fixed when it had not been touched.
+
+**Correction 1 — the path.** There is **no `src/lib/format.ts`**. `csvField` lives at
+**`src/app/events/_lib/format.ts:116-121`**:
+
+```ts
+/** Escape one field per RFC 4180: quote when it contains "," | '"' | newline. */
+function csvField(value: string): string {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+```
+
+Note it is **module-private**. The exported wrapper is `serializeCsv`
+(`src/app/events/_lib/format.ts:124-128`), which maps every cell through it.
+
+**Correction 2 — "the CCA roster export gets the fix too" is FALSE. Delete that belief.**
+
+`serializeCsv` has exactly **one** caller in the whole repo: `EventAttendees.tsx:43`, building
+the attendee download. The CCA roster export is a **different serialiser on a different format**
+— `RosterPanel.tsx:139` calls `downloadXlsx` (`src/lib/xlsx.ts:213`), which goes through
+`buildXlsx` (`:127`).
+
+**And the roster does not need the fix.** `sheetXml` (`src/lib/xlsx.ts:64-77`) emits every cell as
+
+```
+<c r="A1" t="inlineStr"><is><t xml:space="preserve">…</t></is></c>
+```
+
+`t="inlineStr"` is an **inline string**, not a formula cell (`<f>`). Excel does not evaluate a
+leading `=` in one. **The XLSX path is structurally immune to formula injection**, so this is a
+genuine "no change needed", not an oversight — recorded so a reviewer does not file it as a
+missed site, and so nobody "fixes" `xlsx.ts` by prefixing apostrophes into cells that would then
+display them.
+
+> **RULING.** `csvField` gains a leading-`'` prefix for `=`, `+`, `-` and `@`. **Blast radius:
+> one function, one exported wrapper, one caller — the event attendee CSV.** Nothing else in the
+> repo changes, and no other export is affected in either direction.
+
+**Why it matters now and did not before.** Every cell this CSV has ever carried came from a
+controlled vocabulary or a profile field. Part B puts two **attacker-authored** strings into it:
+a **question label**, which becomes a **column header**, and a **free-text answer**. A head types
+`=HYPERLINK("https://evil","Click")` as a question label and every committee member who opens the
+download in Excel gets a live formula.
+
+**The fix, and the one thing to get right about it:**
+
+```ts
+function csvField(value: string): string {
+  // A leading =, +, - or @ makes Excel and Sheets treat the cell as a FORMULA.
+  // Prefix an apostrophe, which those apps consume as "this is text".
+  // MUST run BEFORE the quoting test below: prefixing after quoting would put
+  // the apostrophe outside the quotes and corrupt the field.
+  const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
+  if (/[",\r\n]/.test(safe)) {
+    return `"${safe.replace(/"/g, '""')}"`;
+  }
+  return safe;
+}
+```
+
+**Ordering is the trap.** Neutralise first, then quote. Reversing them yields `'"=x,y"` — the
+apostrophe outside the quoted field — which is both wrong CSV and still a formula.
+
+**A negative number is not a formula.** `-5` gets an apostrophe under this rule and imports as
+text. Accepted: the alternative is a number-shaped exclusion that `-5+cmd` slips through. The
+only numeric cells here are `number` answers, which nothing downstream sums.
 
 ### D-51 — PDPA: the builder carries a visible line about what not to ask
 
@@ -1181,7 +1682,7 @@ layer 2 were automatic** — §11.2's string is written against layer 1 for exac
 and if a future phase adds a scheduler the copy can be strengthened then.
 
 **`answersPurgedAt` already exists** (`schema.prisma:810`, landed inert by D-17) and is already
-written explicitly as `null` by `create` and `duplicate` (`event.ts:497`), which is what makes
+written explicitly as `null` by `create` and `duplicate` (`R:639`), which is what makes
 `where: { answersPurgedAt: null }` find Phase-1 rows at all. That was T-12's whole argument and
 this is the query it was arguing about.
 
@@ -1191,13 +1692,13 @@ C-3's rule is unchanged: **state-machine transitions are audited, field saves ar
 Questions are fields of an event. `saveQuestions` fires on every builder save and would bury
 the six rows that describe what happened to an event.
 
-**`exportAttendees` already audits** (`event.ts:1183-1190`) and its row now covers a strictly
+**`exportAttendees` already audits** (`R:1381-1388`) and its row now covers a strictly
 larger PII payload — the same audit row, more data behind it. Its `reason` gains the question
 count so the log distinguishes "exported 40 names" from "exported 40 names and their answers":
 `` `${n} attendee(s), ${q} answer column(s)` ``.
 
 **The purge script writes no `RoleAuditLog` row.** It is not an actor with a session, and
-`writeAudit` requires an `actorUserID` (`admin.ts:406`). Its record is `Event.answersPurgedAt`
+`writeAudit` requires an `actorUserID` (`admin.ts:434-441`). Its record is `Event.answersPurgedAt`
 plus its own stdout, which the operator redirects to a file exactly as with every other script
 here. Inventing a synthetic actor id to satisfy a log's schema would put a fictional person in
 the one table whose purpose is "who did what".
@@ -1700,7 +2201,7 @@ Written by `event.update` into `scannerUserIDs`, which requires adding it to
 `src/lib/schemas/cca.ts:` already exports one, and a raw `z.string()` here would let a client
 write an arbitrary string into a canonical-id column.
 
-**`scannerUserIDs` is already in `SCRC_HIDDEN_EVENT_FIELDS`** (`event.ts:405`, blanked to `[]`)
+**`scannerUserIDs` is already in `SCRC_HIDDEN_EVENT_FIELDS`** (`R:409`, blanked to `[]`)
 and **stays there**. That was T-18, landed while the field was inert; this is the phase that
 fills it in, and it is the phase where removing it would matter.
 
@@ -1778,7 +2279,7 @@ the attendance flag off — the head's signup charts are Phase 1 behaviour and m
 failing because a Phase 3 switch is off. Two queries fail independently; one merged query fails
 together.
 
-**`noShows` uses `resolveAttendees`** (`event.ts:190-250`), so its PII is joined live like every
+**`noShows` uses `resolveAttendees`** (`R:194-252`), so its PII is joined live like every
 other attendee read, and it is **not audited** — the same call the head already makes through
 `getAttendees` (`event.ts:1117`), same authorisation, same data.
 
@@ -2094,12 +2595,12 @@ Stated as a line item so its absence from the diff is deliberate and reviewable.
 
 All four fields Parts B and C need (`attendanceOpensAt`, `attendanceClosesAt`,
 `scannerUserIDs`, `answersPurgedAt`) landed inert in Phase 1 (`schema.prisma:790-810`) and are
-already written explicitly by `create` and `duplicate` (`event.ts:488-499`). D-17 said the
+already written explicitly by `create` and `duplicate` (`R:610-640`). D-17 said the
 attendance work would need no second schema pass on `Event`. **It does not.**
 
 Consequences worth naming: `SCRC_HIDDEN_EVENT_FIELDS` needs no edit (D-69), `toPublicCard`
 needs no new field, and the `satisfies Partial<Record<keyof Event, …>>` clause at
-`event.ts:406` will not fire.
+`R:410` will not fire.
 
 ### 3.5 `model Bookings` — NO CHANGE
 
@@ -2171,7 +2672,7 @@ exists.
 | `answerValueSchema`, `EventAnswerValue` | `{ questionID: int>0, values: string[] max 64, each ≤ EVENT_ANSWER_TEXT_MAX }` |
 | `validateAnswers(questions, answers)` | **THE** content validator, shared verbatim by the resident form and `signup` (D-41b) |
 | `EVENT_ANSWER_RETENTION_DAYS`, `answersAreRetained(endTime, startTime, nowSec)` | the read cutoff (D-52 layer 1) |
-| `QUESTION_TYPE_COPY: Record<EventQuestionType, { label, hint }>` | the builder's type picker. **A `Record` over the type union**, so adding a type without copy is a compile error — the same trick `PROFILE_COMPLETION_COPY` uses (`profile.ts:139-155`) |
+| `QUESTION_TYPE_COPY: Record<EventQuestionType, { label, hint }>` | the builder's type picker. **A `Record` over the type union**, so adding a type without copy is a compile error — the same trick `PROFILE_COMPLETION_COPY` uses (`profile.ts:141-155`) |
 
 The module docblock repeats `profile.ts:3-10`'s reasoning verbatim and adds one paragraph: *the
 schema validates the SHAPE of a payload; `validateAnswers` validates its CONTENT against the
@@ -2200,7 +2701,7 @@ constraint `routers/admin.ts` already carries and that `roles.ts:602,646` docume
 | `eventIdInput` `:392` | unchanged |
 | new | `eventSignupInput = z.object({ eventID, answers: z.array(answerValueSchema).max(EVENT_MAX_QUESTIONS).optional() })` (D-43) |
 | `updateEventInput` `:279-320` | add `attendanceOpensAt`, `attendanceClosesAt` (`epochSecondsField.nullable().optional()`) and `scannerUserIDs` (`z.array(canonicalUserIDSchema).max(20).optional()` — **`canonicalUserIDSchema` is imported from `cca.ts`**, never a bare `z.string()`, because this column holds identity keys). Extend the existing `superRefine` to require `attendanceClosesAt > attendanceOpensAt` when both are present |
-| `createEventInput` `:244-258` | **unchanged.** Every field stays optional; D-29's bare create sends `{ ccaID }` only, which this schema already accepts |
+| `createEventInput` **`S:244-258`** | **UNCHANGED — and this is load-bearing.** Every field stays `.optional()`; D-29's bare create sends `{ ccaID }` only, which this schema already accepts. **NEVER add a `.default()` to any field here (D-45a):** zod populates a defaulted field even when the caller omits it, which makes `isBareCreate` (`R:531-533`) false for every bare create — blank-draft reuse then silently never fires again. §13.1(h) greps for it. |
 | docblock `:22-26` | the `draft` paragraph is rewritten: it is still a technical staging state, and the sentence "the create form routes straight through" becomes "the New event button creates the row and lands the head on the editor; there is no create form" (D-28) |
 
 **`createEventInput` deliberately does NOT gain `bannerUrl` / `photoUrls` / `publicDescription`.**
@@ -2220,22 +2721,22 @@ Current: 22 procedures, 1,843 lines. After: **34**.
 
 | Procedure | Fate | Part |
 |---|---|---|
-| `create` `:428` | **edited** — blank-draft reuse (D-30) | A |
-| `update` `:528` | **edited** — `attendanceOpensAt` / `attendanceClosesAt` / `scannerUserIDs` written in **both** scopes (D-65) | C |
-| `submitForReview` `:635` | **edited** — atomic write (D-37) | A |
-| `withdraw` `:724`, `cancelEvent` `:790`, `reviewerCancel` `:867`, `duplicate` `:943` | unchanged | — |
-| `listForOwner` `:1023`, `getForOwner` `:1063` | unchanged | — |
-| `getSignupStats` `:1076` | **unchanged** — deliberately; it must keep working with attendance off (D-72) | — |
-| `getAttendees` `:1119` | **edited** — returns `answers` + `answersRetained` (D-52) | B |
-| `exportAttendees` `:1155` | **edited** — returns `questions`, per-attendee `answers`, retention state; audit `reason` gains the column count (D-50, D-53) | B |
-| `listForReview` `:1196` | unchanged | — |
-| `getForReview` `:1225` | **edited** — returns the question list for review (D-47) | B |
-| `decide` `:1261` | unchanged | — |
-| `listForOversight` `:1525`, `getForOversight` `:1618` | **unchanged** — and D-69 says why | — |
-| `listPublished` `:1661` | unchanged | — |
-| `getPublic` `:1694` | **edited** — returns `questions` (D-46). **`toPublicCard` is NOT widened** | B |
-| `signup` `:1741` | **edited** — `answers`, validated and written inside the lock (D-43) | B |
-| `cancelSignup` `:1802`, `listMySignups` `:1813` | unchanged | — |
+| `create` **`R:472`** | **edited** — blank-draft reuse (D-30) | A |
+| `update` **`R:665`** | **edited** — `attendanceOpensAt` / `attendanceClosesAt` / `scannerUserIDs` written in **both** scopes (D-65) | C |
+| `submitForReview` **`R:800`** | **edited** — atomic write (D-37) | A |
+| `withdraw` **`R:922`**, `cancelEvent` **`R:988`**, `reviewerCancel` **`R:1065`**, `duplicate` **`R:1141`** | unchanged | — |
+| `listForOwner` **`R:1221`**, `getForOwner` **`R:1261`** | unchanged | — |
+| `getSignupStats` **`R:1274`** | **unchanged** — deliberately; it must keep working with attendance off (D-72) | — |
+| `getAttendees` **`R:1317`** | **edited** — returns `answers` + `answersRetained` (D-52) | B |
+| `exportAttendees` **`R:1353`** | **edited** — returns `questions`, per-attendee `answers`, retention state; audit `reason` gains the column count (D-50, D-53) | B |
+| `listForReview` **`R:1394`** | unchanged | — |
+| `getForReview` **`R:1423`** | **edited** — returns the question list for review (D-47) | B |
+| `decide` **`R:1459`** | unchanged | — |
+| `listForOversight` **`R:1723`**, `getForOversight` **`R:1816`** | **unchanged** — and D-69 says why | — |
+| `listPublished` **`R:1859`** | unchanged | — |
+| `getPublic` **`R:1892`** | **edited** — returns `questions` (D-46). **`toPublicCard` is NOT widened** | B |
+| `signup` **`R:1939`** | **edited** — `answers`, validated and written inside the lock (D-43) | B |
+| `cancelSignup` **`R:2000`**, `listMySignups` **`R:2011`** | unchanged | — |
 | — | **new** `saveQuestions` | B |
 | — | **new** `getQuestionsForOwner` | B |
 | — | **new** `getSignupAnswers` | B |
@@ -2268,26 +2769,46 @@ find out which — plan 01 shipped with this exact arithmetic wrong in its own �
 **No new procedure is on `oversightProcedure`.** Constraint 8: SCRC stays read-only and gains
 neither authorship nor scanning.
 
-### 5.3 `create` — the reuse branch (D-30)
+### 5.3 `create` — the reuse branch (D-30) — **SHIPPED IN PART A. Part B adds ONE line.**
 
-Inserted between the ownership branch (`:435-456`) and the facility resolution (`:458-465`).
-Three things the coder must not optimise away:
+**Status: done.** The reuse branch is live at **`R:531-571`**, between the ownership branch
+(`R:479-499`) and the facility resolution (`R:573-580`). The three rules below are **already
+satisfied** in the shipped code and are restated only so a coder does not "simplify" them away:
 
-- **`ccaID: input.ccaID ?? null` is written explicitly in the `where`.** T-12: `{ ccaID: null }`
-  matches a stored null and not an absent key, and the hall branch depends on it.
-- **The reuse returns before `nextEventId`.** Allocating an id and then discarding it is a
-  counter gap for no reason.
-- **The `NO_SUCH_CCA` check stays inside the non-null arm** and stays *before* the reuse lookup.
-  T-9: hoisting it refuses every hall event.
+- **`ccaID` is written explicitly in the `where`** (`R:545`) — the resolved local, not
+  `input.ccaID`. T-12: `{ ccaID: null }` matches a stored null and not an absent key.
+- **The reuse returns before `nextEventId`** (`R:567-570`). Allocating an id then discarding it
+  is a counter gap for no reason.
+- **The `NO_SUCH_CCA` check stays inside the non-null arm** (`R:488-497`) and *before* the reuse
+  lookup. T-9: hoisting it refuses every hall event.
+
+> **PART B'S ONLY EDIT HERE IS D-39a**, and it is the highest-risk change in this Part.
+> `BLANK_EVENT_CONTENT` is `satisfies Partial<Record<keyof Event, null>>` and questions are a
+> **separate collection**, so "has no questions" cannot be expressed in the `where` at all. Add
+> the `eventQuestion.count` check in JS at **`R:566`**, mirroring the `photoUrls` check already
+> there for the same class of reason. **Read D-39a in full before touching this function** — the
+> failure mode is a head's abandoned questions silently reappearing on what they believe is a new
+> event, and it reaches the JCRC.
 
 ### 5.4 `signup` — where the answers go (D-43)
 
-The only structural change is `3a`/`3b` inside the existing `withEventLock` callback, and
-`answers: v.normalized` on the existing `create`. **Do not move the capacity check, do not
-move the `P2002` catch, and do not add a second write.** Read mistake ④ and T-23.
+Four changes inside the existing `withEventLock` callback (opened at **`R:1961`**), and
+`answers: v.normalized` on the existing `create` at **`R:1982-1985`**:
 
-The `event` row is read **before** the lock (`:1747`) and its `capacity` is used **inside** it
-(`:1764`) — pre-existing, unchanged, and worth knowing: the questions are read *inside* the
+| # | Change | Where |
+|---|---|---|
+| 1 | `.input(eventIdInput)` → `.input(eventSignupInput)`. `.use(requireMatric)` **stays** | `R:1940-1941` |
+| 2 | **D-43a** — `findUnique` on `event_user` + early `return { signedUp: true }`, at the **top** of the lock | new, `R:1962` |
+| 3 | fetch questions, then `validateAnswers` → `ANSWERS_INVALID` | new, after 2 |
+| 4 | capacity arm **simplifies** — its inner `findUnique` and early return are now dead (D-43a) | `R:1966-1978` |
+
+> **Do not move the `P2002` catch (`R:1986-1997`), do not delete it, and do not add a second
+> write.** D-43a's early return handles the *already signed up* case; the catch handles the
+> genuine *two tabs raced past it* case. They are different facts and both are needed. Read
+> mistake ④ and T-23.
+
+The `event` row is read **before** the lock (`R:1945`) and its `capacity` is used **inside** it
+(`R:1963`) — pre-existing, unchanged, and worth knowing: the questions are read *inside* the
 lock precisely because they are the thing that can change while somebody is filling in the form.
 
 ### 5.5 `saveQuestions` — the reconciliation (D-45)
@@ -2352,23 +2873,30 @@ wrong and it is worth two minutes to find out which.*
 | `package.json` | delete four scripts (D-80) |
 
 
-### 6.2 Part B — questions (4 created, 9 modified)
+### 6.2 Part B — questions (5 created, 9 modified)
+
+**Reconciled against shipped Part A.** `EventCreateForm.tsx` and the two `/new` routes are
+**already deleted** (`f8c9ffd`) — do not look for them and do not re-create them (D-40a).
 
 | File | Change |
 |---|---|
 | `src/lib/schemas/eventQuestion.ts` | **CREATE** (§4.1) |
-| `src/app/cca/_components/EventQuestionBuilder.tsx` | **CREATE.** Props `{ eventID: number }`. Reorder (up/down buttons, not drag — a drag library is a third dependency for one screen), type picker, options editor, required toggle, the PDPA line (D-51), the frozen state (D-44) |
-| `src/app/events/_components/EventSignupQuestions.tsx` | **CREATE.** Props `{ questions, value, onChange, errors }`. Renders the seven types. **No mutation of its own** — the parent owns `signup` |
-| `prisma/schema.prisma` | §3.1, §3.2 |
-| `src/lib/schemas/event.ts` | §4.3 |
-| `src/server/api/routers/event.ts` | `saveQuestions`, `getQuestionsForOwner`, `getSignupAnswers`; edits to `signup`, `getPublic`, `getForReview`, `getAttendees`, `exportAttendees` |
-| `src/server/api/services/events.ts` | `assertQuestionsEditable` (D-44) |
-| `src/app/cca/_components/EventManage.tsx` | mount `EventQuestionBuilder` inside `DetailsEditor`, below the public description |
-| `src/app/events/_components/EventDetail.tsx` (231) | the signup branch at `:179-189` opens a Dialog holding `EventSignupQuestions` when `questions.length > 0`; unchanged one-click when it is 0. **The box is `sm:w-64` (`:144`) — the form goes in a Dialog, not in the box** |
-| `src/app/cca/_components/EventAttendees.tsx` (132) | answer columns in the CSV and in the table; the purged notice (D-50) |
-| `src/app/events/_lib/format.ts` | `csvField` gains formula-injection neutralisation (T-28) |
-| `src/app/admin/_components/events/EventReviewDetail.tsx` (493) | render the questions read-only above the decision panel (D-47) |
+| `src/app/cca/_components/EventQuestionBuilder.tsx` | **CREATE.** Props `{ eventID: number }`. Mounts **inside `DetailsEditor`, which is already `"use client"`** — no new route, no new server/client boundary (**D-40a**). Reorder (up/down buttons, not drag — a drag library is a third dependency for one screen), type picker, options editor, required toggle, the PDPA line (D-51), the frozen state (D-44) |
+| `src/app/events/_components/EventSignupQuestions.tsx` | **CREATE.** Props `{ questions, value, onChange, errors }` — **function props are fine here**: the parent `EventDetail.tsx:1` is `"use client"`. **No mutation of its own** — the parent owns `signup` |
+| `scripts/remediation/create-event-phase2-indexes.mjs` | **CREATE — §9.2. Belongs to PR 2, not PR 3.** `EventQuestion`'s unique index is a Part B index and the code cannot ship without it (mistake ②). PR 2 runs it with the `EventQuestion` target only; PR 3 re-uses the same file for `EventAttendance`. *(The original draft listed this under §6.3/Part C, which would have shipped Part B with no index at all.)* |
 | `scripts/remediation/purge-event-answers.mjs` | **CREATE** (D-52) |
+| `prisma/schema.prisma` | §3.1, §3.2 |
+| `src/lib/schemas/event.ts` | §4.3. **No `.default()` may be added to `createEventInput`** — D-45a |
+| `src/server/api/routers/event.ts` | `saveQuestions`, `getQuestionsForOwner`, `getSignupAnswers`; edits to **`create` (D-39a — the question-count guard on the reuse branch, `R:566`)**, `signup` (D-43/D-43a), `getPublic`, `getForReview`, `getAttendees`, `exportAttendees` |
+| `src/server/api/services/events.ts` | `assertQuestionsEditable` (D-44) |
+| `src/app/cca/_components/EventManage.tsx` | mount `EventQuestionBuilder` inside `DetailsEditor` (`:141-432`), below the public description and **above** the footer actions (`:401-416`); new `mapError` entries (§11.2) |
+| `src/app/events/_components/EventDetail.tsx` (231) | the signup branch at **`:178-190`** opens a Dialog holding `EventSignupQuestions` when `questions.length > 0`; unchanged one-click when it is 0. **The box is `sm:w-64` (`:144`) — the form goes in a Dialog, not in the box** |
+| `src/app/cca/_components/EventAttendees.tsx` (132) | answer columns in the CSV (header built at `:31-40`) and in the table; the purged notice (D-50) |
+| `src/app/events/_lib/format.ts` | `csvField` (`:116-121`) gains formula-injection neutralisation — **D-50a**, and note this is `src/app/events/_lib/`, **not** `src/lib/` |
+| `src/app/admin/_components/events/EventReviewDetail.tsx` (493) | render the questions read-only above the decision panel (D-47) |
+
+**`scripts/remediation/sweep-blank-event-drafts.mjs` — NO CODE CHANGE** (D-39b). Its condition 7
+already refuses to delete a draft carrying `EventQuestion` rows. Do not "fix" it into a deletion.
 
 ### 6.3 Part C — attendance (8 created, 8 modified)
 
@@ -2390,7 +2918,7 @@ wrong and it is worth two minutes to find out which.*
 | `src/app/events/_components/EventDetail.tsx` | mount `MyCheckInCode` in the "You're going" branch and behind the walk-in disclosure (D-67) |
 | `package.json` | `qrcode.react@^4.2.0`, `jsqr@^1.4.0` (D-58) |
 | `scripts/remediation/set-attendance-flag.mjs` | **CREATE** (D-66) |
-| `scripts/remediation/create-event-phase2-indexes.mjs` | **CREATE** (§9) |
+| `scripts/remediation/create-event-phase2-indexes.mjs` | **NO CHANGE — created in PR 2 (§6.2).** PR 3 only *runs* it, with the `EventAttendance` target (§9.2, §12.4) |
 
 ### 6.4 Part D — dashboards (2 created, 3 modified)
 
@@ -2466,7 +2994,7 @@ They are told two things at the point of typing, both verbatim in §11.2: **who 
 Restating D-69 as a census line so it is reviewable:
 
 - **No column is added to `model Event`**, so `getForOversight`'s `{ ...event }` spread
-  (`event.ts:1645-1656`) exposes nothing new and `SCRC_HIDDEN_EVENT_FIELDS` (`:399-406`) needs
+  (`R:1842-1855`) exposes nothing new and `SCRC_HIDDEN_EVENT_FIELDS` (`R:403-411`) needs
   no edit.
 - **`EventQuestion`, `EventAttendance` and `EventSignup.answers` are not read by any procedure
   on `oversightProcedure`.** Verify by grep at review time, not by trusting this line.
@@ -2544,7 +3072,7 @@ Two indexes, both compound-unique:
 
 | Collection | Index | Key | What breaks without it |
 |---|---|---|---|
-| `EventQuestion` | `event_question` | `{ eventID: 1, questionID: 1 }` | The lock is advisory and reclaimable after 30 s (`services/events.ts:108`). Without the index, a stale-lock reclaim mid-save writes two questions with the same `questionID` and every answer to either one is ambiguous. **No error anywhere.** |
+| `EventQuestion` | `event_question` | `{ eventID: 1, questionID: 1 }` | The lock is advisory and reclaimable after 30 s (`services/events.ts:110`). Without the index, a stale-lock reclaim mid-save writes two questions with the same `questionID` and every answer to either one is ambiguous. **No error anywhere.** |
 | `EventAttendance` | `event_attendee` | `{ eventID: 1, userID: 1 }` | A re-scan writes a second row. The count is wrong, the turnout percentage is wrong, and `undoCheckIn` deletes one of two. **No error anywhere.** |
 
 `prisma db push` would create both. It would **also drop `User.email_unique_ci`**, the
@@ -2586,21 +3114,57 @@ was before its own script ran.
 
 ### 9.2 `scripts/remediation/create-event-phase2-indexes.mjs`
 
+> **CORRECTED — THE SCRIPT MUST TAKE AN EXPLICIT TARGET, AND MUST REFUSE TO RUN WITHOUT ONE.**
+>
+> The original draft put both collections in one unconditional `TARGETS` list. That contradicts
+> the rollout in two directions and would have been discovered mid-deploy:
+>
+> - §12.3 (**PR 2**) tells the operator the census diff should show **"ONLY the `EventQuestion`
+>   lines"**. An unconditional script creates `EventAttendance` too, so the diff shows lines the
+>   operator was told to treat as a red flag — during the one step whose entire purpose is
+>   spotting unexpected index changes. The likely reaction is to stop a correct deploy; the worse
+>   reaction is to learn that this diff is noisy and start skimming it.
+> - §12.4 (**PR 3**) step 3 then re-runs the script to create `EventAttendance` — which already
+>   exists, so it reports `68 IndexAlreadyExists` and PR 3's census diff is **empty**. §10.5 check
+>   `[9]` is scheduled to become blocking at PR 3 on the strength of a step that did nothing.
+> - And it creates an index on a collection whose model does not exist until Part C, which §9.1's
+>   own table lists as **`(absent)`** at that point.
+>
+> **The target is named on the command line and there is no default.**
+
 ```bash
-node scripts/remediation/create-event-phase2-indexes.mjs             # DRY RUN
-node scripts/remediation/create-event-phase2-indexes.mjs --commit    # apply
+# PR 2 (Part B) — questions
+node scripts/remediation/create-event-phase2-indexes.mjs EventQuestion            # DRY RUN
+node scripts/remediation/create-event-phase2-indexes.mjs EventQuestion --commit   # apply
+
+# PR 3 (Part C) — attendance
+node scripts/remediation/create-event-phase2-indexes.mjs EventAttendance --commit
 ```
+
+**Named with no argument, it prints usage and exits non-zero.** It must never guess, and it must
+never do both because someone forgot to say which.
 
 **Modelled on `create-auth-allowlist.mjs`, line for line.** What it must carry:
 
 ```js
-const TARGETS = [
-  { coll: "EventQuestion",
-    indexes: [{ key: { eventID: 1, questionID: 1 }, name: "event_question", unique: true }] },
-  { coll: "EventAttendance",
-    indexes: [{ key: { eventID: 1, userID: 1 },     name: "event_attendee", unique: true }] },
-];
+const TARGETS = {
+  EventQuestion: [
+    { key: { eventID: 1, questionID: 1 }, name: "event_question", unique: true },
+  ],
+  EventAttendance: [
+    { key: { eventID: 1, userID: 1 },     name: "event_attendee",  unique: true },
+  ],
+};
+
+// NO DEFAULT. An unrecognised or missing name exits 2 with usage — it must never
+// silently fall back to "all", which is what makes PR 2's census diff readable.
+const target = process.argv[2];
+if (!target || !(target in TARGETS)) { usage(); process.exit(2); }
 ```
+
+**PART B ONLY NEEDS `EventQuestion`.** The `EventAttendance` entry ships in the same file because
+the file is created in PR 2 (§6.2) and Part C should not have to edit it — but **PR 2 must not
+run it**, and the VERIFY pass below checks only the target it was given.
 
 - **`runCmd` inspects the reply, it does not rely on a throw.** `$runCommandRaw` returns errors
   **as data**: a failed command resolves `{ ok: 0, code, errmsg }` and a partially-failed one
@@ -2896,10 +3460,10 @@ without copy is a compile error):
 > {n} {people have} already signed up and answered these questions. Changing them now would leave those answers pointing at questions that no longer exist, so the form is fixed for this event. If you need a different form, cancel this event and duplicate it.
 
 *(`{people have}` is `person has` for n = 1, `people have` otherwise. Match the pluralisation
-shape at `EventAttendees.tsx:66` and `EventsListPanel.tsx:65`.)*
+shape at `EventAttendees.tsx:66` and `EventsListPanel.tsx:114`.)*
 
 **When the event is in the review queue**, the builder is not mounted at all — the `submitted`
-panel replaces the whole editor (`EventManage.tsx:951-989`), which is existing behaviour and is
+panel replaces the whole editor (`EventManage.tsx:1043-1078`), which is existing behaviour and is
 why `EVENT_LOCKED` is unreachable here.
 
 **Server error strings** (`EventManage.tsx`'s `mapError`, new entries):
@@ -2998,7 +3562,7 @@ false claim.
 
 > This file includes everyone’s answers. Downloading it is recorded in the audit log.
 
-That sentence is true of both halves: `exportAttendees` already audits (`event.ts:1183-1190`),
+That sentence is true of both halves: `exportAttendees` already audits (`R:1381-1388`),
 and D-53 puts the answer-column count in the row.
 
 ---
@@ -3320,9 +3884,12 @@ only thing that can catch mistake ③.
 # 1. schema
 npx prisma generate
 
-# 2. the index — DRY RUN FIRST, and read the output
-node scripts/remediation/create-event-phase2-indexes.mjs
-node scripts/remediation/create-event-phase2-indexes.mjs --commit
+# 2. the index — NAME THE TARGET, DRY RUN FIRST, and read the output.
+#    EventQuestion ONLY. Do NOT create EventAttendance here: Part C's model does
+#    not exist yet, and an unexpected line in step 3's diff is exactly the signal
+#    step 3 exists to detect (§9.2).
+node scripts/remediation/create-event-phase2-indexes.mjs EventQuestion
+node scripts/remediation/create-event-phase2-indexes.mjs EventQuestion --commit
 
 # 3. prove it
 node scripts/remediation/index-census.mjs > census-after.txt
@@ -3346,8 +3913,10 @@ remember to turn on. The rollback lever is a Vercel revert.
 ```
 1. Set EVENT_QR_SECRET in Vercel (Production AND Preview).  openssl rand -base64 48
 2. Redeploy so the env var is live.
-3. node scripts/remediation/create-event-phase2-indexes.mjs           # dry run
-   node scripts/remediation/create-event-phase2-indexes.mjs --commit  # EventAttendance
+3. node scripts/remediation/create-event-phase2-indexes.mjs EventAttendance
+   node scripts/remediation/create-event-phase2-indexes.mjs EventAttendance --commit
+   # The script was CREATED in PR 2 but PR 2 ran it only for EventQuestion (§9.2),
+   # so this is the first time this index is created and the diff must be non-empty.
 4. node scripts/remediation/index-census.mjs > census-after.txt ; diff
    node scripts/remediation/verify-events-schema.mjs                  # check [9] now blocking
 5. Confirm event.attendanceStatus reports { enabled: false, reason: "flag" }
@@ -3419,7 +3988,7 @@ the last time this was assumed, five routes 500'd.
 questions editable while submitted" is a one-word change that compiles and silently reinstates
 the moving-target bug ruling C-2 removed.
 
-**(c) A second copy of the ownership branch.** `loadOwnedEvent` (`event.ts:102-125`) and
+**(c) A second copy of the ownership branch.** `loadOwnedEvent` (`R:102-123`) and
 `assertMayScan` (D-61) are the only two places the `ccaID == null` branch may live, plus the
 deliberate third copy in `/api/event/upload/route.ts:78-88`. Grep for `manageHallEvents` and
 confirm the count.
@@ -3431,8 +4000,41 @@ Miss the second and it reads `undefined` forever, silently, with a passing build
 **nothing**. That module imports `~/env` and `node:crypto` at module scope; the repo already
 documents what that does to a client bundle (`roles.ts:602,646`).
 
-**(f) `csvField` handling `=`, `+`, `-`, `@`.** T-28. A unit-free check: call it with
-`"=1+1"` and confirm the output starts with `'`.
+**(f) `csvField` handling `=`, `+`, `-`, `@`.** T-28/D-50a. A unit-free check: call it with
+`"=1+1"` and confirm the output starts with `'`. Then call it with `'=a,b'` and confirm the
+result is `"'=a,b"` — **apostrophe INSIDE the quotes**. Reversed ordering yields `'"=a,b"`, which
+is both invalid CSV and still a formula. The file is **`src/app/events/_lib/format.ts:116`**;
+`src/lib/format.ts` does not exist.
+
+**(g) PART B ADDS NO `page.tsx`. This is a one-command check and it is the mistake-③ tripwire.**
+
+```bash
+git diff --name-only --diff-filter=A origin/main... -- 'src/app/**/page.tsx'   # must be EMPTY for PR 2
+```
+
+D-40a: the builder mounts inside `DetailsEditor`, which is already `"use client"`. **A new
+`page.tsx` in Part B means someone gave the builder its own route**, which is a server component
+by default, and passing it an `onSave` callback is exactly the crash that took out five routes.
+If the command returns a file, stop and read D-40a.
+
+**(h) `createEventInput` has no `.default()`.** D-45a.
+
+```bash
+grep -n '\.default(' src/lib/schemas/event.ts     # must return NOTHING
+```
+
+zod populates a defaulted field even when the caller omits it, so one `.default()` makes
+`isBareCreate` (`R:531-533`) false for every bare create — reuse never fires again, silently,
+with a green build. That is the exact bug `195b063` was written to fix.
+
+**(i) The D-39a guard is present on the reuse branch.** Grep `src/server/api/routers/event.ts`
+for `eventQuestion.count` and confirm it sits **inside** the `if (existing && existing.photoUrls
+.length === 0)` block at `R:566`, **before** the `return { eventID: existing.eventID }`. A
+`count` placed after the return is dead code that type-checks.
+
+**(j) The `signup` P2002 catch still exists.** D-43a adds an early return; it does **not** replace
+the catch. Confirm `R:1986-1997` is intact and that `validateAnswers` is called **after** the
+already-signed-up return, not before it.
 
 ### 13.2 Two things that MUST be verified before the first real row lands
 
@@ -3457,9 +4059,25 @@ becoming a `deleteMany` and the count therefore living on `EventSignup` where it
 That fallback is named here so the coder does not invent one under pressure, and it costs the
 embedded-list argument in D-49 without costing anything else in the plan.
 
-Production had 0 `EventSignup` rows when plan 01 measured (§0.1, unverified), so the population
-at risk is zero **today** — which is exactly why this is checked *before* the first signup, not
-after.
+> **⚠ THE "ZERO ROWS AT RISK" ARGUMENT NO LONGER HOLDS. RE-READ §0.1.**
+>
+> The original text said production had 0 `EventSignup` rows, so nothing legacy was at risk.
+> **`eventID 1` is a real published event with a facility booking**, so `EventSignup` may hold
+> real rows — and **every one of them has no `answers` key**, because the field does not exist in
+> `prisma/schema.prisma` on this branch at all.
+>
+> The population at risk is therefore **unknown, not zero**, and could not be measured this pass
+> (§0.0 — the cluster is unreachable from the NUS network; port 27017 is blocked outbound).
+>
+> **This makes step 2 strictly more blocking than it was, not less.** Run it from a network that
+> can reach Atlas, before PR 2 deploys. If it throws, the fallback below is not a contingency —
+> it is the design.
+>
+> **Do the check on a throwaway `eventID`, never on `eventID 1`.** That row and its signups are
+> READ-ONLY for this entire plan: do not insert against it, do not update it, do not sweep it.
+
+**If it throws, the fallback is a separate `EventAnswer` collection** — see the paragraph above;
+it is named so the coder does not invent one under pressure.
 
 ### 13.3 What MUST be checked by a human, in a browser, after each deploy
 
@@ -3522,6 +4140,37 @@ Three accounts: a `cca_head` who is not `jcrc`, a `jcrc`, and a plain `resident`
     **not** the generic "Try again."
 18. Sign up for an event with **zero** questions.
     *Expect:* **one tap**, no dialog. Unchanged Phase 1 behaviour.
+
+18a. **THE D-39a REUSE CHECK — the single most important browser step in Part B.** No unit test
+     reaches it: it needs a real abandoned row, real question rows, and a second button press.
+     Part A's own reuse bug was found exactly this way and by nothing else.
+
+     - As the head, press **New event**. Note the eventID. **Type nothing.**
+     - Scroll to the questions builder and add **three** questions. Save.
+     - Navigate away without ever entering a title.
+     - Press **New event** again.
+
+     *Expect:* **a NEW eventID, and an empty questions builder.**
+
+     *If you get the SAME eventID with the three questions still in it, D-39a was not
+     implemented and this is a ship-blocker.* The failure is silent — the screen looks like a
+     normal new event — and its consequence is a head submitting a form they did not write this
+     time, which the JCRC then approves and D-44 freezes on first signup.
+
+18b. **The other half of D-39a — reuse must still work.** Press **New event**, type nothing, add
+     **no** questions, navigate away, press **New event** again.
+
+     *Expect:* **the SAME eventID.** If this now allocates a new id every time, the guard was
+     written too broadly and Part A's blank-draft cap (D-30) is broken again — the same
+     regression `195b063` fixed, in the opposite direction. Both 18a and 18b must pass; either
+     one alone is not evidence.
+
+18c. **D-43a idempotency.** As the resident, sign up (answering the questions). Then, from a
+     stale tab or by re-firing the mutation, submit **`{ eventID }` with no answers**.
+
+     *Expect:* `{ signedUp: true }` — success, and the **stored answers unchanged**. Not
+     `ANSWERS_INVALID`. Then check the head's Attendees table shows the original answers, proving
+     "first answer wins" (D-43a, D-48 point 2).
 
 ---
 
@@ -3654,7 +4303,7 @@ button is the mutation** (D-29).
 
 ### T-23 — the answers write must not be a SECOND write, and must not sit after the P2002 catch
 
-`event.ts:1783-1797`. The `create` swallows `P2002` and returns `{ signedUp: true }` **without
+`R:1982-1997`. The `create` swallows `P2002` and returns `{ signedUp: true }` **without
 writing**. An answers write placed after that block is skipped on every retried submission,
 while the caller is told it worked. And a write placed after the `withEventLock` callback is
 outside the mutex the capacity check needs.
@@ -3675,7 +4324,7 @@ has a zod schema mirroring it.
 
 If Prisma throws instead, invariant I-2's stated failure mode fires: *"a row written by a script
 or a partial hand-fix that omitted a required scalar would break Prisma deserialization for
-every subsequent reader"* (`schema.prisma:735-740`) — and it would break `getPublic`,
+every subsequent reader"* (`schema.prisma:700`) — and it would break `getPublic`,
 `listMySignups` and every signup read at once.
 
 **§13.2 step 2 is BLOCKING and the fallback is named there** (a separate `EventAnswer`
@@ -3707,24 +4356,31 @@ bystander who photographs a screen gets a canonical id — an `@u.nus.edu` addre
 later — plus a token that is dead in ≤60 s.
 
 **Accepted, not solved**, on the grounds that the same id is already visible to every head
-through `exportAttendees`'s `resolveAttendees` projection (`event.ts:190-250`) and `EventAttendees.tsx:106`. What must **not**
+through `exportAttendees`'s `resolveAttendees` projection (`R:194-252`) and `EventAttendees.tsx:106`. What must **not**
 happen is the door becoming an oracle: `checkIn` returns the identical `BAD_QR` for an
 unparseable payload, a bad signature and an expired window, and returns nothing at all about a
 userID whose token did not verify.
 
 ### T-28 — a question label goes into a CSV header, and Excel executes formulas
 
-`csvField` (`format.ts:115-121`) quotes on `/[",\r\n]/`. It does **not** neutralise a leading
-`=`, `+`, `-` or `@`, which Excel and Google Sheets evaluate — `=HYPERLINK(...)` and
-`=cmd|'...'!A1` are the classic payloads.
+`csvField` (**`src/app/events/_lib/format.ts:116-121`** — there is no `src/lib/format.ts`) quotes
+on `/[",\r\n]/`. It does **not** neutralise a leading `=`, `+`, `-` or `@`, which Excel and
+Google Sheets evaluate — `=HYPERLINK(...)` and `=cmd|'...'!A1` are the classic payloads.
 
 Until now every CSV cell came from a controlled vocabulary or a person's own name. A **question
 label** and a **free-text answer** are both authored by someone else and land in a file a head
 opens on their laptop.
 
-Prefix a `'` when a field starts with one of those four. **Fix it in `csvField`**, which is the
-one shared serialiser — the CCA roster export gets the fix for free, and a second copy in
-`EventAttendees.tsx` would be a drift pair.
+Prefix a `'` when a field starts with one of those four, **before** the quoting test — see
+**D-50a** for the exact patch and why the order matters. Fix it in `csvField`, not in
+`EventAttendees.tsx`, which would be a drift pair.
+
+> **CORRECTION.** An earlier draft of this trap said the CCA roster export "gets the fix for
+> free". **It does not.** `serializeCsv` has exactly one caller (`EventAttendees.tsx:43`); the
+> roster is a different format entirely — `RosterPanel.tsx:139` → `downloadXlsx`
+> (`src/lib/xlsx.ts:213`). It also **needs** no fix: `sheetXml` (`src/lib/xlsx.ts:64-77`) writes
+> every cell as `t="inlineStr"`, which Excel never evaluates as a formula. Blast radius of this
+> trap is **one function, one export**. D-50a.
 
 ### T-29 — a purged event must export `—`, not blank
 
@@ -3734,7 +4390,7 @@ head reads the file, concludes their members ignored the form, and is wrong. §1
 ### T-30 — every new `Event` column is an SCRC disclosure decision
 
 `getForOversight` returns `{ ...event }` unredacted to a manager and
-`{ ...event, ...SCRC_HIDDEN_EVENT_FIELDS }` otherwise (`event.ts:1645-1656`). The `satisfies
+`{ ...event, ...SCRC_HIDDEN_EVENT_FIELDS }` otherwise (`R:1842-1855`). The `satisfies
 Partial<Record<keyof Event, …>>` clause at `:406` catches a **typo**, never an **omission**.
 
 **This plan adds no `Event` column, so nothing is exposed** (D-69, §7.3) — which is exactly the
@@ -3794,7 +4450,7 @@ defect plan 01 §8.10 had to fix twice, for `NOT_CANCELABLE` and then again for
 
 ### T-36 — `wasSignedUp` is a SNAPSHOT and must never be re-derived
 
-`cancelSignup` (`event.ts:1802-1811`) is a hard delete with **no time gate** — a resident can
+`cancelSignup` (`R:2000-2010`) is a hard delete with **no time gate** — a resident can
 cancel at any moment, including after they were scanned in. A turnout view that joins
 `EventAttendance` back to `EventSignup` at read time would silently reclassify them as a
 walk-in, and the CCA's turnout number would change days after the event.
@@ -3837,7 +4493,7 @@ deliberately fixed once an event is live and the copy at `EventManage.tsx:1023-1
 ### T-40 — `getPublic` returning questions must not leak them for an unpublished event
 
 `getPublic` already refuses anything that is not `published` or `canceled`
-(`event.ts:1700-1706`) and that guard runs **before** the projection. Keep the questions read
+(`R:1899-1905`) and that guard runs **before** the projection. Keep the questions read
 **after** it. Fetching questions first and then checking status would disclose a draft event's
 form to any authenticated resident who guessed an eventID.
 

@@ -31,13 +31,31 @@ with no warning and without `--accept-data-loss`. Do not run it against this
 cluster, here or anywhere else in this file.
 
 Indexes on this cluster are created with `createIndexes` through
-`$runCommandRaw`, never through `db push`. `create-auth-allowlist.mjs` is the
-working precedent: it created the `AuthAllowlist` collection and its two
-unique indexes this way, and they exist today by that route and no other.
-The equivalent script for the Events Phase 2/3 indexes (`EventLock.key`,
-`Counter.key`, `Event.eventID`) is `create-event-phase2-indexes.mjs` — it
-does not exist yet, it arrives with PR 2. Do not run `prisma db push` in its
-place while you wait for it.
+`$runCommandRaw`, never through `db push`. There are exactly two scripts that
+do it, and between them they are how every index added since phase 2 got here:
+
+- **`create-auth-allowlist.mjs`** — the working precedent. It created the
+  `AuthAllowlist` collection and its two unique indexes this way, and they
+  exist today by that route and no other.
+- **`create-event-phase2-indexes.mjs`** — the events questions/attendance
+  indexes. It takes an **explicit target on the command line and has no
+  default**: `EventQuestion` (Part B) or `EventAttendance` (Part C). Named with
+  neither, it prints usage and exits 2 rather than guessing or doing both.
+
+```bash
+node scripts/remediation/index-census.mjs > census-before.txt          # blocking, exit 0 required
+node scripts/remediation/create-event-phase2-indexes.mjs EventQuestion            # dry run
+node scripts/remediation/create-event-phase2-indexes.mjs EventQuestion --commit   # apply
+node scripts/remediation/index-census.mjs > census-after.txt
+diff census-before.txt census-after.txt                               # ONLY the EventQuestion lines
+```
+
+Take an `index-census.mjs` on **both sides** of any index work and diff the
+two. Any **removed** line is a dropped index and the cluster must take no
+further writes until it is restored; `User.email_unique_ci` in particular must
+still be there afterwards. The database step for a Mongo field-only schema
+change is `npx prisma generate` and nothing else — it reads the schema file and
+never touches the cluster.
 
 ## Step 1 — Seed RBAC so "SCRC Room" stays restricted (#23)
 
@@ -389,11 +407,70 @@ set -a && . ./.env >/dev/null 2>&1 && set +a && node scripts/remediation/sweep-b
 set -a && . ./.env >/dev/null 2>&1 && set +a && node scripts/remediation/sweep-blank-event-drafts.mjs --commit    # apply
 ```
 
+## Step: events phase-2 indexes (rollout, once per target) — `create-event-phase2-indexes.mjs`
+
+**Who runs it and when:** the person doing the events rollout, once per PR, at
+the step the plan names — `EventQuestion` during **PR 2 (Part B)**,
+`EventAttendance` during **PR 3 (Part C)**. Never on a schedule, and never both
+in one run: the target is an explicit argument with no default, and PR 2's
+census diff is supposed to show only the `EventQuestion` lines.
+
+It creates the collection (`create`, so a re-run says `NamespaceExists` rather
+than nothing) and its compound unique index, then **re-reads `listIndexes` and
+proves the result**, matching on the key pattern rather than the index name. It
+is idempotent — `48/68/85/86` are reported as "already present", not failures —
+and `E11000` is never swallowed, because it means existing rows already violate
+the uniqueness and **nothing was built**. Dry run by default. See Step 0 above
+for the census-on-both-sides procedure, which is not optional.
+
+```bash
+set -a && . ./.env >/dev/null 2>&1 && set +a && node scripts/remediation/create-event-phase2-indexes.mjs EventQuestion            # preview
+set -a && . ./.env >/dev/null 2>&1 && set +a && node scripts/remediation/create-event-phase2-indexes.mjs EventQuestion --commit   # apply
+```
+
+Afterwards, `node scripts/remediation/verify-events-schema.mjs` check `[8]`
+proves the index is there and enforcing. Part B has no feature flag, so that
+check is the only gate on it.
+
+## Step: purge event answers (retention, on demand) — `purge-event-answers.mjs`
+
+**Who runs it and when: nobody automatically. A human, whenever they choose.
+There is no cron in this repository** — no `vercel.json`, no cron key in
+`package.json` or `next.config.js`. Do not read a schedule into this section
+that does not exist.
+
+**What makes that acceptable:** the application's read cutoff is unconditional
+and needs no operator. `getAttendees`, `exportAttendees` and `getSignupAnswers`
+return **no answers at all** once 60 days have passed since
+`(endTime ?? startTime)` — whether or not the rows still hold them, and whether
+or not `Event.answersPurgedAt` is set. The answers stop being *reachable* on
+time regardless. What this script buys is that they stop *existing*.
+
+For each `Event` with `answersPurgedAt` unset whose `(endTime ?? startTime)` is
+more than 60 days past, it empties the `answers` list on that event's
+`EventSignup` rows and **then** stamps `answersPurgedAt` — in that order, so an
+event can never claim a purge it did not get. **Signup rows are never deleted**,
+which is what keeps the signup and attendance counts (and the Part D
+dashboards) working on a purged event. Events with no date on file are skipped
+and reported separately. It writes no `RoleAuditLog` row — it has no actor — so
+its record is `Event.answersPurgedAt` plus its own stdout: **redirect that to a
+file.** Run `npx prisma generate` first; `EventSignup.answers` is not in a
+stale client.
+
+```bash
+set -a && . ./.env >/dev/null 2>&1 && set +a && node scripts/remediation/purge-event-answers.mjs                                  # preview
+set -a && . ./.env >/dev/null 2>&1 && set +a && node scripts/remediation/purge-event-answers.mjs --commit > purge-$(date +%F).txt # erase
+```
+
+`verify-events-schema.mjs` `[11]` prints how overdue the purge is, and `[10]`
+fails if any event claims a purge its signups did not get.
+
 ---
 
 ### Order of operations summary
 
-1. `npx prisma db push` (new collections/indexes)
+1. new collections/indexes — `create-auth-allowlist.mjs` /
+   `create-event-phase2-indexes.mjs` (**never** `npx prisma db push`; see Step 0)
 2. `node scripts/remediation/seed-rbac.mjs`
 3. emailLower backfill → schema `@unique` → generate
 4. money backfill (preview → apply) → schema `Int` → generate

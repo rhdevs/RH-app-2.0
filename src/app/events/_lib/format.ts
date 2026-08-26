@@ -112,12 +112,46 @@ export const STATUS_META: Record<
 /* CSV                                                                         */
 /* -------------------------------------------------------------------------- */
 
-/** Escape one field per RFC 4180: quote when it contains "," | '"' | newline. */
+/**
+ * Escape one field per RFC 4180: quote when it contains "," | '"' | newline —
+ * AND neutralise a leading formula character first.
+ *
+ * WHY THIS MATTERS NOW AND DID NOT BEFORE. Every cell this CSV has ever carried
+ * came from a controlled vocabulary or from a profile field. Custom signup
+ * questions put two ATTACKER-AUTHORED strings into it: a QUESTION LABEL, which
+ * becomes a COLUMN HEADER, and a FREE-TEXT ANSWER. A head who types
+ * `=HYPERLINK("https://evil","Click")` as a question label hands a live formula
+ * to every committee member who opens the download in Excel.
+ *
+ * ORDERING IS THE TRAP. NEUTRALISE, THEN QUOTE. Reversing the two yields
+ * `'"=a,b"` — the apostrophe OUTSIDE the quoted field — which is both invalid
+ * CSV and still a formula. The test is: csvField('=a,b') === `"'=a,b"`, with the
+ * apostrophe INSIDE the quotes.
+ *
+ * A NEGATIVE NUMBER IS NOT A FORMULA, and `-5` gets an apostrophe under this
+ * rule and imports as text. Accepted deliberately: the alternative is a
+ * number-shaped exclusion that `-5+cmd` slips straight through. The only
+ * numeric cells here are `number` answers, which nothing downstream sums.
+ *
+ * FIXED HERE AND NOT IN THE CALLER. `EventAttendees.tsx` neutralising its own
+ * cells would be a drift pair — two places that must agree and nothing making
+ * them. Blast radius of this function: one exported wrapper (serializeCsv) and
+ * ONE caller. THE CCA ROSTER EXPORT IS NOT AFFECTED AND NEEDS NO FIX: it is a
+ * different serialiser on a different format (RosterPanel -> downloadXlsx ->
+ * buildXlsx), and `sheetXml` emits every cell as `t="inlineStr"`, an inline
+ * string rather than a formula cell, which Excel never evaluates. Do not
+ * "fix" xlsx.ts by prefixing apostrophes into cells that would then display
+ * them.
+ */
 function csvField(value: string): string {
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  // A leading =, +, - or @ makes Excel and Sheets treat the cell as a FORMULA.
+  // Prefix an apostrophe, which those apps consume as "this is text".
+  // MUST run BEFORE the quoting test below.
+  const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
+  if (/[",\r\n]/.test(safe)) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return value;
+  return safe;
 }
 
 /** Serialize a table (header + rows) to an RFC-4180 CSV string with CRLF. */

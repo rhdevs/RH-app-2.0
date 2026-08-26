@@ -27,6 +27,7 @@ import EventImageField from "./EventImageField";
 import EventGalleryField from "./EventGalleryField";
 import EventAnalytics from "./EventAnalytics";
 import EventAttendees from "./EventAttendees";
+import EventQuestionBuilder from "./EventQuestionBuilder";
 
 type OwnedEvent = RouterOutputs["event"]["getForOwner"]["event"];
 
@@ -49,7 +50,7 @@ function incompleteMessage(message: string): string | null {
   return `Please add: ${missing.join(", ")}.`;
 }
 
-function mapError(e: unknown): string {
+export function mapError(e: unknown): string {
   const message = e instanceof Error ? e.message : "";
   const incomplete = incompleteMessage(message);
   if (incomplete) return incomplete;
@@ -91,6 +92,18 @@ function mapError(e: unknown): string {
   if (message === "NOT_CANCELABLE")
     return "This event is already declined or cancelled, so there's nothing to cancel. Reload the page.";
   if (message === "NO_SUCH_EVENT") return "This event no longer exists.";
+  // saveQuestions refuses this once a signup has landed since the builder's
+  // own query was last read — the race the freeze exists to catch. Retrying
+  // can never succeed: the signup already happened, so the form is
+  // permanently locked for this event. Same non-retryable posture as
+  // NOT_CANCELABLE and NOT_SUBMITTABLE above.
+  if (message === "QUESTIONS_FROZEN")
+    return "Someone signed up while you were editing, so the questions are locked now. Reload the page.";
+  // A question named in the save payload no longer exists on the event —
+  // another head (or another tab) removed it since this one's question list
+  // was fetched. Retrying with the same stale id can never succeed either.
+  if (message === "NO_SUCH_QUESTION")
+    return "One of these questions was removed by another head. Reload the page.";
   return "That didn't save. Try again.";
 }
 
@@ -361,6 +374,13 @@ function DetailsEditor({
       </p>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
+
+      {/* Below the public content, above the contract sentence and the
+          footer actions — the head reads the contract and reaches the
+          primary action AFTER seeing the questions, not before them. Owns
+          its own query/mutation, so it needs nothing from this component but
+          the id. */}
+      <EventQuestionBuilder eventID={event.eventID} />
 
       {/* THE CONTRACT SENTENCE (D-34). This is the ONE authoring screen now —
           /new and EventCreateForm are gone — so everything the head keys in is

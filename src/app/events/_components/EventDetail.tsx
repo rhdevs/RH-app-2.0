@@ -15,8 +15,24 @@ import {
   CarouselPrevious,
   CarouselNext,
 } from "~/components/ui/carousel";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { formatDateRange } from "~/app/events/_lib/format";
 import { ownerLabel } from "~/lib/schemas/event";
+import {
+  EVENT_ANSWER_RETENTION_DAYS,
+  validateAnswers,
+  type EventAnswerValue,
+} from "~/lib/schemas/eventQuestion";
+import EventSignupQuestions, {
+  type EventAnswerDraft,
+} from "~/app/events/_components/EventSignupQuestions";
 
 /**
  * The resident's event page: banner, photo gallery, description and signup.
@@ -30,6 +46,13 @@ export default function EventDetail({ eventID }: { eventID: number }) {
   const query = api.event.getPublic.useQuery({ eventID }, { retry: false });
   const [error, setError] = useState<string | null>(null);
 
+  // The custom-question dialog. NO MUTATION LIVES IN EventSignupQuestions —
+  // this component owns `answers`/`formErrors` and the `signup` call itself,
+  // exactly as the plan requires.
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [answers, setAnswers] = useState<EventAnswerDraft>({});
+  const [formErrors, setFormErrors] = useState<Record<number, string>>({});
+
   const hasMatric = Boolean(session?.user?.hasMatric);
 
   async function invalidate() {
@@ -40,7 +63,12 @@ export default function EventDetail({ eventID }: { eventID: number }) {
   }
 
   const signup = api.event.signup.useMutation({
-    onSuccess: invalidate,
+    onSuccess: async () => {
+      setDialogOpen(false);
+      setAnswers({});
+      setFormErrors({});
+      await invalidate();
+    },
     onError: (e) =>
       setError(
         e.message === "MATRIC_REQUIRED"
@@ -49,7 +77,9 @@ export default function EventDetail({ eventID }: { eventID: number }) {
             ? "This event just filled up."
             : e.message === "SIGNUP_CLOSED"
               ? "Signups have closed for this event."
-              : "That didn’t work. Try again.",
+              : e.message === "ANSWERS_INVALID"
+                ? "Some answers need fixing — check the form above."
+                : "That didn’t work. Try again.",
       ),
   });
   const cancel = api.event.cancelSignup.useMutation({ onSuccess: invalidate });
@@ -79,6 +109,26 @@ export default function EventDetail({ eventID }: { eventID: number }) {
 
   const e = query.data;
   const busy = signup.isPending || cancel.isPending;
+  // A canceled event may still carry questions (someone kept the link) — the
+  // dialog must never render under "Signups are closed.", so it is gated on
+  // the same not-cancelled fact as the button, not just on questions.length.
+  const hasQuestions = e.questions.length > 0 && !e.canceled;
+
+  function submitAnswers() {
+    const answerList: EventAnswerValue[] = Object.entries(answers).map(
+      ([questionID, values]) => ({ questionID: Number(questionID), values }),
+    );
+    // Convenience only — the server runs this SAME function against the
+    // stored questions, inside the lock, and is the real gate.
+    const v = validateAnswers(e.questions, answerList);
+    if (!v.ok) {
+      setFormErrors(v.errors);
+      return;
+    }
+    setFormErrors({});
+    setError(null);
+    signup.mutate({ eventID, answers: v.normalized });
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
@@ -149,6 +199,12 @@ export default function EventDetail({ eventID }: { eventID: number }) {
               <p className="flex items-center gap-2 text-sm font-medium text-emerald-700">
                 <Check className="h-4 w-4" /> You&rsquo;re going
               </p>
+              {e.questions.length > 0 && (
+                <p className="text-xs text-gray-500">
+                  Your answers are saved. To change them, cancel your signup
+                  and sign up again.
+                </p>
+              )}
               <Button
                 variant="outline"
                 className="w-full"
@@ -182,7 +238,14 @@ export default function EventDetail({ eventID }: { eventID: number }) {
               disabled={busy}
               onClick={() => {
                 setError(null);
-                signup.mutate({ eventID });
+                // Phase 1 behaviour, BYTE-FOR-BYTE, when there are no
+                // questions: one tap, no dialog.
+                if (e.questions.length === 0) {
+                  signup.mutate({ eventID });
+                } else {
+                  setFormErrors({});
+                  setDialogOpen(true);
+                }
               }}
             >
               {signup.isPending ? "Signing up…" : "Sign up"}
@@ -191,6 +254,50 @@ export default function EventDetail({ eventID }: { eventID: number }) {
           {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         </div>
       </div>
+
+      {hasQuestions && (
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>A few questions first</DialogTitle>
+              <DialogDescription>
+                {ownerLabel(e.ccaID, e.ccaName)} needs these before you can
+                sign up.
+              </DialogDescription>
+            </DialogHeader>
+
+            <p className="text-xs text-gray-500">
+              Your answers go to this event’s organisers and to JCRC. They
+              stop being available {EVENT_ANSWER_RETENTION_DAYS} days after
+              the event ends.
+            </p>
+
+            <EventSignupQuestions
+              questions={e.questions}
+              value={answers}
+              onChange={(questionID, values) =>
+                setAnswers((prev) => ({ ...prev, [questionID]: values }))
+              }
+              errors={formErrors}
+            />
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => setDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button disabled={busy} onClick={submitAnswers}>
+                {signup.isPending ? "Signing up…" : "Sign up"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {e.publicDescription && (
         <div className="mt-6 whitespace-pre-wrap border-t border-gray-100 pt-6 text-sm leading-relaxed text-gray-700">

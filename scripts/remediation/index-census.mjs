@@ -102,7 +102,11 @@ const db = new PrismaClient();
  *   phase 2's new one   AuthAllowlist (expected ABSENT before the rollout)
  *   profile + grants    UserMatric, ProfileCompletion, PendingRoleGrant, CcaHead
  *   data the app joins  Facilities, Bookings, Posts, UserCCA, Event,
- *                       EventSignup, EventLock
+ *                       EventSignup, EventLock, EventQuestion, EventAttendance
+ *                       (the last two are the events phase-2/3 collections; both
+ *                       are expected ABSENT until create-event-phase2-indexes.mjs
+ *                       has been run for that target, exactly as AuthAllowlist
+ *                       was before its own rollout)
  */
 const EXPECTED = [
   "User",
@@ -125,6 +129,8 @@ const EXPECTED = [
   "Event",
   "EventSignup",
   "EventLock",
+  "EventQuestion",
+  "EventAttendance",
 ];
 
 /**

@@ -1,6 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import type { PrismaClient } from "@prisma/client";
 
+import { editScope, normalizeStatus } from "~/lib/schemas/event";
+
 /**
  * Events feature server helpers: the kill switch, the eventID allocator, and the
  * per-event signup lock. Modelled on services/booking.ts (nextBookingId /
@@ -153,5 +155,91 @@ export async function withEventLock<T>(
     return await fn();
   } finally {
     await db.eventLock.deleteMany({ where: { key } });
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Custom signup questions — the freeze                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * May this event's questions be changed right now? Called by EVERY question
+ * mutation, and called INSIDE withEventLock so "no signups yet" and "write the
+ * questions" cannot interleave with a signup landing.
+ *
+ * TWO CONDITIONS, AND THEY ARE DIFFERENT FACTS.
+ *
+ *   editScope === "none" covers submitted / declined / canceled. `submitted`
+ *   matters most: the questions are part of the event the JCRC reviews, and an
+ *   event in the queue is frozen so the reviewer never approves a form that
+ *   changed underneath them. Same rule, same imported function, as every other
+ *   field — never re-derived here.
+ *
+ *   `published` has editScope "public", which is NOT "none", so a live event
+ *   with zero signups can still gain a question. That is deliberate: questions
+ *   only ever matter once an event is published and open, so freezing them at
+ *   publish would mean they could never be added at all.
+ *
+ *   ZERO SIGNUPS IS THE REAL FREEZE. Editing a live form silently invalidates
+ *   existing answers: a deleted question orphans its answers, a renamed option
+ *   makes a stored single_choice value refer to something that no longer
+ *   exists, and a newly-required question makes every existing signup
+ *   retroactively incomplete with no way to ask anyone.
+ *
+ * QUESTIONS_FROZEN CAN NEVER SUCCEED ON A RETRY, so the UI must not map it to a
+ * "try again" string — see T-35 and the copy in plan 02 §11.2.
+ */
+export async function assertQuestionsEditable(
+  db: PrismaClient,
+  event: { eventID: number; status: string | null },
+): Promise<void> {
+  // QUESTIONS ARE EDITABLE ONLY WHILE THE EVENT IS FULLY EDITABLE — scope
+  // `"all"`, i.e. draft and changes_requested. NOT merely `!== "none"`.
+  //
+  // `editScope("published")` is `"public"` (schemas/event.ts:80-81), so the old
+  // `!== "none"` test let `saveQuestions` succeed on a LIVE, JCRC-APPROVED event
+  // that simply had no signups yet. The builder never mounts there
+  // (EventManage.tsx renders DetailsEditor only at scope `"all"`), but the
+  // server is the boundary and a direct tRPC call from the owning head was
+  // enough: submit innocuous questions, get approved, publish, then swap in
+  // "list your medical conditions" before the first resident signs up. The JCRC
+  // would never see it.
+  //
+  // That defeats the exact purpose of showing the reviewer the questions — a
+  // reviewer approving an event is approving what residents will be asked. The
+  // user ruled on 2026-08-27: freeze at approval. A head who spots a typo after
+  // approval needs JCRC to send the event back, which is the same round trip
+  // any other post-approval change already takes.
+  if (editScope(normalizeStatus(event.status)) !== "all") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "EVENT_LOCKED",
+    });
+  }
+  // UNREACHABLE TODAY, AND KEPT ON PURPOSE.
+  //
+  // Freezing at approval (above) made this branch dead: `signup` refuses
+  // anything but `published` (routers/event.ts:2340), `published` is not scope
+  // `"all"`, and no transition returns a published event to an editable scope
+  // — `withdraw` is submitted -> draft only. So an event that is editable here
+  // can never have a signup, and QUESTIONS_FROZEN cannot fire. Confirmed in a
+  // browser on 2026-08-27: saving questions on a published event with a real
+  // signup returns EVENT_LOCKED, not QUESTIONS_FROZEN.
+  //
+  // Left standing as defence in depth, because it is the guard that stops
+  // answers being invalidated under people who already gave them, and the
+  // status machine is exactly the kind of thing a later phase edits. Deleting
+  // it would silently transfer that protection to a rule three files away.
+  // Its user-facing copy and the T-35 "can never succeed on a retry" mapping
+  // are correspondingly unreachable — do not spend time tuning them, and do
+  // not treat their absence from the UI as a bug.
+  const signups = await db.eventSignup.count({
+    where: { eventID: event.eventID },
+  });
+  if (signups > 0) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "QUESTIONS_FROZEN",
+    });
   }
 }
