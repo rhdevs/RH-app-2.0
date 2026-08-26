@@ -28,6 +28,7 @@ import EventGalleryField from "./EventGalleryField";
 import EventAnalytics from "./EventAnalytics";
 import EventAttendees from "./EventAttendees";
 import EventQuestionBuilder from "./EventQuestionBuilder";
+import EventScannerPicker from "./EventScannerPicker";
 
 type OwnedEvent = RouterOutputs["event"]["getForOwner"]["event"];
 
@@ -381,6 +382,22 @@ function DetailsEditor({
           its own query/mutation, so it needs nothing from this component but
           the id. */}
       <EventQuestionBuilder eventID={event.eventID} />
+
+      {/* THE DOOR LIST sits BELOW the questions builder, which is where the
+          plan puts it and which is also why the blank-draft reuse rule has to
+          know about it: the same submit-without-scrolling path that could
+          inherit somebody's abandoned questions could inherit their door list
+          too, and that one is an authorisation defect rather than a tidiness
+          one. `create`'s reuse branch refuses a draft carrying either.
+
+          Renders nothing for a hall event, and the server refuses one — see the
+          component. */}
+      <EventScannerPicker
+        eventID={event.eventID}
+        ccaID={event.ccaID}
+        scannerUserIDs={event.scannerUserIDs}
+        onSaved={onInvalidate}
+      />
 
       {/* THE CONTRACT SENTENCE (D-34). This is the ONE authoring screen now —
           /new and EventCreateForm are gone — so everything the head keys in is
