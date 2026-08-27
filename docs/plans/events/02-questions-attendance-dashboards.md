@@ -2535,6 +2535,22 @@ walk-in is D-64.
 
 ### D-64 — Walk-ins are checked in regardless, by QR or by name
 
+> **RULING 2026-08-28 — `event.resolveWalkIn` AND THE "SOMEONE NOT ON THE LIST"
+> CONTROL ARE DROPPED.** The user decided this is not needed. Walk-ins are still
+> checked in by QR, which is the paragraph immediately below and which is built
+> and verified; what is dropped is the by-NAME path for a walk-in whose phone is
+> also unusable.
+>
+> **The consequence, stated plainly so nobody rediscovers it as a bug:** a person
+> who did not sign up AND cannot show a code cannot be recorded at the door at
+> all. The roster lists signups only, so there is no row to tick. That is the
+> intersection of both fallbacks failing, and it is now a deliberate gap rather
+> than an oversight.
+>
+> Do not re-add this without asking — it was considered and declined, and the
+> resolver would be a lookup primitive on the door page, which is the one thing
+> that page deliberately does not have.
+
 **By QR:** step 8 of D-60 records `wasSignedUp: false` and the write proceeds. The card says
 "Not on the list — checked in anyway". **There is no branch that refuses.**
 

@@ -110,28 +110,71 @@ export const ATTENDANCE_OPENS_BEFORE_SECONDS = 60 * 60;
 export const ATTENDANCE_CLOSES_AFTER_SECONDS = 60 * 60;
 
 /**
- * The window a door may check people in. Both stored columns are nullable and
- * default to null, which means "derive it" — a head who never touches the
- * setting gets start−1h to end+1h without a migration having to backfill
- * anything.
+ * THE WINDOW A DOOR MAY CHECK PEOPLE IN. Three states, not two.
  *
- * `endTime` is optional on an event, so it falls back to `startTime`. An event
- * with no `startTime` at all has no derivable window and returns null, which
- * callers must read as CLOSED rather than as open-forever.
+ *   1. BOTH NULL — nobody has touched the timing, so it is DERIVED:
+ *      start − 1h through end + 1h. Every row created so far is in this state,
+ *      and it is what a head who never opens the Door section gets.
+ *
+ *   2. HEAD-CONTROLLED, WITH A CLOSE TIME — explicit `opensAt` and `closesAt`.
+ *
+ *   3. HEAD-CONTROLLED, OPEN-ENDED — an explicit `opensAt` and `closesAt: null`,
+ *      meaning "open until I close it". Closing writes `closesAt = now`.
+ *
+ * WHY `closesAt: null` CHANGES MEANING ONCE `opensAt` IS SET, and why that is
+ * not the sentinel trap this repo keeps hitting. The alternative was a magic
+ * far-future timestamp or a fourth column, and both are worse: a sentinel is a
+ * second value meaning something the type does not say, and a new `Event`
+ * column is an SCRC disclosure decision every time. Here the PAIR carries the
+ * state — "no close time" is only readable as such when there IS an open time
+ * beside it, so no single field is doing double duty on its own.
+ *
+ * A DOOR WITH NO CLOSE TIME STAYS OPEN, and that is deliberate: a head who
+ * opens it and forgets is a door that accepts a check-in the next morning,
+ * which is a wrong row in a table nothing punishes anyone with. A door that
+ * shuts on its own mid-queue is a committee that cannot check people in and
+ * cannot see why. The failure directions are not symmetric.
+ *
+ * `null` OUT OF THIS FUNCTION MEANS CLOSED, NEVER OPEN-FOREVER. An event with
+ * no `startTime` and no explicit open time has no derivable window at all;
+ * callers must read that as shut rather than as unrestricted.
  */
 export function resolveAttendanceWindow(event: {
   startTime: number | null;
   endTime: number | null;
   attendanceOpensAt: number | null;
   attendanceClosesAt: number | null;
-}): { opensAt: number; closesAt: number } | null {
+}): { opensAt: number; closesAt: number | null } | null {
   const { startTime, endTime, attendanceOpensAt, attendanceClosesAt } = event;
-  if (startTime == null) return null;
-  const opensAt = attendanceOpensAt ?? startTime - ATTENDANCE_OPENS_BEFORE_SECONDS;
-  const closesAt =
-    attendanceClosesAt ?? (endTime ?? startTime) + ATTENDANCE_CLOSES_AFTER_SECONDS;
-  if (closesAt <= opensAt) return null;
-  return { opensAt, closesAt };
+
+  // State 1 — untouched. Derive, and require a startTime to derive from.
+  if (attendanceOpensAt == null && attendanceClosesAt == null) {
+    if (startTime == null) return null;
+    return {
+      opensAt: startTime - ATTENDANCE_OPENS_BEFORE_SECONDS,
+      closesAt: (endTime ?? startTime) + ATTENDANCE_CLOSES_AFTER_SECONDS,
+    };
+  }
+
+  // States 2 and 3 — the head owns the timing. An open time is required: if
+  // they somehow have only a close time, fall back to the derived open, and if
+  // that is not derivable either the door is shut rather than open-ended.
+  const opensAt = attendanceOpensAt ?? (startTime != null ? startTime - ATTENDANCE_OPENS_BEFORE_SECONDS : null);
+  if (opensAt == null) return null;
+
+  // closesAt null here is OPEN-ENDED, not "derive" — see the docblock.
+  if (attendanceClosesAt != null && attendanceClosesAt <= opensAt) return null;
+  return { opensAt, closesAt: attendanceClosesAt };
+}
+
+/** Is the door open at `nowSec`? `closesAt: null` is open-ended, not closed. */
+export function doorIsOpen(
+  w: { opensAt: number; closesAt: number | null } | null,
+  nowSec: number,
+): boolean {
+  if (!w) return false;
+  if (nowSec < w.opensAt) return false;
+  return w.closesAt == null || nowSec <= w.closesAt;
 }
 
 /* -------------------------------------------------------------------------- */

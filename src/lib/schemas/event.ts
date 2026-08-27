@@ -297,6 +297,16 @@ export const updateEventInput = z
       .optional(),
     bannerUrl: z.string().url().nullable().optional(),
     photoUrls: z.array(z.string().url()).max(EVENT_MAX_PHOTOS).optional(),
+    // THE DOOR TIMING. Nullable AND optional, and the two are different:
+    // `undefined` means "leave it alone", `null` means "clear it".
+    //   both null       -> back to the derived default (start-1h .. end+1h)
+    //   opensAt set,
+    //   closesAt null   -> OPEN-ENDED: open until the head closes it
+    //   both set        -> an explicit window
+    // See resolveAttendanceWindow in lib/schemas/eventAttendance.ts, which is
+    // the single reader of that three-state encoding.
+    attendanceOpensAt: epochSecondsField.nullable().optional(),
+    attendanceClosesAt: epochSecondsField.nullable().optional(),
   })
   .superRefine((val, ctx) => {
     refineTimes(val, ctx);

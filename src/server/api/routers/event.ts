@@ -25,6 +25,7 @@ import {
   saveScannersInput,
   parseCheckInPayload,
   resolveAttendanceWindow,
+  doorIsOpen,
   normalizeMethod,
 } from "~/lib/schemas/eventAttendance";
 import {
@@ -936,6 +937,28 @@ export const eventRouter = createTRPCRouter({
         data.publicDescription = input.publicDescription.trim() || null;
       if (input.bannerUrl !== undefined) data.bannerUrl = input.bannerUrl;
       if (input.photoUrls !== undefined) data.photoUrls = input.photoUrls;
+
+      // THE DOOR TIMING IS WRITABLE IN BOTH SCOPES, and this is THE ONE
+      // DELIBERATE WIDENING of the "public" scope in this feature.
+      //
+      // Everything else about a published event is frozen — that is the whole
+      // point of freezing at approval, so a JCRC approves what residents get.
+      // But the check-in window and the scanner list are the two things a head
+      // needs to change ON THE DAY: registration starts earlier than planned,
+      // the event overruns, or the committee member who was going to work the
+      // door is ill. Freezing those does not protect the reviewer's decision —
+      // neither is visible to a resident or part of what was approved — it just
+      // means a head stands at a door unable to fix the evening in front of
+      // them.
+      //
+      // (The scanner list is written by `saveScanners`, which gates on
+      // ownership alone for the same reason.)
+      if (input.attendanceOpensAt !== undefined) {
+        data.attendanceOpensAt = input.attendanceOpensAt;
+      }
+      if (input.attendanceClosesAt !== undefined) {
+        data.attendanceClosesAt = input.attendanceClosesAt;
+      }
 
       if (scope === "all") {
         // Merge-then-check: a client may send endTime alone, so validate against
@@ -2696,7 +2719,9 @@ export const eventRouter = createTRPCRouter({
           message: "DOOR_NOT_OPEN",
         });
       }
-      if (nowSec > attWindow.closesAt) {
+      // closesAt null is OPEN-ENDED (the head opened the door and has not
+      // closed it), not "closed". Only a real close time in the past shuts it.
+      if (attWindow.closesAt != null && nowSec > attWindow.closesAt) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "DOOR_CLOSED",
@@ -2775,7 +2800,9 @@ export const eventRouter = createTRPCRouter({
           message: "DOOR_NOT_OPEN",
         });
       }
-      if (nowSec > attWindow.closesAt) {
+      // closesAt null is OPEN-ENDED (the head opened the door and has not
+      // closed it), not "closed". Only a real close time in the past shuts it.
+      if (attWindow.closesAt != null && nowSec > attWindow.closesAt) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "DOOR_CLOSED",
@@ -2905,10 +2932,9 @@ export const eventRouter = createTRPCRouter({
         published: normalizeStatus(event.status) === "published",
         opensAt: attWindow?.opensAt ?? null,
         closesAt: attWindow?.closesAt ?? null,
-        open:
-          attWindow != null &&
-          nowSec >= attWindow.opensAt &&
-          nowSec <= attWindow.closesAt,
+        // doorIsOpen, so an open-ended window (closesAt null) reads as OPEN
+        // rather than as closed by a null comparison.
+        open: doorIsOpen(attWindow, nowSec),
         count,
       };
     }),
