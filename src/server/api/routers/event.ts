@@ -25,6 +25,7 @@ import {
   saveScannersInput,
   parseCheckInPayload,
   resolveAttendanceWindow,
+  normalizeMethod,
 } from "~/lib/schemas/eventAttendance";
 import {
   mintCheckInToken,
@@ -2982,6 +2983,227 @@ export const eventRouter = createTRPCRouter({
           };
         }),
         checkedInCount: attendance.length,
+      };
+    }),
+
+  /**
+   * THE HEAD'S ATTENDANCE NUMBERS — a SEPARATE query, not a widened
+   * `getSignupStats`.
+   *
+   * `getSignupStats` is Phase 1 behaviour and must keep working with the
+   * attendance flag OFF. Merging the two would make the head's signup charts
+   * start failing because a Phase 3 switch is off, which is a regression
+   * dressed as a feature. Two queries fail independently; one merged query
+   * fails together.
+   *
+   * `walkIns` and `turnedUp` are counted from the STORED `wasSignedUp`, never
+   * re-derived by re-checking the signup table. A resident who checks in and
+   * then cancels their signup stays a `turnedUp`, because that is what
+   * happened.
+   */
+  getAttendanceStats: identifiedProcedure
+    .input(eventIdInput)
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      await assertAttendanceEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
+
+      const [signups, attendance] = await Promise.all([
+        ctx.db.eventSignup.findMany({
+          where: { eventID: input.eventID },
+          select: { userID: true },
+        }),
+        ctx.db.eventAttendance.findMany({
+          where: { eventID: input.eventID },
+          select: { userID: true, wasSignedUp: true, method: true },
+        }),
+      ]);
+
+      const attended = new Set(attendance.map((a) => a.userID));
+      const noShowIDs = signups
+        .map((s) => s.userID)
+        .filter((id) => !attended.has(id));
+
+      // resolveAttendees, so PII is joined LIVE like every other attendee read.
+      // NOT audited — the same call, same authorisation and same data the head
+      // already gets through getAttendees.
+      const resolved = await resolveAttendees(ctx.db, noShowIDs);
+      const window = resolveAttendanceWindow(event);
+
+      return {
+        signedUp: signups.length,
+        checkedIn: attendance.length,
+        // STORED, not re-derived (T-36).
+        walkIns: attendance.filter((a) => a.wasSignedUp !== true).length,
+        turnedUp: attendance.filter((a) => a.wasSignedUp === true).length,
+        // (name, block, telegram), per D-71.
+        //
+        // TELEGRAM IS NOT A WIDENING HERE, which is the only reason it is
+        // included: `getAttendees` already returns `telegramHandle` for every
+        // signup to this same head, through `resolveAttendees`, rendered in the
+        // attendee table on this same page. Same authorisation
+        // (`loadOwnedEvent`), same person, same data. Omitting it would only
+        // make the head cross-reference two lists to do the thing the panel's
+        // own copy tells them it is for — chasing their own members.
+        noShows: noShowIDs.map((id) => ({
+          userID: id,
+          displayName: resolved.get(id)?.displayName ?? null,
+          block: resolved.get(id)?.block ?? null,
+          telegramHandle: resolved.get(id)?.telegramHandle ?? null,
+        })),
+        doorOpens: window?.opensAt ?? null,
+        doorCloses: window?.closesAt ?? null,
+        byMethod: {
+          qr: attendance.filter((a) => normalizeMethod(a.method) === "qr").length,
+          manual: attendance.filter((a) => normalizeMethod(a.method) === "manual")
+            .length,
+        },
+      };
+    }),
+
+  /**
+   * THE JCRC'S HALL-WIDE ROLL-UP.
+   *
+   * A DATE RANGE, NOT A TERM. The brief asked for "every event this term" and
+   * this repository has no notion of a term — there is no term, semester or
+   * academic-year model anywhere in the schema. Inventing one would be a second
+   * calendar to maintain, wrong the year the academic calendar shifts, and
+   * needed by nothing else. A date range is honest about what it is, is always
+   * correct, and can be pointed at a term by whoever knows when it started.
+   *
+   * THE LIVE `reviewEvents` RE-CHECK IS NOT OPTIONAL even though
+   * `roleManagerProcedure` already gated the call. Same I-5 pattern `decide`
+   * and `reviewerCancel` both use: the procedure builder proves the caller was
+   * a manager when the session was minted, and the re-read proves they still
+   * are. A hall-wide roll-up of every CCA's turnout is a disclosure surface and
+   * gets the same treatment as a decision.
+   *
+   * DELIBERATELY NOT GATED ON THE ATTENDANCE FLAG. The event, signup and
+   * calendar-density panels are all meaningful with the door layer switched
+   * off; only the turnout columns are empty, and they render as "—" rather than
+   * 0% precisely so that absence reads as absence.
+   */
+  getHallStats: roleManagerProcedure
+    .input(
+      z.object({
+        fromSec: z.number().int().positive(),
+        toSec: z.number().int().positive(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      if (!computeCapabilities(roles).reviewEvents) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "CAPABILITY_REQUIRED:reviewEvents",
+        });
+      }
+      if (input.toSec <= input.fromSec) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "BAD_RANGE" });
+      }
+
+      const events = await ctx.db.event.findMany({
+        where: {
+          startTime: { gte: input.fromSec, lte: input.toSec },
+          // Drafts are nobody's business but their owner's, and a declined
+          // event never existed as far as the hall is concerned.
+          status: { in: ["published", "canceled"] },
+        },
+        select: {
+          eventID: true,
+          ccaID: true,
+          title: true,
+          startTime: true,
+          status: true,
+        },
+        orderBy: { startTime: "asc" },
+      });
+
+      const eventIDs = events.map((e) => e.eventID);
+      const [signups, attendance, names] = await Promise.all([
+        eventIDs.length === 0
+          ? Promise.resolve([] as { eventID: number }[])
+          : ctx.db.eventSignup.findMany({
+              where: { eventID: { in: eventIDs } },
+              select: { eventID: true },
+            }),
+        eventIDs.length === 0
+          ? Promise.resolve([] as { eventID: number; wasSignedUp: boolean | null }[])
+          : ctx.db.eventAttendance.findMany({
+              where: { eventID: { in: eventIDs } },
+              select: { eventID: true, wasSignedUp: true },
+            }),
+        attachCcaNames(ctx.db, nameableCcaIDs(events)),
+      ]);
+
+      const signupsBy = new Map<number, number>();
+      for (const s of signups) {
+        signupsBy.set(s.eventID, (signupsBy.get(s.eventID) ?? 0) + 1);
+      }
+      const checkedBy = new Map<number, number>();
+      const walkBy = new Map<number, number>();
+      for (const a of attendance) {
+        checkedBy.set(a.eventID, (checkedBy.get(a.eventID) ?? 0) + 1);
+        if (a.wasSignedUp !== true) {
+          walkBy.set(a.eventID, (walkBy.get(a.eventID) ?? 0) + 1);
+        }
+      }
+
+      const rows = events.map((e) => ({
+        eventID: e.eventID,
+        ccaID: e.ccaID,
+        // ownerName so a hall event reads "Hall" and a deleted CCA still reads
+        // as an id. The CLIENT calls ownerLabel on the pair — it must never
+        // guard with `{ccaName && …}`, which is how a hall event's owner line
+        // silently vanishes (T-4).
+        ccaName: ownerName(e.ccaID, names),
+        title: e.title,
+        startTime: e.startTime,
+        status: normalizeStatus(e.status),
+        signups: signupsBy.get(e.eventID) ?? 0,
+        checkedIn: checkedBy.get(e.eventID) ?? 0,
+        walkIns: walkBy.get(e.eventID) ?? 0,
+      }));
+
+      // Grouped by OWNER, with hall events collapsed under a single null key so
+      // "Hall" is one row rather than one row per hall event.
+      const byCcaMap = new Map<
+        string,
+        { ccaID: number | null; ccaName: string | null; events: number; signups: number; checkedIn: number }
+      >();
+      for (const r of rows) {
+        const key = r.ccaID == null ? "hall" : String(r.ccaID);
+        const cur =
+          byCcaMap.get(key) ??
+          { ccaID: r.ccaID, ccaName: r.ccaName, events: 0, signups: 0, checkedIn: 0 };
+        cur.events += 1;
+        cur.signups += r.signups;
+        cur.checkedIn += r.checkedIn;
+        byCcaMap.set(key, cur);
+      }
+
+      // Weeks keyed by the UTC Monday, so the buckets are stable regardless of
+      // who is reading and from where.
+      const byWeekMap = new Map<string, number>();
+      for (const r of rows) {
+        if (r.startTime == null) continue;
+        const d = new Date(r.startTime * 1000);
+        const day = (d.getUTCDay() + 6) % 7; // Monday = 0
+        d.setUTCDate(d.getUTCDate() - day);
+        const key = d.toISOString().slice(0, 10);
+        byWeekMap.set(key, (byWeekMap.get(key) ?? 0) + 1);
+      }
+
+      return {
+        events: rows,
+        byCca: [...byCcaMap.values()].sort((a, b) => b.events - a.events),
+        byWeek: [...byWeekMap.entries()]
+          .map(([weekStart, count]) => ({ weekStart, events: count }))
+          .sort((a, b) => a.weekStart.localeCompare(b.weekStart)),
       };
     }),
 

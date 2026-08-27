@@ -1,6 +1,10 @@
 # Pending database + ops tasks — Events Part C
 
-**Status: NOT YET RUN.** Everything here needs a network where **TCP 27017 is not
+**Status: T1, T2, T3(local), T4, T5 and T10 RUN AND PASSED on 2026-08-27/28.** T3 still
+needs doing in **Vercel Production** — the secret set here is local-dev only. T6/T11
+(a real door) and T12-T17 remain. Original note follows.
+
+**ORIGINALLY:** Everything here needs a network where **TCP 27017 is not
 firewalled outbound**. Part C was designed and implemented without database
 access, so nothing below has been executed and no figure in it is measured.
 
@@ -320,6 +324,58 @@ until someone stands at a door:
 
 - [ ] Done. Event used, and what actually broke:
 
+## RESULTS — 2026-08-28, run against production with network access restored
+
+**T1 — `EventAttendance` unique index: CREATED AND PROVEN ENFORCING.**
+Census delta was exactly two lines (`_id_` and `event_attendee`), index count
+112 -> 114, collections 44 -> 45, and `User.email_unique_ci` present and
+unchanged. Enforcement proved by inserting twice against `eventID 999999`: the
+second was refused with `P2002`. Probe row deleted.
+
+**T2 — `verify-events-schema.mjs`: PASS, exit 0**, with no `--pre-rollout`. Check
+[9] now reads OK rather than INFO.
+
+**T3 — local only.** `EVENT_QR_SECRET` generated and written to `.env`, which is
+gitignored. **PRODUCTION STILL NEEDS ITS OWN**, set in Vercel and followed by a
+redeploy; env changes do not apply to existing deployments.
+
+**T4 — the door was switched on for testing and is now OFF again.** The flag row
+exists and reads `"off"`. It ships dark, as intended.
+
+**T5 — measured:** Event 1, EventSignup 1, EventQuestion 0, EventAttendance 0,
+EventLock 0, `event.*` audit 2, Bookings 17,475 of which 3,857 carry `ccaID: 0`.
+Flags: `events.enabled=on`, `cca.recruitment=open`.
+
+**T10 — the switch-on order was followed and works.** `set-attendance-flag.mjs`
+refused nothing because both preconditions were already met; the off-path was
+used afterwards with no checks blocking it.
+
+**What was verified end to end in a browser, against real data:**
+
+- The **hall-wide dashboard renders** — range buttons, the by-CCA bar, the weekly
+  area chart, and the table showing `—` for both Checked in and Turnout on an
+  event with no attendance. `ccaName` resolved to "RH Developers" correctly.
+- The **door page renders** with the window open, "Start camera" enabled, and the
+  manual list showing its honest empty state.
+- **A real token was minted, built into `RH1|{userID}|{tag}`, and scanned.** The
+  scan recorded a walk-in with the name resolved.
+- **THE DOUBLE SCAN IS IDEMPOTENT.** The second scan returned
+  `alreadyCheckedIn: true` with the count STILL 1 and the same `checkedInAt`.
+  This is the `P2002` path, and it was unreachable until T1 ran.
+- A wrong token and pure garbage BOTH return `BAD_QR` — no enumeration oracle.
+- `undoCheckIn` deleted the row and wrote an audit row carrying
+  `targetUserID`; a second undo returned `NOT_CHECKED_IN`.
+- `checkInManual` recorded `method: "manual"`, and was idempotent too.
+- The **head's turnout panel renders** with `Turnout: —` where `signedUp` is 0
+  and `checkedIn` is 1 — the exact case that would otherwise print `NaN%`.
+- Check-ins are NOT audited; only submit, approve and undo were.
+
+**All test data deleted.** Final state: Event 1 (the user's own), EventSignup 1,
+EventAttendance 0, EventQuestion 0, EventLock 0, `event.*` audit 2.
+
+**STILL NOT DONE:** T3 in production, T6/T11 (a real door, real phones, a real
+camera — none of the camera path has ever run), and T12-T17.
+
 ## Notes for whoever runs this
 
 Everything in Part C was written against a database nobody could read. Treat
@@ -434,3 +490,66 @@ was implemented; they are deliberately NOT being added blind, because a decode
 path that cannot be tested here is a worse risk than a slow one that works.
 
 - [ ] Run. Phone/OS: ___ · preview smooth: ___ · scan-to-card: ___ s
+
+## T16 — Index `Event` for the hall dashboard's range scan
+
+`event.getHallStats` (Part D) is the first query in the app to filter `Event` by
+**time**:
+
+```
+where: { startTime: { gte, lte }, status: { in: ["published", "canceled"] } }
+```
+
+`Event` carries exactly one index — `@@index([ccaID, status], map: "cca_status")`
+(`schema.prisma:816`) — which leads with `ccaID` and is therefore useless to a
+query that does not mention one. **Every load of `/admin/events/insights`, and
+every click on one of its four range buttons, is a full collection scan of
+`Event`.** Statically provable from the schema; how much it costs is not, because
+nobody here can count the collection.
+
+The right index is `{ status: 1, startTime: 1 }` — equality first, range second,
+which is the order Mongo can actually use. It is NOT being added to
+`schema.prisma` blind, because an index that exists in the schema and not in the
+database is a lie the census will report, and because this may be cheap enough at
+the real row count to not be worth an index at all.
+
+- [ ] Count `Event`. Total: ___ · with `status` in {published, canceled}: ___
+- [ ] `db.Event.find({ startTime: { $gte: <now-180d>, $lte: <now+365d> },
+      status: { $in: ["published","canceled"] } }).explain("executionStats")` —
+      record `totalDocsExamined` vs `nReturned` and `executionTimeMillis`: ___
+- [ ] If `totalDocsExamined` is more than ~10× `nReturned`, create
+      `{ status: 1, startTime: 1 }`, name it `status_start`, and add it to
+      `create-event-phase2-indexes.mjs` as a named target **and** to
+      `index-census.mjs`'s `EXPECTED`, so the two stay in step.
+- [ ] Re-run the census before and after. **`prisma db push` silently drops
+      non-schema indexes** — if this index is created by hand rather than via the
+      schema, any later `db push` will remove it and nothing will fail loudly.
+
+`EventSignup` and `EventAttendance` need nothing here: `EventSignup` already has
+`@@index([eventID], map: "eventID")` plus `@@unique([eventID, userID])`, and
+`EventAttendance`'s `event_attendee` unique index leads with `eventID`, which is
+exactly what the dashboards' `{ eventID: { in: [...] } }` reads want. Both
+verified in `schema.prisma`, not measured.
+
+## T17 — How many events does the hall-wide page actually have to draw?
+
+`getHallStats` takes **no `take` and no cap on the span of the range**, and
+`HallInsights` draws **one bar group per event** with `interval={0}` on the X
+axis, meaning every event gets a rendered axis label. At a few dozen events that
+is the right chart. At several hundred it is an unreadable smear, and the table
+below it becomes the only usable panel on the page.
+
+The plan (D-76) specifies "one group per event", so this is **not** being
+silently capped — but whoever switches this on should know the number before a
+JCRC member does.
+
+- [ ] Count `Event` rows with `status` in {published, canceled} and `startTime`
+      inside the default window (now − 180 d → now + 365 d): ___
+- [ ] Of those, how many have at least one `EventAttendance` row — i.e. how many
+      bars the Turnout chart actually draws, since it filters to `checkedIn > 0`: ___
+- [ ] If the first number is comfortably over ~60, the honest fixes, in order of
+      preference: (a) sort the Turnout chart by attendance and draw the top N with
+      a caption saying so, leaving the table complete; (b) add a `take` to the
+      procedure with the truncation stated on screen. Do **not** cap it silently —
+      a chart that quietly omits a CCA's event is the same defamation problem D-76
+      exists to prevent, wearing a different hat.

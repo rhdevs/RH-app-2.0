@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import EventReviewQueue from "../_components/events/EventReviewQueue";
 import HallEventsPanel from "../_components/events/HallEventsPanel";
 
@@ -16,7 +18,18 @@ import HallEventsPanel from "../_components/events/HallEventsPanel";
 export default function AdminEventsPage() {
   return (
     <div className="space-y-8">
-      <h1 className="text-xl font-semibold text-gray-900">Events</h1>
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h1 className="text-xl font-semibold text-gray-900">Events</h1>
+        {/* The hall-wide view is a SUB-PAGE, not a new admin tab: /admin/events
+            is already a tab, and AdminShell's list is left alone. Reached from
+            here so it inherits this route's layout gate. */}
+        <Link
+          href="/admin/events/insights"
+          className="text-sm text-blue-700 underline"
+        >
+          Across the hall →
+        </Link>
+      </div>
       <HallEventsPanel />
       <EventReviewQueue />
     </div>
