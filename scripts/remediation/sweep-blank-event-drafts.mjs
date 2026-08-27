@@ -43,6 +43,16 @@
  *   8. no RoleAuditLog row carries this targetEventID
  *                                            — nothing worth recording happened
  *   9. createdAt is older than 30 days       — not a head's work in progress
+ *  10. scannerUserIDs is empty               — no door list; deleting one
+ *                                              discards a decision about people,
+ *                                              and `create`'s reuse branch
+ *                                              already refuses such a row. The
+ *                                              check-in WINDOW is deliberately
+ *                                              NOT a blocker: it is a preference
+ *                                              about a minute of the day, and
+ *                                              blocking on it would make this
+ *                                              sweep refuse the rows it exists
+ *                                              to remove.
  *
  * ---------------------------------------------------------------------------
  * WHY A HARD DELETE IS ACCEPTABLE HERE WHEN D-21 FORBIDS ONE IN THE APP
@@ -398,6 +408,36 @@ async function evaluate(row, nowMs) {
         `${Array.isArray(row.photoUrls) ? `${row.photoUrls.length} photo(s)` : "non-array value"})`,
     );
   } else notes.push(`c4 no gallery`);
+
+  // -- 10. nominated scanners (Part C) --------------------------------------
+  // A DRAFT CARRYING A DOOR LIST IS NOT BLANK, AND DELETING IT DESTROYS A
+  // DECISION ABOUT PEOPLE — which is a different class of thing from the
+  // schedule fields above, and the reason this is a blocker while the check-in
+  // WINDOW deliberately is not. A head who set a window expressed a preference
+  // about a minute of the day and can re-set it in seconds; a head who
+  // nominated three committee members made a choice about who is trusted at a
+  // door, and a sweep silently discarding that is indistinguishable from the
+  // app losing it.
+  //
+  // IT MUST AGREE WITH `create`'s REUSE BRANCH, which already refuses to hand
+  // back a draft whose `scannerUserIDs` is non-empty (routers/event.ts). A row
+  // that is reusable-but-not-sweepable, or sweepable-but-not-reusable, is the
+  // state that produces the surprises: without this the two mechanisms disagree
+  // and the sweep deletes exactly the rows the reuse rule was taught to
+  // protect. REPORTED, never deleted — an operator removes it by judgement.
+  //
+  // Non-array values block too, via isEmptyArray: an unexpected shape here is
+  // something somebody stored, not an empty list.
+  if (!isEmptyArray(row?.scannerUserIDs)) {
+    blockers.push(
+      `c10 scannerUserIDs not empty (` +
+        `${
+          Array.isArray(row.scannerUserIDs)
+            ? `${row.scannerUserIDs.length} nominated scanner(s)`
+            : "non-array value"
+        }) — a door list is a decision about people; REPORTED, not deleted`,
+    );
+  } else notes.push(`c10 no nominated scanners`);
 
   // -- 5. booking -----------------------------------------------------------
   if (!isAbsentOrNull(row?.bookingID)) {

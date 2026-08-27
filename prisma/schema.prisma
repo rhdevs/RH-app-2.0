@@ -334,7 +334,7 @@ model RoleAuditLog {
   /// pending.claim | pending.revoke | booking.denied.shadow |
   /// ccaHead.grant | ccaHead.revoke | ccaHead.transfer |
   /// event.approve | event.reject | event.publish | event.cancel |
-  /// event.attendees.export |
+  /// event.attendees.export | event.checkin.undo |
   /// user.detail.read | user.profile.update | user.delete |
   /// scrc.candidate.read |
   /// authAllowlist.add | authAllowlist.remove | identity.rekey
@@ -943,6 +943,47 @@ model EventQuestion {
   createdAt  DateTime? @default(now())
 
   @@unique([eventID, questionID], map: "event_question")
+}
+
+/// One person checked in at one event's door. A HARD-DELETE on undo (the row is
+/// removed and the undo is audited), which keeps the unique index clean and
+/// makes the attendance count a simple row count — the same reasoning as
+/// EventSignup's cancel.
+///
+/// I-2: every scalar nullable or defaulted. And I-2 is NOT a licence to omit
+/// them: every writer sets all six EXPLICITLY, because `{ wasSignedUp: false }`
+/// matches a STORED false and NOT an absent key (T-12).
+///
+/// THE UNIQUE INDEX IS WHAT MAKES A RE-SCAN IDEMPOTENT, and a Prisma `@@unique`
+/// creates NOTHING on MongoDB. Until
+/// `scripts/remediation/create-event-phase2-indexes.mjs EventAttendance --commit`
+/// has been run AND proven to enforce (pending task T1), `checkIn`'s P2002
+/// branch is unreachable and every double scan writes a second row, silently.
+/// That is why `events.attendance.enabled` must not be switched on before T1/T2
+/// pass. NEVER `prisma db push` on this cluster — it drops `User.email_unique_ci`.
+model EventAttendance {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  eventID     Int
+  /// CANONICAL userID (I-1) of the person who attended.
+  userID      String
+  checkedInAt DateTime? @default(now())
+  /// CANONICAL userID (I-1) of the SCANNER. An identity field: never expose it
+  /// to the hall-office tier. No oversight procedure reads this collection
+  /// today, which is why it needs no redaction list — see D-69.
+  checkedInBy String?
+  /// "qr" | "manual". Enforced in code (lib/schemas/eventAttendance.ts), never
+  /// a DB enum, for the same reason Event.status is a String.
+  method      String?   @default("qr")
+  /// Was this person on the signup list AT THE MOMENT THEY WERE SCANNED?
+  /// SNAPSHOTTED, never re-derived: cancelSignup is a hard delete with no time
+  /// gate, so a resident who checks in and then cancels would otherwise
+  /// retroactively become a walk-in. See T-36.
+  wasSignedUp Boolean?  @default(false)
+
+  /// No separate @@index([eventID]): this unique index leads with eventID, so
+  /// the per-event roster read and the dashboards' `{ eventID: { in: [...] } }`
+  /// are both served by its prefix.
+  @@unique([eventID, userID], map: "event_attendee")
 }
 
 /// Advisory mutex documents for per-event signup serialization, so a capacity

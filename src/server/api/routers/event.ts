@@ -14,11 +14,30 @@ import {
 import { getUserRoles } from "~/server/api/services/access";
 import { computeCapabilities } from "~/server/api/services/roles";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
+import {
+  isLiveCcaMember,
+  membershipKeysForKey,
+} from "~/server/api/services/ccaMembers";
+import {
+  checkInInput,
+  manualCheckInInput,
+  undoCheckInInput,
+  saveScannersInput,
+  parseCheckInPayload,
+  resolveAttendanceWindow,
+} from "~/lib/schemas/eventAttendance";
+import {
+  mintCheckInToken,
+  verifyCheckInToken,
+  isQrConfigured,
+} from "~/server/api/services/eventQr";
 import { assertScrcEnabled } from "~/server/api/services/scrcFlag";
 import { writeAudit } from "~/server/api/routers/admin";
 import {
+  assertAttendanceEnabled,
   assertEventsEnabled,
   assertQuestionsEditable,
+  isAttendanceEnabled,
   nextEventId,
   withEventLock,
 } from "~/server/api/services/events";
@@ -127,6 +146,87 @@ async function loadOwnedEvent(
     await assertHeadsCca(db, { userID, roles }, event.ccaID);
   }
   return event;
+}
+
+/**
+ * WHO MAY SCAN AT THIS EVENT'S DOOR. Like `loadOwnedEvent`, THE BRANCH LIVES IN
+ * EXACTLY ONE PLACE — every check-in path goes through here.
+ *
+ * Two ways in: you own the event, or the head nominated you AND you are still a
+ * member. Nothing else, and no role string shortcut.
+ *
+ * THE STORED LIST IS NECESSARY, NEVER SUFFICIENT. `Event.scannerUserIDs` is
+ * written once, when the head sets the event up. A nominee who later leaves the
+ * CCA — or is removed from it — keeps their entry in that array forever,
+ * because nothing sweeps it. Re-validating against live membership is the same
+ * argument `assertHeadsCca` makes for reading `CcaHead` directly instead of
+ * trusting `roles.includes("cca_head")`, and the same one I-5 makes for
+ * `getUserRoles`.
+ *
+ * `isLiveCcaMember` checks all THREE places membership lives, not just the
+ * obvious `UserCCA` rows — see its docblock. A UserCCA-only check would deny
+ * roughly a third of every CCA, at a door, with a queue.
+ */
+async function assertMayScan(
+  db: PrismaClient,
+  userID: string,
+  roles: string[],
+  event: { ccaID: number | null; scannerUserIDs: string[] },
+): Promise<void> {
+  // 1. The owner always may — the same two ownership shapes as loadOwnedEvent.
+  if (event.ccaID == null) {
+    if (computeCapabilities(roles).manageHallEvents) return;
+  } else {
+    try {
+      await assertHeadsCca(db, { userID, roles }, event.ccaID);
+      return;
+    } catch {
+      // Not a head of this CCA. Fall through to the nominee branch rather than
+      // rethrowing: being nominated is a second, independent way in, and
+      // assertHeadsCca's FORBIDDEN would otherwise mask it.
+    }
+  }
+
+  // 2. A nominee.
+  //
+  // MATCHED ACROSS THE WHOLE KEY SPACE, NOT ON THE CANONICAL ID ALONE, and this
+  // is load-bearing rather than defensive. `userID` here is
+  // `session.user.userID` = `canonicalUserID(email)`. What is STORED in
+  // `scannerUserIDs` came out of `cca.memberDirectory`, whose `userID` field is
+  // `e.storedUserID` = the `User.userID` COLUMN (services/ccaRoster.ts) — and
+  // `schema.prisma` states above `UserMatric` that ~515 rows hold an A-format
+  // matric there. A bare `.includes(userID)` therefore compares two DIFFERENT
+  // key spaces and returns false for every nominee whose stored column is not
+  // the canonical id: the head picks them out of the live directory, the save
+  // succeeds, and then the door tells them they are not on the list. That is
+  // precisely the failure the live-membership re-validation below exists to
+  // avoid, arriving one line earlier through the key instead of the source.
+  //
+  // THIS DOES NOT WIDEN THE GRANT. `membershipKeysForKey` derives both keys
+  // from the caller's OWN `User` row (their session email and their stored
+  // column); nothing here is client-supplied, so the set of PEOPLE admitted is
+  // unchanged — only the set of SPELLINGS that names them. Being on the list is
+  // still necessary and never sufficient: live membership is re-checked below.
+  const callerKeys = await membershipKeysForKey(db, userID);
+  if (!callerKeys.some((k) => event.scannerUserIDs.includes(k))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
+  }
+
+  if (event.ccaID == null) {
+    // A HALL EVENT HAS NO MEMBERSHIP SET TO RE-VALIDATE AGAINST. The only
+    // meaningful live check is the capability itself, re-read by the caller
+    // (I-5). In practice this branch is unreachable from the UI, because every
+    // hall nominee must hold manageHallEvents and branch 1 already admitted
+    // them — which is why no nominee picker is rendered for hall events at all.
+    if (!computeCapabilities(roles).manageHallEvents) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
+    }
+    return;
+  }
+
+  if (!(await isLiveCcaMember(db, event.ccaID, userID))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
+  }
 }
 
 /**
@@ -454,6 +554,23 @@ const BLANK_EVENT_CONTENT = {
   location: null,
   facilityID: null,
   capacity: null,
+  // ADDED BY PART C (D-59a). Both are Int?, so `null` is a legal value and the
+  // `satisfies` guard accepts them. Safe in the only direction that matters:
+  // `create` and `duplicate` have written both explicitly as null since they
+  // were added, so every row this filter is meant to find already carries the
+  // keys and Prisma's strict null match (T-12) is satisfied. A row predating
+  // that simply fails to match and the head gets one extra blank draft — the
+  // benign direction, and the one this branch already commits to in writing.
+  //
+  // scannerUserIDs IS DELIBERATELY ABSENT AND CANNOT BE ADDED. It is
+  // `String[] @default([])`, a non-nullable list whose absent value is `[]`,
+  // not `null`, so it does not satisfy Partial<Record<keyof Event, null>> and
+  // adding it does not compile. IF YOU HIT THAT BUILD ERROR, DO NOT LOOSEN THIS
+  // `satisfies` CLAUSE TO ADMIT IT — the clause is what keeps this filter safe
+  // against a renamed column, and loosening it IS the defect. It is checked in
+  // JS below instead, beside the question count, for the same reason.
+  attendanceOpensAt: null,
+  attendanceClosesAt: null,
 } as const satisfies Partial<Record<keyof Event, null>>;
 
 /**
@@ -589,7 +706,7 @@ export const eventRouter = createTRPCRouter({
             ...BLANK_EVENT_CONTENT,
           },
           orderBy: { createdAt: "desc" },
-          select: { eventID: true, photoUrls: true },
+          select: { eventID: true, photoUrls: true, scannerUserIDs: true },
         });
         // photoUrls is checked in JS and NOT in the `where`: Prisma+Mongo's
         // `equals: []` on a scalar list is a shape this repo has not used and
@@ -637,7 +754,30 @@ export const eventRouter = createTRPCRouter({
           const questionCount = await ctx.db.eventQuestion.count({
             where: { eventID: existing.eventID },
           });
-          if (questionCount === 0) {
+          // D-59a — AND A DRAFT THAT ALREADY CARRIES NOMINATED SCANNERS IS NOT
+          // BLANK EITHER. Same wall as the questions above, reached from the
+          // opposite direction: questions are invisible to the `where` because
+          // they are not a column at all, and scannerUserIDs is invisible
+          // because it is a column of the WRONG SHAPE — `String[]`, whose
+          // absent value is `[]` and not `null`. Free to check: the row is
+          // already in hand and the field is already selected.
+          //
+          // THIS ONE IS AN AUTHORISATION BUG, NOT HOUSEKEEPING. Without it: a
+          // head presses New event, scrolls to the Door section, nominates two
+          // committee members, never types a title, and leaves. Weeks later
+          // they press New event again, are handed that same row, fill in a
+          // real event and submit it — and two people they did not choose now
+          // hold a door surface that writes rows asserting where residents
+          // physically were, while the head's screen shows an empty scanner
+          // list. The Door section sits BELOW the questions builder, so the
+          // same submit-without-scrolling path applies verbatim.
+          //
+          // The blast radius is bounded and saying so is part of the argument:
+          // the filter is scoped to the same ccaID and the same createdBy, and
+          // assertMayScan re-validates every nominee against LIVE membership,
+          // so an inherited scanner is necessarily a current member of the same
+          // CCA. Not a stranger — but still not the head's choice.
+          if (questionCount === 0 && existing.scannerUserIDs.length === 0) {
             // RETURNS BEFORE nextEventId. Allocating an id and then discarding
             // it burns a counter value for no reason, and nextEventId never
             // goes backwards.
@@ -2480,4 +2620,523 @@ export const eventRouter = createTRPCRouter({
       })),
     };
   }),
+
+  /* ------------------------------------------------------------------ */
+  /* PART C — attendance                                                 */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * The resident's side: mint MY current check-in token.
+   *
+   * Deliberately says nothing about any event. The token is a claim about WHO
+   * you are for the next thirty seconds, not about where you are going, so one
+   * code works at every door and nothing here needs an eventID. It also means
+   * this cannot be used to enumerate events.
+   */
+  myCheckInToken: identifiedProcedure.query(async ({ ctx }) => {
+    await assertEventsEnabled(ctx.db);
+    await assertAttendanceEnabled(ctx.db);
+    const userID = ctx.session.user.userID;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const { token, expiresAt } = mintCheckInToken(userID, nowSec);
+    return { userID, token, expiresAt };
+  }),
+
+  /**
+   * THE DOOR SCAN.
+   *
+   * NO withEventLock, deliberately. Two scans of DIFFERENT people do not
+   * contend, and two scans of the SAME person are resolved by the unique index.
+   * Taking the signup lock here would put the door behind the same mutex as
+   * signup, on the one path where latency is a person standing in a queue.
+   */
+  checkIn: identifiedProcedure
+    .input(checkInInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      await assertAttendanceEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+
+      const event = await ctx.db.event.findUnique({
+        where: { eventID: input.eventID },
+      });
+      if (!event) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
+      }
+      if (normalizeStatus(event.status) !== "published") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_PUBLISHED",
+        });
+      }
+
+      await assertMayScan(ctx.db, userID, roles, event);
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const attWindow = resolveAttendanceWindow(event);
+      // NO DERIVABLE WINDOW IS ITS OWN STATE, and it gets its own code.
+      // `resolveAttendanceWindow` returns null for an event with no startTime
+      // and for an override whose close is not after its open — neither of
+      // which is "not open yet" or "closed". Folding it into DOOR_NOT_OPEN told
+      // the scanner "it opens an hour before the start time" for an event that
+      // has no start time, while the page beside them said "check-in has
+      // closed": two different untruths about one state, and neither names the
+      // thing the head has to go and fix.
+      if (!attWindow) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NO_DOOR_WINDOW",
+        });
+      }
+      if (nowSec < attWindow.opensAt) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "DOOR_NOT_OPEN",
+        });
+      }
+      if (nowSec > attWindow.closesAt) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "DOOR_CLOSED",
+        });
+      }
+
+      const parsed = parseCheckInPayload(input.payload);
+      // BAD_QR FOR BOTH AN UNPARSEABLE PAYLOAD AND A FAILED VERIFICATION, and
+      // that sameness is the point. A distinct "expired" or "wrong person" code
+      // would tell someone holding a scanner whether a given userID EXISTS,
+      // turning the door into an account-enumeration oracle.
+      if (!parsed) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "BAD_QR" });
+      }
+      if (!verifyCheckInToken(parsed.userID, parsed.token, nowSec)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "BAD_QR" });
+      }
+
+      return recordCheckIn(ctx.db, {
+        eventID: input.eventID,
+        subjectUserID: parsed.userID,
+        scannerUserID: userID,
+        method: "qr",
+      });
+    }),
+
+  /**
+   * THE PAPER FALLBACK. Same authorisation, same window, same write — the only
+   * difference is that a human asserted the identity instead of a token.
+   *
+   * This is not a lesser path: a flat battery, a resident with no signal, or a
+   * camera the browser will not open are all ordinary, and a door that stops
+   * working in those cases is a door nobody trusts.
+   */
+  checkInManual: identifiedProcedure
+    .input(manualCheckInInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      await assertAttendanceEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+
+      const event = await ctx.db.event.findUnique({
+        where: { eventID: input.eventID },
+      });
+      if (!event) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
+      }
+      if (normalizeStatus(event.status) !== "published") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_PUBLISHED",
+        });
+      }
+      await assertMayScan(ctx.db, userID, roles, event);
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const attWindow = resolveAttendanceWindow(event);
+      // NO DERIVABLE WINDOW IS ITS OWN STATE, and it gets its own code.
+      // `resolveAttendanceWindow` returns null for an event with no startTime
+      // and for an override whose close is not after its open — neither of
+      // which is "not open yet" or "closed". Folding it into DOOR_NOT_OPEN told
+      // the scanner "it opens an hour before the start time" for an event that
+      // has no start time, while the page beside them said "check-in has
+      // closed": two different untruths about one state, and neither names the
+      // thing the head has to go and fix.
+      if (!attWindow) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NO_DOOR_WINDOW",
+        });
+      }
+      if (nowSec < attWindow.opensAt) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "DOOR_NOT_OPEN",
+        });
+      }
+      if (nowSec > attWindow.closesAt) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "DOOR_CLOSED",
+        });
+      }
+
+      return recordCheckIn(ctx.db, {
+        eventID: input.eventID,
+        subjectUserID: input.userID,
+        scannerUserID: userID,
+        method: "manual",
+      });
+    }),
+
+  /**
+   * UNDO — a hard delete, and AUDITED.
+   *
+   * A check-in is a claim about where a person physically was. Erasing one
+   * leaves no row behind to carry that fact, which is exactly why this is the
+   * attendance action that writes an audit row while the check-in itself does
+   * not. The reason is mandatory for the same purpose.
+   */
+  undoCheckIn: identifiedProcedure
+    .input(undoCheckInInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      await assertAttendanceEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+
+      const event = await ctx.db.event.findUnique({
+        where: { eventID: input.eventID },
+      });
+      if (!event) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
+      }
+      await assertMayScan(ctx.db, userID, roles, event);
+
+      const removed = await ctx.db.eventAttendance.deleteMany({
+        where: { eventID: input.eventID, userID: input.userID },
+      });
+      if (removed.count === 0) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_CHECKED_IN",
+        });
+      }
+
+      await writeAudit(ctx.db, {
+        actorUserID: userID,
+        actorRoles: roles,
+        // THE ONE AUDIT ROW IN THIS FEATURE THAT IS ABOUT A SPECIFIC RESIDENT,
+        // so it goes in the COLUMN and not only in the reason string.
+        // `admin.listAuditLog` filters on `targetUserID`; an undo recorded only
+        // inside free text is invisible to the one query that would ever look
+        // for it — "what happened to this person's check-in" is exactly the
+        // question this row exists to answer.
+        targetUserID: input.userID,
+        // `?? undefined`, never `?? null`: the column is Int? and `?? null`
+        // does not compile against writeAudit's signature.
+        targetCcaID: event.ccaID ?? undefined,
+        targetEventID: event.eventID,
+        action: "event.checkin.undo",
+        reason: `undo check-in for ${input.userID}: ${input.reason}`,
+      });
+
+      const count = await ctx.db.eventAttendance.count({
+        where: { eventID: input.eventID },
+      });
+      return { ok: true as const, count };
+    }),
+
+  /**
+   * A TINY QUERY SO THE UI NEVER RENDERS A BROKEN DOOR.
+   *
+   * Answers "can this door work, for me, right now" without minting a token or
+   * throwing. The page needs to distinguish "the feature is off", "the secret
+   * is not configured", "you are not a scanner" and "the window is shut" — all
+   * honest states deserving different copy, none of which should look like a
+   * crash to someone standing at a door.
+   */
+  attendanceStatus: identifiedProcedure
+    .input(eventIdInput)
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const enabled = await isAttendanceEnabled(ctx.db);
+      if (!enabled) {
+        return {
+          enabled: false as const,
+          configured: isQrConfigured(),
+          mayScan: false,
+          published: false,
+          opensAt: null,
+          closesAt: null,
+          open: false,
+          count: 0,
+        };
+      }
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const event = await ctx.db.event.findUnique({
+        where: { eventID: input.eventID },
+      });
+      if (!event) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
+      }
+
+      let mayScan = true;
+      try {
+        await assertMayScan(ctx.db, userID, roles, event);
+      } catch {
+        mayScan = false;
+      }
+
+      const attWindow = resolveAttendanceWindow(event);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const count = mayScan
+        ? await ctx.db.eventAttendance.count({
+            where: { eventID: input.eventID },
+          })
+        : 0;
+
+      return {
+        enabled: true as const,
+        configured: isQrConfigured(),
+        mayScan,
+        published: normalizeStatus(event.status) === "published",
+        opensAt: attWindow?.opensAt ?? null,
+        closesAt: attWindow?.closesAt ?? null,
+        open:
+          attWindow != null &&
+          nowSec >= attWindow.opensAt &&
+          nowSec <= attWindow.closesAt,
+        count,
+      };
+    }),
+
+  /**
+   * THE PRE-LOADED ROSTER for the manual fallback. Same `assertMayScan` gate as
+   * the scan itself.
+   *
+   * `matricSuffix` IS THE LAST FOUR CHARACTERS, NEVER THE FULL NUMBER, and the
+   * reason is the audience rather than the data. `getAttendees` hands the head a
+   * full matric on the stated grounds that the head is already authorised to see
+   * it. This list goes to EVERY NOMINATED SCANNER — any CCA member the head
+   * picked — so shipping full matriculation numbers to all of them widens a PII
+   * surface for no operational gain. A committee member ticking someone off is
+   * reading a student card and needs to tell two similar names apart, which four
+   * characters do.
+   *
+   * Nothing is taken from anyone who had it: the head still gets the full matric
+   * through `getAttendees` and the audited `exportAttendees`.
+   *
+   * Search is CLIENT-SIDE over displayName and matricSuffix, which is what makes
+   * the list usable when the network is the thing that failed.
+   *
+   * WALK-INS ARE NOT HERE, by definition — they did not sign up. They are
+   * checked in by QR, or by a head who knows their account id.
+   */
+  getDoorRoster: identifiedProcedure
+    .input(eventIdInput)
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      await assertAttendanceEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+
+      const event = await ctx.db.event.findUnique({
+        where: { eventID: input.eventID },
+      });
+      if (!event) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
+      }
+      await assertMayScan(ctx.db, userID, roles, event);
+
+      const [signups, attendance] = await Promise.all([
+        ctx.db.eventSignup.findMany({
+          where: { eventID: input.eventID },
+          select: { userID: true },
+        }),
+        ctx.db.eventAttendance.findMany({
+          where: { eventID: input.eventID },
+          select: { userID: true },
+        }),
+      ]);
+
+      const checkedIn = new Set(attendance.map((a) => a.userID));
+      const resolved = await resolveAttendees(
+        ctx.db,
+        signups.map((s) => s.userID),
+      );
+
+      return {
+        rows: signups.map((s) => {
+          const r = resolved.get(s.userID);
+          const matric = r?.matric ?? null;
+          return {
+            userID: s.userID,
+            displayName: r?.displayName ?? null,
+            block: r?.block ?? null,
+            // LAST FOUR ONLY. Rendered as ••••567X.
+            matricSuffix: matric ? matric.slice(-4) : null,
+            signedUp: true as const,
+            checkedIn: checkedIn.has(s.userID),
+          };
+        }),
+        checkedInCount: attendance.length,
+      };
+    }),
+
+  /**
+   * NOMINATE SCANNERS. Owner-only — being a scanner does not let you appoint
+   * more scanners.
+   *
+   * VALIDATED AGAINST LIVE MEMBERSHIP AT WRITE TIME so the head gets told
+   * immediately, rather than discovering at a door that a name they typed was
+   * never eligible. That validation is a COURTESY, NOT THE BOUNDARY:
+   * `assertMayScan` re-checks every nominee at scan time (I-5), because this
+   * list is written once and nothing sweeps it when someone leaves the CCA.
+   *
+   * NO PICKER IS OFFERED FOR HALL EVENTS and this refuses them. A hall event has
+   * no membership set to validate against, and every person who could
+   * legitimately scan one already holds `manageHallEvents`, which
+   * `assertMayScan`'s first branch admits outright — so a nomination list there
+   * would be a control that changes nothing.
+   */
+  saveScanners: identifiedProcedure
+    .input(saveScannersInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
+
+      if (event.ccaID == null) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "HALL_EVENT_HAS_NO_SCANNERS",
+        });
+      }
+
+      // De-duplicate before validating: the same person named twice is a slip,
+      // not an error worth refusing over.
+      const wanted = [...new Set(input.scannerUserIDs)];
+      const ccaID = event.ccaID;
+      const checks = await Promise.all(
+        wanted.map(async (candidate) => ({
+          candidate,
+          ok: await isLiveCcaMember(ctx.db, ccaID, candidate),
+        })),
+      );
+      const notMembers = checks.filter((c) => !c.ok).map((c) => c.candidate);
+      if (notMembers.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `NOT_MEMBERS:${notMembers.join(",")}`,
+        });
+      }
+
+      await ctx.db.event.updateMany({
+        where: { eventID: input.eventID },
+        data: { scannerUserIDs: wanted },
+      });
+
+      return { ok: true as const, scannerUserIDs: wanted };
+    }),
 });
+
+/**
+ * THE ONE WRITER of an attendance row, shared by the QR and manual paths so the
+ * two cannot drift about what a check-in means.
+ *
+ * `wasSignedUp` IS SNAPSHOTTED HERE, BEFORE THE WRITE, AND NEVER RE-DERIVED.
+ * `cancelSignup` is a hard delete with no time gate, so a resident who checks
+ * in and then cancels their signup would otherwise retroactively become a
+ * walk-in in every count and export.
+ */
+async function recordCheckIn(
+  db: PrismaClient,
+  args: {
+    eventID: number;
+    subjectUserID: string;
+    scannerUserID: string;
+    method: "qr" | "manual";
+  },
+): Promise<{
+  alreadyCheckedIn: boolean;
+  displayName: string | null;
+  wasSignedUp: boolean;
+  checkedInAt: Date | null;
+  count: number;
+}> {
+  const { eventID, subjectUserID, scannerUserID, method } = args;
+
+  const signup = await db.eventSignup.findUnique({
+    where: { eventID_userID: { eventID, userID: subjectUserID } },
+    select: { eventID: true },
+  });
+  const wasSignedUp = signup !== null;
+
+  let alreadyCheckedIn = false;
+  let checkedInAt: Date | null = null;
+  let storedWasSignedUp = wasSignedUp;
+
+  try {
+    const created = await db.eventAttendance.create({
+      data: {
+        eventID,
+        userID: subjectUserID,
+        checkedInAt: new Date(),
+        checkedInBy: scannerUserID,
+        method,
+        // ALL SIX WRITTEN EXPLICITLY. `{ wasSignedUp: false }` matches a STORED
+        // false and NOT an absent key (T-12), and the dashboards filter on it.
+        wasSignedUp,
+      },
+    });
+    checkedInAt = created.checkedInAt;
+  } catch (err) {
+    // THE UNIQUE INDEX IS THE DOUBLE-SCAN BACKSTOP — a second scan of the same
+    // person is a SUCCESS reporting "already in", not an error, because at a
+    // door the person is through either way and an error would send them to the
+    // back of a queue.
+    //
+    // DO NOT DELETE THIS CATCH. And note it is only reachable once
+    // `create-event-phase2-indexes.mjs EventAttendance --commit` has actually
+    // run: a Prisma `@@unique` creates NOTHING on MongoDB, so until then a
+    // double scan writes a SECOND ROW and the count is silently wrong.
+    // Duck-typed, matching the existing P2002 catch in `signup` above. This
+    // file imports only TYPES from @prisma/client; pulling in the runtime
+    // `Prisma` namespace just to name an error class would be a new runtime
+    // dependency in a module the client tree can reach.
+    // The `typeof`/`!== null` guard is not padding: `(err as …).code` on a
+    // thrown `null` or `undefined` throws a TypeError of its own and REPLACES
+    // the original error, so the same shape the `signup` catch above uses is
+    // used here verbatim rather than a shortened variant of it.
+    if (
+      !(
+        typeof err === "object" &&
+        err !== null &&
+        (err as { code?: string }).code === "P2002"
+      )
+    ) {
+      throw err;
+    }
+    alreadyCheckedIn = true;
+    const existing = await db.eventAttendance.findUnique({
+      where: { eventID_userID: { eventID, userID: subjectUserID } },
+      select: { checkedInAt: true, wasSignedUp: true },
+    });
+    checkedInAt = existing?.checkedInAt ?? null;
+    storedWasSignedUp = existing?.wasSignedUp ?? wasSignedUp;
+  }
+
+  const resolved = await resolveAttendees(db, [subjectUserID]);
+  const count = await db.eventAttendance.count({ where: { eventID } });
+
+  return {
+    alreadyCheckedIn,
+    displayName: resolved.get(subjectUserID)?.displayName ?? null,
+    wasSignedUp: storedWasSignedUp,
+    checkedInAt,
+    count,
+  };
+}

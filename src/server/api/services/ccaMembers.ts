@@ -52,6 +52,120 @@ export function membershipKeysFor(u: {
   return [...keys];
 }
 
+/**
+ * IS THIS PERSON A MEMBER OF THIS CCA, RIGHT NOW?
+ *
+ * READ-ONLY, and it must agree with `removeCcaMember` about where membership
+ * lives — ALL THREE PLACES, not just the obvious one:
+ *   1. UserCCA rows under the CANONICAL key
+ *   2. UserCCA rows under the LEGACY A-format key (same person, other key)
+ *   3. the undeclared User.userCCA Int[] embedded array
+ *
+ * A `UserCCA`-ONLY CHECK IS THE BUG THIS FUNCTION EXISTS TO PREVENT. A
+ * measurement during planning found 37 of 116 sampled users are embedded-array
+ * ONLY — roughly a third of every CCA. Checking (1) alone tells those people
+ * they are not members of a CCA they are plainly in, and the place that would
+ * surface is a door, with a queue behind them, while a committee member reads
+ * an error that says the opposite of what everyone present can see.
+ *
+ * Used by `assertMayScan` to re-validate a NOMINATED SCANNER at scan time (I-5)
+ * rather than trusting the stored `Event.scannerUserIDs` list, which was
+ * written when the event was created and may name someone who has since left.
+ */
+/**
+ * Find the `User` row behind a key that may be EITHER a canonical id OR the
+ * legacy A-format value stored in `User.userID`.
+ *
+ * A `findFirst({ where: { userID } })` IS THE BUG THIS EXISTS TO PREVENT.
+ * `schema.prisma` says it outright above `UserMatric`: *"NEVER key on
+ * User.userID: ~515 users have an A-format matric there (invariant I-1)."*
+ * `session.user.userID` is `canonicalUserID(email)`, so for every one of those
+ * rows a lookup by the canonical key on the `userID` COLUMN matches nothing —
+ * and a caller that then gives up has silently skipped the embedded
+ * `User.userCCA` array, which is the ONLY membership source for ~37 of 116
+ * measured users.
+ *
+ * So this matches the way `resolveAttendees` (routers/event.ts) already does:
+ * the guessed `@u.nus.edu` address OR the stored column, whichever lands.
+ */
+export async function findUserByAnyKey(
+  db: PrismaClient,
+  key: string,
+): Promise<{ id: string; email: string; userID: string | null } | null> {
+  // Never a bare read: passwordHash must not be selected (a Google-adapter row
+  // lacking it throws on deserialization — I-2), so the select is explicit.
+  const select = { id: true, email: true, userID: true } as const;
+  return await db.user.findFirst({
+    where: {
+      OR: [
+        { email: { equals: `${key.toLowerCase()}@u.nus.edu`, mode: "insensitive" } },
+        { userID: key },
+      ],
+    },
+    select,
+  });
+}
+
+/**
+ * EVERY KEY THAT NAMES THIS PERSON, from any one of them.
+ *
+ * `membershipKeysFor` needs a `{ email, userID }` pair; this is the lookup that
+ * gets there from a bare key, and it is what any caller comparing a
+ * client-supplied or stored identity against a session identity must use. The
+ * two are NOT interchangeable strings: one is `canonicalUserID(email)` and the
+ * other is whatever `User.userID` happens to hold.
+ *
+ * Falls back to the key itself when no `User` row resolves, so an orphaned
+ * membership row is still checkable rather than being treated as absent.
+ */
+export async function membershipKeysForKey(
+  db: PrismaClient,
+  key: string,
+): Promise<string[]> {
+  const u = await findUserByAnyKey(db, key);
+  return u ? membershipKeysFor(u) : [key];
+}
+
+export async function isLiveCcaMember(
+  db: PrismaClient,
+  ccaID: number,
+  userID: string,
+): Promise<boolean> {
+  // Resolve the person first, so (2) and (3) are reachable at all — and resolve
+  // them by EITHER key, because `userID` here may be the canonical session id
+  // while the row stores an A-format matric, or the exact reverse.
+  const u = await findUserByAnyKey(db, userID);
+
+  // (1) + (2). With a User row we can check BOTH keys; without one, the given
+  // key is all there is — an unresolved key is still worth checking directly
+  // rather than refusing outright, because a UserCCA row can outlive its User.
+  const keys = u ? membershipKeysFor(u) : [userID];
+  const rows = await db.userCCA.count({
+    where: { ccaID, userID: { in: keys } },
+  });
+  if (rows > 0) return true;
+
+  // (3) the embedded array. Not declared in `model User`, so Prisma cannot
+  // express it and this has to be a raw command — the same reason
+  // removeCcaMember reaches for $runCommandRaw to clean it.
+  if (!u) return false;
+  const reply = (await db.$runCommandRaw({
+    count: "User",
+    query: { _id: { $oid: u.id }, userCCA: ccaID },
+  })) as { n?: number; ok?: number } | null;
+
+  // A FAILED READ IS NOT A ZERO. `ok` is inspected because treating an errored
+  // reply as "not a member" would fail OPEN in the wrong direction here: it
+  // would deny a real member at a door and look identical to a correct refusal.
+  if (!reply || reply.ok !== 1) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "MEMBERSHIP_READ_FAILED",
+    });
+  }
+  return (reply.n ?? 0) > 0;
+}
+
 export type RemoveMemberResult = {
   removedRows: number;
   /** Human label for the audit reason: an email, or the raw key. */

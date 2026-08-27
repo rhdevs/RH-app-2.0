@@ -25,6 +25,7 @@ import {
 } from "~/components/ui/dialog";
 import { formatDateRange } from "~/app/events/_lib/format";
 import { ownerLabel } from "~/lib/schemas/event";
+import MyCheckInQr from "./MyCheckInQr";
 import {
   EVENT_ANSWER_RETENTION_DAYS,
   validateAnswers,
@@ -205,6 +206,18 @@ export default function EventDetail({ eventID }: { eventID: number }) {
                   and sign up again.
                 </p>
               )}
+              {/*
+                THE CHECK-IN CODE, SHOWN ONLY TO SOMEONE WHO IS GOING and only
+                once the door layer is switched on. MyCheckInQr renders its own
+                honest empty state when attendance is off or unconfigured, so
+                this does not have to guess — and a resident who is not signed
+                up has nothing to check in to.
+
+                It sits ABOVE Cancel signup deliberately: at a door the code is
+                what someone is reaching for, and putting a destructive control
+                above the thing everyone taps invites the wrong one.
+              */}
+              <MyCheckInQr />
               <Button
                 variant="outline"
                 className="w-full"
