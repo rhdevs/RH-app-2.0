@@ -29,6 +29,7 @@ import EventAnalytics from "./EventAnalytics";
 import EventAttendees from "./EventAttendees";
 import EventQuestionBuilder from "./EventQuestionBuilder";
 import EventScannerPicker from "./EventScannerPicker";
+import EventAttendanceStats from "./EventAttendanceStats";
 
 type OwnedEvent = RouterOutputs["event"]["getForOwner"]["event"];
 
@@ -1155,6 +1156,16 @@ export default function EventManage({
               Signups
             </h3>
             <EventAnalytics eventID={event.eventID} />
+          </section>
+
+          {/* SEPARATE SECTION, SEPARATE QUERY. The signup charts above are
+              Phase 1 behaviour and keep working with the door layer off;
+              folding turnout into them would make them fail together. This
+              renders NOTHING at all when attendance is switched off — a zero
+              would be a claim, and "we weren't counting" is a different fact
+              from "nobody came". */}
+          <section>
+            <EventAttendanceStats eventID={event.eventID} />
           </section>
 
           <section>
