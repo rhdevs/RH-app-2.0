@@ -23,11 +23,24 @@ export default function EventAttendanceStats({ eventID }: { eventID: number }) {
   // `configured` is EVENT_QR_SECRET.
   const status = api.event.attendanceStatus.useQuery(
     { eventID },
-    { retry: false },
+    // Polled slowly so that the door window OPENING is noticed on a screen that
+    // was left open, which is exactly how a committee uses this page.
+    { retry: false, refetchInterval: 60_000 },
   );
+  // D-71's LIVE count. While the door window is open the number on this screen
+  // is being changed by someone standing at a door, so it is polled; once the
+  // window shuts the figure is final and polling it forever is just load.
+  // Driven off `attendanceStatus.open` rather than off this query's own data,
+  // which would be circular, and `attendanceStatus` polls too so that the
+  // window OPENING is itself noticed without a reload.
+  const doorOpen = status.data?.enabled === true && status.data.open;
   const stats = api.event.getAttendanceStats.useQuery(
     { eventID },
-    { retry: false, enabled: status.data?.enabled === true },
+    {
+      retry: false,
+      enabled: status.data?.enabled === true,
+      refetchInterval: doorOpen ? 15_000 : false,
+    },
   );
 
   if (status.isPending) return null;
@@ -58,15 +71,22 @@ export default function EventAttendanceStats({ eventID }: { eventID: number }) {
   // "—", NEVER "0%". An event where nobody opened the door page has NO DATA,
   // which is a different fact from nobody turning up — and a 0% printed next to
   // a well-attended event is a defamatory number about a CCA.
+  // CLAMPED AT 100. `signedUp` is the signup list AS IT IS NOW and `turnedUp`
+  // is what was recorded AT THE DOOR, and `cancelSignup` has no time gate — so
+  // someone who checked in and later withdrew shrinks the denominator without
+  // touching the numerator, and the raw ratio can exceed 1. That is a real
+  // sequence of events, not a data error, and "everyone still on the list came"
+  // is the true reading of it. Printing "700%" beside a CCA's name is not.
   const turnout =
-    s.checkedIn === 0
+    s.checkedIn === 0 || s.signedUp === 0
       ? "—"
-      : s.signedUp === 0
-        ? "—"
-        : `${Math.round((s.turnedUp / s.signedUp) * 100)}%`;
+      : `${Math.min(100, Math.round((s.turnedUp / s.signedUp) * 100))}%`;
 
   return (
-    <div className="space-y-4">
+    <section className="space-y-4">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+        Turnout
+      </h3>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Signed up" value={String(s.signedUp)} />
         <Stat label="Checked in" value={String(s.checkedIn)} />
@@ -102,6 +122,9 @@ export default function EventAttendanceStats({ eventID }: { eventID: number }) {
                 {n.block !== null ? (
                   <span className="text-gray-400"> · Block {n.block}</span>
                 ) : null}
+                {n.telegramHandle ? (
+                  <span className="text-gray-400"> · @{n.telegramHandle}</span>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -118,7 +141,7 @@ export default function EventAttendanceStats({ eventID }: { eventID: number }) {
         signups, priority or standing anywhere in RHApp, and no export pairs a
         name with a no-show.
       </p>
-    </div>
+    </section>
   );
 }
 

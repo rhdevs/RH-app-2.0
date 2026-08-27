@@ -1163,10 +1163,12 @@ export default function EventManage({
               folding turnout into them would make them fail together. This
               renders NOTHING at all when attendance is switched off — a zero
               would be a claim, and "we weren't counting" is a different fact
-              from "nobody came". */}
-          <section>
-            <EventAttendanceStats eventID={event.eventID} />
-          </section>
+              from "nobody came" — and NO WRAPPER ELEMENT HERE, deliberately.
+              An empty <section> is still a child of this space-y-8 stack, so
+              wrapping a component that renders null would open a blank 2rem
+              gap between Signups and Attendees in the flag-off state, which is
+              the state this ships in. The component brings its own section. */}
+          <EventAttendanceStats eventID={event.eventID} />
 
           <section>
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">

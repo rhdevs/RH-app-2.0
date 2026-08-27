@@ -115,6 +115,17 @@ export default function HallInsights() {
           {events.length} {events.length === 1 ? "event" : "events"}
         </span>
       </div>
+      {/*
+        SAYING WHAT THE RANGE ACTUALLY IS. The buttons choose how far BACK to
+        look; the window always runs forward to a year ahead as well, so that
+        what is already scheduled shows up next to what has happened. Without
+        this line "Last 30 days" is a label on a set that contains next
+        semester's events, and the event count beside it looks wrong.
+      */}
+      <p className="-mt-6 text-xs text-gray-400">
+        Counting back {days} days, plus everything already scheduled up to a
+        year ahead. Events still to come have no turnout yet.
+      </p>
 
       {events.length === 0 ? (
         <p className="text-sm text-gray-500">
@@ -241,9 +252,20 @@ export default function HallInsights() {
                       <td className="px-3 py-2 text-right tabular-nums">
                         {/* "—" when nothing was scanned OR nobody signed up.
                             No data is not zero attendance. */}
+                        {/* Clamped at 100: `signups` is the list as it is NOW
+                            and `checkedIn - walkIns` is what was recorded at
+                            the door, and cancelSignup has no time gate, so a
+                            late withdrawal shrinks the denominator alone and
+                            the raw ratio can exceed 1. "700%" beside a CCA's
+                            name is worse than the rounding. */}
                         {e.checkedIn === 0 || e.signups === 0
                           ? "—"
-                          : `${Math.round(((e.checkedIn - e.walkIns) / e.signups) * 100)}%`}
+                          : `${Math.min(
+                              100,
+                              Math.round(
+                                ((e.checkedIn - e.walkIns) / e.signups) * 100,
+                              ),
+                            )}%`}
                       </td>
                     </tr>
                   ))}

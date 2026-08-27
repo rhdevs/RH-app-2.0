@@ -2987,22 +2987,6 @@ export const eventRouter = createTRPCRouter({
     }),
 
   /**
-   * NOMINATE SCANNERS. Owner-only — being a scanner does not let you appoint
-   * more scanners.
-   *
-   * VALIDATED AGAINST LIVE MEMBERSHIP AT WRITE TIME so the head gets told
-   * immediately, rather than discovering at a door that a name they typed was
-   * never eligible. That validation is a COURTESY, NOT THE BOUNDARY:
-   * `assertMayScan` re-checks every nominee at scan time (I-5), because this
-   * list is written once and nothing sweeps it when someone leaves the CCA.
-   *
-   * NO PICKER IS OFFERED FOR HALL EVENTS and this refuses them. A hall event has
-   * no membership set to validate against, and every person who could
-   * legitimately scan one already holds `manageHallEvents`, which
-   * `assertMayScan`'s first branch admits outright — so a nomination list there
-   * would be a control that changes nothing.
-   */
-  /**
    * THE HEAD'S ATTENDANCE NUMBERS — a SEPARATE query, not a widened
    * `getSignupStats`.
    *
@@ -3054,10 +3038,20 @@ export const eventRouter = createTRPCRouter({
         // STORED, not re-derived (T-36).
         walkIns: attendance.filter((a) => a.wasSignedUp !== true).length,
         turnedUp: attendance.filter((a) => a.wasSignedUp === true).length,
+        // (name, block, telegram), per D-71.
+        //
+        // TELEGRAM IS NOT A WIDENING HERE, which is the only reason it is
+        // included: `getAttendees` already returns `telegramHandle` for every
+        // signup to this same head, through `resolveAttendees`, rendered in the
+        // attendee table on this same page. Same authorisation
+        // (`loadOwnedEvent`), same person, same data. Omitting it would only
+        // make the head cross-reference two lists to do the thing the panel's
+        // own copy tells them it is for — chasing their own members.
         noShows: noShowIDs.map((id) => ({
           userID: id,
           displayName: resolved.get(id)?.displayName ?? null,
           block: resolved.get(id)?.block ?? null,
+          telegramHandle: resolved.get(id)?.telegramHandle ?? null,
         })),
         doorOpens: window?.opensAt ?? null,
         doorCloses: window?.closesAt ?? null,
@@ -3213,6 +3207,22 @@ export const eventRouter = createTRPCRouter({
       };
     }),
 
+  /**
+   * NOMINATE SCANNERS. Owner-only — being a scanner does not let you appoint
+   * more scanners.
+   *
+   * VALIDATED AGAINST LIVE MEMBERSHIP AT WRITE TIME so the head gets told
+   * immediately, rather than discovering at a door that a name they typed was
+   * never eligible. That validation is a COURTESY, NOT THE BOUNDARY:
+   * `assertMayScan` re-checks every nominee at scan time (I-5), because this
+   * list is written once and nothing sweeps it when someone leaves the CCA.
+   *
+   * NO PICKER IS OFFERED FOR HALL EVENTS and this refuses them. A hall event has
+   * no membership set to validate against, and every person who could
+   * legitimately scan one already holds `manageHallEvents`, which
+   * `assertMayScan`'s first branch admits outright — so a nomination list there
+   * would be a control that changes nothing.
+   */
   saveScanners: identifiedProcedure
     .input(saveScannersInput)
     .mutation(async ({ ctx, input }) => {
