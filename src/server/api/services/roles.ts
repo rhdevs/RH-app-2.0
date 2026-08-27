@@ -1,6 +1,8 @@
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
-import { EXT_ID, canonicalUserID, isCanonicalResidentID } from "~/lib/identity";
+import { EXT_ID, canonicalUserID, isCanonicalResidentID,
+  isExtUserID,
+} from "~/lib/identity";
 
 /**
  * Role VOCABULARY + the stored-baseline machinery (RBAC v2, 02-backend-authz.md
@@ -664,6 +666,53 @@ export const extUserIDSchema = z
  * transform is load-bearing at all 11 of its existing sites and a hand-merged
  * pattern would drop it.
  */
+/**
+ * THE CCA-HEAD GRANT TARGET. Shape only — the real check is resolution against
+ * a live account, in admin.ts's `resolveCcaHeadTarget`.
+ *
+ * WHY THIS EXISTS RATHER THAN `userIDSchema`. That one is `/^E\d{7}$/`, and
+ * using it here was lockout mode **L-27** in production: `marcus-chua@u.nus.edu`
+ * canonicalises to `MARCUS-CHUA`, which fails the regex, so he could not be made
+ * a CCA head at all. Measured 2026-08-28 against the live cluster: **420 of 1624
+ * NUS accounts — 25.9%** — have a non-E-format localpart and were therefore
+ * ineligible for any headship. `identity.ts` warns about exactly this and says
+ * E_FORMAT is "a validation rule for GRANT TARGETS only", which is where the
+ * reasoning went wrong: grant targets are people, and a quarter of them do not
+ * have E-format emails.
+ *
+ * WHAT G7 ACTUALLY WANTED was to keep the hall office out of CCA headships —
+ * its own comment says "there is no requirement that an EXT principal ever head
+ * a CCA". E-format was a blunt way to express "not EXT". That intent is now
+ * stated directly: this schema admits the canonical NUS charset and REFUSES the
+ * EXT namespace, so the security property is unchanged while the collateral
+ * lockout is gone.
+ *
+ * THIS IS DELIBERATELY LOOSER THAN THE OLD RULE AND THE PIPELINE IS STRICTER.
+ * A matric like `A0345036J` passes this shape test — and must not become a
+ * CcaHead key, because it would never match the holder's session id and they
+ * would be a head who is not a head. `resolveCcaHeadTarget` is what prevents
+ * that: it looks the person up and grants on `canonicalUserID(their email)`,
+ * so the stored key is always the one a session produces. Never grant straight
+ * from this schema's output.
+ */
+export const ccaHeadTargetSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .min(1)
+  .max(64)
+  // THE COLON IS ADMITTED HERE ON PURPOSE, then refused below with a truthful
+  // message. Without it an `EXT:` pin fails the charset and the admin is told
+  // "Not a valid account id" — which is false, it is a perfectly valid id that
+  // is not ELIGIBLE — and the refine that says so would never fire.
+  .regex(/^[A-Z0-9._%:-]+$/, "Not a valid account id")
+  .refine((v) => !v.includes(":") || isExtUserID(v), {
+    message: "Not a valid account id",
+  })
+  .refine((v) => !isExtUserID(v), {
+    message: "The hall office can't be made a CCA head",
+  });
+
 export const roleTargetUserIDSchema = userIDSchema.or(extUserIDSchema);
 
 /* -------------------------------------------------------------------------- */

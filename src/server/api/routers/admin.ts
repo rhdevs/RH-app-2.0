@@ -44,6 +44,7 @@ import {
   legacyMirror,
   revocableFromOthersBy,
   userIDSchema,
+  ccaHeadTargetSchema,
   extUserIDSchema,
   roleTargetUserIDSchema,
   type Capabilities,
@@ -373,6 +374,71 @@ function tokenMatches(expected: string, given: string): boolean {
 }
 
 /* -- identifier resolution ------------------------------------------------- */
+
+/**
+ * RESOLVE A CCA-HEAD GRANT TARGET TO THE KEY A SESSION WILL ACTUALLY PRODUCE.
+ *
+ * Takes whatever an admin typed — a canonical id, an E-number, or a matric that
+ * happens to sit in `User.userID` — finds the person, and returns
+ * `canonicalUserID(their email)`. THAT is the value written to `CcaHead`,
+ * because it is the value `session.user.userID` equals at runtime.
+ *
+ * WHY RESOLUTION RATHER THAN A WIDER REGEX. The old rule was `/^E\d{7}$/`,
+ * which locked out 420 of 1624 real accounts (L-27). Simply widening the shape
+ * would have swapped one bug for a worse one: `A0345036J` would then pass, a
+ * `CcaHead` row would be written under a MATRIC, and that key never equals the
+ * holder's session id — so they would hold a headship the app cannot see, with
+ * nothing erroring. `prisma/schema.prisma` states the rule being protected:
+ * "NEVER key on User.userID: ~515 users have an A-format matric there."
+ *
+ * So this is STRICTER than the rule it replaces, not looser. E-format proved
+ * only that a string looked like an id; this proves an account exists and
+ * returns the one key that will match it.
+ *
+ * G7 IS PRESERVED, and stated directly instead of by proxy. An `EXT:` pin has
+ * no `@u.nus.edu` address, so `canonicalUserID` returns null and the grant is
+ * refused — which is what G7 always meant: "the hall office must not become a
+ * CCA head".
+ */
+async function resolveCcaHeadTarget(
+  db: PrismaClient,
+  raw: string,
+): Promise<string> {
+  const key = raw.trim().toUpperCase();
+
+  // Both halves of how a person can be addressed: the canonical id implied by
+  // their email, and whatever happens to sit in the `userID` column. Never a
+  // bare read — passwordHash must not be selected (I-2).
+  const user = await db.user.findFirst({
+    where: {
+      OR: [
+        { email: { equals: `${key.toLowerCase()}@u.nus.edu`, mode: "insensitive" } },
+        { userID: key },
+      ],
+    },
+    select: { email: true, userID: true, displayName: true },
+  });
+
+  if (!user) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "NO_SUCH_ACCOUNT",
+    });
+  }
+
+  const canonical = canonicalUserID(user.email);
+  if (!canonical) {
+    // A non-NUS address: an EXT allowlist principal, or a Google account that
+    // never had one. Either way there is no canonical student id to key a
+    // headship on, and G7 says the hall office is not eligible regardless.
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "NOT_A_NUS_ACCOUNT",
+    });
+  }
+  return canonical;
+}
+
 
 /**
  * Tier-ordered resolution, restricted to the two HIGH-CONFIDENCE tiers.
@@ -1067,13 +1133,22 @@ async function assertMayManageCcaHeadOf(
     });
     return forbid(reason);
   };
-  // G7, AND DELIBERATELY NOT WIDENED TO THE EXT NAMESPACE — unlike the copy in
-  // assertCanMutateRoles above. CCA-head grants stay E-format-only: the hall
-  // office must not become a CCA head (phase 1 non-goal #6), and `cca_head` is
-  // the role that hands out assertHeadsCca and with it every CCA write, the
-  // member directory and the attendee PII export. There is no requirement that
-  // an EXT principal ever head a CCA, so the narrower test stands.
-  if (!isEFormatUserID(targetUserID)) await deny("NOT_A_CANONICAL_USERID"); // G7
+  // G7 — THE HALL OFFICE MUST NOT BECOME A CCA HEAD (phase 1 non-goal #6).
+  // `cca_head` hands out assertHeadsCca and with it every CCA write, the member
+  // directory and the attendee PII export, so the EXT namespace stays out.
+  //
+  // THIS NOW TESTS THE THING IT MEANS. It used to be `!isEFormatUserID(...)`,
+  // which excluded EXT only as a side effect of demanding `/^E\d{7}$/` — and in
+  // doing so it also excluded every genuine student whose email localpart is not
+  // E-format. Measured 2026-08-28: 420 of 1624 NUS accounts, 25.9%, could not be
+  // made a CCA head by anyone. `marcus-chua@u.nus.edu` -> `MARCUS-CHUA` was one
+  // of them. That is lockout mode L-27, which identity.ts warns about while
+  // calling this site the safe place for E_FORMAT; it was not.
+  //
+  // The security property is unchanged — an EXT pin is still refused — and the
+  // grant path additionally resolves its target to a real account first, so this
+  // guard now sees a key that provably belongs to somebody.
+  if (isExtUserID(targetUserID)) await deny("NOT_A_CANONICAL_USERID"); // G7
   if (!actorRoles.includes(ADMIN_ROLE)) {
     const targetRoles = await getUserRoles(db, targetUserID);
     if (targetRoles.includes(ADMIN_ROLE)) await deny("CANNOT_MODIFY_AN_ADMIN");
@@ -1944,7 +2019,11 @@ export const adminRouter = createTRPCRouter({
   grantCcaHead: roleManagerProcedure
     .input(
       z.object({
-        userID: userIDSchema,
+        // ccaHeadTargetSchema, NOT userIDSchema: the latter is /^E\d{7}$/ and
+        // locked out 420 of 1624 real accounts (L-27). The shape is looser here
+        // and the PIPELINE is stricter — resolveCcaHeadTarget below proves the
+        // account exists and returns the key a session actually produces.
+        userID: ccaHeadTargetSchema,
         ccaID: z.number().int(),
         reason: z.string().trim().max(500).optional(),
       }),
@@ -1954,46 +2033,57 @@ export const adminRouter = createTRPCRouter({
       requireCapability(c, "manageCcaHeads");
       const actorUserID = ctx.session.user.userID;
       const actorRoles = await getUserRoles(ctx.db, actorUserID); // I-5 re-read
+
+      // RESOLVE FIRST, then use the resolved key for EVERYTHING below — the
+      // guard, the roles read, the CcaHead row, the audit and the return. A
+      // headship keyed on anything else is a headship the app cannot see.
+      const targetUserID = await resolveCcaHeadTarget(ctx.db, input.userID);
+
       await assertMayManageCcaHeadOf(
         ctx.db,
         actorUserID,
         actorRoles,
-        input.userID,
+        targetUserID,
       );
 
-      const before = await getUserRoles(ctx.db, input.userID);
+      const before = await getUserRoles(ctx.db, targetUserID);
       const after = await ctx.db.$transaction(async (tx) => {
         await tx.ccaHead.upsert({
           where: {
-            userID_ccaID: { userID: input.userID, ccaID: input.ccaID },
+            userID_ccaID: { userID: targetUserID, ccaID: input.ccaID },
           },
           create: {
-            userID: input.userID,
+            userID: targetUserID,
             ccaID: input.ccaID,
             grantedBy: actorUserID,
           },
           update: { grantedBy: actorUserID },
         });
-        return writeCcaHeadString(tx, input.userID, true, actorUserID);
+        return writeCcaHeadString(tx, targetUserID, true, actorUserID);
       });
 
       await writeAudit(ctx.db, {
         actorUserID,
         actorRoles,
-        targetUserID: input.userID,
+        targetUserID: targetUserID,
         targetCcaID: input.ccaID,
         action: "ccaHead.grant",
         rolesBefore: before,
         rolesAfter: after,
         reason: input.reason,
       });
-      return { userID: input.userID, ccaID: input.ccaID, roles: after };
+      return { userID: targetUserID, ccaID: input.ccaID, roles: after };
     }),
 
   revokeCcaHead: roleManagerProcedure
     .input(
       z.object({
-        userID: userIDSchema,
+        // DELIBERATELY THE RAW STORED KEY, NOT A RESOLVED ONE. Removing a
+        // headship must always work, including one written under an odd key by
+        // an older script — `CcaHead` already contains `CHUAMINGYUAN`. Resolving
+        // here would make exactly those rows unremovable through the UI, which
+        // is the opposite of what a revoke is for.
+        userID: ccaHeadTargetSchema,
         ccaID: z.number().int(),
         reason: z.string().trim().max(500).optional(),
       }),
@@ -2045,8 +2135,11 @@ export const adminRouter = createTRPCRouter({
   transferCcaHead: roleManagerProcedure
     .input(
       z.object({
-        fromUserID: userIDSchema,
-        toUserID: userIDSchema,
+        // FROM is the STORED key (see revokeCcaHead) so any existing head can
+        // be transferred away; TO is resolved to a real account below, so the
+        // new row is keyed on the value that person's session produces.
+        fromUserID: ccaHeadTargetSchema,
+        toUserID: ccaHeadTargetSchema,
         ccaID: z.number().int(),
         reason: z.string().trim().max(500).optional(),
       }),
@@ -2054,11 +2147,23 @@ export const adminRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const c = caps(ctx.session.user.roles);
       requireCapability(c, "manageCcaHeads");
-      if (input.fromUserID === input.toUserID) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "SAME_USER" });
-      }
+      // The SAME_USER check moved BELOW resolution: comparing the raw inputs
+      // would miss "E1234567 -> e1234567@u.nus.edu", which are one person
+      // spelled two ways, and would let a transfer delete a headship and
+      // re-grant it to the same key.
       const actorUserID = ctx.session.user.userID;
       const actorRoles = await getUserRoles(ctx.db, actorUserID);
+
+      // THE DESTINATION IS RESOLVED, THE SOURCE IS NOT. `toUserID` becomes a new
+      // CcaHead row, so it must be the key that person's session produces —
+      // otherwise the transfer hands the headship to a key nobody logs in as.
+      // `fromUserID` is only ever used to DELETE, so it stays the raw stored
+      // key and a row written under an odd key can still be moved off.
+      const toUserID = await resolveCcaHeadTarget(ctx.db, input.toUserID);
+      if (input.fromUserID === toUserID) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "SAME_USER" });
+      }
+
       await assertMayManageCcaHeadOf(
         ctx.db,
         actorUserID,
@@ -2069,12 +2174,12 @@ export const adminRouter = createTRPCRouter({
         ctx.db,
         actorUserID,
         actorRoles,
-        input.toUserID,
+        toUserID,
       );
 
       const [beforeFrom, beforeTo] = await Promise.all([
         getUserRoles(ctx.db, input.fromUserID),
-        getUserRoles(ctx.db, input.toUserID),
+        getUserRoles(ctx.db, toUserID),
       ]);
       const batchId = randomUUID();
 
@@ -2084,10 +2189,10 @@ export const adminRouter = createTRPCRouter({
         });
         await tx.ccaHead.upsert({
           where: {
-            userID_ccaID: { userID: input.toUserID, ccaID: input.ccaID },
+            userID_ccaID: { userID: toUserID, ccaID: input.ccaID },
           },
           create: {
-            userID: input.toUserID,
+            userID: toUserID,
             ccaID: input.ccaID,
             grantedBy: actorUserID,
           },
@@ -2105,7 +2210,7 @@ export const adminRouter = createTRPCRouter({
           ),
           afterTo: await writeCcaHeadString(
             tx,
-            input.toUserID,
+            toUserID,
             true,
             actorUserID,
           ),
@@ -2126,7 +2231,7 @@ export const adminRouter = createTRPCRouter({
       await writeAudit(ctx.db, {
         actorUserID,
         actorRoles,
-        targetUserID: input.toUserID,
+        targetUserID: toUserID,
         targetCcaID: input.ccaID,
         action: "ccaHead.transfer",
         rolesBefore: beforeTo,
