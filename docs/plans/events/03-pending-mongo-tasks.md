@@ -1,6 +1,10 @@
 # Pending database + ops tasks — Events Part C
 
-**Status: NOT YET RUN.** Everything here needs a network where **TCP 27017 is not
+**Status: T1, T2, T3(local), T4, T5 and T10 RUN AND PASSED on 2026-08-27/28.** T3 still
+needs doing in **Vercel Production** — the secret set here is local-dev only. T6/T11
+(a real door) and T12-T17 remain. Original note follows.
+
+**ORIGINALLY:** Everything here needs a network where **TCP 27017 is not
 firewalled outbound**. Part C was designed and implemented without database
 access, so nothing below has been executed and no figure in it is measured.
 
@@ -319,6 +323,58 @@ until someone stands at a door:
 - **Whether a walk-in is recorded and reads as a walk-in afterwards.**
 
 - [ ] Done. Event used, and what actually broke:
+
+## RESULTS — 2026-08-28, run against production with network access restored
+
+**T1 — `EventAttendance` unique index: CREATED AND PROVEN ENFORCING.**
+Census delta was exactly two lines (`_id_` and `event_attendee`), index count
+112 -> 114, collections 44 -> 45, and `User.email_unique_ci` present and
+unchanged. Enforcement proved by inserting twice against `eventID 999999`: the
+second was refused with `P2002`. Probe row deleted.
+
+**T2 — `verify-events-schema.mjs`: PASS, exit 0**, with no `--pre-rollout`. Check
+[9] now reads OK rather than INFO.
+
+**T3 — local only.** `EVENT_QR_SECRET` generated and written to `.env`, which is
+gitignored. **PRODUCTION STILL NEEDS ITS OWN**, set in Vercel and followed by a
+redeploy; env changes do not apply to existing deployments.
+
+**T4 — the door was switched on for testing and is now OFF again.** The flag row
+exists and reads `"off"`. It ships dark, as intended.
+
+**T5 — measured:** Event 1, EventSignup 1, EventQuestion 0, EventAttendance 0,
+EventLock 0, `event.*` audit 2, Bookings 17,475 of which 3,857 carry `ccaID: 0`.
+Flags: `events.enabled=on`, `cca.recruitment=open`.
+
+**T10 — the switch-on order was followed and works.** `set-attendance-flag.mjs`
+refused nothing because both preconditions were already met; the off-path was
+used afterwards with no checks blocking it.
+
+**What was verified end to end in a browser, against real data:**
+
+- The **hall-wide dashboard renders** — range buttons, the by-CCA bar, the weekly
+  area chart, and the table showing `—` for both Checked in and Turnout on an
+  event with no attendance. `ccaName` resolved to "RH Developers" correctly.
+- The **door page renders** with the window open, "Start camera" enabled, and the
+  manual list showing its honest empty state.
+- **A real token was minted, built into `RH1|{userID}|{tag}`, and scanned.** The
+  scan recorded a walk-in with the name resolved.
+- **THE DOUBLE SCAN IS IDEMPOTENT.** The second scan returned
+  `alreadyCheckedIn: true` with the count STILL 1 and the same `checkedInAt`.
+  This is the `P2002` path, and it was unreachable until T1 ran.
+- A wrong token and pure garbage BOTH return `BAD_QR` — no enumeration oracle.
+- `undoCheckIn` deleted the row and wrote an audit row carrying
+  `targetUserID`; a second undo returned `NOT_CHECKED_IN`.
+- `checkInManual` recorded `method: "manual"`, and was idempotent too.
+- The **head's turnout panel renders** with `Turnout: —` where `signedUp` is 0
+  and `checkedIn` is 1 — the exact case that would otherwise print `NaN%`.
+- Check-ins are NOT audited; only submit, approve and undo were.
+
+**All test data deleted.** Final state: Event 1 (the user's own), EventSignup 1,
+EventAttendance 0, EventQuestion 0, EventLock 0, `event.*` audit 2.
+
+**STILL NOT DONE:** T3 in production, T6/T11 (a real door, real phones, a real
+camera — none of the camera path has ever run), and T12-T17.
 
 ## Notes for whoever runs this
 
