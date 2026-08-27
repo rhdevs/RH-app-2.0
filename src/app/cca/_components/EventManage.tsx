@@ -28,7 +28,7 @@ import EventGalleryField from "./EventGalleryField";
 import EventAnalytics from "./EventAnalytics";
 import EventAttendees from "./EventAttendees";
 import EventQuestionBuilder from "./EventQuestionBuilder";
-import EventScannerPicker from "./EventScannerPicker";
+import EventDoorSection from "./EventDoorSection";
 import EventAttendanceStats from "./EventAttendanceStats";
 
 type OwnedEvent = RouterOutputs["event"]["getForOwner"]["event"];
@@ -384,21 +384,6 @@ function DetailsEditor({
           the id. */}
       <EventQuestionBuilder eventID={event.eventID} />
 
-      {/* THE DOOR LIST sits BELOW the questions builder, which is where the
-          plan puts it and which is also why the blank-draft reuse rule has to
-          know about it: the same submit-without-scrolling path that could
-          inherit somebody's abandoned questions could inherit their door list
-          too, and that one is an authorisation defect rather than a tidiness
-          one. `create`'s reuse branch refuses a draft carrying either.
-
-          Renders nothing for a hall event, and the server refuses one — see the
-          component. */}
-      <EventScannerPicker
-        eventID={event.eventID}
-        ccaID={event.ccaID}
-        scannerUserIDs={event.scannerUserIDs}
-        onSaved={onInvalidate}
-      />
 
       {/* THE CONTRACT SENTENCE (D-34). This is the ONE authoring screen now —
           /new and EventCreateForm are gone — so everything the head keys in is
@@ -1075,6 +1060,25 @@ export default function EventManage({
         </div>
       )}
 
+      {/* THE DOOR SECTION, MOUNTED ONCE AND OUTSIDE BOTH BRANCHES.
+          Visible while the event is editable AND once it is published, because
+          the check-in window and the door list are the two things a head needs
+          to change on the day — everything else stays frozen at approval. One
+          mount rather than one per branch, so the two cannot drift. */}
+      {(scope === "all" || status === "published") && (
+        <EventDoorSection
+          eventID={event.eventID}
+          ccaID={event.ccaID}
+          status={status}
+          startTime={event.startTime}
+          endTime={event.endTime}
+          attendanceOpensAt={event.attendanceOpensAt}
+          attendanceClosesAt={event.attendanceClosesAt}
+          scannerUserIDs={event.scannerUserIDs}
+          onSaved={invalidate}
+        />
+      )}
+
       {/* SUBMITTED — READ-ONLY. The panel REPLACES the editor; it does not sit
           above one. Leaving DetailsEditor mounted here would give the head a
           form the server refuses every save from, with EVENT_LOCKED. */}
@@ -1120,37 +1124,6 @@ export default function EventManage({
         <div className="space-y-8">
           <AutoBookingNotice event={event} />
 
-          {/*
-            THE WAY IN TO THE DOOR. Only on a published event, because there is
-            nobody to check in before that.
-
-            A plain link rather than a gated panel: `attendanceStatus` on the
-            door page itself is what decides whether this person may scan,
-            whether the window is open, and whether the feature is configured at
-            all — four states it renders honest copy for. Duplicating that
-            judgement here would be a second copy of the rule that can drift
-            from the first, and the failure would be a head told they cannot
-            open a door they can.
-
-            Nominated scanners are not heads and never see this screen; they get
-            sent the link. That is the intended shape — the door page is
-            self-contained and authorises its own visitor.
-          */}
-          <section>
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
-              At the door
-            </h3>
-            <a
-              href={`/events/${event.eventID}/door`}
-              className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-gray-50"
-            >
-              Open the door scanner
-            </a>
-            <p className="mt-2 text-sm text-gray-500">
-              Scan arrivals, or tick them off the list if a phone won&rsquo;t
-              cooperate. Send this link to whoever you put on the door.
-            </p>
-          </section>
           <section>
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
               Signups
