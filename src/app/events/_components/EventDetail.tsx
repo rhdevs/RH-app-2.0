@@ -88,7 +88,7 @@ export default function EventDetail({ eventID }: { eventID: number }) {
   if (query.isPending) {
     return (
       <div className="px-4 py-6 sm:px-6 lg:px-8">
-        <div className="aspect-[16/6] max-h-96 w-full animate-pulse rounded-2xl bg-gray-200" />
+        <div className="h-56 w-full animate-pulse rounded-2xl bg-gray-200 sm:h-72 lg:h-80" />
         <div className="mt-6 h-9 w-64 animate-pulse rounded-lg bg-gray-200" />
         <div className="mt-6 h-20 w-full animate-pulse rounded-xl bg-gray-200" />
       </div>
@@ -147,16 +147,32 @@ export default function EventDetail({ eventID }: { eventID: number }) {
         <ArrowLeft className="h-4 w-4" /> All events
       </Link>
 
-      {/* CAPPED HEIGHT, not just an aspect ratio. At full width a bare
-          aspect-[16/6] becomes a letterbox on a wide monitor and pushes the
-          title below the fold, which is the opposite of what a banner is for. */}
+      {/* THE WHOLE BANNER, NEVER A CROP OF IT. Heads upload at whatever
+          aspect ratio they have, and object-cover in a fixed-ratio box ate the
+          top and bottom of anything that was not 16:6 — on a poster or a
+          ticket-style graphic, that is the part carrying the words.
+
+          So: a fixed-height band, and object-contain inside it. Contain alone
+          would leave grey pillars beside a tall image across a full-width
+          page, so a blurred, scaled copy of the same file fills the band
+          behind it. Same URL, so it is one download, and it is aria-hidden
+          because it carries no information the real image does not. */}
       {e.bannerUrl && (
-        <div className="relative mt-4 aspect-[16/6] max-h-96 w-full overflow-hidden rounded-2xl bg-gray-100">
+        <div className="relative mt-4 h-56 w-full overflow-hidden rounded-2xl bg-gray-100 sm:h-72 lg:h-80">
+          <Image
+            src={e.bannerUrl}
+            alt=""
+            aria-hidden
+            fill
+            className="scale-110 object-cover opacity-50 blur-2xl"
+            sizes="100vw"
+            unoptimized
+          />
           <Image
             src={e.bannerUrl}
             alt={e.title ?? "Event banner"}
             fill
-            className="object-cover"
+            className="object-contain"
             sizes="100vw"
             priority
             unoptimized
@@ -259,12 +275,17 @@ export default function EventDetail({ eventID }: { eventID: number }) {
                       key={url}
                       className="sm:basis-1/2 xl:basis-1/3"
                     >
-                      <div className="relative aspect-video overflow-hidden rounded-xl bg-gray-100">
+                      {/* Contained for the same reason as the banner: a photo
+                          gallery that crops every photo to 16:9 is showing the
+                          middle of a poster and calling it a picture. Border
+                          rather than a fill, so a contained image reads as
+                          sitting in a frame instead of floating on a grey slab. */}
+                      <div className="relative aspect-video overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
                         <Image
                           src={url}
                           alt={`Photo ${i + 1}`}
                           fill
-                          className="object-cover"
+                          className="object-contain"
                           sizes="(min-width: 1280px) 25vw, (min-width: 640px) 40vw, 100vw"
                           unoptimized
                         />
