@@ -513,34 +513,6 @@ export default function EventQuestionBuilder({ eventID }: { eventID: number }) {
         </div>
       )}
 
-      {/* THE PDPA NOTE. Always visible, above "Add a question", never behind a
-          disclosure — a CCA head is not a data controller and has had no
-          training, and the audience for an answer (whoever holds a headship in
-          this CCA, a set that turns over annually) is exactly what this note
-          exists to name at the moment they are typing the question, not to
-          block any particular question outright. */}
-      <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-        <p className="text-sm font-medium text-amber-900">
-          Careful what you ask for
-        </p>
-        <p className="mt-1 text-sm text-amber-800">
-          {/*
-            NAMES EVERY READER. This previously said only "whoever heads this
-            CCA — this year and next", which is incomplete: assertHeadsCca
-            (ccaScope.ts:58) returns early for `manageCcaHeads`, and that is
-            `manager` (roles.ts:1338) — admin OR jcrc. This is the one sentence
-            a head reads while deciding whether to put a health question on a
-            hall form, so understating the audience is the worst place in the
-            product to be wrong.
-          */}
-          Answers are read by whoever heads this CCA — this year and next —
-          and by JCRC and admins. Don’t ask about allergies, dietary needs,
-          medical conditions or anything else about someone’s health unless
-          the event genuinely can’t run without it, and say why in the
-          question.
-        </p>
-      </div>
-
       <Button
         type="button"
         variant="outline"
