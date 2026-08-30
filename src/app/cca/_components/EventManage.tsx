@@ -311,7 +311,7 @@ function DetailsEditor({
   const busy = update.isPending || submit.isPending || decide.isPending;
 
   return (
-    <div className="max-w-3xl space-y-5 rounded-lg border border-gray-200 bg-white p-5">
+    <div className="space-y-5 rounded-lg border border-gray-200 bg-white p-5">
       <EventDetailsFields
         value={value}
         onChange={(patch) => {
@@ -510,7 +510,7 @@ function PublicEditor({
   const busy = update.isPending;
 
   return (
-    <div className="max-w-3xl space-y-5">
+    <div className="space-y-5">
       <EventImageField
         eventID={event.eventID}
         label="Banner"
