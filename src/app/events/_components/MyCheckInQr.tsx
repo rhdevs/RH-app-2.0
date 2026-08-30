@@ -87,15 +87,15 @@ export default function MyCheckInQr({ className }: { className?: string }) {
             marginSize={2}
           />
         </div>
-        <p className="text-center text-sm text-gray-600">
-          Show this to whoever is on the door.
+        <p className="text-center text-sm font-medium text-gray-700">
+          Show this at the door.
         </p>
         {/* NO COUNTDOWN, AND THAT IS THE POINT. A ticking number invites people
             to snatch the phone back and wait for a "fresh" code, which is the
             one thing that makes a queue stall. The refresh is silent and the
             scanner accepts the previous window anyway, so a code that looks old
             still works. */}
-        <p className="text-center text-xs text-gray-400">
+        <p className="text-center text-xs text-gray-500">
           It refreshes every few seconds — that&rsquo;s normal.
         </p>
       </div>
