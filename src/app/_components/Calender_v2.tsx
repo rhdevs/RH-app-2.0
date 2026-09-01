@@ -26,7 +26,11 @@ import {
 import Loading from "./Loading";
 import Toast from "./Toast";
 import { useSession } from "next-auth/react";
-import BookingModal, { NO_IDENTITY_MESSAGE } from "./BookingModal";
+import BookingModal, {
+  NO_IDENTITY_MESSAGE,
+  type PickerFacility,
+} from "./BookingModal";
+import { JCRC_ROLE, CCA_HEAD_ROLE, ADMIN_ROLE } from "~/lib/roleNames";
 
 function classNames(...classes: (string | boolean | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
@@ -138,16 +142,54 @@ const Calendar_v2: React.FC = () => {
    *     query would be a client-only lockout with no server denial behind it.
    * The server still re-checks on submit, which is the real gate.
    */
-  const bookableFacilities: Facility[] = useMemo(() => {
-    if (!bookableQuery.data) return facilities;
-    return bookableQuery.data
-      .filter((f) => f.canBook)
-      .map((f) => ({
-        facilityID: f.facilityID,
-        facilityName: f.facilityName,
-        facilityLocation: f.facilityLocation,
+  const bookableFacilities: PickerFacility[] = useMemo(() => {
+    // FAIL OPEN, unchanged: until the advisory query resolves (or if it fails)
+    // fall back to the full list, never to the empty one. Hiding every room on a
+    // failed advisory query would be a client-only lockout with no server denial
+    // behind it. Rooms are then rendered UNANNOTATED rather than disabled.
+    if (!bookableQuery.data) {
+      return facilities.map((f) => ({
+        ...f,
+        canBook: true,
+        requiredRoles: [],
+        closed: false,
+        closedNote: null,
       }));
+    }
+    // NO LONGER FILTERED TO `canBook`. The picker now renders every room and
+    // disables the ones it cannot offer, with the reason — which is what
+    // `requiredRoles` was added to the payload for ("so the UI can say WHAT is
+    // needed instead of silently hiding a room") and what Q2 settled. The server
+    // is still the enforcement point; this only decides what is drawn.
+    return bookableQuery.data.map((f) => ({
+      facilityID: f.facilityID,
+      facilityName: f.facilityName,
+      facilityLocation: f.facilityLocation,
+      canBook: f.canBook,
+      requiredRoles: f.requiredRoles,
+      closed: f.closed,
+      closedNote: f.closedNote,
+    }));
   }, [bookableQuery.data, facilities]);
+
+  /**
+   * May this session create a REPEATING booking? Advisory only — `createSeries`
+   * carries its own role gate server-side and is the real check. This decides
+   * whether the control is drawn at all, so a resident is not shown an option
+   * that can only ever be refused.
+   *
+   * Reads the LIVE session role list, which the auth session callback rebuilds
+   * from the database on every request (I-4), so a revoked head loses the
+   * control on their next page load rather than in 30 days.
+   */
+  const canCreateSeries = useMemo(() => {
+    const roles = session?.user?.roles ?? [];
+    return (
+      roles.includes(ADMIN_ROLE) ||
+      roles.includes(JCRC_ROLE) ||
+      roles.includes(CCA_HEAD_ROLE)
+    );
+  }, [session]);
 
   const selectedFacilities = facilities.filter((f: Facility) =>
     selectedFacilityIds.includes(f.facilityID),
@@ -214,6 +256,38 @@ const Calendar_v2: React.FC = () => {
       isSameDay(booking.start, selectedDate),
     );
   }, [processedBookings, selectedDate]);
+
+  /**
+   * The selected day's bookings, GROUPED BY ROOM with times nested inside — Q1.
+   *
+   * Grouped here rather than server-side on purpose. `getBookings` is
+   * keyset-paginated on `(startTime desc, id asc)` and its `orderBy` has to
+   * mirror that predicate exactly or the cursor walks a different sequence than
+   * it cuts; adding `facilityID` as the primary sort key there would break
+   * pagination outright. A day view has already fetched its whole day, so
+   * grouping is free at this end and costs nothing at the other.
+   *
+   * `booking.title` is the facility NAME (getBookings denormalises it into the
+   * title field). Rooms are ordered alphabetically and times ascending within
+   * each, so the panel reads as per-room occupancy.
+   */
+  const bookingsByRoom = useMemo(() => {
+    const byRoom = new Map<string, typeof eventsForSelectedDate>();
+    for (const b of eventsForSelectedDate) {
+      const room = b.title ?? "Unknown room";
+      const list = byRoom.get(room) ?? [];
+      list.push(b);
+      byRoom.set(room, list);
+    }
+    return [...byRoom.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([room, list]) => ({
+        room,
+        bookings: list
+          .slice()
+          .sort((a, b) => a.start.getTime() - b.start.getTime()),
+      }));
+  }, [eventsForSelectedDate]);
 
   const navigateMonth = (direction: "prev" | "next") => {
     const newMonth = new Date(currentMonth);
@@ -330,6 +404,14 @@ const Calendar_v2: React.FC = () => {
         userId={userID}
         currentDate={selectedDate}
         refetch={refetchBookingsInMonth}
+        canCreateSeries={canCreateSeries}
+        onBooked={(message) => {
+          // Raised HERE and not inside the modal: the modal unmounts on success,
+          // taking its own Toast with it. This component stays on screen.
+          setToastContent(message);
+          setToastType("success");
+          setToastOpen(true);
+        }}
       />
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         {/* 08 §1.2: state the situation once, up front, rather than only when a
@@ -550,38 +632,45 @@ const Calendar_v2: React.FC = () => {
               </div>
               <div className="flex-1 overflow-y-auto pb-4">
                 <div className="space-y-4 px-6">
-                  {eventsForSelectedDate
-                    .slice()
-                    .sort((a, b) => a.start.getTime() - b.start.getTime())
-                    .map((booking) => (
-                      <div
-                        key={booking.id}
-                        className={classNames(
-                          "rounded-lg border-l-4 p-4",
-                          getFacilityColor(booking.title),
-                        )}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="mb-1 text-xs font-medium text-gray-500">
-                              {booking.time}
-                              {booking.endTime &&
-                                booking.endTime !== booking.time &&
-                                ` TO ${booking.endTime}`}
-                            </div>
-                            <div className="mb-1 font-medium text-gray-900">
-                              {booking.title}
-                            </div>
-                            <div className="text-sm text-gray-600">
-                              Event: {booking.eventName}
-                            </div>
-                            <div className="text-sm text-gray-600">
-                              By: {booking.user} (@{booking.userTeleHandle})
+                  {bookingsByRoom.map(({ room, bookings }) => (
+                    <div key={room} className="space-y-2">
+                      <div className="flex items-baseline gap-2 border-b border-gray-200 pb-1">
+                        <h4 className="text-sm font-semibold text-gray-900">
+                          {room}
+                        </h4>
+                        <span className="text-xs text-gray-400">
+                          {bookings.length}
+                          {bookings.length === 1 ? " booking" : " bookings"}
+                        </span>
+                      </div>
+                      {bookings.map((booking) => (
+                        <div
+                          key={booking.id}
+                          className={classNames(
+                            "rounded-lg border-l-4 p-4",
+                            getFacilityColor(booking.title),
+                          )}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="mb-1 text-xs font-medium text-gray-500">
+                                {booking.time}
+                                {booking.endTime &&
+                                  booking.endTime !== booking.time &&
+                                  ` TO ${booking.endTime}`}
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                Event: {booking.eventName}
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                By: {booking.user} (@{booking.userTeleHandle})
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  ))}
 
                   {eventsForSelectedDate.length === 0 && (
                     <div className="py-12 text-center">

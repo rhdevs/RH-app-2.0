@@ -127,6 +127,33 @@ export const protectedProcedure = t.procedure
     if (!ctx.session?.user) {
       throw new TRPCError({ code: "UNAUTHORIZED" });
     }
+    /**
+     * SESSION REVOCATION — checked FIRST, above the D-7 backstop.
+     *
+     * Sessions are JWTs with a 30-day maxAge and there is no server-side
+     * session store, so a password reset could not previously end anybody
+     * else's session: an attacker holding a stolen cookie kept full access for
+     * a month after the victim "recovered" the account. `credentialsStale` is
+     * the session callback's live read of the `CredentialRevocation` watermark
+     * (auth.ts / schema.prisma) and this is the boundary that enforces it.
+     *
+     * ORDER MATTERS FOR THE MESSAGE, not for the outcome — the callback also
+     * clears `eligible` on a revoked session, so the check below would deny
+     * anyway. But it would deny with NUS_ACCOUNT_REQUIRED, which sends a user
+     * whose password was just reset to the "sign in with your @u.nus.edu email"
+     * page and tells them nothing true. CREDENTIALS_CHANGED is the fact.
+     *
+     * Trusting the session field here is not an I-5 violation, for the same
+     * reason the `eligible` note below gives: it is re-derived from the
+     * database on EVERY request by the session callback, never cached in the
+     * token.
+     */
+    if (ctx.session.user.credentialsStale) {
+      throw new TRPCError({
+        code: "UNAUTHORIZED",
+        message: "CREDENTIALS_CHANGED",
+      });
+    }
     // D-7 backstop for pre-cutover JWTs (02-backend-authz.md §5). session.maxAge
     // is 30 days and the `signIn` callback does not re-run for a live token, so
     // without this an ineligible legacy session keeps every non-role-gated

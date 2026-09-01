@@ -62,9 +62,30 @@ export const ROLES = ["admin", "jcrc", "cca_head", "resident", "scrc"] as const;
 // read-boundary hazard (07-cca-future.md §1.4).
 export type Role = (typeof ROLES)[number];
 
-export const ADMIN_ROLE = "admin" as const;
-export const JCRC_ROLE = "jcrc" as const;
-export const CCA_HEAD_ROLE = "cca_head" as const;
+/**
+ * The role NAME STRINGS are declared in `~/lib/roleNames` and re-exported here.
+ *
+ * They live there because that module is PURE and a `"use client"` component can
+ * import it; this module cannot be imported from the browser at all (Prisma and
+ * `~/env` at module scope). Re-exported rather than moved so every existing
+ * `from "~/server/api/services/roles"` import keeps working and there is still
+ * one obvious place to look for them.
+ *
+ * The long notes below on `scrc` and `resident` describe what those roles MEAN
+ * and stay here, with the machinery that enforces it.
+ */
+// Imported AND re-exported, not `export … from`: this module uses these names
+// in its own body (capability tables, grant guards), and a pass-through
+// re-export binds nothing locally.
+import {
+  ADMIN_ROLE,
+  JCRC_ROLE,
+  CCA_HEAD_ROLE,
+  SCRC_ROLE,
+  BASELINE_ROLE,
+} from "~/lib/roleNames";
+
+export { ADMIN_ROLE, JCRC_ROLE, CCA_HEAD_ROLE, SCRC_ROLE, BASELINE_ROLE };
 /**
  * Hall Office / SCRC. A STAFF-SIDE role, not a student-leadership one, and the
  * narrowest privileged role in the vocabulary.
@@ -85,13 +106,11 @@ export const CCA_HEAD_ROLE = "cca_head" as const;
  * self-target refusal in admin.setJcrcRole, the `scrc.enabled` kill switch, and
  * an audit row per grant carrying the actor's roles.
  */
-export const SCRC_ROLE = "scrc" as const;
 /**
  * Baseline capability of every verified NUS account. STORED and auto-assigned
  * (I-8), never GRANTABLE: it is written only by ensureBaseline, the register
  * route, the createUser event and the backfill — never through the role UI.
  */
-export const BASELINE_ROLE = "resident" as const;
 
 /**
  * Roles that survive every role write, because they cannot be expressed in a

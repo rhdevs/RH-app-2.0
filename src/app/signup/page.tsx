@@ -15,6 +15,7 @@ import {
 import Header from "../_components/header";
 import Toast from "../_components/Toast";
 import { useRouter } from "next/navigation";
+import { validatePassword } from "~/lib/schemas/password";
 
 const SignUpPage = () => {
   const [formData, setFormData] = useState({
@@ -57,6 +58,19 @@ const SignUpPage = () => {
       formData.confirmPassword === ""
     ) {
       setToastContent("Please fill in required field!");
+      setToastOpen(true);
+      setToastType("danger");
+      return;
+    }
+
+    // Mirrors the server rule via the SHARED policy (src/lib/schemas/password).
+    // Advice only — src/app/api/register/route.ts is the enforcement point.
+    // Checked BEFORE the match test so someone typing a too-short password
+    // twice is told the actual problem rather than being waved through step 1
+    // and rejected by the API two screens later.
+    const policyError = validatePassword(formData.password);
+    if (policyError) {
+      setToastContent(policyError);
       setToastOpen(true);
       setToastType("danger");
       return;

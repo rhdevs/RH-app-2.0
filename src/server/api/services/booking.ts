@@ -57,6 +57,57 @@ export async function nextBookingId(db: PrismaClient): Promise<number> {
 }
 
 /**
+ * Allocate `count` consecutive bookingIDs in ONE atomic round trip.
+ *
+ * WHY IT EXISTS. `nextBookingId` above costs a full round trip per id, and a
+ * recurring booking needs one per occurrence — all of them inside a
+ * `withFacilityLock` hold, against a route with `maxDuration = 60`. A 26-week
+ * series would spend 26 sequential round trips on ids alone, holding the
+ * facility lock the entire time, before it writes anything. This turns that into
+ * a constant two, whatever the length of the series.
+ *
+ * ATOMIC FOR THE SAME REASON THE SINGLE VERSION IS: a single-document `$inc` in
+ * MongoDB is atomic, so two concurrent callers asking for 10 each get two
+ * disjoint blocks. Reading the counter and then writing `seq + count` would not
+ * be — that is the read-then-write race the rate limiter was just fixed for.
+ *
+ * RETURNS THE BLOCK, not the top: `seq` after the increment is the LAST id in
+ * the block, so the block is `[seq - count + 1 .. seq]`. Returning the array
+ * rather than the bounds keeps the arithmetic in one place instead of at every
+ * call site.
+ *
+ * IDS ARE CONSUMED WHETHER OR NOT THE WRITE SUCCEEDS. If the series then fails
+ * to insert, the block is simply never used and `bookingID` has a gap. That is
+ * correct and intended — `bookingID` is an identifier, not a count, and nothing
+ * in the app derives meaning from it being contiguous. Trying to "give back"
+ * unused ids is what reintroduces the race.
+ */
+export async function nextBookingIdBlock(
+  db: PrismaClient,
+  count: number,
+): Promise<number[]> {
+  if (count <= 0) return [];
+  // Reuse the single allocator for the first id purely for its lazy-init side
+  // effect: it is the one place that seeds `Counter` from the existing max when
+  // no row exists yet, and duplicating that here would be a second, drifting
+  // copy of the seeding rule.
+  const firstId = await nextBookingId(db);
+  if (count === 1) return [firstId];
+
+  // Claim the remaining `count - 1` ids in one more atomic $inc. After this the
+  // block [firstId .. firstId + count - 1] belongs to this caller and no other
+  // caller can be inside it, because both increments moved the shared counter.
+  await db.counter.update({
+    where: { key: "bookingID" },
+    data: { seq: { increment: count - 1 } },
+  });
+
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) out.push(firstId + i);
+  return out;
+}
+
+/**
  * Resolve a chosen facility to its id + name. The name is DENORMALIZED into the
  * owning row (Event.location, CcaInterviewSlot.location) so every display path
  * renders the location without a join; the id drives the auto-booking. Throws if

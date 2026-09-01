@@ -337,11 +337,72 @@ export type BookDenialReason =
   | "NO_IDENTITY"
   | "NOT_ELIGIBLE"
   | "NOT_RESIDENT"
-  | "ROLE_REQUIRED";
+  | "ROLE_REQUIRED"
+  /**
+   * The room is not bookable through this app BY ANYONE — a different axis from
+   * every other reason here, which are all about WHO the caller is. No role
+   * satisfies it and `admin` does not bypass it, because it is not a permission
+   * at all: it records that the room is administered somewhere else (the Dance
+   * Studio, by the Dance CCA Exco).
+   */
+  | "FACILITY_CLOSED";
 
 export type BookDecision =
   | { ok: true }
-  | { ok: false; reason: BookDenialReason; requiredRoles: string[] };
+  | {
+      ok: false;
+      reason: BookDenialReason;
+      requiredRoles: string[];
+      /**
+       * Operator-supplied copy for FACILITY_CLOSED — `FacilityAccess.unbookableNote`,
+       * e.g. "please approach the Dance CCA Exco". Optional and null for every
+       * other reason, whose messages are derived from the reason code itself.
+       */
+      note?: string | null;
+    };
+
+/**
+ * Is this facility bookable through the app at all?
+ *
+ * ABSENCE MEANS YES. A null row, or a row with `bookable` unset, is bookable —
+ * so this predicate is inert across the entire existing dataset and needs no
+ * kill switch of its own. Only an operator explicitly writing `bookable: false`
+ * changes any outcome. That is deliberate: a new denial that defaults to
+ * denying is a mass lockout waiting for a deploy.
+ *
+ * FAILS OPEN on a read fault, matching `getFacilityRequiredRoles`' posture on
+ * this path: an Atlas hiccup must not make every room in the hall unbookable.
+ * The role check beside it is the one that fails closed.
+ *
+ * NEVER FILTER ON THIS FIELD WITH `where: { bookable: null }` — MEASURED, NOT
+ * THEORISED. On the live cluster 46 of 47 `FacilityAccess` rows have no
+ * `bookable` field at all (verified 2026-09-01), and Prisma READS an absent
+ * field as `null` while its `where: { bookable: null }` filter matches ZERO of
+ * them. So `count({ where: { bookable: null } })` returns 0 where the honest
+ * answer is 46, and a future "list all the open facilities" query written that
+ * way would silently return nothing.
+ *
+ * Both readers here therefore test the VALUE (`=== false`) on rows fetched
+ * without a `bookable` predicate, which is correct for absent, null and true
+ * alike. Keep it that way.
+ */
+export async function getFacilityClosure(
+  db: PrismaClient,
+  facilityID: number,
+): Promise<{ closed: boolean; note: string | null }> {
+  try {
+    const row = await db.facilityAccess.findUnique({
+      where: { facilityID },
+      select: { bookable: true, unbookableNote: true },
+    });
+    return {
+      closed: row?.bookable === false,
+      note: row?.unbookableNote ?? null,
+    };
+  } catch {
+    return { closed: false, note: null };
+  }
+}
 
 /**
  * Full D-1 evaluation with a STRUCTURED denial, so the UI can say WHY instead
@@ -467,6 +528,35 @@ export async function evaluateBookingWithMode(
     return { ok: false, reason: "NO_IDENTITY", requiredRoles: [] };
   }
 
+  /* ---- IS THE ROOM BOOKABLE HERE AT ALL? ------------------------------
+   * ABOVE THE MODE BRANCH, and therefore enforced in off, permissive AND
+   * enforce alike — the same placement and the same reasoning as the identity
+   * check above it.
+   *
+   * The enforcement mode governs the D-1 ROLE rollout: it exists so the hall
+   * can learn who WOULD be denied by the new role rules before anyone is hurt.
+   * This denial is not a role rule. "The Dance Studio is administered by the
+   * Dance CCA Exco" is true in every mode, and permissive mode shadowing it
+   * would mean the app cheerfully books a room it does not control.
+   *
+   * NOT AUDITED, unlike NO_IDENTITY. That log exists to size an affected
+   * population during a migration; this is a permanent, intended configuration
+   * and would only add noise.
+   *
+   * `admin` DOES NOT BYPASS THIS. Every other denial here is about the caller,
+   * and admin outranks all of them; this one is about the room, and there is no
+   * rank that makes RHApp the system of record for a room it does not own.
+   */
+  const closure = await getFacilityClosure(db, facilityID);
+  if (closure.closed) {
+    return {
+      ok: false,
+      reason: "FACILITY_CLOSED",
+      requiredRoles: [],
+      note: closure.note,
+    };
+  }
+
   const mode = await getEnforcementMode(db);
 
   if (mode === "off") {
@@ -548,7 +638,17 @@ export async function canBookFacility(
 export async function getBookableFacilityMap(
   db: PrismaClient,
   userID: string | undefined | null,
-): Promise<Map<number, { canBook: boolean; requiredRoles: string[] }>> {
+): Promise<
+  Map<
+    number,
+    {
+      canBook: boolean;
+      requiredRoles: string[];
+      closed: boolean;
+      closedNote: string | null;
+    }
+  >
+> {
   const [facilities, rows, roles, mode] = await Promise.all([
     db.facilities.findMany({ select: { facilityID: true } }),
     db.facilityAccess.findMany(),
@@ -557,20 +657,50 @@ export async function getBookableFacilityMap(
   ]);
 
   const req = new Map(rows.map((r) => [r.facilityID, rawRequired(r)]));
-  const out = new Map<number, { canBook: boolean; requiredRoles: string[] }>();
+  // Same source as getFacilityClosure, read in bulk from the rows already
+  // fetched — a per-facility query here would be 47 round trips on a picker
+  // render. `bookable === false` is the only closing value; null and true are
+  // both open. See getFacilityClosure for why absence means bookable.
+  const closedMap = new Map(
+    rows.map((r) => [
+      r.facilityID,
+      { closed: r.bookable === false, note: r.unbookableNote ?? null },
+    ]),
+  );
+  const out = new Map<
+    number,
+    {
+      canBook: boolean;
+      requiredRoles: string[];
+      closed: boolean;
+      closedNote: string | null;
+    }
+  >();
   for (const f of facilities) {
     const raw = req.get(f.facilityID) ?? [];
     const required = raw.length ? raw : [...DEFAULT_REQUIRED_ROLES];
+    const closure = closedMap.get(f.facilityID) ?? {
+      closed: false,
+      note: null,
+    };
+    const roleAllows =
+      mode === "off"
+        ? canBookLegacy(roles, raw)
+        : canBookWithRoles(roles, required);
     out.set(f.facilityID, {
       // The picker must agree with the enforcement point, kill switch included,
-      // or a room renders enabled and fails at submit (or vice versa).
-      canBook:
-        mode === "off"
-          ? canBookLegacy(roles, raw)
-          : canBookWithRoles(roles, required),
+      // or a room renders enabled and fails at submit (or vice versa). That now
+      // includes the closure axis: evaluateBookingWithMode denies a closed room
+      // in EVERY mode and admin does not bypass it, so neither does this.
+      canBook: roleAllows && !closure.closed,
       // Always the DEFAULTED set: this is what the UI tells the user is needed,
       // and "nothing is required" is not a state that exists under D-1.
       requiredRoles: required,
+      // Surfaced separately from `canBook` so the picker can distinguish "you
+      // may not book this" from "nobody books this here" and show the operator's
+      // own note instead of a role list that would be misleading.
+      closed: closure.closed,
+      closedNote: closure.note,
     });
   }
   return out;

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "~/server/db";
-import { hashPassword } from "~/lib/password";
+import { hashPassword, validatePassword } from "~/lib/password";
 import { rateLimit, clientIp } from "~/lib/rateLimit";
 import {
   canonicalUserID,
@@ -100,11 +100,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid Email" }, { status: 400 });
     }
 
-    if (password.length < 8) {
-      return NextResponse.json(
-        { error: "Password should be at least 8 characters long." },
-        { status: 400 },
-      );
+    // THE SHARED POLICY (src/lib/password.ts), not a private length check. This
+    // site and api/reset-password/route.ts each held their own `length < 8`,
+    // which is the shape that lets a hardening land on one password writer and
+    // silently miss the other.
+    const policyError = validatePassword(password);
+    if (policyError) {
+      return NextResponse.json({ error: policyError }, { status: 400 });
     }
     if (password !== confirmPassword) {
       return NextResponse.json(

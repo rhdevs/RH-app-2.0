@@ -137,6 +137,32 @@ const PastBookings = () => {
       .sort((a, b) => b.start.getTime() - a.start.getTime());
   }, [bookingData?.bookings, searchQuery]);
 
+  /**
+   * The same room grouping the calendar day view uses — Q1 applies to both, so
+   * there is ONE grouping rule in the app rather than two that drift.
+   *
+   * Rooms alphabetically; within a room, MOST RECENT FIRST, which is the axis
+   * this view has always sorted on and the one that matters in a history.
+   * `booking.title` is the facility name, denormalised by getBookings.
+   */
+  const bookingsByRoom = useMemo(() => {
+    const byRoom = new Map<string, typeof filteredBookings>();
+    for (const b of filteredBookings) {
+      const room = b.title ?? "Unknown room";
+      const list = byRoom.get(room) ?? [];
+      list.push(b);
+      byRoom.set(room, list);
+    }
+    return [...byRoom.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([room, list]) => ({
+        room,
+        bookings: list
+          .slice()
+          .sort((a, b) => b.start.getTime() - a.start.getTime()),
+      }));
+  }, [filteredBookings]);
+
   const clearFilters = () => {
     setSelectedFacilityIds([]);
     setSelectedTimeFrame("all");
@@ -406,7 +432,16 @@ const PastBookings = () => {
               </p>
             </div>
           ) : (
-            filteredBookings.map((booking, idx) => (
+            bookingsByRoom.map(({ room, bookings }) => (
+              <div key={room} className="space-y-3">
+                <div className="flex items-baseline gap-2 border-b border-gray-200 pb-1">
+                  <h3 className="text-sm font-semibold text-gray-900">{room}</h3>
+                  <span className="text-xs text-gray-400">
+                    {bookings.length}
+                    {bookings.length === 1 ? " booking" : " bookings"}
+                  </span>
+                </div>
+                {bookings.map((booking, idx) => (
               <div
                 key={idx}
                 className="rounded-lg border border-gray-200 bg-white p-6 transition-shadow hover:shadow-md"
@@ -468,6 +503,8 @@ const PastBookings = () => {
                     </div>
                   )}
                 </div>
+              </div>
+                ))}
               </div>
             ))
           )}
