@@ -350,8 +350,35 @@ type SignedRow = {
   confidence: string;
 };
 
+/**
+ * DOMAIN SEPARATION, AND IT COMES FIRST IN THE PAYLOAD — the same rule
+ * `services/eventQr.ts` states for its own tokens, applied to the second signer
+ * in the codebase.
+ *
+ * IT MATTERS MORE HERE THAN THERE, because this signer does NOT have a key of
+ * its own: `planSecret()` returns NEXTAUTH_SECRET, which is also the key
+ * next-auth uses to sign every session JWT. Two different message formats under
+ * one key is the precondition for a cross-protocol forgery — the day a third
+ * thing is signed with this secret, an unprefixed payload from one signer that
+ * can be made to look like a payload from another verifies against both. The
+ * prefix makes an `admin-bulk-role-import` message unrepresentable as any other
+ * kind, so the collision cannot be constructed even if the field layouts
+ * otherwise line up.
+ *
+ * ADDING THIS INVALIDATES OUTSTANDING PREVIEW TOKENS — every rowToken minted
+ * before this deploy stops verifying, and an operator mid-import sees
+ * PLAN_TOKEN_INVALID and has to re-run the preview. That is acceptable and
+ * self-correcting: the tokens already carry a short `expiresAt`, the failure is
+ * loud rather than silent, and it fails CLOSED (nothing is written).
+ *
+ * SEPARATE KEYS WOULD BE BETTER STILL. If a dedicated BULK_IMPORT_SECRET is ever
+ * added to env.js, this prefix stays anyway — belt and braces cost one string.
+ */
+const SIGN_PURPOSE = "admin-bulk-role-import";
+
 function signRow(r: SignedRow): string {
   const payload = [
+    SIGN_PURPOSE,
     r.batchId,
     r.actorUserID,
     String(r.expiresAt),

@@ -5,6 +5,10 @@ import { Mail, Lock } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Header from "../_components/header";
 import Toast from "../_components/Toast";
+import {
+  PASSWORD_MIN_LENGTH,
+  validatePassword,
+} from "~/lib/schemas/password";
 
 const RequestResetForm = () => {
   const [email, setEmail] = useState("");
@@ -180,8 +184,14 @@ const SetNewPasswordForm = ({ token }: { token: string }) => {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 8) {
-      showToast("Password should be at least 8 characters long.", "danger");
+    // Mirrors the server rule via the SHARED policy rather than restating it —
+    // this is advice, and src/app/api/reset-password/route.ts is enforcement.
+    // A hardcoded length here silently disagrees with the server the moment the
+    // policy moves, which shows up as a form that accepts a password and then
+    // reports a 400 the user cannot act on.
+    const policyError = validatePassword(password);
+    if (policyError) {
+      showToast(policyError, "danger");
       return;
     }
     if (password !== confirm) {
@@ -245,7 +255,7 @@ const SetNewPasswordForm = ({ token }: { token: string }) => {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     className="w-full rounded-xl border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 transition-all duration-200 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500"
-                    placeholder="At least 8 characters"
+                    placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
                   />
                 </div>
               </div>

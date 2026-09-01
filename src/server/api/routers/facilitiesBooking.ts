@@ -1,11 +1,15 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
+import { randomUUID } from "node:crypto";
+
 import {
   createTRPCRouter,
   protectedProcedure,
   publicProcedure,
   matricProcedure,
+  requireMatric,
+  requireRoles,
 } from "../trpc";
 import {
   evaluateBookingWithMode,
@@ -13,7 +17,37 @@ import {
   getBookableFacilityMap,
   type BookDecision,
 } from "../services/access";
-import { nextBookingId, withFacilityLock } from "../services/booking";
+import {
+  nextBookingId,
+  nextBookingIdBlock,
+  withFacilityLock,
+} from "../services/booking";
+import { JCRC_ROLE, CCA_HEAD_ROLE } from "../services/roles";
+import {
+  SERIES_MAX_OCCURRENCES,
+  seriesWindowSchema,
+  validateSeriesWindows,
+  type SeriesWindow,
+} from "~/lib/schemas/recurrence";
+
+/**
+ * WHO MAY CREATE A REPEATING BOOKING: CCA heads and JCRC (and `admin`, which
+ * `requireRoles` admits implicitly). Ordinary residents keep single bookings.
+ *
+ * A series is an N-times claim on a shared hall, so this is a policy decision
+ * rather than a technical one, and it was taken deliberately as the STRICT
+ * opening position: it is easy to relax later, and very hard to take back once
+ * residents have term-long bookings. `SERIES_MAX_OCCURRENCES` is a separate,
+ * purely technical bound and is NOT the policy — see its own note.
+ *
+ * Composed onto `matricProcedure` rather than replacing it: a head still has to
+ * clear the same onboarding gate as anyone else making a booking, and layering
+ * the two means neither can be forgotten. Ordering follows the existing
+ * `identifiedProcedure.use(requireMatric)` idiom in the events router.
+ */
+const seriesProcedure = protectedProcedure
+  .use(requireMatric)
+  .use(requireRoles(JCRC_ROLE, CCA_HEAD_ROLE));
 
 /**
  * Fields safe to expose about a user (#9). Deliberately excludes passwordHash
@@ -49,6 +83,14 @@ function denialMessage(d: Extract<BookDecision, { ok: false }>): string {
       return "Your account is not recognised as a hall resident. Please contact the JCRC.";
     case "ROLE_REQUIRED":
       return `This room is restricted to: ${d.requiredRoles.join(" or ")}.`;
+    case "FACILITY_CLOSED":
+      // The operator's own copy when there is any, because only they know where
+      // the booking actually happens. The fallback says the one true thing we
+      // can say without it: not here.
+      return (
+        d.note ??
+        "This room can't be booked through RHApp. Please contact the JCRC to find out who manages it."
+      );
   }
 }
 
@@ -89,6 +131,11 @@ export const facilityBookingRouter = createTRPCRouter({
       ...f,
       canBook: permMap.get(f.facilityID)?.canBook ?? false,
       requiredRoles: permMap.get(f.facilityID)?.requiredRoles ?? ["resident"],
+      // The closure axis, carried through so the picker can say "the Dance CCA
+      // Exco books this" rather than showing a role list the user cannot act on.
+      // `canBook` already accounts for it; these two are for the COPY.
+      closed: permMap.get(f.facilityID)?.closed ?? false,
+      closedNote: permMap.get(f.facilityID)?.closedNote ?? null,
     }));
   }),
 
@@ -347,6 +394,30 @@ export const facilityBookingRouter = createTRPCRouter({
               }
             : {}),
         },
+        /* ---- ORDERING IS CORRECTNESS HERE, NOT PRESENTATION -------------
+         * THIS QUERY HAD NO `orderBy` AT ALL, while the `cursor` filter above
+         * paginates on `(startTime, id)`. Keyset pagination over an UNORDERED
+         * result is undefined: Mongo returns documents in natural order, which
+         * is neither stable nor related to the cursor's predicate, so page 2
+         * could skip rows page 1 never showed and repeat rows it did. Nobody
+         * would see an error — just a booking list quietly missing bookings.
+         *
+         * THE ORDER IS DICTATED BY THE CURSOR PREDICATE, NOT BY THE UI. Read the
+         * cursor filter above: `startTime < cursor.startTime` OR (`startTime ==
+         * cursor.startTime` AND `id > cursor.id`). That is startTime DESCENDING
+         * with an ASCENDING id tiebreak, and this `orderBy` must mirror it
+         * exactly or the cursor walks a different sequence than the one it is
+         * cutting.
+         *
+         * SO: NO `facilityID` HERE, even though both consumers group by room
+         * (Q1). Sorting by facility first would put the pagination key third and
+         * break the cursor outright. Room grouping is a PRESENTATION concern and
+         * is done client-side in Calender_v2 and PastBookings, which is the right
+         * place for it: those views group a day or a time frame that has already
+         * been fetched whole, whereas grouping at the DB level would fight the
+         * keyset walk.
+         */
+        orderBy: [{ startTime: "desc" }, { id: "asc" }],
       });
       // 09 §3.1 (S5): filter the sentinel out of the JOIN, not out of each read.
       // A ""-keyed booking must resolve to NO user, never to whichever ""-keyed
@@ -425,12 +496,25 @@ export const facilityBookingRouter = createTRPCRouter({
         ...splitBookings,
       ];
 
-      // Light resort after splitting (most bookings will already be ordered)
+      /* Resort after splitting multi-day bookings, which inserts rows out of
+       * order.
+       *
+       * THE TIEBREAK MUST AGREE WITH THE CURSOR, and it did not: this sorted
+       * `id` DESCENDING while the cursor selects `id: { gt: cursor.id }`, i.e.
+       * ascending. `nextCursor` is taken from the LAST element of this array, so
+       * with a descending tiebreak the cursor handed back the SMALLEST id in a
+       * startTime group and the next page then asked for ids greater than it —
+       * re-serving every other row in that group. Ties are common here because
+       * hall bookings almost all start on the hour.
+       *
+       * Now: startTime descending, id ascending — the same sequence as the
+       * `orderBy` above and the same one the cursor predicate cuts.
+       */
       processedBookings.sort((a, b) => {
         if (b.startTime !== a.startTime) {
           return b.startTime - a.startTime;
         }
-        return b.id.localeCompare(a.id);
+        return a.id.localeCompare(b.id);
       });
 
       const nextCursor =
@@ -740,12 +824,54 @@ export const facilityBookingRouter = createTRPCRouter({
       const newStartTime = startTime ?? existingBooking.startTime;
       const newEndTime = endTime ?? existingBooking.endTime;
 
+      // TRPCError, not a bare `Error`. This file already makes the argument one
+      // guard up: tRPC surfaces a bare throw as INTERNAL_SERVER_ERROR, and a
+      // rejected input must not be reported to the client as a server fault —
+      // it also trips the `sanitizeErrors` middleware into logging a real
+      // incident for what is a typo.
       if (newEndTime <= newStartTime) {
-        throw new Error("End time must be after start time");
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "End time must be after start time",
+        });
       }
 
-      // Check for conflicts only if time is being changed
-      if (startTime !== undefined || endTime !== undefined) {
+      const timesChanged = startTime !== undefined || endTime !== undefined;
+
+      // A pure metadata edit (rename, description) cannot create an overlap, so
+      // it does not contend for the facility and does not pay for the lock.
+      if (!timesChanged) {
+        return ctx.db.bookings.update({
+          where: { id },
+          data: {
+            ...(eventName !== undefined && { eventName }),
+            ...(description !== undefined && { description }),
+          },
+        });
+      }
+
+      /* ---- THE CONFLICT CHECK AND THE WRITE MUST BE ONE CRITICAL SECTION ---
+       * createBooking has held `withFacilityLock` since #11/#12; THIS PATH DID
+       * NOT, and it is the same race with the same consequence. Read the
+       * conflicting rows, decide, then update — with an await between each — so
+       * two residents both moving a booking into the same free window each read
+       * "no conflict" and both write. The room is then double-booked by two
+       * people who each saw the app tell them it was free, which is the exact
+       * outcome the lock on the create path exists to prevent.
+       *
+       * It is REACHABLE WITHOUT MALICE: the picker shows a free slot, two people
+       * tap it at once, and neither is doing anything unusual. `forceBook` has
+       * no equivalent here, so unlike createBooking there is not even a
+       * deliberate override to explain the overlap afterwards.
+       *
+       * LOCKED ON `existingBooking.facilityID`, which is the right key and the
+       * only available one: `facilityID` is not editable through this mutation
+       * (see the access-recheck note above), so the booking cannot move between
+       * facilities and one lock covers the whole operation. If facility changes
+       * are ever added here, this becomes a TWO-lock problem — take them in a
+       * deterministic order or it deadlocks.
+       */
+      return withFacilityLock(ctx.db, existingBooking.facilityID, async () => {
         const conflicts = await ctx.db.bookings.findMany({
           where: {
             facilityID: existingBooking.facilityID,
@@ -758,21 +884,329 @@ export const facilityBookingRouter = createTRPCRouter({
         });
 
         if (conflicts.length > 0) {
-          throw new Error("Time conflicts with existing bookings");
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Time conflicts with existing bookings",
+          });
         }
+
+        return ctx.db.bookings.update({
+          where: { id },
+          data: {
+            ...(eventName !== undefined && { eventName }),
+            ...(description !== undefined && { description }),
+            ...(startTime !== undefined && { startTime }),
+            ...(endTime !== undefined && { endTime }),
+          },
+        });
+      });
+    }),
+
+  /* ======================================================================
+   * RECURRING BOOKINGS
+   *
+   * Read src/lib/schemas/recurrence.ts before touching any of the three
+   * procedures below — it holds the bounds, the expansion and the shared
+   * validation, and it explains why the wire contract is a list of WINDOWS
+   * rather than a rule.
+   *
+   * THE ONE THING NOT TO DO: do not implement recurrence by giving
+   * `Bookings.repeat` meaning. Over 14,000 legacy rows carry non-zero values
+   * that nothing has ever read; a reader that starts expanding them would
+   * retroactively occupy rooms across the whole calendar. See the field's own
+   * comment in schema.prisma. Occurrences are MATERIALISED — one row each,
+   * sharing a `seriesID` — so every existing reader works on a series unchanged.
+   * ====================================================================== */
+
+  /**
+   * DRY RUN. Which occurrences are free, and what takes the ones that are not.
+   *
+   * A QUERY, AND IT WRITES NOTHING. This is the whole UX of the feature: the
+   * head sees all 15 Thursdays with their status and decides, rather than
+   * discovering on week 7 that the series is full of holes.
+   *
+   * It deliberately does NOT hold the facility lock. A preview is advisory by
+   * construction (I-7) — the window it reports can be taken a second later, and
+   * `createSeries` re-checks every occurrence under the lock before writing.
+   * Locking a facility for as long as someone reads a form would be a denial of
+   * service dressed up as correctness.
+   *
+   * The access decision is evaluated ONCE, not per occurrence: `facilityID` is
+   * fixed for the series, and `evaluateBookingWithMode` answers a question about
+   * the caller and the room, not about the time.
+   */
+  previewSeries: seriesProcedure
+    .input(
+      z.object({
+        facilityID: z.number().int(),
+        windows: z.array(seriesWindowSchema),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const shapeError = validateSeriesWindows(input.windows);
+      if (shapeError) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: shapeError });
       }
 
-      // Update the booking
-      const updated = await ctx.db.bookings.update({
-        where: { id },
-        data: {
-          ...(eventName !== undefined && { eventName }),
-          ...(description !== undefined && { description }),
-          ...(startTime !== undefined && { startTime }),
-          ...(endTime !== undefined && { endTime }),
+      const decision = await evaluateBookingWithMode(
+        ctx.db,
+        ctx.session.user.userID,
+        input.facilityID,
+        ctx.session.user.email,
+      );
+      if (!decision.ok) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: denialMessage(decision),
+        });
+      }
+
+      // ONE query for the whole series rather than one per occurrence. The
+      // series spans at most 26 weeks, so the outer bound is a single indexed
+      // range read on (facilityID, startTime, endTime); filtering the
+      // occurrences against it in memory is far cheaper than 26 round trips,
+      // and — unlike 26 sequential reads — it sees a consistent snapshot.
+      const first = input.windows[0]!;
+      const last = input.windows[input.windows.length - 1]!;
+      const candidates = await ctx.db.bookings.findMany({
+        where: {
+          facilityID: input.facilityID,
+          startTime: { lt: last.endTime },
+          endTime: { gt: first.startTime },
+        },
+        select: { startTime: true, endTime: true, eventName: true },
+        orderBy: { startTime: "asc" },
+      });
+
+      const occurrences = input.windows.map((w) => {
+        // Half-open overlap, identical to findFacilityConflict and every other
+        // overlap test in this file: a booking ending exactly when this window
+        // starts does not take the room.
+        const clash = candidates.find(
+          (c) => c.startTime < w.endTime && c.endTime > w.startTime,
+        );
+        return {
+          startTime: w.startTime,
+          endTime: w.endTime,
+          available: clash === undefined,
+          conflict: clash
+            ? {
+                startTime: clash.startTime,
+                endTime: clash.endTime,
+                eventName: clash.eventName,
+              }
+            : null,
+        };
+      });
+
+      return {
+        occurrences,
+        freeCount: occurrences.filter((o) => o.available).length,
+        clashCount: occurrences.filter((o) => !o.available).length,
+        maxOccurrences: SERIES_MAX_OCCURRENCES,
+      };
+    }),
+
+  /**
+   * COMMIT. Writes the free occurrences of a series as one unit.
+   *
+   * `skipConflicts` IS REQUIRED FROM THE CLIENT AND HAS NO DEFAULT, deliberately.
+   * The preview has already told the head exactly which weeks clash; this flag is
+   * their answer to it. Defaulting it either way would turn a decision they were
+   * shown into one the server made for them — silently dropping weeks they
+   * expected to get, or refusing a series they had already accepted was partial.
+   */
+  createSeries: seriesProcedure
+    .input(
+      z.object({
+        facilityID: z.number().int(),
+        ccaID: z.number().int(),
+        eventName: z.string().min(1),
+        description: z.string().optional(),
+        windows: z.array(seriesWindowSchema),
+        skipConflicts: z.boolean(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const shapeError = validateSeriesWindows(input.windows);
+      if (shapeError) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: shapeError });
+      }
+
+      const userID = ctx.session.user.userID;
+
+      const decision = await evaluateBookingWithMode(
+        ctx.db,
+        userID,
+        input.facilityID,
+        ctx.session.user.email,
+      );
+      if (!decision.ok) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: denialMessage(decision),
+        });
+      }
+
+      // C9, the same restatement createBooking makes: evaluateBookingWithMode
+      // already denies an absent identity with NO_IDENTITY in every mode, but
+      // that denial lives in a callee and no type system carries guard dominance
+      // across a call boundary. Restated where the compiler can see it,
+      // immediately before `userID` is written into `Bookings.userID`.
+      if (userID === null) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: denialMessage({
+            ok: false,
+            reason: "NO_IDENTITY",
+            requiredRoles: [],
+          }),
+        });
+      }
+
+      /* EVERY CONFLICT CHECK AND EVERY INSERT INSIDE ONE LOCK HOLD.
+       *
+       * Checking per occurrence and then writing per occurrence WITHOUT the lock
+       * is the same read-then-write race createBooking has held this lock against
+       * since #11/#12, multiplied by the length of the series: another resident
+       * can take week 5 in the gap between this call checking it and writing it,
+       * and the series double-books a room that the preview, the re-check and the
+       * confirmation all called free.
+       *
+       * The cost of holding it is bounded by SERIES_MAX_OCCURRENCES and by the
+       * three round trips inside: one read, one id allocation, one createMany.
+       */
+      return withFacilityLock(ctx.db, input.facilityID, async () => {
+        const first = input.windows[0]!;
+        const last = input.windows[input.windows.length - 1]!;
+        const existing = await ctx.db.bookings.findMany({
+          where: {
+            facilityID: input.facilityID,
+            startTime: { lt: last.endTime },
+            endTime: { gt: first.startTime },
+          },
+          select: { startTime: true, endTime: true },
+        });
+
+        const free: SeriesWindow[] = [];
+        const skipped: SeriesWindow[] = [];
+        for (const w of input.windows) {
+          const clashes = existing.some(
+            (c) => c.startTime < w.endTime && c.endTime > w.startTime,
+          );
+          (clashes ? skipped : free).push(w);
+        }
+
+        if (skipped.length > 0 && !input.skipConflicts) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              skipped.length === input.windows.length
+                ? "Every session in that series is already taken."
+                : `${skipped.length} of ${input.windows.length} sessions are already taken.`,
+          });
+        }
+
+        if (free.length === 0) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Every session in that series is already taken.",
+          });
+        }
+
+        // One id per row, in one allocation rather than one round trip each.
+        const ids = await nextBookingIdBlock(ctx.db, free.length);
+
+        // THE SERIES KEY. A uuid rather than a counter: it needs to be unique,
+        // not ordered, and a counter would be a third shared sequence to contend
+        // on inside a lock that is already the bottleneck.
+        const seriesID = randomUUID();
+
+        await ctx.db.bookings.createMany({
+          data: free.map((w, i) => ({
+            bookingID: ids[i]!,
+            eventName: input.eventName,
+            description: input.description,
+            startTime: w.startTime,
+            endTime: w.endTime,
+            facilityID: input.facilityID,
+            userID,
+            ccaID: input.ccaID,
+            seriesID,
+            // `repeat` and `bookUntil` are DELIBERATELY NOT WRITTEN. They are
+            // legacy write-only columns and this feature does not revive them —
+            // see the note on those fields in schema.prisma.
+            forceBook: false,
+          })),
+        });
+
+        return {
+          seriesID,
+          created: free.length,
+          skipped: skipped.length,
+          skippedWindows: skipped,
+        };
+      });
+    }),
+
+  /**
+   * Cancel a series, or the tail of one.
+   *
+   * `fromTime` is what makes "this and all future sessions" expressible without
+   * a second procedure: omit it to drop the whole series, pass an occurrence's
+   * startTime to drop that one and everything after it. Cancelling a SINGLE
+   * middle occurrence is just `deleteBooking` on that row, which already works
+   * and already carries its own ownership check — a series row is an ordinary
+   * booking in every other respect.
+   *
+   * OWNERSHIP IS CHECKED ON THE ROWS, NOT ON THE KEY. A `seriesID` is a uuid the
+   * client hands us; it proves nothing. The delete is scoped by `userID` in the
+   * same `where` clause as the seriesID, so a caller can only ever remove their
+   * own rows even if they guess or copy someone else's key — and an admin gets
+   * the same override they already have on `deleteBooking`.
+   */
+  deleteSeries: protectedProcedure
+    .input(
+      z.object({
+        seriesID: z.string().min(1),
+        fromTime: z.number().int().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const callerUserID = ctx.session.user.userID;
+      // 08 §1.1: an empty canonical id owns nothing. Without this a ""-keyed
+      // session would match every ""-keyed row in the series scope.
+      if (!callerUserID) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You can only cancel your own bookings.",
+        });
+      }
+
+      const admin = await isAdmin(ctx.db, callerUserID);
+
+      const { count } = await ctx.db.bookings.deleteMany({
+        where: {
+          seriesID: input.seriesID,
+          ...(admin ? {} : { userID: callerUserID }),
+          ...(input.fromTime !== undefined
+            ? { startTime: { gte: input.fromTime } }
+            : {}),
         },
       });
 
-      return updated;
+      // NOT_FOUND rather than a silent zero: a "cancel" that reports success
+      // while removing nothing is the same class of silent failure as the
+      // booking modal's dead Confirm button. It is not an ownership oracle
+      // either — the message is identical whether the series does not exist or
+      // belongs to somebody else.
+      if (count === 0) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "No bookings from that series were found.",
+        });
+      }
+
+      return { cancelled: count };
     }),
 });

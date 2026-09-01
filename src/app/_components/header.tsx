@@ -15,6 +15,7 @@ import {
   UserCircle,
   ShieldCheck,
   Landmark,
+  Search,
 } from "lucide-react";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
@@ -86,6 +87,10 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     // Resident-facing CCA browse + applications. Shown to everyone signed in;
     // the page itself is inert until cca.applications.enabled is on, so this is
     // a link to a "not open yet" state at worst, never a broken route.
+    // Time-first room availability. Sits beside Home because it answers the
+    // question the calendar cannot: "what can I have for the next hour". Shown
+    // to everyone signed in — the page renders its own sign-in state otherwise.
+    { name: "Availability", href: "/availability", icon: Search },
     { name: "CCAs", href: "/ccas", icon: LayoutGrid },
     { name: "Events", href: "/events", icon: CalendarDays },
     ...(isCcaHead ? [{ name: "Manage CCAs", href: "/cca", icon: Users }] : []),

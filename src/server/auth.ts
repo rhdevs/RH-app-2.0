@@ -15,6 +15,54 @@ import { env } from "~/env";
 import { db } from "~/server/db";
 import { verifyPassword } from "~/lib/password";
 import {
+  clientIp,
+  rateLimit,
+  rateLimitPeek,
+  rateLimitReset,
+} from "~/lib/rateLimit";
+
+/**
+ * Login throttle budgets. See the long note in the credentials `authorize`
+ * below for why the per-email bound is tight and the per-IP bound is loose
+ * (campus NAT), and why these count FAILURES rather than attempts.
+ */
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * THE TIGHT BUDGET, and the one that actually stops an attacker: failures for
+ * ONE account from ONE source. A single party guessing at a single login runs
+ * out after ten tries.
+ */
+const LOGIN_MAX_FAILURES_PER_EMAIL_IP = 10;
+
+/**
+ * THE PER-ACCOUNT BACKSTOP, and it is deliberately LOOSE at 50 rather than 10.
+ *
+ * THIS NUMBER IS A TRADE AND THE REASONING SHOULD SURVIVE. Any per-account
+ * failure budget is also a LOCKOUT WEAPON: whoever knows a resident address can
+ * spend that budget on their behalf and keep them out of their own account. Set
+ * it at 10 and one motivated person with a grudge locks a roommate out
+ * indefinitely for the cost of a loop. The pair budget above is what stops the
+ * ordinary attack; this one exists only for an attacker rotating IPs against a
+ * single named account, which is a much rarer thing.
+ *
+ * 50 per 15 minutes is roughly 4,800 guesses a day. Against the 12-character
+ * minimum that validatePassword now enforces that is not a meaningful search, so
+ * raising this from 10 costs approximately nothing in real security while making
+ * targeted griefing five times more expensive to sustain.
+ *
+ * IT IS NOT ZERO RISK AND MUST NOT BE DESCRIBED AS SOLVED: a determined party
+ * can still hold an account shut by sustaining failures. Closing that properly
+ * needs a step-up — a CAPTCHA, or notifying the account owner — which is a
+ * product decision rather than a constant.
+ */
+const LOGIN_MAX_FAILURES_PER_EMAIL = 50;
+
+/** Broad spraying across many accounts from one source. Loose because of campus
+ *  NAT — see the note in `authorize`. */
+const LOGIN_MAX_FAILURES_PER_IP = 100;
+
+import {
   REQUIRED_PROFILE_FIELDS,
   computeProfileGaps,
   requiredProfileFieldsFor,
@@ -50,6 +98,56 @@ import {
 // equality-on-email version, which misses the whitespace variants that are
 // precisely the rows the merge scripts delete. See the deleted-row branch below.
 import { findCanonicalIdCollisions } from "~/server/api/services/userAdmin";
+
+/**
+ * Has this token been invalidated by a password change since it was issued?
+ *
+ * THE COMPARISON IS `authAt < changedAt`, STRICTLY. A sign-in landing in the same
+ * whole second as the reset that caused it is NOT revoked — otherwise a user
+ * who resets and immediately logs in could be bounced straight back out, which
+ * would look like the reset silently failing. `authAt` is stamped in whole UNIX
+ * seconds, so `changedAt` is floored to seconds to match rather than comparing
+ * across two different resolutions.
+ *
+ * NO WATERMARK ROW MEANS NOT REVOKED. The collection holds one row per account
+ * that has ever reset a password, so it is empty for almost everybody and the
+ * common answer is "false" after a single indexed miss.
+ *
+ * A MISSING OR NON-NUMERIC `authAt` IS TREATED AS REVOKED, but only when a
+ * watermark exists — and that combination is what makes this safe to deploy.
+ * Every token minted BEFORE this field existed has no `authAt`, so:
+ *   - on an account that has never reset a password there is no watermark row,
+ *     the `!row` check returns first, and nobody is logged out by the deploy;
+ *   - on an account that HAS reset, an undateable token cannot be proved to
+ *     post-date the reset, so it is refused. That is the correct direction: the
+ *     whole point is to evict a session we cannot vouch for.
+ * The ordering of the two checks is therefore load-bearing, not stylistic.
+ *
+ * IT IS DELIBERATELY NOT `token.iat`. See the note on `authAt` in the `jwt`
+ * callback: next-auth re-encodes the token on every /api/auth/session call and
+ * `encode()` stamps a fresh `iat`, so an `iat`-based comparison revokes a stolen
+ * session for exactly one request and then admits it again forever.
+ *
+ * THROWS NEVER, AND DEGRADES OPEN. See the call site for why that direction is
+ * correct here.
+ */
+async function isCredentialRevoked(
+  prisma: typeof db,
+  userId: string,
+  authenticatedAt: unknown,
+): Promise<boolean> {
+  try {
+    const row = await prisma.credentialRevocation.findUnique({
+      where: { userId },
+      select: { changedAt: true },
+    });
+    if (!row) return false;
+    if (typeof authenticatedAt !== "number") return true;
+    return authenticatedAt < Math.floor(row.changedAt.getTime() / 1000);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * D-7 + I-12. THE domain half of the eligibility predicate. The rule itself
@@ -146,6 +244,21 @@ async function maySignIn(
  *
  * @see https://next-auth.js.org/getting-started/typescript#module-augmentation
  */
+/**
+ * `authAt` — the immutable authentication instant, in UNIX seconds.
+ *
+ * Declared so the revocation comparison is not reading an untyped bag. It is
+ * written ONLY by the `jwt` callback's sign-in branch and read only by
+ * `isCredentialRevoked`; nothing else may touch it, because the moment anything
+ * refreshes it the session-revocation guarantee is gone. That is exactly what
+ * `token.iat` does, and why this field exists instead of using it.
+ */
+declare module "next-auth/jwt" {
+  interface JWT {
+    authAt?: number;
+  }
+}
+
 declare module "next-auth" {
   interface Session extends DefaultSession {
     user: {
@@ -262,6 +375,26 @@ declare module "next-auth" {
        */
       roles: string[];
       isAdmin: boolean;
+      /**
+       * TRUE when this token was issued BEFORE the account's password last
+       * changed, i.e. the session has been revoked and carries no authority.
+       *
+       * WHAT IT FIXES. Sessions are JWTs with a 30-day maxAge and there is no
+       * server-side session store, so `db.user.update({ passwordHash })` did
+       * not end anybody else's session. An attacker holding a stolen session
+       * cookie kept full access for up to a month after the victim reset their
+       * password — the recovery flow did not recover the account. The watermark
+       * lives in `CredentialRevocation` (schema.prisma); this field is the
+       * session callback's live read of it.
+       *
+       * ENFORCED SERVER-SIDE by `protectedProcedure` (trpc.ts), which is the
+       * boundary that matters. The callback ALSO zeroes `roles`/`isAdmin` and
+       * clears `eligible` on a revoked session, so the page-level capability
+       * guards in the admin/cca/scrc layouts fail closed too without needing to
+       * learn about this field. RENDER-ONLY as far as this flag itself goes —
+       * never authorize off it alone.
+       */
+      credentialsStale: boolean;
     } & DefaultSession["user"];
   }
 
@@ -324,7 +457,7 @@ export const authOptions = {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         const parsedCredentials = z
           .object({
             email: z.string().email(),
@@ -336,10 +469,102 @@ export const authOptions = {
 
         const { email, password } = parsedCredentials.data;
 
+        /* ---- THROTTLE THE LOGIN DOOR --------------------------------------
+         * THIS WAS THE ONE UNTHROTTLED AUTH ENTRY POINT, and it was the one
+         * that mattered most. Registration (10/hr/IP) and the reset request
+         * (5/email, 20/IP) were both metered; the credentials gate — the only
+         * endpoint where guessing a secret gets you an account — did no
+         * counting at all, and `rateLimit.ts` had documented `login:<ip>` as
+         * the intended key since it was written. Against ~1200 accounts that is
+         * unlimited credential stuffing, and a successful guess confers hall
+         * booking rights and, for some accounts, the JCRC or admin surface.
+         *
+         * FAILURES ARE COUNTED, NOT ATTEMPTS. A resident who signs in
+         * successfully twenty times in an afternoon must not be throttled;
+         * someone who gets it wrong twenty times must be. Hence the
+         * peek-then-consume pair rather than a bare `rateLimit` call, and hence
+         * the reset on the success path at the end.
+         *
+         * THREE BUDGETS, EACH ANSWERING A DIFFERENT ATTACK:
+         *
+         *   PER EMAIL + IP (10 / 15 min) — THE TIGHT ONE, and the one that stops
+         *     the ordinary attack: one party guessing at one account. Keyed on
+         *     the pair specifically so that spending the budget hurts the
+         *     attacker rather than the victim.
+         *
+         *   PER EMAIL (50 / 15 min) — a backstop for an attacker ROTATING IPs
+         *     against one named account. Loose on purpose: any per-account
+         *     budget is also a lockout weapon against that account owner. See
+         *     the note on the constant.
+         *
+         *   PER IP (100 / 15 min) — catches broad spraying across many
+         *     accounts. DELIBERATELY LOOSE. Raffles Hall residents sit behind
+         *     campus NAT, so a large share of legitimate traffic shares a
+         *     handful of source addresses; a tight per-IP budget here would not
+         *     stop an attacker (who can rotate addresses) and WOULD lock the
+         *     whole hall out of its own app on a busy evening. The tight bound
+         *     belongs on the email+IP pair, which NAT widens but does not erase.
+         *
+         * BOTH KEYS ARE NORMALIZED. `login:email:` uses the shared normalizer
+         * (I-12), so "E1234567@u.nus.edu" and " e1234567@U.NUS.EDU " contend
+         * for ONE bucket — otherwise case and whitespace variants would each
+         * mint a fresh budget for the same account, which is the same class of
+         * bypass the X-Forwarded-For fix closes on the other key.
+         *
+         * A THROTTLED ATTEMPT RETURNS null, NOT AN ERROR. Identical to a wrong
+         * password, for the reason gate #1 below already gives: this endpoint
+         * must not become an oracle. A distinguishable "rate limited" response
+         * would confirm that an address is worth attacking.
+         */
+        const normalizedEmail = normalizeEmail(email);
+        const ip = clientIp(req ?? { headers: {} });
+        const pairKey = `login:pair:${normalizedEmail}:${ip}`;
+        const emailKey = `login:email:${normalizedEmail}`;
+        const ipKey = `login:ip:${ip}`;
+
+        const [pairBudget, emailBudget, ipBudget] = await Promise.all([
+          rateLimitPeek(pairKey, LOGIN_MAX_FAILURES_PER_EMAIL_IP),
+          rateLimitPeek(emailKey, LOGIN_MAX_FAILURES_PER_EMAIL),
+          rateLimitPeek(ipKey, LOGIN_MAX_FAILURES_PER_IP),
+        ]);
+        if (!pairBudget.allowed || !emailBudget.allowed || !ipBudget.allowed) {
+          console.warn(
+            JSON.stringify({
+              evt: "login_throttled",
+              scope: !pairBudget.allowed
+                ? "email+ip"
+                : !emailBudget.allowed
+                  ? "email"
+                  : "ip",
+            }),
+          );
+          return null;
+        }
+
+        /**
+         * Record one failure against both budgets and deny. EVERY `return null`
+         * below the throttle goes through here — including the D-7 domain
+         * rejections, which are cheap to provoke and would otherwise be a free
+         * way to keep the door open. Never throws: a limiter fault must not
+         * turn a failed login into a 500.
+         */
+        const fail = async (): Promise<null> => {
+          await Promise.all([
+            rateLimit(
+              pairKey,
+              LOGIN_MAX_FAILURES_PER_EMAIL_IP,
+              LOGIN_WINDOW_MS,
+            ),
+            rateLimit(emailKey, LOGIN_MAX_FAILURES_PER_EMAIL, LOGIN_WINDOW_MS),
+            rateLimit(ipKey, LOGIN_MAX_FAILURES_PER_IP, LOGIN_WINDOW_MS),
+          ]).catch(() => undefined);
+          return null;
+        };
+
         // D-7 gate #1, before any DB work. Return null (not throw) so the
         // response shape is identical to a wrong password — this endpoint must
         // not become an oracle for "which domains are accepted".
-        if (!(await maySignIn(email))) return null;
+        if (!(await maySignIn(email))) return fail();
 
         const user = await db.user.findFirst({
           where: {
@@ -349,13 +574,13 @@ export const authOptions = {
             },
           },
         });
-        if (!user?.passwordHash) return null;
+        if (!user?.passwordHash) return fail();
 
         // D-7 gate #2, on the STORED address. The lookup above is
         // case-insensitive-equals, so the stored value can differ from the
         // submitted one, and only the stored value is used downstream to
         // derive the canonical role key.
-        if (!(await maySignIn(user.email))) return null;
+        if (!(await maySignIn(user.email))) return fail();
 
         // Verifies bcrypt or legacy SHA-256 (#3); transparently upgrades the
         // stored hash to bcrypt on a successful legacy login.
@@ -363,7 +588,7 @@ export const authOptions = {
           password,
           user.passwordHash,
         );
-        if (!valid) return null;
+        if (!valid) return fail();
 
         if (upgradedHash) {
           await db.user.update({
@@ -371,6 +596,16 @@ export const authOptions = {
             data: { passwordHash: upgradedHash },
           });
         }
+
+        // Clear the ACCOUNT-SCOPED counters now that the password has been
+        // proved. Someone who mistypes nine times and then succeeds should not
+        // spend the rest of the window one slip from a lockout.
+        //
+        // The per-IP counter is deliberately NOT cleared: it aggregates across
+        // accounts, so one success must not wipe the evidence of a spray in
+        // progress. An attacker holding one valid credential could otherwise
+        // reset it at will and stuff the rest for free.
+        await Promise.all([rateLimitReset(pairKey), rateLimitReset(emailKey)]);
 
         return {
           id: user.id,
@@ -445,6 +680,32 @@ export const authOptions = {
         token.id = user.id;
         token.email = user.email;
         token.name = user.name;
+        /**
+         * THE IMMUTABLE AUTHENTICATION INSTANT — the anchor session revocation
+         * compares against. Set HERE and only here, inside `if (user)`, which
+         * next-auth populates on SIGN-IN ONLY.
+         *
+         * IT EXISTS BECAUSE `token.iat` IS NOT USABLE FOR THIS, and that is not
+         * obvious: `iat` looks like exactly the right claim and is wrong. The
+         * JWT branch of next-auth's /api/auth/session route re-encodes the token
+         * on EVERY call — there is no `updateAge` guard on that path, see
+         * core/routes/session.js — and `jwt.encode` calls `.setIssuedAt()`, so
+         * `iat` is refreshed continuously for as long as a session is being
+         * used.
+         *
+         * Comparing a watermark against `iat` therefore revokes a stolen session
+         * for EXACTLY ONE REQUEST: the callback denies it, next-auth then
+         * re-issues the cookie with a fresh `iat` that post-dates the password
+         * change, and the very next request is admitted again. The feature would
+         * appear to work in a single-request test and protect nobody.
+         *
+         * `authAt` survives re-encoding because the `jwt` callback returns the
+         * same token object and only a genuine sign-in rewrites this field.
+         *
+         * UNIX SECONDS, to match the resolution `CredentialRevocation.changedAt`
+         * is floored to. See isCredentialRevoked.
+         */
+        token.authAt = Math.floor(Date.now() / 1000);
       }
       return token;
     },
@@ -489,7 +750,75 @@ export const authOptions = {
         // this file already makes for `roles` (I-4) and `matricRequired`
         // (I-11); resolving live is what makes revocation take effect in 15
         // seconds instead of 30 days.
-        const userID = await resolvePrincipalID(db, token.email);
+        /* ---- REVOCATION, CHECKED BEFORE ANY AUTHORITY IS ASSEMBLED --------
+         * Runs in the SAME round trip as resolvePrincipalID rather than in the
+         * Promise.all further down, and both of those placements are
+         * deliberate.
+         *
+         * WHY NOT LOWER: the `userID === null` early return below never reaches
+         * that Promise.all. Those are precisely the sessions that most need
+         * revoking — a malformed stored email, a pre-cutover token — and under
+         * the default "off" auth-enforcement mode they are `eligible` and can
+         * call every non-role-gated procedure. Checking below the branch would
+         * leave a hole exactly where the branch is.
+         *
+         * WHY PARALLEL: rule 2 (steady state adds no round trips). This is one
+         * indexed findUnique on a collection holding one row per account that
+         * has ever reset a password — a handful — and it rides alongside a read
+         * that was already happening, so it costs latency only if it is the
+         * slower of the two, which it will not be.
+         *
+         * IT DEGRADES OPEN, AND THAT IS THE RIGHT DIRECTION HERE even though
+         * this is a security check. Rule 1 says this callback must never throw;
+         * beyond that, the two failure modes are not symmetric. Failing closed
+         * on a transient Atlas fault logs out every signed-in user at once — a
+         * hall-wide outage — to shorten a specific attacker's window by the few
+         * seconds until the next request, and the watermark is durable, so the
+         * very next successful read revokes them anyway. Failing open loses
+         * almost nothing; failing closed is a self-inflicted denial of service.
+         */
+        const [userID, revoked] = await Promise.all([
+          resolvePrincipalID(db, token.email),
+          isCredentialRevoked(db, session.user.id, token.authAt),
+        ]);
+
+        if (revoked) {
+          /* THE SESSION IS DEAD. Return it stripped of every capability rather
+           * than throwing (rule 1) — a throw here force-logs-out via an error
+           * page, and this must be an ordinary denial the client can render.
+           *
+           * THREE INDEPENDENT THINGS DENY, so no single reader has to remember
+           * this state:
+           *   - `credentialsStale` -> protectedProcedure refuses (trpc.ts).
+           *   - `eligible: false`  -> protectedProcedure's D-7 backstop refuses
+           *                           even if the check above is ever removed.
+           *   - `roles: []`        -> every page-level capability guard
+           *                           (admin/cca/scrc layouts) redirects, since
+           *                           computeCapabilities([]) grants nothing.
+           *
+           * `userID: null` too: an evicted session must not carry an ownership
+           * key, or a resolver that only checks identity would still attribute
+           * writes to the victim.
+           */
+          session.user.userID = null;
+          session.user.hasIdentity = false;
+          session.user.credentialsStale = true;
+          session.user.eligible = false;
+          session.user.accountMissing = false;
+          session.user.matric = null;
+          session.user.hasMatric = false;
+          session.user.matricRequired = false;
+          session.user.profileNeedsFields = [];
+          session.user.profileIncomplete = false;
+          session.user.profileMissingFields = [];
+          session.user.roles = [];
+          session.user.isAdmin = false;
+          session.user.email = token.email;
+          session.user.name = token.name;
+          return session;
+        }
+
+        session.user.credentialsStale = false;
         session.user.userID = userID;
         // D-C: the identity fact, derived HERE and nowhere else (no new query —
         // it is line 302's value, named). Deliberately NOT flag-aware: unlike
@@ -889,7 +1218,37 @@ export const authOptions = {
       // NextAuth's own error redirect, so a D-7-rejected user was silently
       // bounced to "/" with no indication of why. Same-origin pass-through;
       // anything external still collapses to home.
-      return url.startsWith(baseUrl) ? url : `${baseUrl}/`;
+      //
+      // ORIGIN COMPARISON, NOT `url.startsWith(baseUrl)`. THE PREFIX TEST WAS
+      // AN OPEN REDIRECT: a string prefix does not respect the authority
+      // boundary, so with baseUrl "https://rhapp.lol" every one of these passed
+      // it —
+      //
+      //     https://rhapp.lol.evil.com/login      (suffix on the host)
+      //     https://rhapp.lol.evil.com/?x=        (ditto, any path)
+      //     https://rhapp.lolsomething.example    (no dot needed at all)
+      //
+      // — because each begins with the literal baseUrl characters. Reachable as
+      // `/api/auth/signin?callbackUrl=<attacker>`: the victim signs in on the
+      // real site with real credentials and is then handed to a page the
+      // attacker controls, arriving from the genuine domain with the genuine
+      // login already behind them. That is the credential-phishing setup this
+      // callback exists to prevent, and stock NextAuth's own default compares
+      // ORIGINS for exactly this reason. This replaced it; this restores it.
+      //
+      // RELATIVE URLS ARE RESOLVED AGAINST baseUrl RATHER THAN REJECTED —
+      // NextAuth passes "/login?error=..." style paths through here, and the
+      // two-argument `new URL` makes those same-origin by construction.
+      // Anything unparseable collapses to home rather than throwing: this
+      // callback runs on the sign-in path and must not be able to 500 it.
+      try {
+        const target = new URL(url, baseUrl);
+        return target.origin === new URL(baseUrl).origin
+          ? target.toString()
+          : `${baseUrl}/`;
+      } catch {
+        return `${baseUrl}/`;
+      }
     },
   },
   events: {

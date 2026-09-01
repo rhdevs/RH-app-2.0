@@ -33,6 +33,25 @@ function legacySha256Matches(password: string, hash: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+/**
+ * THE POLICY LIVES IN `~/lib/schemas/password` AND IS RE-EXPORTED HERE.
+ *
+ * It cannot live in this file: this module imports `bcrypt` (a native Node
+ * addon) and `~/env` at module scope, and the signup and reset-password forms
+ * are `"use client"` components that mirror the same validation so the user is
+ * told what is wrong before a round trip. Importing the policy from here would
+ * drag bcrypt into the browser bundle.
+ *
+ * Re-exported rather than left for callers to find, so server code keeps
+ * importing hashing and policy from one place and there is no second spelling
+ * of "where do I get the password rule".
+ */
+export {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_MAX_BYTES,
+  validatePassword,
+} from "~/lib/schemas/password";
+
 /** Hash a new/updated password with bcrypt. */
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, BCRYPT_ROUNDS);

@@ -108,13 +108,71 @@ model Bookings {
   eventName   String?
   facilityID  Int
   forceBook   Boolean?
+
+  /// LEGACY, WRITE-ONLY, AND DELIBERATELY LEFT THAT WAY. Read this before
+  /// touching either of these two fields.
+  ///
+  /// `repeat` and `bookUntil` are v1 remnants. Every booking ever made writes
+  /// them — the modal hardcoded `repeat: 0` and set `bookUntil` to the end time
+  /// — and NOTHING HAS EVER READ THEM. Not the conflict checker, not
+  /// getFacilityAvailability, not the calendar. `BookingLogs` still carries
+  /// `facilities[]` and `endDate` from the same removed feature.
+  ///
+  /// OVER 14,000 EXISTING ROWS CARRY NON-ZERO `repeat` VALUES. The moment any
+  /// reader starts expanding this field, those rows retroactively become
+  /// recurring series and mass-occupy rooms across the whole calendar — rooms
+  /// nobody booked, held by bookings nobody made. It would pass testing, because
+  /// new rows would carry correct values; the damage is entirely in legacy data.
+  ///
+  /// RECURRENCE IS THEREFORE IMPLEMENTED BY MATERIALISING ONE ROW PER
+  /// OCCURRENCE, linked by `seriesID` below. Do not give these two fields
+  /// meaning. Cleaning them up is a separate data-only migration.
   repeat      Int?
+
   startTime   Int
   userID      String
+
+  /// RECURRENCE. Non-null on every row that belongs to a repeating series; all
+  /// occurrences of one series share the value. A single (non-repeating) booking
+  /// leaves it null, which is what every pre-existing row is.
+  ///
+  /// MATERIALISED, NOT DERIVED: each occurrence is a real `Bookings` row with
+  /// real `startTime`/`endTime`, so the conflict checker, getFacilityAvailability,
+  /// the calendar and My Bookings all work on a series with no changes at all.
+  /// The alternative — storing a rule and expanding it at read time — is exactly
+  /// the failure mode `repeat` above demonstrates: a field that readers must
+  /// remember to expand is a field some reader will forget, and the symptom is a
+  /// room that reads as free while it is held.
+  seriesID    String?
 
   @@index([facilityID, startTime, endTime], map: "facility + time")
   @@index([userID], map: "userID")
   @@index([userID, startTime, endTime], map: "user_time")
+  /// Series fan-out: "give me every occurrence of this series", used by the
+  /// series-aware cancel and by the My Bookings grouping.
+  @@index([seriesID], map: "series")
+
+  /// CROSS-FACILITY OVERLAP. The one index that serves "which rooms are free
+  /// between X and Y", which is `getFacilityAvailability`, the availability
+  /// board, and the per-occurrence series preview.
+  ///
+  /// NONE OF THE INDEXES ABOVE CAN SERVE IT. Those queries constrain only
+  /// `startTime`/`endTime` and deliberately do NOT filter by facility — the
+  /// whole point is to ask about every room at once. `facility + time` leads
+  /// with `facilityID`, so an unconstrained prefix makes it unusable, and the
+  /// query degrades to a collection scan over every booking the hall has ever
+  /// taken. That was survivable when nothing called it on a hot path; the
+  /// booking picker now runs it on a 350ms debounce as the user types a time.
+  ///
+  /// `endTime` LEADS, AND THE ORDER IS THE WHOLE VALUE. The overlap test is
+  /// `startTime < windowEnd AND endTime > windowStart`. The first half matches
+  /// almost every row in the collection (everything that ever started before
+  /// the window ends — i.e. all of history). The second half matches only
+  /// bookings that have not finished yet, which is a tiny and roughly constant
+  /// slice. Leading with the selective bound is what turns the scan into a
+  /// range seek; `[startTime, endTime]` would seek over nearly the whole
+  /// collection and filter afterwards.
+  @@index([endTime, startTime], map: "time_overlap")
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
@@ -306,6 +364,35 @@ model FacilityAccess {
   requiredRole  String?
   updatedAt     DateTime?
   updatedBy     String?
+
+  /// NOT BOOKABLE THROUGH THIS APP AT ALL — a different axis from
+  /// `requiredRoles`, which answers "who may book it". This answers "may it be
+  /// booked here by anyone", and the Dance Studio is the case that motivated it:
+  /// the room is real, it appears on the calendar, and it is administered by the
+  /// Dance CCA Exco rather than through RHApp.
+  ///
+  /// NULL AND `true` BOTH MEAN BOOKABLE. Absence is the default, so adding this
+  /// field changes NOTHING until an operator sets a row to `false` — no kill
+  /// switch is needed because the inert state is the empty state. I-2: nullable,
+  /// like every other scalar here, so a row written by another process without
+  /// it still deserializes.
+  ///
+  /// WHY IT LIVES HERE AND NOT ON `Facilities`: that collection carries a
+  /// DB-level $jsonSchema validator that does not declare this property, so the
+  /// write would be REJECTED BY MONGO — and a $jsonSchema rejection arrives as
+  /// data rather than a thrown error, so a careless caller reads it as success.
+  /// `FacilityAccess` exists as the un-validated sidecar for exactly this reason.
+  ///
+  /// IT REPLACES A CLIENT-SIDE STRING MATCH. The rule used to be
+  /// `selectedFacility === "Dance Studio"` in BookingModal.tsx — matched on the
+  /// DISPLAY NAME, in the browser only, with no server-side equivalent. It would
+  /// have stopped working silently the day anyone renamed the room.
+  bookable      Boolean?
+
+  /// Shown to the user when `bookable` is false, e.g. "To book the Dance Studio,
+  /// please approach the Dance CCA Exco." Data, not code, so the copy can change
+  /// without a deploy. Falls back to a generic message when absent.
+  unbookableNote String?
 }
 
 /// Append-only audit trail for every role and facility-access mutation, and for
@@ -1059,6 +1146,53 @@ model ProfileCompletion {
   reason      String?
   flaggedAt   DateTime?
   resolvedAt  DateTime?
+}
+
+/// CREDENTIAL-CHANGE WATERMARK — the thing that makes a password reset actually
+/// evict whoever was already in the account.
+///
+/// WHY IT EXISTS. Sessions are JWTs (`session.strategy = "jwt"`) with a 30-day
+/// `maxAge` and there is NO server-side session store to delete from. So before
+/// this collection, resetting a password did not log anybody out: an attacker
+/// holding a stolen session cookie kept full access for up to a month AFTER the
+/// victim "recovered" the account. The recovery flow did not recover the
+/// account, which made incident response structurally impossible — there was no
+/// action a user or an admin could take that ended an active intruder's session
+/// short of rotating NEXTAUTH_SECRET and logging out all 1200+ users at once.
+///
+/// WHY A SEPARATE COLLECTION AND NOT A FIELD ON `User`. Identical reason to
+/// UserRole / UserMatric / ProfileCompletion, and it is not a style preference:
+/// the `User` collection carries a DB-level `$jsonSchema` validator that does
+/// not declare this property, so a write adding one is REJECTED BY MONGO AT
+/// WRITE TIME. It does not fail at `prisma db push` — it fails the first time a
+/// password is reset, in production, on the security path.
+///
+/// KEYED BY `User.id` (the Mongo `_id`), NOT by the canonical userID, and that
+/// choice is load-bearing. `_id` is the one identity EVERY session branch has:
+/// it is frozen into the JWT as `token.id` at sign-in and is what the session
+/// callback already reads `User` by. The canonical userID is `null` for exactly
+/// the sessions that most need revoking (a malformed stored email, a pre-cutover
+/// token), so keying on it would leave those unrevocable.
+///
+/// COMPARED AGAINST THE TOKEN'S `iat`. Any JWT issued strictly before
+/// `changedAt` is refused; see the revocation branch in `src/server/auth.ts`.
+model CredentialRevocation {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  /// `User.id`. See the note above for why this is the `_id` and not the
+  /// canonical userID.
+  userId String @unique
+
+  /// Every JWT issued at or before this instant is refused. Second precision is
+  /// sufficient and intended: the JWT `iat` claim is in whole seconds, and the
+  /// comparison is deliberately `iat < changedAt` so a fresh sign-in landing in
+  /// the same second as the reset is NOT revoked.
+  changedAt DateTime
+
+  /// Why the watermark moved — "password_reset" today. Present so an operator
+  /// reading this collection during an incident can tell a self-service reset
+  /// from a future admin-initiated revocation without cross-referencing logs.
+  reason String?
 }
 
 /// This collection uses a JSON Schema defined in the database, which requires additional setup for migrations. Visit https://pris.ly/d/mongodb-json-schema for more info.
