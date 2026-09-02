@@ -1,3 +1,28 @@
+/**
+ * DO NOT BUMP `bcrypt` TO 6.x WITHOUT VERIFYING IT ON A VERCEL DEPLOYMENT FIRST.
+ * It is pinned to 5.x deliberately, and this is not caution — it is a rollback.
+ *
+ * WHAT HAPPENED. bcrypt 6.0.0 changed how it ships its native binary: 5.x uses
+ * node-pre-gyp and installs to `lib/binding/napi-v3/bcrypt_lib.node`, while 6.x
+ * uses the prebuildify layout, `prebuilds/<platform>/bcrypt.node`. Next.js
+ * output-file tracing bundles the former into the serverless function and MISSES
+ * the latter, so the module throws at import time in the lambda.
+ *
+ * `auth.ts` imports `verifyPassword` from this file at module scope, so that
+ * import failure took down EVERY route that touches auth: `/api/auth/session`
+ * returned 500, and with it every page calling `auth()`. Nobody could sign in.
+ *
+ * IT PASSES EVERY LOCAL CHECK. `tsc`, `eslint`, `next build` and even a direct
+ * `require('bcrypt')` in Node all succeed, because the binary is present on the
+ * build machine. The Vercel BUILD succeeds too. It fails only at RUNTIME inside
+ * the deployed function, which is the one place none of those checks look.
+ *
+ * THE REAL FIX, if the tar advisory that 5.x drags in via node-pre-gyp matters
+ * enough, is `bcryptjs` — pure JavaScript, no native addon, hash-format
+ * compatible with the `$2a$`/`$2b$` digests already in `User.passwordHash`. That
+ * removes this entire failure class rather than pinning around it. It is a
+ * deliberate change to the authentication path and deserves its own PR.
+ */
 import bcrypt from "bcrypt";
 import { createHash, timingSafeEqual } from "crypto";
 
