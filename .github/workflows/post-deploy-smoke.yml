@@ -1,0 +1,48 @@
+## Probes production after Vercel reports a successful deployment.
+##
+## WHY IT EXISTS. When bcrypt 6 broke the native-addon bundle, production looked
+## healthy from outside: `/`, `/login` and `/events` all returned 200 because
+## they do not import the auth module. Only `/api/auth/session` and the pages
+## calling `auth()` returned 500 — so an uptime monitor pointed at the homepage
+## stayed green for hours while nobody in the hall could sign in.
+##
+## Vercel's own "Ready" status does not help either: the BUILD succeeded. The
+## failure was at require() time inside the running function, which nothing in
+## the pipeline looked at until a person tried to log in.
+##
+## This runs on the `deployment_status` event Vercel sends to GitHub, so it fires
+## on every successful production deploy without needing a Vercel token.
+##
+## IT DOES NOT ROLL BACK. It fails loudly and names what broke; a human decides.
+## An automatic rollback on a flaky probe is its own outage.
+name: Post-deploy smoke check
+
+on:
+  deployment_status:
+
+jobs:
+  smoke:
+    ## Only successful PRODUCTION deployments. Preview deploys are noisy, carry
+    ## Preview environment variables, and are not what residents use.
+    if: >
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment.environment == 'Production'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      ## No `npm ci` — the script uses only global fetch, so installing the tree
+      ## would add a minute to a check whose value is being fast.
+      - name: Smoke-check the deployment
+        env:
+          ## The deployment's own URL, so this follows Vercel rather than
+          ## hardcoding a domain that could drift.
+          SMOKE_URL: ${{ github.event.deployment_status.target_url }}
+        run: node scripts/smoke-deployment.mjs "$SMOKE_URL"

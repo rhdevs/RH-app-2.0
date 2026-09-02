@@ -1,0 +1,64 @@
+## Asserts that every native addon the server code requires is actually BUNDLED
+## into the serverless function that requires it.
+##
+## WHY THIS IS A SEPARATE WORKFLOW FROM lint.yml: it needs a real `next build`,
+## which lint does not, and it needs the build's `.nft.json` trace manifests. Kept
+## apart so a slow build never gates the fast feedback lint gives, and so a
+## failure here reads as what it is — "this build will break in production" —
+## rather than as a lint nit.
+##
+## WHAT IT PREVENTS. Bumping `bcrypt` 5.x -> 6.x took production authentication
+## down: bcrypt 6 ships its binary under `prebuilds/` (prebuildify) rather than
+## `lib/binding/` (node-pre-gyp), and Next.js output-file tracing follows the
+## second but not the first. `src/server/auth.ts` imports the hashing module at
+## module scope, so the missing `.node` file broke 37 routes — `/api/auth/session`
+## and every page calling `auth()`.
+##
+## `tsc`, `eslint`, `next build` and the Vercel build ALL PASSED, on that commit
+## and every commit since. The binary exists on the build machine; it just never
+## reaches the lambda. This is the only check in the pipeline that looks at what
+## actually gets shipped.
+name: Native addon tracing
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  verify-tracing:
+    runs-on: ubuntu-latest
+
+    ## The build validates env vars via src/env.js. These are placeholders — the
+    ## check reads build OUTPUT, never connects to anything, and must not need
+    ## real secrets to run on a fork's pull request.
+    env:
+      SKIP_ENV_VALIDATION: "1"
+      DATABASE_URL: "mongodb://localhost:27017/placeholder"
+      NEXTAUTH_SECRET: "placeholder-for-build-only"
+      NEXTAUTH_URL: "http://localhost:3000"
+      RESEND_API_KEY: "placeholder"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      ## Reads .next/server/**/*.nft.json and fails if any route traces a native
+      ## package's JavaScript without also tracing its .node binary.
+      - name: Verify native addons are bundled
+        run: node scripts/verify-native-tracing.mjs
