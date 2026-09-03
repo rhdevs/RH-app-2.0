@@ -180,6 +180,48 @@ export function canonicalUserID(
 }
 
 /**
+ * A BARE NUSNET ID AS A HUMAN TYPES IT — `E1234567`, but also `MARCUS-CHUA` —
+ * back to the canonical key. For the identifier boxes ("NUSNET id, email, or
+ * matric") and for pasted bulk input, where the operator omits the domain.
+ *
+ * WHY IT ROUTES THROUGH canonicalUserID AND DOES NOT TEST A SHAPE. Every
+ * lookup that wanted this used `isEFormatUserID` — /^E\d{7}$/ — as its
+ * stand-in, and that predicate does not describe NUSNET ids, it describes a
+ * SUBSET of them. Measured 2026-08-28: 420 of 1624 accounts, 25.9%, have a
+ * non-E localpart (`G.S_SAMUEL`, `MARCUS-CHUA`, `NICOLEYAU`). Those people
+ * could be granted a headship — resolveCcaHeadTarget resolves them, guard G7
+ * admits them, `CcaHead` stores them — but could not be FOUND by the box in
+ * front of the grant, so the lockout survived the fix to the grant itself.
+ * That is lockout mode L-27 wearing a different hat.
+ *
+ * Reconstructing the address and canonicalizing it means the value set of this
+ * function is a SUBSET of canonicalUserID's, by construction rather than by a
+ * second regex kept in sync with the first. Two consequences worth stating:
+ *
+ *   - M1 STILL HOLDS. `EXT:` cannot come out of here for the same reason it
+ *     cannot come out of canonicalUserID: ':' is not in NUS_STUDENT_EMAIL's
+ *     capture class, so `EXT:FOO` fails the whole regex and returns null. The
+ *     parity gate asserts this over the EXT fixtures rather than trusting the
+ *     argument.
+ *   - IT PROVES NOTHING ABOUT AN ACCOUNT. It is a spelling conversion, not a
+ *     lookup: `canonicalFromNusnetID("ASDF")` is `"ASDF"`. Every caller must
+ *     still establish that somebody is behind the key — a `UserRole` row for a
+ *     preview, a `User` row for a grant target (I-8d). Callers that skip that
+ *     step get a silent wrong-key grant, which is exactly what resolving to a
+ *     live account exists to prevent.
+ *
+ * An input containing '@' returns null: that is an address, and it belongs to
+ * canonicalUserID directly. Callers branch on '@' before reaching here.
+ */
+export function canonicalFromNusnetID(
+  raw: string | null | undefined,
+): CanonicalUserID | null {
+  const s = (raw ?? "").trim();
+  if (!s || s.includes("@")) return null;
+  return canonicalUserID(`${s}@u.nus.edu`);
+}
+
+/**
  * POST-CANONICALIZATION SANITY CHECK on an id. NOT an authorization test and
  * NOT a provenance test — it is a pure SHAPE test and it carries no evidence
  * about where its argument came from.

@@ -116,8 +116,22 @@ export default function HeadCandidateInput({
             "No account matches that. Check the id, email, or matric."}
           {result.status === "AMBIGUOUS" &&
             "That matric matches more than one account, so it can't be used. Try their NUSNET id or email."}
-          {result.status === "NOT_SIGNED_IN" &&
-            "That person has an id but hasn't signed in to the app yet, so they can't be made a head until they do."}
+          {/* NAMES THE ID IT LOOKED FOR, because this branch now covers two
+              different mistakes. The server used to reach it only for a
+              well-formed E-number, so "hasn't signed in yet" was the only thing
+              it could mean; now that any NUSNET id resolves — which is the point
+              of the fix, non-E ids are three quarters of nobody and a quarter of
+              everybody — a typo lands here too. Showing the id is what lets the
+              two be told apart without a second status, and a second status is
+              the wrong tool: the server genuinely cannot distinguish them. */}
+          {result.status === "NOT_SIGNED_IN" && (
+            <>
+              Nobody has signed in as{" "}
+              <span className="font-mono">{result.userID}</span>. Check the
+              spelling — if it is right, they need to sign in once before they
+              can be made a head.
+            </>
+          )}
         </p>
       )}
 

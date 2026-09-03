@@ -7,7 +7,7 @@ import {
   oversightProcedure,
 } from "~/server/api/trpc";
 import { getUserRoles } from "~/server/api/services/access";
-import { computeCapabilities, isEFormatUserID } from "~/server/api/services/roles";
+import { computeCapabilities } from "~/server/api/services/roles";
 import {
   assertHeadsCca,
   assertMayViewCcaRoster,
@@ -31,7 +31,7 @@ import {
   type HeadCandidateResult,
 } from "~/lib/schemas/cca";
 import { MATRIC_RE } from "~/lib/schemas/profile";
-import { canonicalUserID } from "~/lib/identity";
+import { canonicalFromNusnetID, canonicalUserID } from "~/lib/identity";
 
 /**
  * CCA-head-facing procedures, scoped per-CCA rather than per-role.
@@ -696,11 +696,18 @@ export const ccaRouter = createTRPCRouter({
 
       // Resolve to a canonical userID by tier. Matric is the only tier that can
       // be AMBIGUOUS, because it is looked up in a non-unique collection.
+      //
+      // MATRIC IS TESTED BEFORE THE BARE-ID TIER AND THE ORDER IS LOAD-BEARING.
+      // `A0345036J` is a well-formed email localpart, so the tier below would
+      // happily convert it to the key "A0345036J" — a key no session ever
+      // produces, because schema.prisma's rule is "NEVER key on User.userID:
+      // ~515 users have an A-format matric there". Previewing that as FOUND
+      // would be the silent wrong-key grant e57abcc's message warns about. The
+      // matric tier translates it to the holder's real key instead; only if
+      // that is what the string ISN'T does the bare-id tier see it.
       let candidateID: string | null = null;
       if (raw.includes("@")) {
         candidateID = canonicalUserID(raw); // email → canonical, or null
-      } else if (isEFormatUserID(raw.toUpperCase())) {
-        candidateID = raw.toUpperCase(); // NUSNET id is already canonical
       } else if (MATRIC_RE.test(raw.toUpperCase())) {
         const rows = await ctx.db.userMatric.findMany({
           where: { matric: raw.toUpperCase() },
@@ -708,6 +715,22 @@ export const ccaRouter = createTRPCRouter({
         });
         if (rows.length > 1) return { status: "AMBIGUOUS" };
         candidateID = rows[0]?.userID ?? null;
+      } else {
+        // A BARE NUSNET ID — E-FORMAT OR NOT. This tier used to be
+        // `isEFormatUserID(raw.toUpperCase())`, and that is the L-27 lockout
+        // e57abcc fixed in the GRANT while leaving it standing in the LOOKUP
+        // that precedes it. `marcus-chua@u.nus.edu` carries the id MARCUS-CHUA;
+        // admin.grantCcaHead resolves that, guard G7 admits it and `CcaHead`
+        // stores it — but "Add a head" answered NOT_FOUND, so the 420 of 1624
+        // accounts (25.9%, measured 2026-08-28) with a non-E localpart stayed
+        // exactly as unreachable as before, one box earlier.
+        //
+        // canonicalFromNusnetID rebuilds the address and canonicalizes it, so
+        // what comes out is a value canonicalUserID could have produced and
+        // nothing else — which is what keeps G7 intact here: `EXT:NGOCANH_MAI`
+        // contains ':', outside the localpart class, so a hall-office pin
+        // typed into this box returns null and reads as NOT_FOUND.
+        candidateID = canonicalFromNusnetID(raw);
       }
 
       if (candidateID === null) return { status: "NOT_FOUND" };
