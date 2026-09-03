@@ -271,6 +271,87 @@ for (const [input, expected] of ID_FIXTURES) {
   );
 }
 
+/**
+ * canonicalFromNusnetID — a bare id as a human types it, back to the key.
+ *
+ * Longhand for the same reason every list above is. The three that matter:
+ *
+ *   MARCUS-CHUA  L-27 on the LOOKUP side. `/^E\d{7}$/` was the stand-in for
+ *                "is a NUSNET id" in three identifier boxes, and it describes a
+ *                SUBSET of them — 420 of 1624 accounts, 25.9%, are outside it.
+ *                Those people were grantable and unfindable at the same time.
+ *   A0345036J    A MATRIC IS A WELL-FORMED LOCALPART. It converts, and the
+ *                result is a key nobody's session produces (schema.prisma:
+ *                "NEVER key on User.userID"). This function cannot tell — every
+ *                caller MUST test the matric tier before reaching it, which is
+ *                why the hazard is pinned here rather than left implicit.
+ *   EXT:…        M1 on the new function. Asserted again in the loop below over
+ *                the whole EXT list, not just this one entry.
+ */
+const NUSNET_FIXTURES = [
+  ["E1234567", "E1234567"],
+  ["e1234567", "E1234567"], // typed lowercase
+  ["  E1234567  ", "E1234567"], // pasted from a spreadsheet
+  ["MARCUS-CHUA", "MARCUS-CHUA"],
+  ["marcus-chua", "MARCUS-CHUA"],
+  ["G.S_SAMUEL", "G.S_SAMUEL"],
+  ["A0345036J", "A0345036J"], // see the note above — converts, and must not be spent
+  ["EXT:NGOCANH_MAI", null], // M1: ':' is outside the capture class
+  ["marcus chua", null], // a name, not an id
+  ["e1234567+x", null], // '+' is outside the class (the duplicate-account vector)
+  ["e1234567@u.nus.edu", null], // an address belongs to canonicalUserID
+  ["@", null],
+  ["", null],
+  ["   ", null],
+  [null, null],
+  [undefined, null],
+];
+
+for (const [input, expected] of NUSNET_FIXTURES) {
+  const i = show(input);
+  check(
+    `canonicalFromNusnetID(${i})`,
+    ts.canonicalFromNusnetID(input),
+    mjs.canonicalFromNusnetID(input),
+    expected,
+  );
+  // THE SUBSET PROPERTY, AS A TEST. The whole security argument for this
+  // function is that it produces nothing canonicalUserID could not produce —
+  // that is what carries M1 across to it for free. If someone ever "optimises"
+  // it into its own regex, this is the line that fails.
+  for (const [name, mod] of [
+    ["ts", ts],
+    ["mjs", mjs],
+  ]) {
+    const out = mod.canonicalFromNusnetID(input);
+    if (out !== null && mod.canonicalUserID(`${out}@u.nus.edu`) !== out) {
+      failures.push(
+        `NOT A CANONICAL VALUE (${name}): canonicalFromNusnetID(${i}) = ${show(out)}`,
+      );
+    }
+    if (mod.isExtUserID(out)) {
+      failures.push(
+        `NAMESPACE COLLISION (${name}): canonicalFromNusnetID(${i}) is an EXT id`,
+      );
+    }
+  }
+}
+
+// M1 over the whole EXT list: no pin, well-formed or not, may be typed into an
+// identifier box and come back out as a usable key.
+for (const [input] of EXT_FIXTURES) {
+  for (const [name, mod] of [
+    ["ts", ts],
+    ["mjs", mjs],
+  ]) {
+    if (mod.isExtUserID(mod.canonicalFromNusnetID(input))) {
+      failures.push(
+        `NAMESPACE COLLISION (${name}): canonicalFromNusnetID(${show(input)}) is an EXT id`,
+      );
+    }
+  }
+}
+
 // Exported surface must match too — an export present on one side only is
 // drift that the value comparisons above cannot see.
 const surface = (m) => Object.keys(m).filter((k) => k !== "default").sort().join(",");

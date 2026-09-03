@@ -80,6 +80,28 @@ export function canonicalUserID(email) {
 }
 
 /**
+ * A BARE NUSNET ID AS A HUMAN TYPES IT — `E1234567`, but also `MARCUS-CHUA` —
+ * back to the canonical key. Mirrors src/lib/identity.ts; read the long note
+ * there for why it reconstructs the address instead of testing a shape.
+ *
+ * Two properties the parity gate asserts rather than assumes: the value set is
+ * a SUBSET of canonicalUserID's (so M1 holds — `EXT:FOO` returns null because
+ * ':' is outside NUS_STUDENT_EMAIL's capture class), and it proves NOTHING
+ * about an account. It is a spelling conversion. `canonicalFromNusnetID("ASDF")`
+ * is `"ASDF"`, and a caller that grants on that without first establishing a
+ * live row has written a key no session will ever match (I-1).
+ *
+ * MIRRORED HERE BECAUSE THE SCRIPTS TAKE TYPED IDS. A remediation script given
+ * a NUSNET id on argv has exactly this conversion to do, and the alternative is
+ * the private derivation the ban in verify-identity-parity.mjs exists to stop.
+ */
+export function canonicalFromNusnetID(raw) {
+  const s = (raw ?? "").trim();
+  if (!s || s.includes("@")) return null;
+  return canonicalUserID(`${s}@u.nus.edu`);
+}
+
+/**
  * THE EXTERNAL IDENTITY NAMESPACE. An admin-pinned key for a principal that has
  * no @u.nus.edu address — hall office staff, whose addresses are @nus.edu.sg
  * (08-userid-keydrift.md §3 Branch C). One `AuthAllowlist` row pins one address

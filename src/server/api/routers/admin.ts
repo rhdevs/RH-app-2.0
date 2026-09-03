@@ -34,6 +34,7 @@ import {
   SCRC_ROLE,
   assignableBy,
   asStoredCanonicalUserID,
+  canonicalFromNusnetID,
   canonicalUserID,
   type CanonicalUserID,
   computeCapabilities,
@@ -489,6 +490,89 @@ function resolveIdentifier(
   }
   const upper = s.toUpperCase();
   return isEFormatUserID(upper) ? { userID: upper, via: "nusnet" } : null;
+}
+
+/**
+ * THE SAME RESOLUTION, EXTENDED TO NUSNET IDS THAT ARE NOT E-FORMAT — and
+ * extended ONLY AS FAR AS A LIVE ACCOUNT REACHES.
+ *
+ * `resolveIdentifier` above is a pure shape test, and `/^E\d{7}$/` was standing
+ * in for "is a NUSNET id" while describing only 1204 of 1624 of them. Pasting a
+ * CCA's heads therefore refused a quarter of the hall (25.9%, measured
+ * 2026-08-28) with UNRESOLVED_IDENTIFIER — the same L-27 lockout e57abcc fixed
+ * in `grantCcaHead`, still standing in the surface that feeds it.
+ *
+ * WHY THIS ONE TIER NEEDS A DATABASE READ AND THE OTHER TWO DO NOT. Both
+ * existing tiers are self-proving shapes: an address is an address, and
+ * `E1234567` cannot be typed by accident. `MARCUS-CHUA` cannot be told apart
+ * from a stray spreadsheet cell by looking at it — `canonicalFromNusnetID`
+ * converts any single word, `ASDF` included. Resolving a word to a grant target
+ * on shape alone is precisely the silent wrong-key grant that resolveCcaHeadTarget
+ * exists to prevent, one surface upstream and 1000 rows at a time. So the
+ * widened tier resolves ONLY when a `User` row answers to the derived key, and
+ * an unmatched word still lands on UNRESOLVED_IDENTIFIER exactly as today.
+ *
+ * That makes the new tier STRICTLY STRONGER than the E-format one beside it,
+ * which asserts nothing about whether anybody is there. It is not made to match:
+ * tightening E-format would move rows that import cleanly today into refusals,
+ * which is a different change with a different blast radius.
+ *
+ * ONE QUERY, SKIPPED ENTIRELY WHEN NOTHING NEEDS IT — the rows that already
+ * resolve never reach it, and its ids are a subset of the ones the caller is
+ * about to fetch anyway.
+ *
+ * NOT USED BY createPendingGrants, deliberately. A pending grant is for somebody
+ * who does NOT have an account yet — it refuses a target that does, with
+ * USER_EXISTS_GRANT_DIRECTLY — so there is nothing for this gate to check
+ * against, and widening it there would let a stray cell queue a grant redeemable
+ * at a stranger's first login. That path keeps the bare shape test.
+ */
+async function bulkResolver(
+  db: PrismaClient,
+  rows: readonly { identifier: string }[],
+): Promise<
+  (raw: string) => { userID: string; via: "email" | "nusnet" } | null
+> {
+  const provisional = new Map<string, string>();
+  for (const r of rows) {
+    if (resolveIdentifier(r.identifier)) continue; // already a high-confidence tier
+    const cid = canonicalFromNusnetID(r.identifier);
+    if (cid) provisional.set(r.identifier, cid);
+  }
+
+  let backed = new Set<string>();
+  if (provisional.size > 0) {
+    const ids = [...new Set(provisional.values())];
+    const users = await db.user.findMany({
+      where: {
+        email: {
+          in: ids.map((i) => `${i.toLowerCase()}@u.nus.edu`),
+          mode: "insensitive",
+        },
+      },
+      // Never a bare read: passwordHash must not be selected (I-2).
+      select: { email: true },
+    });
+    // Keyed on the canonical id of the row that came BACK, not on the id that
+    // was searched for: the guessed address is a `contains`-free equality, but
+    // the key that gets spent must still be derived from a real stored address.
+    // C9: absent ids are dropped rather than landing under a sentinel key.
+    backed = new Set(
+      users.flatMap((u) => {
+        const cid = canonicalUserID(u.email);
+        return cid === null ? [] : [cid as string];
+      }),
+    );
+  }
+
+  return (raw: string) => {
+    const hit = resolveIdentifier(raw);
+    if (hit) return hit;
+    const cid = provisional.get(raw);
+    return cid && backed.has(cid)
+      ? { userID: cid, via: "nusnet" as const }
+      : null;
+  };
 }
 
 /* ========================================================================== */
@@ -1632,11 +1716,15 @@ export const adminRouter = createTRPCRouter({
       // be AMBIGUOUS, because it is looked up in a non-unique collection — and
       // it is decided HERE, before any role or account read, which is what makes
       // it safe to keep as a distinct status (see JcrcCandidateResult).
+      //
+      // MATRIC BEFORE THE BARE-ID TIER, and the order is load-bearing for the
+      // same reason it is in cca.resolveHeadCandidate: `A0345036J` is a
+      // well-formed localpart, so the tier below would convert it into a key no
+      // session produces. The matric tier translates it to the holder's real
+      // key first.
       let candidateID: string | null = null;
       if (raw.includes("@")) {
         candidateID = canonicalUserID(raw); // email → canonical, or null
-      } else if (isEFormatUserID(raw.toUpperCase())) {
-        candidateID = raw.toUpperCase(); // NUSNET id is already canonical
       } else if (MATRIC_RE.test(raw.toUpperCase())) {
         const rows = await ctx.db.userMatric.findMany({
           where: { matric: raw.toUpperCase() },
@@ -1647,6 +1735,23 @@ export const adminRouter = createTRPCRouter({
           return { status: "AMBIGUOUS" };
         }
         candidateID = rows[0]?.userID ?? null;
+      } else {
+        // A BARE NUSNET ID, E-FORMAT OR NOT — the same L-27 lockout that this
+        // box's CCA-head twin carried: 420 of 1624 accounts (25.9%, measured
+        // 2026-08-28) have a non-E localpart and could not be looked up at all,
+        // so no jcrc could be granted to a quarter of the hall.
+        //
+        // NO NEW ORACLE. Every negative outcome on this procedure still returns
+        // the same opaque NOT_AVAILABLE, byte for byte (see JcrcCandidateResult)
+        // — what changes is only WHICH negative the audit records: an
+        // unrecognised string used to stop at UNRESOLVED and now reaches
+        // NEVER_SIGNED_IN. Both are admin-only, and the caller cannot tell them
+        // apart either way.
+        //
+        // G7 is intact for the same structural reason as everywhere else:
+        // canonicalFromNusnetID cannot emit a ':' , so an `EXT:` pin typed here
+        // resolves to nothing.
+        candidateID = canonicalFromNusnetID(raw);
       }
 
       if (candidateID === null) {
@@ -2374,9 +2479,14 @@ export const adminRouter = createTRPCRouter({
       const batchId = randomUUID();
       const expiresAt = Date.now() + PLAN_TTL_MS;
 
+      // bulkResolver, not resolveIdentifier: the bare shape test refused every
+      // NUSNET id that is not E-format, i.e. a quarter of the hall. See its
+      // comment for why the widened tier costs one query and why it is stricter
+      // than the tier beside it rather than looser.
+      const resolveRow = await bulkResolver(ctx.db, input.rows);
       const resolved = input.rows.map((r) => ({
         row: r,
-        hit: resolveIdentifier(r.identifier),
+        hit: resolveRow(r.identifier),
       }));
       const ids = [
         ...new Set(resolved.map((r) => r.hit?.userID).filter(Boolean)),
@@ -3340,9 +3450,14 @@ export const adminRouter = createTRPCRouter({
       const batchId = randomUUID();
       const expiresAt = Date.now() + PLAN_TTL_MS;
 
+      // bulkResolver, not resolveIdentifier: the bare shape test refused every
+      // NUSNET id that is not E-format, i.e. a quarter of the hall. See its
+      // comment for why the widened tier costs one query and why it is stricter
+      // than the tier beside it rather than looser.
+      const resolveRow = await bulkResolver(ctx.db, input.rows);
       const resolved = input.rows.map((r) => ({
         row: r,
-        hit: resolveIdentifier(r.identifier),
+        hit: resolveRow(r.identifier),
       }));
       const ids = [
         ...new Set(resolved.map((r) => r.hit?.userID).filter(Boolean)),

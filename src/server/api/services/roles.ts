@@ -21,6 +21,7 @@ import { EXT_ID, canonicalUserID, isCanonicalResidentID,
 
 export {
   asStoredCanonicalUserID,
+  canonicalFromNusnetID,
   canonicalUserID,
   isNusStudentEmail,
   normalizeEmail,
