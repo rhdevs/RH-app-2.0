@@ -31,7 +31,7 @@ export default function RootLayout({
               <MatricGate>{children}</MatricGate>
             </TRPCReactProvider>
           </main>
-          <footer className="bg-emerald-800 py-4 text-center text-sm text-white">
+          <footer className="bg-emerald-800 py-4 text-center text-sm text-white print:hidden">
             Thanks for using the RH App! Feel free to report bugs or suggest
             features via form:
             <a
