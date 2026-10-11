@@ -1,176 +1,188 @@
 /**
  * CCA TRANSCRIPT — SPECIMEN DATA. NOTHING HERE IS REAL.
  *
- * This is the showcase version of the CCA transcript: one fixed, made-up
- * resident, rendered by /transcript and verifiable at /verify/<code>. Every
- * name below is invented and every signature is a script font, not an image of
- * anyone's hand. The pages carry a SPECIMEN watermark for the same reason —
- * the audience is people OUTSIDE the hall, and a fake record that looks
+ * ONE TRANSCRIPT PER ACADEMIC YEAR. Hall life is recorded and judged a year at
+ * a time (readmission, CCA points, JCRC terms all turn over each AY), so each
+ * year is its own document with its own verification code — a resident hands
+ * over the year that is asked for, not their whole history.
+ *
+ * Every name below is invented. The pages carry a SPECIMEN watermark because
+ * the audience is people OUTSIDE the hall, and a made-up record that looks
  * official must never be mistakable for one.
  *
- * WHY THE APP CANNOT PRODUCE A REAL ONE YET: `UserCCA` is only {ccaID, userID}
- * — no academic year, no position, no history (leaving deletes the row), and
- * `CcaHead` only says who heads a CCA NOW. A real transcript needs a new
- * collection of past memberships plus a sign-off flow (head → JCRC President →
- * Master), where a "signature" is a recorded approval by an identified account
- * rather than a picture.
+ * DELIBERATELY ABSENT, after review:
+ *  - Faculty. The app does not hold it, and joint programmes (Computer
+ *    Engineering is CDE *and* SoC) have no single honest answer. The degree is
+ *    the NUS transcript's job; this one shows Block, which the hall owns.
+ *  - Commitment level / hours. Not something a head can attest consistently
+ *    across CCAs, so it would read as a grade without being one.
+ *  - Signatures. The record is issued electronically and proven by its
+ *    verification code, like the NUS e-transcript. The real version records
+ *    each head's sign-off as an approval by an identified account — it is
+ *    evidence held by the hall, not ink printed on the page.
  *
- * THE TYPES BELOW ARE SHAPED LIKE THAT FUTURE COLLECTION on purpose, and the
- * pages only ever go through `getTranscriptByCode` / `DEMO_TRANSCRIPT`. Swapping
- * in real data later means replacing this module, not the pages.
+ * THE TYPES ARE SHAPED LIKE THE FUTURE COLLECTION, and the pages only go
+ * through `getTranscriptByCode` / `getYearsForResident` /
+ * `getTranscriptForYear`. Making it real means replacing this module's data
+ * source, not the pages.
  */
 
-export type CommitmentLevel = "High" | "Moderate" | "Light";
+export type Semester = 1 | 2;
 
-export interface Signatory {
-  name: string;
-  /** e.g. "Captain, Soccer (MALE)" or "JCRC President, AY2025/26". */
-  title: string;
-}
-
-export interface TranscriptEntry {
-  ccaName: string;
+export interface CcaRow {
+  cca: string;
+  /** The CCA's category as the app already stores it (Cca.category). */
   category: string;
-  /** "AY2023/24" — the unit a membership is recorded in. */
-  academicYear: string;
   position: string;
-  commitment: {
-    level: CommitmentLevel;
-    /** Average over the academic year, as attested by the CCA leader. */
-    hoursPerWeek: number;
-    /** One line on what the commitment actually consisted of. */
-    summary: string;
-  };
-  /** The CCA leader who signed this entry off — for that year, not today's. */
-  certifiedBy: Signatory;
+  semesters: Semester[];
 }
 
-export interface Transcript {
+/**
+ * A JCRC appointment — the only thing this record calls leadership. A CCA's
+ * own exco roles (Captain, Head, …) are a `position` under CCA Participation,
+ * and every hall committee is a CCA, so nothing is listed twice.
+ */
+export interface LeadershipRow {
+  appointment: string;
+  semesters: Semester[];
+}
+
+/** The special-subsection: only printed when there is something to put in it. */
+export interface AchievementRow {
+  title: string;
+  detail: string;
+  month: string;
+}
+
+export interface YearTranscript {
   /** Printed on the document and encoded in its QR code. A real one must be
-   *  random and unguessable — this is a fixed demo value. */
+   *  random and unguessable — these are fixed demo values. */
   verificationCode: string;
+  /** "AY2025/26" */
+  academicYear: string;
+  /** 1 for a resident's first year in hall, 2 for their second, … */
+  yearOfResidence: number;
   resident: {
     name: string;
     matric: string;
-    faculty: string;
+    block: string;
   };
-  residencyPeriod: string;
   issuedOn: string; // ISO date
-  entries: TranscriptEntry[];
-  jcrcPresident: Signatory;
-  master: Signatory;
-  /** Always true here. Real records will carry false, and every page keys its
+  leadership: LeadershipRow[];
+  ccas: CcaRow[];
+  achievements: AchievementRow[];
+  /** Always true here. Real records carry false, and every page keys its
    *  SPECIMEN treatment off this flag rather than off the route. */
   isSpecimen: boolean;
 }
 
-export const DEMO_TRANSCRIPT: Transcript = {
-  verificationCode: "RH-CCT-DEMO-7F3K",
-  resident: {
-    name: "Alex Tan Jun Hao",
-    matric: "A0000000X",
-    faculty: "College of Design and Engineering",
-  },
-  residencyPeriod: "AY2023/24 – AY2025/26",
-  issuedOn: "2026-10-06",
-  isSpecimen: true,
-  entries: [
-    {
-      ccaName: "Soccer (MALE)",
-      category: "Sports Activities",
-      academicYear: "AY2023/24",
-      position: "Member",
-      commitment: {
-        level: "High",
-        hoursPerWeek: 6,
-        summary: "Trained twice weekly; represented the hall at Inter-Hall Games.",
-      },
-      certifiedBy: { name: "Marcus Lim Wei Jie", title: "Captain, Soccer (MALE)" },
-    },
-    {
-      ccaName: "Phoenix Press",
-      category: "Media Committees",
-      academicYear: "AY2023/24",
-      position: "Writer",
-      commitment: {
-        level: "Light",
-        hoursPerWeek: 2,
-        summary: "Contributed four features to the hall newsletter.",
-      },
-      certifiedBy: { name: "Priya Raman", title: "Chief Editor, Phoenix Press" },
-    },
-    {
-      ccaName: "RHMP Sets",
-      category: "RHMP",
-      academicYear: "AY2023/24",
-      position: "Crew",
-      commitment: {
-        level: "Moderate",
-        hoursPerWeek: 4,
-        summary: "Built and struck sets for the annual hall musical production.",
-      },
-      certifiedBy: { name: "Chloe Ng Shu Wen", title: "Head, RHMP Sets" },
-    },
-    {
-      ccaName: "Soccer (MALE)",
-      category: "Sports Activities",
-      academicYear: "AY2024/25",
-      position: "Vice-Captain",
-      commitment: {
-        level: "High",
-        hoursPerWeek: 8,
-        summary: "Co-ran training sessions and team selection for IHG.",
-      },
-      certifiedBy: { name: "Daniel Koh Zhi Wei", title: "Captain, Soccer (MALE)" },
-    },
-    {
-      ccaName: "Welfare Committee",
-      category: "Committees",
-      academicYear: "AY2024/25",
-      position: "Member",
-      commitment: {
-        level: "Moderate",
-        hoursPerWeek: 3,
-        summary: "Organised exam-period welfare drives for 600 residents.",
-      },
-      certifiedBy: { name: "Sarah Chua Hui Min", title: "Chairperson, Welfare Committee" },
-    },
-    {
-      ccaName: "Soccer (MALE)",
-      category: "Sports Activities",
-      academicYear: "AY2025/26",
-      position: "Captain",
-      commitment: {
-        level: "High",
-        hoursPerWeek: 10,
-        summary: "Led a 24-player squad; managed training, fixtures and budget.",
-      },
-      certifiedBy: { name: "Ethan Goh Jia Le", title: "Sports Secretary, JCRC" },
-    },
-    {
-      ccaName: "RH Developers",
-      category: "Media Committees",
-      academicYear: "AY2025/26",
-      position: "Developer",
-      commitment: {
-        level: "Moderate",
-        hoursPerWeek: 5,
-        summary: "Built features for the hall's resident web app.",
-      },
-      certifiedBy: { name: "Rachel Teo Xin Yi", title: "Head, RH Developers" },
-    },
-  ],
-  jcrcPresident: {
-    name: "Benjamin Ong Kai Wen",
-    title: "President, Junior Common Room Committee",
-  },
-  master: {
-    name: "Prof. Helen Wong",
-    title: "Master, Raffles Hall",
-  },
+const RESIDENT = {
+  name: "Alex Tan Jun Hao",
+  matric: "A0000000X",
+  block: "Block 3",
 };
 
-const SPECIMENS: Transcript[] = [DEMO_TRANSCRIPT];
+const SPECIMENS: YearTranscript[] = [
+  {
+    verificationCode: "RH-CCT-DEMO-2324",
+    academicYear: "AY2023/24",
+    yearOfResidence: 1,
+    resident: { ...RESIDENT, block: "Block 5" },
+    issuedOn: "2024-05-10",
+    isSpecimen: true,
+    leadership: [],
+    ccas: [
+      {
+        cca: "Soccer (MALE)",
+        category: "Sports Activities",
+        position: "Member",
+        semesters: [1, 2],
+      },
+      {
+        cca: "Phoenix Press",
+        category: "Media Committees",
+        position: "Writer",
+        semesters: [1, 2],
+      },
+      { cca: "RHMP Sets", category: "RHMP", position: "Crew", semesters: [2] },
+    ],
+    achievements: [],
+  },
+  {
+    verificationCode: "RH-CCT-DEMO-2425",
+    academicYear: "AY2024/25",
+    yearOfResidence: 2,
+    resident: RESIDENT,
+    issuedOn: "2025-05-09",
+    isSpecimen: true,
+    leadership: [],
+    ccas: [
+      {
+        cca: "Soccer (MALE)",
+        category: "Sports Activities",
+        position: "Vice-Captain",
+        semesters: [1, 2],
+      },
+      {
+        cca: "Welfare Committee",
+        category: "Committees",
+        position: "Member",
+        semesters: [1, 2],
+      },
+      {
+        cca: "Phoenix Press",
+        category: "Media Committees",
+        position: "Writer",
+        semesters: [1],
+      },
+    ],
+    achievements: [
+      {
+        title: "Inter-Hall Games 2025",
+        detail: "Soccer (Men) — 2nd Runner-Up",
+        month: "Feb 2025",
+      },
+    ],
+  },
+  {
+    verificationCode: "RH-CCT-DEMO-2526",
+    academicYear: "AY2025/26",
+    yearOfResidence: 3,
+    resident: RESIDENT,
+    issuedOn: "2026-05-08",
+    isSpecimen: true,
+    leadership: [{ appointment: "Sports Secretary", semesters: [1, 2] }],
+    ccas: [
+      {
+        cca: "Soccer (MALE)",
+        category: "Sports Activities",
+        position: "Captain",
+        semesters: [1, 2],
+      },
+      {
+        cca: "RH Developers",
+        category: "Media Committees",
+        position: "Developer",
+        semesters: [1, 2],
+      },
+    ],
+    achievements: [
+      {
+        title: "Inter-Hall Games 2026",
+        detail: "Soccer (Men) — Champions",
+        month: "Feb 2026",
+      },
+      {
+        title: "Raffles Hall Colours Award",
+        detail: "Awarded for sustained contribution to hall sports",
+        month: "Apr 2026",
+      },
+    ],
+  },
+];
+
+/** The year shown when none is asked for: the latest one issued. */
+export const DEFAULT_SPECIMEN = SPECIMENS[SPECIMENS.length - 1]!;
 
 /** Codes are printed in upper case; a verifier typing one by hand may not. */
 export function normaliseVerificationCode(raw: string): string {
@@ -178,34 +190,59 @@ export function normaliseVerificationCode(raw: string): string {
 }
 
 /**
- * The only lookup the pages use. Returns null for anything that is not an
- * issued code — including malformed input, which never reaches the lookup.
+ * The verifier's lookup. Returns null for anything that is not an issued code
+ * — including malformed input, which never reaches the lookup.
  */
-export function getTranscriptByCode(raw: string): Transcript | null {
+export function getTranscriptByCode(raw: string): YearTranscript | null {
   const code = normaliseVerificationCode(raw);
   if (!/^[A-Z0-9-]{4,40}$/.test(code)) return null;
   return SPECIMENS.find((t) => t.verificationCode === code) ?? null;
 }
 
-/** Entries grouped by academic year, oldest first, preserving input order. */
-export function groupByYear(
-  entries: TranscriptEntry[],
-): Array<{ academicYear: string; entries: TranscriptEntry[] }> {
-  const groups = new Map<string, TranscriptEntry[]>();
-  for (const e of entries) {
-    const list = groups.get(e.academicYear) ?? [];
-    list.push(e);
-    groups.set(e.academicYear, list);
-  }
-  return [...groups.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([academicYear, entries]) => ({ academicYear, entries }));
+/** Academic years a transcript exists for, oldest first. */
+export function getYearsForResident(): string[] {
+  return SPECIMENS.map((t) => t.academicYear);
+}
+
+/** "AY2025/26" or the URL form "2025-26". Unknown years → null. */
+export function getTranscriptForYear(
+  year: string | undefined,
+): YearTranscript | null {
+  if (!year) return DEFAULT_SPECIMEN;
+  const ay = yearFromParam(year);
+  return SPECIMENS.find((t) => t.academicYear === ay) ?? null;
+}
+
+/** "AY2025/26" → "2025-26", for a query string that needs no escaping. */
+export function yearToParam(academicYear: string): string {
+  return academicYear.replace(/^AY/, "").replace("/", "-");
+}
+
+function yearFromParam(param: string): string {
+  return param.startsWith("AY") ? param : `AY${param.replace("-", "/")}`;
+}
+
+/** "AY2025/26" → "Academic Year 2025/2026", as an official heading reads. */
+export function formatAcademicYear(academicYear: string): string {
+  const m = /^AY(\d{4})\/(\d{2})$/.exec(academicYear);
+  if (!m) return academicYear;
+  return `Academic Year ${m[1]}/${m[1]!.slice(0, 2)}${m[2]}`;
+}
+
+export function formatSemesters(semesters: Semester[]): string {
+  if (semesters.length === 2) return "Sem 1 & 2";
+  return `Sem ${semesters[0]}`;
+}
+
+const ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth"];
+export function formatYearOfResidence(n: number): string {
+  return `${ORDINALS[n - 1] ?? `${n}th`} year`;
 }
 
 export function formatIssuedOn(iso: string): string {
   return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-SG", {
-    day: "numeric",
-    month: "long",
+    day: "2-digit",
+    month: "short",
     year: "numeric",
     timeZone: "UTC",
   });
