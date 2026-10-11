@@ -3,9 +3,10 @@ import Link from "next/link";
 import { type Metadata } from "next";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import {
+  formatAcademicYear,
   formatIssuedOn,
+  formatSemesters,
   getTranscriptByCode,
-  groupByYear,
   normaliseVerificationCode,
 } from "~/lib/transcript/demoData";
 
@@ -108,43 +109,47 @@ export default function VerifyCodePage({
 
           <dl className="grid grid-cols-1 gap-x-6 gap-y-3 border-b border-gray-100 p-5 text-sm sm:grid-cols-2">
             <Field label="Resident" value={transcript.resident.name} />
-            <Field label="Matriculation no." value={transcript.resident.matric} />
-            <Field label="Period of residence" value={transcript.residencyPeriod} />
-            <Field label="Date of issue" value={formatIssuedOn(transcript.issuedOn)} />
-            <Field label="Verification code" value={transcript.verificationCode} />
             <Field
-              label="Endorsed by"
-              value={`${transcript.jcrcPresident.name} (JCRC President), ${transcript.master.name} (Master)`}
+              label="Matriculation no."
+              value={transcript.resident.matric}
+            />
+            <Field
+              label="Academic year"
+              value={formatAcademicYear(transcript.academicYear)}
+            />
+            <Field label="Block" value={transcript.resident.block} />
+            <Field
+              label="Date of issue"
+              value={formatIssuedOn(transcript.issuedOn)}
+            />
+            <Field
+              label="Verification code"
+              value={transcript.verificationCode}
             />
           </dl>
 
           <div className="space-y-5 p-5">
-            {groupByYear(transcript.entries).map(({ academicYear, entries }) => (
-              <div key={academicYear}>
-                <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-emerald-900">
-                  {academicYear}
-                </h3>
-                <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200">
-                  {entries.map((e) => (
-                    <li
-                      key={`${e.academicYear}-${e.ccaName}`}
-                      className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-3 py-2 text-sm"
-                    >
-                      <span>
-                        <span className="font-medium text-gray-900">
-                          {e.ccaName}
-                        </span>
-                        <span className="text-gray-600"> · {e.position}</span>
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        {e.commitment.level} · ~{e.commitment.hoursPerWeek} h/wk ·
-                        certified by {e.certifiedBy.name}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
+            <RecordList
+              title="Leadership (JCRC)"
+              items={transcript.leadership.map((r) => [
+                r.appointment,
+                formatSemesters(r.semesters),
+              ])}
+            />
+            <RecordList
+              title="CCA participation"
+              items={transcript.ccas.map((r) => [
+                `${r.cca} · ${r.position}`,
+                `${r.category} · ${formatSemesters(r.semesters)}`,
+              ])}
+            />
+            <RecordList
+              title="Achievements and awards"
+              items={transcript.achievements.map((r) => [
+                `${r.title} · ${r.detail}`,
+                r.month,
+              ])}
+            />
           </div>
         </div>
       )}
@@ -161,10 +166,41 @@ function safeDecode(segment: string): string {
   }
 }
 
+/** Same rule as the document: a category with no entries is not shown. */
+function RecordList({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<[main: string, aside: string]>;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-emerald-900">
+        {title}
+      </h3>
+      <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200">
+        {items.map(([main, aside]) => (
+          <li
+            key={main}
+            className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-3 py-2 text-sm"
+          >
+            <span className="font-medium text-gray-900">{main}</span>
+            <span className="text-xs text-gray-500">{aside}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-xs uppercase tracking-wider text-gray-500">{label}</dt>
+      <dt className="text-xs uppercase tracking-wider text-gray-500">
+        {label}
+      </dt>
       <dd className="font-medium text-gray-900">{value}</dd>
     </div>
   );
