@@ -1,32 +1,55 @@
 import {
   type AwardRow,
-  type CcaDescriptionRow,
   type CcaMembershipInput,
   type InvolvementRow,
+  type JcrcPageModel,
+  type JcrcServiceInput,
+  type NoteRow,
   type OneOffVolunteerInput,
   type RegularVolunteerInput,
   type TranscriptInput,
+  type TranscriptPage,
   type TranscriptSection,
+  type TranscriptSummary,
   type TranscriptViewModel,
   type VolunteerHoursModel,
 } from "./types";
 
-/** Shown in the CCA descriptions section when a CCA has no description yet. */
+/** Shown in the Explanatory notes when a CCA has no description yet. */
 export const MISSING_DESCRIPTION_TEXT = "Description not yet available.";
+
+/** Static text on the JCRC page. */
+export const JCRC_ABOUT_TEXT =
+  "The JCRC is the elected student committee that leads Raffles Hall and represents its residents. Its members run hall-wide programmes, oversee CCAs within their portfolios, and work with hall management.";
+
+const JCRC_NOTE_TITLE = "JCRC (Junior Common Room Committee)";
+const JCRC_NOTE_TEXT =
+  "the elected student committee that leads the hall. See the Junior Common Room Committee page for a full account of this role.";
 
 /**
  * Builds the view model for one resident and one academic year.
  *
  * PURE: no Prisma, no I/O, and the input is never mutated (every array is
  * copied before it is filtered or sorted). Output order is deterministic:
- * leaders first, then alphabetical by CCA name.
+ * leaders first, then alphabetical by CCA name, with the JCRC appointment
+ * above them all.
+ *
+ * Throws a RangeError when no transcript was issued for `academicYear`: the
+ * pages only ever ask for years listed in `input.issues`.
  */
 export function assembleTranscript(
   input: TranscriptInput,
   academicYear: string,
 ): TranscriptViewModel {
-  const memberships = input.memberships.filter(
-    (m) => m.academicYear === academicYear,
+  const issue = input.issues.find((i) => i.academicYear === academicYear);
+  if (!issue) {
+    throw new RangeError(`No transcript was issued for ${academicYear}`);
+  }
+
+  const memberships = dedupeMemberships(
+    sortMemberships(
+      input.memberships.filter((m) => m.academicYear === academicYear),
+    ),
   );
   const regular = input.regularVolunteering.filter(
     (v) => v.academicYear === academicYear,
@@ -35,33 +58,33 @@ export function assembleTranscript(
     (v) => v.academicYear === academicYear,
   );
   const awards = input.awards.filter((a) => a.academicYear === academicYear);
+  const jcrc = input.jcrc?.term === academicYear ? input.jcrc : null;
 
-  const sortedMemberships = sortMemberships(memberships);
+  const involvements = buildInvolvements(memberships, jcrc, academicYear);
   const volunteer = buildVolunteerHours(regular, oneOff);
+  const awardRows = buildAwards(awards);
 
   const sections: TranscriptSection[] = [];
-  if (sortedMemberships.length > 0) {
-    sections.push({
-      kind: "involvements",
-      rows: sortedMemberships.map(toInvolvementRow),
-    });
-    sections.push({
-      kind: "ccaDescriptions",
-      rows: buildDescriptions(sortedMemberships),
-    });
+  if (involvements.length > 0) {
+    sections.push({ kind: "involvements", rows: involvements });
   }
   if (volunteer) sections.push({ kind: "volunteerHours", volunteer });
-  if (awards.length > 0) {
-    sections.push({ kind: "awards", rows: buildAwards(awards) });
-  }
+  if (awardRows.length > 0) sections.push({ kind: "awards", rows: awardRows });
+
+  const pages: TranscriptPage[] = [{ kind: "main", sections }];
+  if (jcrc) pages.push({ kind: "jcrc", jcrc: toJcrcPage(jcrc) });
+  pages.push({ kind: "notes", notes: buildNotes(involvements, memberships) });
 
   return {
     academicYear,
     resident: { ...input.resident },
+    issue: { ...issue },
     isEmpty: sections.length === 0,
+    summary: buildSummary(memberships, jcrc, volunteer, awardRows),
     hasVolunteerHours: volunteer !== null,
-    hasAwards: awards.length > 0,
-    sections,
+    hasAwards: awardRows.length > 0,
+    hasJcrc: jcrc !== null,
+    pages,
   };
 }
 
@@ -70,14 +93,24 @@ export function normaliseVerificationCode(raw: string): string {
   return raw.trim().toUpperCase();
 }
 
-/** "2026-10-06" -> "6 October 2026". */
+/** "2026-10-06" -> "06/10/2026". */
 export function formatIssuedOn(iso: string): string {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-SG", {
-    day: "numeric",
-    month: "long",
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
     year: "numeric",
     timeZone: "UTC",
   });
+}
+
+/** "AY2025/26" -> "2025-26", for a query string that needs no escaping. */
+export function yearToParam(academicYear: string): string {
+  return academicYear.replace(/^AY/, "").replace("/", "-");
+}
+
+/** "2025-26" or "AY2025/26" -> "AY2025/26". */
+export function yearFromParam(param: string): string {
+  return param.startsWith("AY") ? param : `AY${param.replace("-", "/")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,36 +138,101 @@ function sortMemberships(
   });
 }
 
-function toInvolvementRow(m: CcaMembershipInput): InvolvementRow {
-  return {
-    ccaName: m.ccaName,
-    category: m.category,
-    role: cleaned(m.leadershipRole),
-    extraContribution: cleaned(m.extraContribution),
-  };
+/**
+ * One row per CCA. A CCA recorded twice keeps its first (leadership-first)
+ * entry, but borrows a description or contribution the first one lacks.
+ */
+function dedupeMemberships(
+  sorted: readonly CcaMembershipInput[],
+): CcaMembershipInput[] {
+  const byName = new Map<string, CcaMembershipInput>();
+  for (const m of sorted) {
+    const seen = byName.get(m.ccaName);
+    if (!seen) {
+      byName.set(m.ccaName, m);
+      continue;
+    }
+    byName.set(m.ccaName, {
+      ...seen,
+      description: cleaned(seen.description) ?? m.description,
+      extraContribution: cleaned(seen.extraContribution) ?? m.extraContribution,
+    });
+  }
+  return [...byName.values()];
 }
 
-/** Only the resident's own CCAs, alphabetical, each once. */
-function buildDescriptions(
+function shortYear(academicYear: string): string {
+  return academicYear.replace(/^AY/, "");
+}
+
+function buildInvolvements(
   memberships: readonly CcaMembershipInput[],
-): CcaDescriptionRow[] {
-  const byName = new Map<string, string | null>();
-  for (const m of memberships) {
-    const description = cleaned(m.description);
-    if (
-      !byName.has(m.ccaName) ||
-      (byName.get(m.ccaName) === null && description)
-    ) {
-      byName.set(m.ccaName, description);
-    }
+  jcrc: JcrcServiceInput | null,
+  academicYear: string,
+): InvolvementRow[] {
+  const year = shortYear(academicYear);
+  const rows: InvolvementRow[] = [];
+  if (jcrc) {
+    rows.push({
+      ccaName: `Junior Common Room Committee (JCRC), ${jcrc.portfolio}`,
+      role: cleaned(jcrc.position),
+      year,
+      extraContribution: null,
+      footnote: 0,
+      isJcrc: true,
+    });
   }
-  return [...byName.entries()]
-    .sort(([a], [b]) => compareText(a, b))
-    .map(([ccaName, description]) => ({
-      ccaName,
-      description: description ?? MISSING_DESCRIPTION_TEXT,
+  for (const m of memberships) {
+    rows.push({
+      ccaName: m.ccaName,
+      role: cleaned(m.leadershipRole),
+      year,
+      extraContribution: cleaned(m.extraContribution),
+      footnote: 0,
+      isJcrc: false,
+    });
+  }
+  return rows.map((row, index) => ({ ...row, footnote: index + 1 }));
+}
+
+/** Footnotes follow the order of the table: the JCRC row, then each CCA. */
+function buildNotes(
+  involvements: readonly InvolvementRow[],
+  memberships: readonly CcaMembershipInput[],
+): NoteRow[] {
+  const descriptions = new Map(
+    memberships.map((m) => [m.ccaName, cleaned(m.description)] as const),
+  );
+  return involvements.map((row) => {
+    if (row.isJcrc) {
+      return {
+        number: row.footnote,
+        title: JCRC_NOTE_TITLE,
+        text: JCRC_NOTE_TEXT,
+        isMissing: false,
+      };
+    }
+    const description = descriptions.get(row.ccaName) ?? null;
+    return {
+      number: row.footnote,
+      title: row.ccaName,
+      text: description ?? MISSING_DESCRIPTION_TEXT,
       isMissing: description === null,
-    }));
+    };
+  });
+}
+
+function toJcrcPage(jcrc: JcrcServiceInput): JcrcPageModel {
+  return {
+    portfolio: jcrc.portfolio,
+    position: jcrc.position,
+    term: jcrc.term,
+    about: JCRC_ABOUT_TEXT,
+    responsibilities: jcrc.description,
+    contributions: [...jcrc.contributions],
+    testimonial: { ...jcrc.testimonial },
+    isPlaceholder: jcrc.isPlaceholder,
+  };
 }
 
 /** Rounds away floating-point noise such as 0.1 + 0.2. */
@@ -151,21 +249,38 @@ function buildVolunteerHours(
   if (regular.length === 0 && oneOff.length === 0) return null;
 
   const regularRows = [...regular]
-    .sort((a, b) => compareText(a.ccaName, b.ccaName))
-    .map((v) => ({ ccaName: v.ccaName, hours: v.hours }));
+    .sort(
+      (a, b) =>
+        compareText(a.ccaName, b.ccaName) ||
+        compareText(a.activity, b.activity),
+    )
+    .map((v) => ({
+      activity: `${v.activity} (regular)`,
+      kind: "regular" as const,
+      organiser: v.ccaName,
+      date: null,
+      hours: v.hours,
+    }));
   const oneOffRows = [...oneOff]
     .sort(
       (a, b) =>
         compareText(a.date, b.date) || compareText(a.eventName, b.eventName),
     )
-    .map((v) => ({ eventName: v.eventName, date: v.date, hours: v.hours }));
+    .map((v) => ({
+      activity: `${v.eventName} (one-off)`,
+      kind: "one-off" as const,
+      organiser: v.organiser,
+      date: v.date,
+      hours: v.hours,
+    }));
 
   const regularSubtotal = sumHours(regularRows.map((r) => r.hours));
   const oneOffSubtotal = sumHours(oneOffRows.map((r) => r.hours));
 
   return {
-    regular: { rows: regularRows, subtotal: regularSubtotal },
-    oneOff: { rows: oneOffRows, subtotal: oneOffSubtotal },
+    rows: [...regularRows, ...oneOffRows],
+    regularSubtotal,
+    oneOffSubtotal,
     total: sumHours([regularSubtotal, oneOffSubtotal]),
   };
 }
@@ -180,4 +295,21 @@ function buildAwards(
       academicYear: a.academicYear,
       citation: cleaned(a.citation),
     }));
+}
+
+function buildSummary(
+  memberships: readonly CcaMembershipInput[],
+  jcrc: JcrcServiceInput | null,
+  volunteer: VolunteerHoursModel | null,
+  awards: readonly AwardRow[],
+): TranscriptSummary {
+  const leaderships = memberships.filter(
+    (m) => cleaned(m.leadershipRole) !== null,
+  ).length;
+  return {
+    ccas: memberships.length,
+    leadershipRoles: leaderships + (jcrc ? 1 : 0),
+    volunteerHours: volunteer?.total ?? 0,
+    awards: awards.length,
+  };
 }
