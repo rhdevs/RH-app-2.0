@@ -459,3 +459,20 @@ Effort: S = small, M = medium, L = large.
 | O | **Transcript request/approval window** (open at end of AY, close after) via `SystemFlag` | S | Reuses the flag pattern. |
 | P | **Linking applications to history**: accepted `CcaApplication` seeds membership records | M | Existing acceptance writes `UserCCA`. |
 | Q | **Accessibility and print QA** (screen-reader tables, A4 pagination checks) | S | Print CSS already exists. |
+
+---
+
+## 12. Phase 2 decisions
+
+These supersede anything above that conflicts.
+
+- **Removed from the prototype:** commitment level, hours-per-week badge, per-entry "certified by" signature, the JCRC President / Master signatures, and the signature script font. The verification code, QR and `/verify/<code>` page are kept.
+- **Awards editor:** roles `jcrc` or `admin`. There is no Honorary General Secretary role in the app; `src/server/api/services/roles.ts` is not modified. (Resolves Q4.)
+- **No backfill:** transcripts start at AY2026/27 (resolves Q5). AY strings use the form `AY2026/27`.
+- **No schema change in Phase 2:** the future collections are represented as TypeScript input types in `src/lib/transcript/types.ts`. The sidecar models in section 5 remain the target for a later phase and still need approval.
+- **Layout order:** header and resident details (with verification code and QR), co-curricular involvements, CCA descriptions, volunteer hours (omitted if none), awards (omitted if none). An empty year shows "No recorded involvements for this academic year."
+- **Missing CCA description:** shown as the muted text "Description not yet available."
+- **Data-driven sections:** the document renders an ordered list of sections from the assembler, so a JCRC service section and a testimonial block can be added in Phase 3 without redesign. Neither is built yet.
+- **PDF:** Phase 2 uses the browser's print-to-PDF ("Save as PDF" calls `window.print()`) with an A4 print stylesheet. No PDF library was added.
+- **Tests:** Vitest is the only new dependency (devDependency). `@vitest/coverage-v8` is not installed, so coverage is unmeasured.
+- **Preview:** `/transcript/preview/[fixture]` shows each of the 10 specimens in development and returns 404 in production. The `/transcript` and `/verify` pages still render specimens only; they are not yet tied to the signed-in resident.
