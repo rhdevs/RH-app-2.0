@@ -1,7 +1,7 @@
 import Image from "next/image";
 import { redirect } from "next/navigation";
 import { type Metadata } from "next";
-import { normaliseVerificationCode } from "~/lib/transcript/demoData";
+import { normaliseVerificationCode } from "~/lib/transcript/assemble";
 
 export const metadata: Metadata = {
   title: "Verify a CCA Transcript · Raffles Hall",
@@ -36,8 +36,8 @@ export default function VerifyIndexPage({
         Verify a CCA Transcript
       </h1>
       <p className="mt-2 text-sm text-gray-600">
-        Enter the verification code printed at the bottom of a Raffles Hall
-        CCA transcript.
+        Enter the verification code printed at the bottom of a Raffles Hall CCA
+        transcript.
       </p>
       <form action="/verify" method="get" className="mt-6 flex w-full gap-2">
         <input
