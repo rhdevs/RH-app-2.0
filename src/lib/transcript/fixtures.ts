@@ -109,7 +109,7 @@ const SPORTS_SECRETARY: JcrcServiceInput = {
   isPlaceholder: true,
 };
 
-const MANY_CCAS: CcaMembershipInput[] = [
+const MANY_CCAS_BASE: CcaMembershipInput[] = [
   cca("Badminton (MALE)", "Sports Activities", {
     leadershipRole: "Vice-Captain",
   }),
@@ -132,6 +132,19 @@ const MANY_CCAS: CcaMembershipInput[] = [
   cca("Table Tennis (MALE)", "Sports Activities"),
   cca("Volleyball (MALE)", "Sports Activities"),
 ];
+
+/**
+ * Every CCA carries an additional contribution, so page 1 is long enough to
+ * run onto a second printed page and exercise the page breaks.
+ */
+const MANY_CCAS: CcaMembershipInput[] = MANY_CCAS_BASE.map((m) =>
+  m.extraContribution
+    ? m
+    : {
+        ...m,
+        extraContribution: `Took on extra duties for ${m.ccaName} through the year, supporting its events, welcoming new members and keeping its records up to date.`,
+      },
+);
 
 export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
   {
