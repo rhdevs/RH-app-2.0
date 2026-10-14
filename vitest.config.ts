@@ -11,8 +11,10 @@ export default defineConfig({
       { find: /^@\//, replacement: `${src}/` },
     ],
   },
+  // Next.js sets tsconfig "jsx": "preserve"; component tests render directly.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
   },
 });
