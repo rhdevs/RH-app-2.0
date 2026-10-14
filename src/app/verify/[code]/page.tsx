@@ -1,16 +1,13 @@
-import Image from "next/image";
 import Link from "next/link";
 import { type Metadata } from "next";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import {
   assembleTranscript,
-  formatIssuedOn,
   normaliseVerificationCode,
 } from "~/lib/transcript/assemble";
 import { getFixtureByCode } from "~/lib/transcript/fixtures";
-import { documentSerif } from "../../transcript/_components/fonts";
-import { EMPTY_YEAR_MESSAGE } from "../../transcript/_components/TranscriptDocument";
-import { TranscriptSections } from "../../transcript/_components/TranscriptSections";
+import { Crest } from "../../transcript/_components/PageHeader";
+import { TranscriptDocument } from "../../transcript/_components/TranscriptDocument";
 
 export const metadata: Metadata = {
   title: "Transcript Verification · Raffles Hall",
@@ -19,11 +16,15 @@ export const metadata: Metadata = {
 };
 
 /**
- * PUBLIC — exempt from MatricGate, reached from the QR on a transcript.
+ * PUBLIC — exempt from MatricGate, reached from the QR on a transcript. Each
+ * academic year's transcript has its own code, so a code resolves to one
+ * resident and one year.
  *
  * SHOWS THE RECORD, NOT JUST "VALID". A bare tick would only prove the code
- * exists; a verifier has to compare the CCAs and positions against the copy in
- * their hand, or an edited printout with a genuine code would pass.
+ * exists; a verifier has to compare the CCAs and roles against the copy in
+ * their hand, or an edited printout with a genuine code would pass. So the
+ * page renders the same document, from the same view model, as the one that
+ * was issued.
  *
  * A SPECIMEN NEVER RENDERS AS A PLAIN "VERIFIED". Outsiders are the audience
  * here, and a green tick on a real domain for an invented person is exactly the
@@ -35,26 +36,21 @@ export default function VerifyCodePage({
   params: { code: string };
 }) {
   const code = normaliseVerificationCode(safeDecode(params.code));
-  const fixture = getFixtureByCode(code);
-  const transcript = fixture
-    ? assembleTranscript(fixture.input, fixture.academicYear)
+  const found = getFixtureByCode(code);
+  const transcript = found
+    ? assembleTranscript(found.fixture.input, found.academicYear)
     : null;
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-10">
+    <div className="mx-auto max-w-[210mm] px-4 py-10">
       <div className="mb-6 flex items-center gap-3">
-        <Image
-          src="/raffles-hall-logo.svg"
-          alt="Raffles Hall crest"
-          width={48}
-          height={48}
-        />
+        <Crest />
         <div>
           <p className="text-xs uppercase tracking-widest text-gray-500">
             Raffles Hall
           </p>
           <h1 className="text-xl font-semibold text-gray-900">
-            CCA Transcript Verification
+            Transcript Verification
           </h1>
         </div>
       </div>
@@ -82,9 +78,9 @@ export default function VerifyCodePage({
           </div>
         </div>
       ) : (
-        <div className="rounded-xl bg-white shadow">
+        <>
           {transcript.resident.isSpecimen ? (
-            <div className="flex items-start gap-3 rounded-t-xl border-b border-amber-200 bg-amber-50 p-5">
+            <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-5">
               <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-600" />
               <div>
                 <h2 className="font-semibold text-amber-900">
@@ -98,50 +94,22 @@ export default function VerifyCodePage({
               </div>
             </div>
           ) : (
-            <div className="flex items-start gap-3 rounded-t-xl border-b border-emerald-200 bg-emerald-50 p-5">
+            <div className="mb-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-5">
               <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-emerald-700" />
               <div>
                 <h2 className="font-semibold text-emerald-900">
                   Issued by Raffles Hall
                 </h2>
                 <p className="mt-1 text-sm text-emerald-900">
-                  Compare the details below with the copy you were given. Any
+                  Compare the record below with the copy you were given. Any
                   difference means that copy has been altered.
                 </p>
               </div>
             </div>
           )}
 
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 border-b border-gray-100 p-5 text-sm sm:grid-cols-2">
-            <Field label="Resident" value={transcript.resident.name} />
-            <Field
-              label="Matriculation no."
-              value={transcript.resident.matric}
-            />
-            {transcript.resident.faculty && (
-              <Field label="Faculty" value={transcript.resident.faculty} />
-            )}
-            <Field label="Academic year" value={transcript.academicYear} />
-            <Field
-              label="Date of issue"
-              value={formatIssuedOn(transcript.resident.issuedOn)}
-            />
-            <Field
-              label="Verification code"
-              value={transcript.resident.verificationCode}
-            />
-          </dl>
-
-          <div className={`${documentSerif.className} px-5 pb-2`}>
-            {transcript.isEmpty ? (
-              <p className="py-8 text-center italic text-gray-600">
-                {EMPTY_YEAR_MESSAGE}
-              </p>
-            ) : (
-              <TranscriptSections sections={transcript.sections} />
-            )}
-          </div>
-        </div>
+          <TranscriptDocument transcript={transcript} />
+        </>
       )}
     </div>
   );
@@ -154,15 +122,4 @@ function safeDecode(segment: string): string {
   } catch {
     return segment;
   }
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs uppercase tracking-wider text-gray-500">
-        {label}
-      </dt>
-      <dd className="font-medium text-gray-900">{value}</dd>
-    </div>
-  );
 }

@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import Header from "../../_components/header";
-import { assembleTranscript } from "~/lib/transcript/assemble";
+import { assembleTranscript, yearToParam } from "~/lib/transcript/assemble";
 import {
   TRANSCRIPT_FIXTURES,
+  getFixtureYears,
+  resolveFixtureYear,
   type TranscriptFixture,
 } from "~/lib/transcript/fixtures";
 import { PrintButton } from "./PrintButton";
@@ -10,22 +13,30 @@ import { TranscriptDocument } from "./TranscriptDocument";
 
 /**
  * Everything around one transcript on screen: app header, specimen notice,
- * Save-as-PDF button, and the document. On paper only the document prints, on
- * A4. Shared by /transcript and the dev-only /transcript/preview/[fixture].
+ * academic-year switch, Save-as-PDF button, and the document. On paper only the
+ * document prints, on A4. One document per academic year, picked with
+ * `?ay=2026-27`; no `ay` shows the latest. Shared by /transcript and the
+ * dev-only /transcript/preview/[fixture].
  */
 export function TranscriptPageShell({
   fixture,
+  ay,
+  basePath,
 }: {
   fixture: TranscriptFixture;
+  ay: string | undefined;
+  /** The route this shell is served from, for the year links. */
+  basePath: string;
 }) {
-  const transcript = assembleTranscript(fixture.input, fixture.academicYear);
+  const academicYear = resolveFixtureYear(fixture, ay);
+  if (!academicYear) notFound();
+
+  const transcript = assembleTranscript(fixture.input, academicYear);
+  const years = getFixtureYears(fixture);
   const isDev = process.env.NODE_ENV !== "production";
 
   return (
     <>
-      {/* A4, and nothing but the document on paper. */}
-      <style>{`@page { size: A4; margin: 14mm; }`}</style>
-
       <div className="print:hidden">
         <Header currentPage="profile" />
       </div>
@@ -35,14 +46,37 @@ export function TranscriptPageShell({
           <p className="font-semibold">Preview of an upcoming feature</p>
           <p className="mt-1">
             This is a sample transcript with made-up names and CCAs. Your own
-            transcript will appear here once CCA records are kept by academic
-            year.
+            transcripts, one for each academic year, will appear here once CCA
+            records are kept by year.
           </p>
         </div>
+
+        {years.length > 1 && (
+          <nav aria-label="Academic year" className="mb-3 flex flex-wrap gap-2">
+            {years.map((year) => {
+              const active = year === academicYear;
+              return (
+                <Link
+                  key={year}
+                  href={`${basePath}?ay=${yearToParam(year)}`}
+                  aria-current={active ? "page" : undefined}
+                  className={`rounded-full border px-3 py-1 text-sm font-medium ${
+                    active
+                      ? "border-emerald-800 bg-emerald-800 text-white"
+                      : "border-gray-300 bg-white text-gray-700 hover:border-emerald-700"
+                  }`}
+                >
+                  {year}
+                </Link>
+              );
+            })}
+          </nav>
+        )}
+
         <div className="flex flex-wrap items-center justify-between gap-3">
           <PrintButton />
           <Link
-            href={`/verify/${fixture.input.resident.verificationCode}`}
+            href={`/verify/${transcript.issue.verificationCode}`}
             className="text-sm font-medium text-emerald-800 underline hover:text-emerald-600"
           >
             See what a verifier sees →

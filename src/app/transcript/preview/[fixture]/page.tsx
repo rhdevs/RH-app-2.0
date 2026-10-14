@@ -14,11 +14,22 @@ export const metadata: Metadata = {
  */
 export default function TranscriptPreviewPage({
   params,
+  searchParams,
 }: {
   params: { fixture: string };
+  searchParams: { ay?: string | string[] };
 }) {
   if (process.env.NODE_ENV === "production") notFound();
   const fixture = getFixtureBySlug(params.fixture);
   if (!fixture) notFound();
-  return <TranscriptPageShell fixture={fixture} />;
+  const ay = Array.isArray(searchParams.ay)
+    ? searchParams.ay[0]
+    : searchParams.ay;
+  return (
+    <TranscriptPageShell
+      fixture={fixture}
+      ay={ay}
+      basePath={`/transcript/preview/${fixture.slug}`}
+    />
+  );
 }

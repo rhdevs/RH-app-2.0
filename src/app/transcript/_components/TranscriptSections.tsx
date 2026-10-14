@@ -1,29 +1,57 @@
-import { formatIssuedOn } from "~/lib/transcript/assemble";
+import { type ReactNode } from "react";
 import {
   type AwardRow,
-  type CcaDescriptionRow,
   type InvolvementRow,
+  type NoteRow,
   type TranscriptSection,
+  type TranscriptSummary,
   type VolunteerHoursModel,
 } from "~/lib/transcript/types";
 
 /**
- * The body of a transcript: one block per section in the view model, in the
- * order the assembler produced. Adding a section kind means adding a member to
- * `TranscriptSection`, one case in `SectionBody` and one title below. The
- * document shell and the pages do not change.
+ * The body of page 1 and of the notes page. Page 1 is one block per section in
+ * the view model, in the order the assembler produced. Adding a section kind
+ * means adding a member to `TranscriptSection`, one case in `SectionBody` and
+ * one title below; the document and the pages do not change.
  *
- * Page breaks: headings stay with their content, and a CCA row stays together
- * with its "Additional contributions" subsection (each CCA is its own
- * <tbody>). The header row of each table repeats on every printed page.
+ * Page breaks: a CCA row stays together with its sub-rows (each CCA is its own
+ * <tbody>), and the header row of each table repeats on every printed page.
  */
 
 const SECTION_TITLES: Record<TranscriptSection["kind"], string> = {
-  involvements: "Co-curricular involvements",
-  ccaDescriptions: "CCA descriptions",
+  involvements: "Leadership and CCA participation",
   volunteerHours: "Volunteer hours",
   awards: "Awards",
 };
+
+const ROMAN = ["I", "II", "III", "IV", "V", "VI"];
+
+const SEC_HEADING =
+  "mb-0.5 mt-3 break-after-avoid border-b border-black text-xs font-bold uppercase";
+const TH = "border-b border-black px-1 py-0.5 text-left font-bold";
+const TD = "px-1 py-0.5 align-top";
+
+export function SummaryStrip({ summary }: { summary: TranscriptSummary }) {
+  const cells: Array<[string, string]> = [
+    [String(summary.ccas), "CCAs"],
+    [String(summary.leadershipRoles), "Leadership roles"],
+    [`${summary.volunteerHours} h`, "Volunteering"],
+    [String(summary.awards), "Awards"],
+  ];
+  return (
+    <dl className="mb-2.5 grid grid-cols-2 border border-black sm:grid-cols-4">
+      {cells.map(([value, label]) => (
+        <div
+          key={label}
+          className="border-r border-black p-1.5 text-center last:border-r-0"
+        >
+          <dd className="m-0 text-lg font-bold">{value}</dd>
+          <dt>{label}</dt>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 export function TranscriptSections({
   sections,
@@ -33,9 +61,9 @@ export function TranscriptSections({
   return (
     <>
       {sections.map((section, index) => (
-        <section key={section.kind} className="py-5">
-          <h2 className="mb-3 break-after-avoid text-base font-semibold uppercase tracking-widest text-emerald-900">
-            {index + 1}. {SECTION_TITLES[section.kind]}
+        <section key={section.kind}>
+          <h2 className={SEC_HEADING}>
+            {ROMAN[index]}. {SECTION_TITLES[section.kind]}
           </h2>
           <SectionBody section={section} />
         </section>
@@ -48,8 +76,6 @@ function SectionBody({ section }: { section: TranscriptSection }) {
   switch (section.kind) {
     case "involvements":
       return <Involvements rows={section.rows} />;
-    case "ccaDescriptions":
-      return <CcaDescriptions rows={section.rows} />;
     case "volunteerHours":
       return <VolunteerHours volunteer={section.volunteer} />;
     case "awards":
@@ -57,46 +83,61 @@ function SectionBody({ section }: { section: TranscriptSection }) {
   }
 }
 
-const TH =
-  "py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-stone-500";
+/** Fixed column widths shared by the two tables on page 1. */
+function Columns() {
+  return (
+    <colgroup>
+      <col className="w-[56%]" />
+      <col className="w-[30%]" />
+      <col className="w-[14%]" />
+    </colgroup>
+  );
+}
+
+function SubRow({ children }: { children: ReactNode }) {
+  return (
+    <tr>
+      <td colSpan={3} className="px-1 py-0.5 pl-[18px] italic text-neutral-800">
+        {children}
+      </td>
+    </tr>
+  );
+}
 
 function Involvements({ rows }: { rows: InvolvementRow[] }) {
   return (
-    <table className="w-full border-collapse text-[15px]">
-      <thead className="border-y border-stone-300">
+    <table className="w-full table-fixed border-collapse">
+      <Columns />
+      <thead>
         <tr>
-          <th scope="col" className={`${TH} w-[45%]`}>
-            CCA
-          </th>
           <th scope="col" className={TH}>
-            Category
+            CCA / portfolio
           </th>
           <th scope="col" className={TH}>
             Role
           </th>
+          <th scope="col" className={TH}>
+            Year
+          </th>
         </tr>
       </thead>
       {rows.map((row) => (
-        <tbody
-          key={row.ccaName}
-          className="break-inside-avoid border-b border-stone-200"
-        >
+        <tbody key={row.footnote} className="break-inside-avoid">
           <tr>
-            <td className="py-2 pr-3 font-semibold">{row.ccaName}</td>
-            <td className="py-2 pr-3 text-stone-600">{row.category}</td>
-            <td className="py-2">{row.role}</td>
+            <td className={TD}>
+              {row.ccaName} <sup>{row.footnote}</sup>
+            </td>
+            <td className={TD}>{row.role}</td>
+            <td className={TD}>{row.year}</td>
           </tr>
+          {row.isJcrc && (
+            <SubRow>
+              See the Junior Common Room Committee page for a full account of
+              this role.
+            </SubRow>
+          )}
           {row.extraContribution && (
-            <tr>
-              <td colSpan={3} className="pb-2 pl-4 pr-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">
-                  Additional contributions
-                </p>
-                <p className="text-[15px] text-stone-800">
-                  {row.extraContribution}
-                </p>
-              </td>
-            </tr>
+            <SubRow>Additional contribution: {row.extraContribution}</SubRow>
           )}
         </tbody>
       ))}
@@ -104,159 +145,114 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
   );
 }
 
-function CcaDescriptions({ rows }: { rows: CcaDescriptionRow[] }) {
-  return (
-    <dl className="space-y-3">
-      {rows.map((row) => (
-        <div key={row.ccaName} className="break-inside-avoid">
-          <dt className="font-semibold">{row.ccaName}</dt>
-          <dd
-            className={
-              row.isMissing
-                ? "text-sm text-stone-400"
-                : "text-[15px] text-stone-700"
-            }
-          >
-            {row.description}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function hours(value: number): string {
-  return `${value} h`;
-}
-
 function VolunteerHours({ volunteer }: { volunteer: VolunteerHoursModel }) {
-  const { regular, oneOff, total } = volunteer;
   return (
-    <div className="space-y-4">
-      {regular.rows.length > 0 && (
-        <div className="break-inside-avoid">
-          <h3 className="mb-1 text-sm font-semibold text-stone-700">
-            Regular (through a CCA)
-          </h3>
-          <table className="w-full border-collapse text-[15px]">
-            <thead className="border-y border-stone-300">
-              <tr>
-                <th scope="col" className={TH}>
-                  CCA
-                </th>
-                <th scope="col" className={`${TH} text-right`}>
-                  Hours
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {regular.rows.map((row) => (
-                <tr key={row.ccaName} className="border-b border-stone-200">
-                  <td className="py-1.5">{row.ccaName}</td>
-                  <td className="py-1.5 text-right tabular-nums">
-                    {hours(row.hours)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <SubtotalFoot label="Regular subtotal" value={regular.subtotal} />
-          </table>
-        </div>
-      )}
-
-      {oneOff.rows.length > 0 && (
-        <div className="break-inside-avoid">
-          <h3 className="mb-1 text-sm font-semibold text-stone-700">One-off</h3>
-          <table className="w-full border-collapse text-[15px]">
-            <thead className="border-y border-stone-300">
-              <tr>
-                <th scope="col" className={TH}>
-                  Event
-                </th>
-                <th scope="col" className={TH}>
-                  Date
-                </th>
-                <th scope="col" className={`${TH} text-right`}>
-                  Hours
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {oneOff.rows.map((row) => (
-                <tr
-                  key={`${row.date}-${row.eventName}`}
-                  className="border-b border-stone-200"
-                >
-                  <td className="py-1.5 pr-3">{row.eventName}</td>
-                  <td className="py-1.5 pr-3 text-stone-600">
-                    {formatIssuedOn(row.date)}
-                  </td>
-                  <td className="py-1.5 text-right tabular-nums">
-                    {hours(row.hours)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <SubtotalFoot
-              label="One-off subtotal"
-              value={oneOff.subtotal}
-              colSpan={2}
-            />
-          </table>
-        </div>
-      )}
-
-      <p className="flex justify-between border-t-2 border-stone-400 pt-2 text-[15px] font-semibold">
-        <span>Total volunteer hours</span>
-        <span className="tabular-nums">{hours(total)}</span>
-      </p>
-    </div>
-  );
-}
-
-function SubtotalFoot({
-  label,
-  value,
-  colSpan = 1,
-}: {
-  label: string;
-  value: number;
-  colSpan?: number;
-}) {
-  return (
-    <tfoot>
-      <tr>
-        <td
-          colSpan={colSpan}
-          className="pt-1.5 text-right text-sm text-stone-600"
-        >
-          {label}
-        </td>
-        <td className="pt-1.5 text-right font-semibold tabular-nums">
-          {hours(value)}
-        </td>
-      </tr>
-    </tfoot>
+    <table className="w-full table-fixed border-collapse">
+      <Columns />
+      <thead>
+        <tr>
+          <th scope="col" className={TH}>
+            Activity
+          </th>
+          <th scope="col" className={TH}>
+            Organiser
+          </th>
+          <th scope="col" className={TH}>
+            Hours
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {volunteer.rows.map((row) => (
+          <tr
+            key={`${row.kind}-${row.activity}`}
+            className="break-inside-avoid"
+          >
+            <td className={TD}>{row.activity}</td>
+            <td className={TD}>{row.organiser}</td>
+            <td className={TD}>{row.hours}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr className="break-inside-avoid font-bold">
+          <td className={`${TD} border-t border-black`} colSpan={2}>
+            Total volunteer hours
+          </td>
+          <td className={`${TD} border-t border-black`}>{volunteer.total}</td>
+        </tr>
+      </tfoot>
+    </table>
   );
 }
 
 function Awards({ rows }: { rows: AwardRow[] }) {
   return (
-    <ul className="space-y-3">
-      {rows.map((row) => (
-        <li
-          key={`${row.academicYear}-${row.title}`}
-          className="break-inside-avoid"
-        >
-          <p className="flex flex-wrap items-baseline justify-between gap-x-4">
-            <span className="font-semibold">{row.title}</span>
-            <span className="text-sm text-stone-600">{row.academicYear}</span>
-          </p>
-          {row.citation && (
-            <p className="text-[15px] italic text-stone-700">{row.citation}</p>
-          )}
-        </li>
-      ))}
-    </ul>
+    <table className="w-full table-fixed border-collapse">
+      <tbody>
+        {rows.map((row) => (
+          <tr
+            key={`${row.academicYear}-${row.title}`}
+            className="break-inside-avoid"
+          >
+            <td className={TD}>
+              {row.title} ({row.academicYear})
+              {row.citation && (
+                <span className="block italic text-neutral-800">
+                  {row.citation}
+                </span>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** The footnotes for the superscripts on page 1, then how to verify. */
+export function NotesBody({
+  notes,
+  verificationCode,
+}: {
+  notes: NoteRow[];
+  verificationCode: string;
+}) {
+  return (
+    <>
+      {notes.length > 0 && (
+        <section>
+          <h2 className={`${SEC_HEADING} mt-3.5`}>
+            Notes on leadership and CCAs
+          </h2>
+          {notes.map((note) => (
+            <p
+              key={note.number}
+              className={`my-0.5 break-inside-avoid ${
+                note.isMissing ? "text-neutral-600" : ""
+              }`}
+            >
+              <sup>{note.number}</sup> {note.title}: {note.text}
+            </p>
+          ))}
+        </section>
+      )}
+
+      <section className="break-inside-avoid">
+        <h2 className={SEC_HEADING}>About this record</h2>
+        <p className="my-0.5 text-[10.5px]">
+          Generated from Raffles Hall&rsquo;s records. Scan the QR code on the
+          first page, or enter the verification code{" "}
+          <span className="font-mono font-bold">{verificationCode}</span> at{" "}
+          <span className="font-bold">rhapp.lol/verify</span>, to confirm its
+          authenticity. The verification page shows the record as held by
+          Raffles Hall; any difference from this copy means this copy has been
+          altered.
+        </p>
+        <p className="mt-3 text-center font-bold tracking-[0.06em]">
+          — END OF TRANSCRIPT —
+        </p>
+      </section>
+    </>
   );
 }

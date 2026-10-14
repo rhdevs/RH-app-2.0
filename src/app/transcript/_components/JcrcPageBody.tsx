@@ -1,0 +1,82 @@
+import { type JcrcPageModel } from "~/lib/transcript/types";
+
+const SEC_HEADING =
+  "mb-0.5 mt-3 break-after-avoid border-b border-black text-xs font-bold uppercase";
+
+/**
+ * The body of the dedicated JCRC page (JCRC members only).
+ *
+ * THE SIGNATURE BOXES ARE ALWAYS PLACEHOLDERS: empty boxes with a label and a
+ * date placeholder, never a person's name. There is no sign-off flow yet and no
+ * stored signature; the real one will replace these boxes in place.
+ */
+export function JcrcPageBody({ jcrc }: { jcrc: JcrcPageModel }) {
+  return (
+    <>
+      {jcrc.isPlaceholder && (
+        <p className="mt-2 text-[10.5px] italic text-neutral-600 print:hidden">
+          Placeholder content
+        </p>
+      )}
+
+      <section>
+        <h2 className={SEC_HEADING}>About the Junior Common Room Committee</h2>
+        <p className="my-0.5">{jcrc.about}</p>
+      </section>
+
+      <section>
+        <h2 className={SEC_HEADING}>Role and responsibilities</h2>
+        <p className="my-0.5">{jcrc.responsibilities}</p>
+      </section>
+
+      <section>
+        <h2 className={SEC_HEADING}>Contributions during the year</h2>
+        <ul className="m-0 ml-4 list-disc p-0">
+          {jcrc.contributions.map((item) => (
+            <li key={item} className="break-inside-avoid">
+              {item}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="break-inside-avoid">
+        <h2 className={SEC_HEADING}>
+          Testimonial from the {jcrc.testimonial.author}
+        </h2>
+        <blockquote className="my-1 border-l-4 border-black py-1 pl-2.5 text-[12.5px]">
+          {jcrc.testimonial.text}
+        </blockquote>
+
+        <div className="mt-[34px] grid grid-cols-2 gap-6">
+          <SignatureBox
+            placeholder="Master signature"
+            office="Master, Raffles Hall"
+          />
+          <SignatureBox
+            placeholder="President signature"
+            office="President, JCRC"
+          />
+        </div>
+      </section>
+    </>
+  );
+}
+
+function SignatureBox({
+  placeholder,
+  office,
+}: {
+  placeholder: string;
+  office: string;
+}) {
+  return (
+    <div className="break-inside-avoid border-t border-black pt-0.5 text-[10.5px] text-neutral-600">
+      [{placeholder} placeholder]
+      <br />
+      <b className="text-black">{office}</b>
+      <br />
+      Date: [placeholder]
+    </div>
+  );
+}

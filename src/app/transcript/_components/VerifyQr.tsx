@@ -9,7 +9,7 @@ import { QRCodeSVG } from "qrcode.react";
  * preview and not at production (where the code would resolve differently).
  * Renders a same-sized blank box until mounted, so nothing shifts on hydration.
  */
-export function VerifyQr({ code }: { code: string }) {
+export function VerifyQr({ code, size = 88 }: { code: string; size?: number }) {
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -17,8 +17,8 @@ export function VerifyQr({ code }: { code: string }) {
   }, [code]);
 
   return (
-    <div className="h-[88px] w-[88px] bg-white">
-      {url && <QRCodeSVG value={url} size={88} level="M" />}
+    <div className="bg-white" style={{ width: size, height: size }}>
+      {url && <QRCodeSVG value={url} size={size} level="M" />}
     </div>
   );
 }
