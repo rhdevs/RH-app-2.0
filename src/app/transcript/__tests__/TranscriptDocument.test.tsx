@@ -177,9 +177,41 @@ describe("TranscriptDocument: print", () => {
   it("counts printed pages in the browser rather than hard-coding them", () => {
     const html = render("jcrc-sports-secretary", JCRC_AY);
 
-    expect(html).toContain("@bottom-left");
-    expect(html).toContain('"Page " counter(page) " of " counter(pages)');
-    expect(html).toContain("Tan Wei Ming (A0011000X)");
+    expect(html).toContain(
+      '@bottom-right { content: "Page " counter(page) " of " counter(pages)',
+    );
+  });
+
+  it("prints the name once, as a fixed footer, never also in a margin box", () => {
+    const html = render("jcrc-sports-secretary", JCRC_AY);
+
+    expect(html).not.toContain("@bottom-left");
+    expect(html.match(/class="rh-print-footer"/g)).toHaveLength(1);
+    expect(html).toContain(
+      '<p class="rh-print-footer">Tan Wei Ming (A0011000X)</p>',
+    );
+    expect(html).toMatch(
+      /.rh-print-footer {[^}]*position: fixed; left: 0; bottom: 0;/,
+    );
+  });
+
+  it("reserves the footer space on every sheet so body text never prints under it", () => {
+    const pages = sheets(render("jcrc-sports-secretary", JCRC_AY));
+
+    expect(pages).toHaveLength(3);
+    for (const page of pages) {
+      expect(page.match(/<tfoot class="rh-print-spacer">/g)).toHaveLength(1);
+    }
+  });
+
+  it("repeats the crest header on every printed page of a sheet via its table head", () => {
+    for (const page of sheets(render("many-ccas"))) {
+      const head = page.slice(
+        page.indexOf("<thead>"),
+        page.indexOf("</thead>"),
+      );
+      expect(head.match(CREST)).toHaveLength(1);
+    }
   });
 
   it("hides the on-screen page footer in print", () => {
@@ -199,7 +231,7 @@ describe("TranscriptDocument: print", () => {
     );
   });
 
-  it("keeps hostile resident names out of the stylesheet and the markup", () => {
+  it("escapes hostile resident names and keeps them out of the stylesheet", () => {
     const fixture = getFixtureBySlug("plain-member")!;
     const vm = assembleTranscript(
       {
@@ -219,7 +251,8 @@ describe("TranscriptDocument: print", () => {
       html.indexOf("<style>") + "<style>".length,
       html.indexOf("</style>"),
     );
+    expect(css).not.toContain("Evil");
     expect(css).not.toContain("<");
-    expect(css).toContain('content: "Evil/stylescriptalert(1)/script');
+    expect(html).toContain("Evil&quot;&lt;/style&gt;&lt;script&gt;");
   });
 });

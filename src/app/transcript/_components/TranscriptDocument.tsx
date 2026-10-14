@@ -25,39 +25,41 @@ const WATERMARK = `url("data:image/svg+xml,${encodeURIComponent(
 const HATCH =
   "repeating-linear-gradient(135deg, rgba(0,0,0,.025) 0 1px, transparent 1px 4px)";
 
-/** Safe to put inside a double-quoted CSS string inside a <style> element. */
-function cssString(value: string): string {
-  return value.replace(/[\\"<>\r\n]/g, "");
-}
-
 /**
- * Print rules. `@page` margin boxes give every printed page its footer: the
- * resident on the left and "Page X of Y" on the right, counted by the browser
- * so nothing is hard-coded (Chrome 131+; browsers without margin boxes print
- * no footer). On screen each logical page shows its own footer instead.
+ * Print rules.
+ *
+ * FOOTER, in two layers so it works everywhere. The resident's name and matric
+ * are a plain `position: fixed` element, which every browser repeats on every
+ * printed page. It is pinned to the bottom of the content area (a fixed element
+ * pushed into the page margin is clipped on page 1 in Chrome), and each sheet
+ * ends in a repeating empty table footer (`rh-print-spacer`) that reserves its
+ * space, so body text never prints underneath it. "Page X of Y" is progressive
+ * enhancement: an `@page` margin box counted by the browser (Chrome 131+), so
+ * nothing is hard-coded and other browsers simply print no page numbers. The
+ * name is deliberately NOT in a margin box too, or Chrome would print it twice.
+ * On screen each logical page shows its own footer instead.
  *
  * Backgrounds are dropped when printing unless `print-color-adjust: exact`, so
  * the SPECIMEN watermark sets it. The hatch is removed in print so nothing
  * dark is printed.
  */
-function documentCss(name: string, matric: string): string {
-  const who = cssString(`${name} (${matric})`);
-  const margin = "font: 10.5px Arial, Helvetica, sans-serif; color: #000;";
-  return `
+const DOCUMENT_CSS = `
 @page {
   size: A4;
-  margin: 14mm 14mm 18mm;
-  @bottom-left { content: "${who}"; ${margin} }
-  @bottom-right { content: "Page " counter(page) " of " counter(pages); ${margin} }
+  margin: 14mm 14mm 12mm;
+  @bottom-right { content: "Page " counter(page) " of " counter(pages); vertical-align: top; font: 10.5px Arial, Helvetica, sans-serif; color: #000; }
 }
 .rh-paper { background-image: ${HATCH}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .rh-paper.rh-specimen { background-image: ${WATERMARK}, ${HATCH}; }
+.rh-print-footer, .rh-print-spacer { display: none; }
 @media print {
   html, body, main { background: #fff !important; }
   .rh-paper { background-image: none; }
   .rh-paper.rh-specimen { background-image: ${WATERMARK}; }
+  .rh-print-footer { display: block; position: fixed; left: 0; bottom: 0; font: 10.5px Arial, Helvetica, sans-serif; color: #000; }
+  .rh-print-spacer { display: table-footer-group; }
+  .rh-print-spacer td { height: 8mm; padding: 0; }
 }`;
-}
 
 /**
  * One academic year's transcript: an ordered list of pages, each starting on a
@@ -73,36 +75,42 @@ export function TranscriptDocument({
 
   return (
     <article className="font-[Arial,Helvetica,sans-serif] text-[11.5px] leading-[1.4] text-black">
-      <style
-        dangerouslySetInnerHTML={{
-          __html: documentCss(resident.name, resident.matric),
-        }}
-      />
+      <style dangerouslySetInnerHTML={{ __html: DOCUMENT_CSS }} />
+      <p className="rh-print-footer">
+        {resident.name} ({resident.matric})
+      </p>
       {transcript.pages.map((page, index) => (
         <Sheet
           key={page.kind}
           index={index}
           total={transcript.pages.length}
           transcript={transcript}
-        >
-          <PageBody page={page} transcript={transcript} />
-        </Sheet>
+          {...pageParts(page, transcript)}
+        />
       ))}
     </article>
   );
 }
 
-/** One page of the document: the sheet, its footer, and a page break before. */
+/**
+ * One page of the document: the sheet, its footer, and a page break before.
+ *
+ * The page header sits in a table <thead> so that, when a page runs onto a
+ * second printed page, the crest and title repeat there like a letterhead
+ * (browsers repeat a table header on every printed page it spans).
+ */
 function Sheet({
   index,
   total,
   transcript,
-  children,
+  header,
+  body,
 }: {
   index: number;
   total: number;
   transcript: TranscriptViewModel;
-  children: ReactNode;
+  header: ReactNode;
+  body: ReactNode;
 }) {
   const { resident } = transcript;
   return (
@@ -118,7 +126,23 @@ function Sheet({
           Specimen · demonstration data · not an official record of Raffles Hall
         </p>
       )}
-      <div className="flex-1">{children}</div>
+      <table className="w-full flex-1 border-collapse">
+        <thead>
+          <tr>
+            <td className="p-0">{header}</td>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="p-0 align-top">{body}</td>
+          </tr>
+        </tbody>
+        <tfoot className="rh-print-spacer">
+          <tr>
+            <td />
+          </tr>
+        </tfoot>
+      </table>
       <footer className="mt-4 flex justify-between border-t border-black pt-[3px] text-[10.5px] print:hidden">
         <span>
           {resident.name} ({resident.matric})
@@ -131,81 +155,85 @@ function Sheet({
   );
 }
 
-function PageBody({
-  page,
-  transcript,
-}: {
-  page: TranscriptPage;
-  transcript: TranscriptViewModel;
-}) {
+/** A page split into the part that repeats in print and the part that flows. */
+function pageParts(
+  page: TranscriptPage,
+  transcript: TranscriptViewModel,
+): { header: ReactNode; body: ReactNode } {
   const { resident, issue, academicYear } = transcript;
   const code = issue.verificationCode;
 
   switch (page.kind) {
     case "main":
-      return (
-        <>
+      return {
+        header: (
           <PageHeader
             level="h1"
             title="Student Development Transcript"
             subtitle="Raffles Hall, National University of Singapore"
             aside={<VerifyQr code={code} size={64} />}
           />
-          <MetaRow
-            items={[
-              { label: "Name", value: resident.name.toUpperCase() },
-              { label: "Matric no.", value: resident.matric },
-              {
-                label: "Residency",
-                value: academicYear,
-                detail: `${issue.block} · ${yearOfResidence(issue.yearOfResidence)}`,
-              },
-              { label: "Date issued", value: formatIssuedOn(issue.issuedOn) },
-              { label: "Verification", value: code },
-            ]}
-          />
-          <SummaryStrip summary={transcript.summary} />
-          {transcript.isEmpty ? (
-            <p
-              role="status"
-              className="py-10 text-center italic text-neutral-700"
-            >
-              {EMPTY_YEAR_MESSAGE}
-            </p>
-          ) : (
-            <TranscriptSections sections={page.sections} />
-          )}
-        </>
-      );
+        ),
+        body: (
+          <>
+            <MetaRow
+              items={[
+                { label: "Name", value: resident.name.toUpperCase() },
+                { label: "Matric no.", value: resident.matric },
+                {
+                  label: "Residency",
+                  value: academicYear,
+                  detail: `${issue.block} · ${yearOfResidence(issue.yearOfResidence)}`,
+                },
+                { label: "Date issued", value: formatIssuedOn(issue.issuedOn) },
+                { label: "Verification", value: code },
+              ]}
+            />
+            <SummaryStrip summary={transcript.summary} />
+            {transcript.isEmpty ? (
+              <p
+                role="status"
+                className="py-10 text-center italic text-neutral-700"
+              >
+                {EMPTY_YEAR_MESSAGE}
+              </p>
+            ) : (
+              <TranscriptSections sections={page.sections} />
+            )}
+          </>
+        ),
+      };
     case "jcrc":
-      return (
-        <>
+      return {
+        header: (
           <PageHeader
             title="Junior Common Room Committee"
             subtitle={`Hall leadership record · ${page.jcrc.term}`}
           />
-          <MetaRow
-            items={[
-              { label: "Name", value: resident.name.toUpperCase() },
-              { label: "Matric no.", value: resident.matric },
-              {
-                label: "Position",
-                value: `${page.jcrc.position}, ${page.jcrc.portfolio}`,
-              },
-              { label: "Term", value: page.jcrc.term },
-              { label: "Verification", value: code },
-            ]}
-          />
-          <JcrcPageBody jcrc={page.jcrc} />
-        </>
-      );
+        ),
+        body: (
+          <>
+            <MetaRow
+              items={[
+                { label: "Name", value: resident.name.toUpperCase() },
+                { label: "Matric no.", value: resident.matric },
+                {
+                  label: "Position",
+                  value: `${page.jcrc.position}, ${page.jcrc.portfolio}`,
+                },
+                { label: "Term", value: page.jcrc.term },
+                { label: "Verification", value: code },
+              ]}
+            />
+            <JcrcPageBody jcrc={page.jcrc} />
+          </>
+        ),
+      };
     case "notes":
-      return (
-        <>
-          <PageHeader title="Explanatory notes" />
-          <NotesBody notes={page.notes} verificationCode={code} />
-        </>
-      );
+      return {
+        header: <PageHeader title="Explanatory notes" />,
+        body: <NotesBody notes={page.notes} verificationCode={code} />,
+      };
   }
 }
 
