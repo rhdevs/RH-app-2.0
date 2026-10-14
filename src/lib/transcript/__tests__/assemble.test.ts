@@ -408,37 +408,6 @@ describe("assembleTranscript: awards", () => {
   });
 });
 
-describe("assembleTranscript: summary strip", () => {
-  it("counts CCAs, leadership roles, hours and awards", () => {
-    const vm = assembleFixture("many-ccas");
-
-    expect(vm.summary).toEqual({
-      ccas: 14,
-      leadershipRoles: 1,
-      volunteerHours: 78.5,
-      awards: 1,
-    });
-  });
-
-  it("counts the JCRC appointment as leadership, not as a CCA", () => {
-    const vm = assembleFixture("jcrc-sports-secretary", JCRC_AY);
-
-    expect(vm.summary.ccas).toBe(5);
-    expect(vm.summary.leadershipRoles).toBe(2);
-  });
-
-  it("reports zeros rather than omitting a cell", () => {
-    const vm = assembleFixture("empty-year");
-
-    expect(vm.summary).toEqual({
-      ccas: 0,
-      leadershipRoles: 0,
-      volunteerHours: 0,
-      awards: 0,
-    });
-  });
-});
-
 describe("assembleTranscript: pages and sections", () => {
   it("orders page 1 sections involvements, volunteer hours, awards", () => {
     const vm = assembleFixture("many-ccas");
@@ -495,7 +464,7 @@ describe("assembleTranscript: pages and sections", () => {
 
     expect(vm.hasJcrc).toBe(false);
     expect(vm.pages.map((p) => p.kind)).toEqual(["main", "notes"]);
-    expect(vm.summary.leadershipRoles).toBe(0);
+    expect(section(vm, "involvements")?.rows.some((r) => r.isJcrc)).toBe(false);
   });
 
   it("handles a resident in 14 CCAs, leaders first then alphabetical", () => {

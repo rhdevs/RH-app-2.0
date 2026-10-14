@@ -142,18 +142,30 @@ describe("TranscriptDocument: content", () => {
     expect(render("plain-member")).toContain("Block 3 · Second year");
   });
 
-  it("shows all four summary cells even when zero", () => {
-    const html = render("empty-year");
-
-    for (const label of [
-      "CCAs",
-      "Leadership roles",
-      "Volunteering",
-      "Awards",
-    ]) {
-      expect(html).toContain(`<dt>${label}</dt>`);
+  it("has no summary strip on page 1, for any kind of resident", () => {
+    const cases: Array<[string, string?]> = [
+      ["plain-member"],
+      ["jcrc-sports-secretary", JCRC_AY],
+      ["empty-year"],
+    ];
+    for (const [slug, year] of cases) {
+      const html = render(slug, year);
+      for (const label of ["Leadership roles", "Volunteering"]) {
+        expect(html).not.toContain(label);
+      }
+      expect(html).not.toMatch(/<dt>(CCAs|Awards)<\/dt>/);
+      expect(html).not.toMatch(/\d+ h</);
     }
-    expect(html).toContain("0 h");
+  });
+
+  it("goes straight from the resident details to the first section", () => {
+    const html = render("plain-member");
+
+    const details = html.indexOf("Verification");
+    const section = html.indexOf("I. Leadership and CCA participation");
+    expect(details).toBeGreaterThan(-1);
+    expect(section).toBeGreaterThan(details);
+    expect(html.slice(details, section)).not.toMatch(/border border-black/);
   });
 });
 

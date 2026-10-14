@@ -6,11 +6,7 @@ import {
 } from "~/lib/transcript/types";
 import { JcrcPageBody } from "./JcrcPageBody";
 import { MetaRow, PageHeader } from "./PageHeader";
-import {
-  NotesBody,
-  SummaryStrip,
-  TranscriptSections,
-} from "./TranscriptSections";
+import { NotesBody, TranscriptSections } from "./TranscriptSections";
 import { VerifyQr } from "./VerifyQr";
 
 export const EMPTY_YEAR_MESSAGE =
@@ -189,7 +185,6 @@ function pageParts(
                 { label: "Verification", value: code },
               ]}
             />
-            <SummaryStrip summary={transcript.summary} />
             {transcript.isEmpty ? (
               <p
                 role="status"

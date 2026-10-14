@@ -10,7 +10,6 @@ import {
   type TranscriptInput,
   type TranscriptPage,
   type TranscriptSection,
-  type TranscriptSummary,
   type TranscriptViewModel,
   type VolunteerHoursModel,
 } from "./types";
@@ -80,7 +79,6 @@ export function assembleTranscript(
     resident: { ...input.resident },
     issue: { ...issue },
     isEmpty: sections.length === 0,
-    summary: buildSummary(memberships, jcrc, volunteer, awardRows),
     hasVolunteerHours: volunteer !== null,
     hasAwards: awardRows.length > 0,
     hasJcrc: jcrc !== null,
@@ -295,21 +293,4 @@ function buildAwards(
       academicYear: a.academicYear,
       citation: cleaned(a.citation),
     }));
-}
-
-function buildSummary(
-  memberships: readonly CcaMembershipInput[],
-  jcrc: JcrcServiceInput | null,
-  volunteer: VolunteerHoursModel | null,
-  awards: readonly AwardRow[],
-): TranscriptSummary {
-  const leaderships = memberships.filter(
-    (m) => cleaned(m.leadershipRole) !== null,
-  ).length;
-  return {
-    ccas: memberships.length,
-    leadershipRoles: leaderships + (jcrc ? 1 : 0),
-    volunteerHours: volunteer?.total ?? 0,
-    awards: awards.length,
-  };
 }

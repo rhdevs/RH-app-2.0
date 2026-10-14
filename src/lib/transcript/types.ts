@@ -151,14 +151,6 @@ export interface AwardRow {
   citation: string | null;
 }
 
-export interface TranscriptSummary {
-  /** CCAs only: the JCRC appointment is counted as leadership, not as a CCA. */
-  ccas: number;
-  leadershipRoles: number;
-  volunteerHours: number;
-  awards: number;
-}
-
 /** A section on page 1. Empty sections are not present. */
 export type TranscriptSection =
   | { kind: "involvements"; rows: InvolvementRow[] }
@@ -205,7 +197,6 @@ export interface TranscriptViewModel {
   issue: YearIssueInput;
   /** True when nothing was recorded for this AY; the page shows a message. */
   isEmpty: boolean;
-  summary: TranscriptSummary;
   hasVolunteerHours: boolean;
   hasAwards: boolean;
   hasJcrc: boolean;

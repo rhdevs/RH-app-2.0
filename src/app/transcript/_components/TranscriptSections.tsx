@@ -4,7 +4,6 @@ import {
   type InvolvementRow,
   type NoteRow,
   type TranscriptSection,
-  type TranscriptSummary,
   type VolunteerHoursModel,
 } from "~/lib/transcript/types";
 
@@ -30,28 +29,6 @@ const SEC_HEADING =
   "mb-0.5 mt-3 break-after-avoid border-b border-black text-xs font-bold uppercase";
 const TH = "border-b border-black px-1 py-0.5 text-left font-bold";
 const TD = "px-1 py-0.5 align-top";
-
-export function SummaryStrip({ summary }: { summary: TranscriptSummary }) {
-  const cells: Array<[string, string]> = [
-    [String(summary.ccas), "CCAs"],
-    [String(summary.leadershipRoles), "Leadership roles"],
-    [`${summary.volunteerHours} h`, "Volunteering"],
-    [String(summary.awards), "Awards"],
-  ];
-  return (
-    <dl className="mb-2.5 grid grid-cols-2 border border-black sm:grid-cols-4">
-      {cells.map(([value, label]) => (
-        <div
-          key={label}
-          className="border-r border-black p-1.5 text-center last:border-r-0"
-        >
-          <dd className="m-0 text-lg font-bold">{value}</dd>
-          <dt>{label}</dt>
-        </div>
-      ))}
-    </dl>
-  );
-}
 
 export function TranscriptSections({
   sections,
