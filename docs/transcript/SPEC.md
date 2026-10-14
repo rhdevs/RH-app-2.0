@@ -476,3 +476,20 @@ These supersede anything above that conflicts.
 - **PDF:** Phase 2 uses the browser's print-to-PDF ("Save as PDF" calls `window.print()`) with an A4 print stylesheet. No PDF library was added.
 - **Tests:** Vitest is the only new dependency (devDependency). `@vitest/coverage-v8` is not installed, so coverage is unmeasured.
 - **Preview:** `/transcript/preview/[fixture]` shows each of the 10 specimens in development and returns 404 in production. The `/transcript` and `/verify` pages still render specimens only; they are not yet tied to the signed-in resident.
+
+---
+
+## 13. Template C decisions
+
+Built on top of upstream PR #113 (one transcript per academic year, `?ay=`, one verification code per year). These supersede anything above that conflicts.
+
+- **Look:** formal and plain. Black text on white, Arial, thin rules, tables, no accent colour. The only colour on the page is the Raffles Hall crest, shown top left on every page (main, JCRC, notes) and on `/verify`. A faint paper hatch shows on screen only and is removed in print.
+- **Pages, in order:** page 1 (header, QR, resident row, summary strip, I. Leadership and CCA participation, II. Volunteer hours, III. Awards); the JCRC page (JCRC members only, always on a new printed page); the Explanatory notes page (numbered footnotes, "About this record", end marker). Empty sections are omitted. An empty year shows "No recorded involvements for this academic year."
+- **Per-year records:** each year has its own issue (verification code, issue date, block, year of residence). Block and year of residence are shown because #113 already models them; faculty is not shown.
+- **JCRC:** one `JcrcServiceInput` per resident, applied only to the year in its `term`. The JCRC appointment is the first row of the table and is counted as a leadership role, not as a CCA. All JCRC content is placeholder data.
+- **Signatures:** never data. The JCRC page always prints two empty boxes labelled "[Master signature placeholder]" and "[President signature placeholder]", each with a date placeholder, and never a person's name.
+- **Footer:** the browser counts pages. Print uses `@page` margin boxes (resident on the left, "Page X of Y" on the right), which need Chrome 131 or later; a browser without margin boxes prints no footer. On screen each page shows its own footer.
+- **Page references:** the table says "See the Junior Common Room Committee page" rather than "See page 2", because page 1 can run to several printed pages for a resident in many CCAs.
+- **Notes order:** footnotes follow the table (JCRC row, then leaders, then members alphabetically), not alphabetical order.
+- **Single fixture source:** `src/lib/transcript/fixtures.ts` replaces `demoData.ts`. It holds twelve specimens, including a JCRC Sports Secretary (two years) and a JCRC member with no other CCAs.
+- **Vitest 3, not 5:** `npm ci` fails with vitest 5 because of its optional `@types/node@22+` peer against the repo's `@types/node@20`. Vitest 3 resolves cleanly, and the lockfile diff against `upstream/main` is additions only.
