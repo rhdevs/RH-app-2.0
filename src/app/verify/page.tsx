@@ -1,7 +1,7 @@
 import Image from "next/image";
 import { redirect } from "next/navigation";
 import { type Metadata } from "next";
-import { normaliseVerificationCode } from "~/lib/transcript/demoData";
+import { normaliseVerificationCode } from "~/lib/transcript/assemble";
 
 export const metadata: Metadata = {
   title: "Verify a CCA Transcript · Raffles Hall",

@@ -3,12 +3,14 @@ import Link from "next/link";
 import { type Metadata } from "next";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import {
-  formatAcademicYear,
+  assembleTranscript,
   formatIssuedOn,
-  formatSemesters,
-  getTranscriptByCode,
   normaliseVerificationCode,
-} from "~/lib/transcript/demoData";
+} from "~/lib/transcript/assemble";
+import { getFixtureByCode } from "~/lib/transcript/fixtures";
+import { documentSerif } from "../../transcript/_components/fonts";
+import { EMPTY_YEAR_MESSAGE } from "../../transcript/_components/TranscriptDocument";
+import { TranscriptSections } from "../../transcript/_components/TranscriptSections";
 
 export const metadata: Metadata = {
   title: "Transcript Verification · Raffles Hall",
@@ -33,7 +35,10 @@ export default function VerifyCodePage({
   params: { code: string };
 }) {
   const code = normaliseVerificationCode(safeDecode(params.code));
-  const transcript = getTranscriptByCode(code);
+  const fixture = getFixtureByCode(code);
+  const transcript = fixture
+    ? assembleTranscript(fixture.input, fixture.academicYear)
+    : null;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
@@ -78,7 +83,7 @@ export default function VerifyCodePage({
         </div>
       ) : (
         <div className="rounded-xl bg-white shadow">
-          {transcript.isSpecimen ? (
+          {transcript.resident.isSpecimen ? (
             <div className="flex items-start gap-3 rounded-t-xl border-b border-amber-200 bg-amber-50 p-5">
               <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-600" />
               <div>
@@ -113,43 +118,28 @@ export default function VerifyCodePage({
               label="Matriculation no."
               value={transcript.resident.matric}
             />
-            <Field
-              label="Academic year"
-              value={formatAcademicYear(transcript.academicYear)}
-            />
-            <Field label="Block" value={transcript.resident.block} />
+            {transcript.resident.faculty && (
+              <Field label="Faculty" value={transcript.resident.faculty} />
+            )}
+            <Field label="Academic year" value={transcript.academicYear} />
             <Field
               label="Date of issue"
-              value={formatIssuedOn(transcript.issuedOn)}
+              value={formatIssuedOn(transcript.resident.issuedOn)}
             />
             <Field
               label="Verification code"
-              value={transcript.verificationCode}
+              value={transcript.resident.verificationCode}
             />
           </dl>
 
-          <div className="space-y-5 p-5">
-            <RecordList
-              title="Leadership (JCRC)"
-              items={transcript.leadership.map((r) => [
-                r.appointment,
-                formatSemesters(r.semesters),
-              ])}
-            />
-            <RecordList
-              title="CCA participation"
-              items={transcript.ccas.map((r) => [
-                `${r.cca} · ${r.position}`,
-                `${r.category} · ${formatSemesters(r.semesters)}`,
-              ])}
-            />
-            <RecordList
-              title="Achievements and awards"
-              items={transcript.achievements.map((r) => [
-                `${r.title} · ${r.detail}`,
-                r.month,
-              ])}
-            />
+          <div className={`${documentSerif.className} px-5 pb-2`}>
+            {transcript.isEmpty ? (
+              <p className="py-8 text-center italic text-gray-600">
+                {EMPTY_YEAR_MESSAGE}
+              </p>
+            ) : (
+              <TranscriptSections sections={transcript.sections} />
+            )}
           </div>
         </div>
       )}
@@ -164,35 +154,6 @@ function safeDecode(segment: string): string {
   } catch {
     return segment;
   }
-}
-
-/** Same rule as the document: a category with no entries is not shown. */
-function RecordList({
-  title,
-  items,
-}: {
-  title: string;
-  items: Array<[main: string, aside: string]>;
-}) {
-  if (items.length === 0) return null;
-  return (
-    <div>
-      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-emerald-900">
-        {title}
-      </h3>
-      <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200">
-        {items.map(([main, aside]) => (
-          <li
-            key={main}
-            className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-3 py-2 text-sm"
-          >
-            <span className="font-medium text-gray-900">{main}</span>
-            <span className="text-xs text-gray-500">{aside}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
 }
 
 function Field({ label, value }: { label: string; value: string }) {
