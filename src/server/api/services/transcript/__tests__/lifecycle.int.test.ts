@@ -704,6 +704,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               JcrcService: db.jcrcService,
               TranscriptAccess: db.transcriptAccess,
               CcaYearFreeze: db.ccaYearFreeze,
+              CcaActivity: db.ccaActivity,
+              CcaActivityParticipant: db.ccaActivityParticipant,
             } as Record<string, { count: (a: object) => Promise<number> }>
           )[name]!;
           out[name] = await delegate.count({ where: { academicYear: ay } });
@@ -743,6 +745,24 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await db.ccaYearFreeze.createMany({
           data: strip(await db.ccaYearFreeze.findMany({ where })) as never,
         });
+        // A participant belongs to one activity, so each activity is copied
+        // first and its people follow it under the new id.
+        for (const activity of await db.ccaActivity.findMany({ where })) {
+          const { id, ...rest } = activity;
+          const copy = await db.ccaActivity.create({
+            data: { ...rest, academicYear: OLD } as never,
+          });
+          const people = await db.ccaActivityParticipant.findMany({
+            where: { activityID: id },
+          });
+          await db.ccaActivityParticipant.createMany({
+            data: people.map(({ id: _id, ...person }) => ({
+              ...person,
+              activityID: copy.id,
+              academicYear: OLD,
+            })) as never,
+          });
+        }
       };
 
       it("counts without deleting on a dry run, then removes only that year", async () => {
