@@ -26,6 +26,7 @@ import { errorText, fieldError } from "~/lib/transcript/adminView";
 import { parseAcademicYear } from "~/lib/transcript/academicYear";
 import {
   ACTIVITY_MAX,
+  clearIfUnchanged,
   HOURS_MAX,
   HOURS_MIN,
   formatHours,
@@ -308,11 +309,13 @@ export default function VolunteerSection({
     { retry: false },
   );
   const create = api.transcriptManage.volunteer.create.useMutation({
-    onSuccess: async () => {
-      setActivity("");
-      setDate("");
-      setHours("");
-      setResident(null);
+    // Clear what was added, keep the kind, and leave alone anything typed
+    // for the next entry while this one was being sent.
+    onSuccess: async (_added, sent) => {
+      setActivity((a) => clearIfUnchanged(a, sent.activity));
+      setDate((d) => clearIfUnchanged(d, sent.activityDate ?? ""));
+      setHours((h) => (parseHours(h) === sent.hours ? "" : h));
+      setResident((r) => (r?.userID === sent.userID ? null : r));
       await utils.transcriptManage.volunteer.list.invalidate();
     },
   });

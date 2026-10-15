@@ -199,3 +199,29 @@ export function headYearOptions(currentStartYear: number): string[] {
   }
   return out;
 }
+
+/* ---- after a save ---------------------------------------------------------- */
+
+/**
+ * What a form shows once a save succeeds. The saved values (as the server
+ * stored them: trimmed, cleared fields as blanks) replace what was typed, so
+ * the form reads as saved and no longer dirty. But if the person kept typing
+ * while the request was in flight, their newer text wins and stays dirty:
+ * `current` differing from `submitted` means exactly that. PURE.
+ */
+export function reconcileAfterSave<T>(
+  current: T,
+  submitted: T,
+  fromServer: T,
+  equal: (a: T, b: T) => boolean,
+): T {
+  return equal(current, submitted) ? fromServer : current;
+}
+
+/**
+ * A text field of an add-form after a successful add: cleared, unless more was
+ * typed since the request was sent.
+ */
+export function clearIfUnchanged(current: string, submitted: string): string {
+  return current === submitted ? "" : current;
+}

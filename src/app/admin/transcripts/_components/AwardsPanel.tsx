@@ -21,6 +21,7 @@ import {
   isWritable,
   yearOptions,
 } from "~/lib/transcript/adminView";
+import { clearIfUnchanged } from "~/lib/transcript/headView";
 import { api } from "~/trpc/react";
 import { ErrorLine, FIELD_LABEL, SectionCard, YearSelect } from "./Bits";
 import ResidentPicker, { type PickedResident } from "./ResidentPicker";
@@ -275,10 +276,12 @@ export default function AwardsPanel() {
   );
 
   const create = api.transcriptManage.awards.create.useMutation({
-    onSuccess: async () => {
-      setTitle("");
-      setCitation("");
-      setResident(null);
+    // Clear what was added; the year stays, and anything typed for the next
+    // award while this one was being sent is left alone.
+    onSuccess: async (_added, sent) => {
+      setTitle((t) => clearIfUnchanged(t, sent.title));
+      setCitation((c) => clearIfUnchanged(c, sent.citation ?? ""));
+      setResident((r) => (r?.userID === sent.userID ? null : r));
       await utils.transcriptManage.awards.list.invalidate();
     },
   });

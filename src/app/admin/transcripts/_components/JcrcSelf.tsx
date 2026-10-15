@@ -2,7 +2,7 @@
 
 import { Loader2, Plus, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -24,6 +24,7 @@ import {
   SIGNATURE_PLACEHOLDER_NOTE,
   TESTIMONIAL_MAX,
   counterText,
+  reconcileAfterSave,
 } from "~/lib/transcript/headView";
 import { api } from "~/trpc/react";
 import { ErrorLine, FIELD_LABEL, SectionCard, YearSelect } from "./Bits";
@@ -286,16 +287,39 @@ export default function JcrcSelf({ userID }: { userID: string }) {
 
   const [draft, setDraft] = useState<JcrcDraft>(EMPTY_JCRC);
   const [saved, setSaved] = useState(false);
-  // Reload the form when the saved record changes (a year change or a save).
-  // `mine.data` keeps its identity across identical refetches, so a refetch on
-  // window focus never overwrites what is being typed.
+  // Reload the form when the saved record changes (a year change, or a save
+  // from elsewhere). Unsaved typing is never overwritten: the form is replaced
+  // only if it still matched what was loaded before, or the year changed.
+  const loaded = useRef<{ year: string; draft: JcrcDraft }>({
+    year: "",
+    draft: EMPTY_JCRC,
+  });
   useEffect(() => {
-    if (mine.isSuccess) setDraft(savedDraft);
+    if (!mine.isSuccess) return;
+    const previous = loaded.current;
+    setDraft((d) =>
+      previous.year !== selected || same(d, previous.draft) ? savedDraft : d,
+    );
+    loaded.current = { year: selected, draft: savedDraft };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mine.data, mine.isSuccess, selected]);
 
+  const submitted = useRef<JcrcDraft>(EMPTY_JCRC);
   const save = api.transcriptManage.jcrc.saveMine.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (stored) => {
+      // Keep showing what was saved, as the server stored it.
+      const fromServer: JcrcDraft = stored
+        ? {
+            portfolio: stored.portfolio,
+            position: stored.position,
+            description: stored.description,
+            contributions: stored.contributions,
+            testimonial: stored.testimonial,
+          }
+        : submitted.current;
+      setDraft((current) =>
+        reconcileAfterSave(current, submitted.current, fromServer, same),
+      );
       setSaved(true);
       await utils.transcriptManage.jcrc.mine.invalidate();
     },
@@ -355,15 +379,16 @@ export default function JcrcSelf({ userID }: { userID: string }) {
         setSaved(false);
         save.reset();
       }}
-      onSave={() =>
+      onSave={() => {
+        submitted.current = draft;
         save.mutate({
           academicYear: selected,
           ...draft,
           contributions: draft.contributions
             .map((c) => c.trim())
             .filter((c) => c !== ""),
-        })
-      }
+        });
+      }}
       saving={save.isPending}
       saved={saved}
       dirty={!same(draft, savedDraft)}

@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   ErrorLine,
@@ -19,6 +19,7 @@ import {
   draftOf,
   durationOptions,
   isDirty,
+  reconcileAfterSave,
   rowProblem,
   upsertFields,
   type DurationChoice,
@@ -256,9 +257,20 @@ export function RosterRow({
   const utils = api.useUtils();
   const [draft, setDraft] = useState<RowDraft>(() => draftOf(row));
   const [saved, setSaved] = useState(false);
+  // What was sent, to tell whether more was typed while it was saving.
+  const submitted = useRef<RowDraft>(draft);
 
   const upsert = api.transcriptManage.roster.upsert.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (stored) => {
+      // Keep showing what was saved, as the server stored it.
+      setDraft((current) =>
+        reconcileAfterSave(
+          current,
+          submitted.current,
+          draftOf(stored),
+          (a, b) => !isDirty(a, b),
+        ),
+      );
       setSaved(true);
       await utils.transcriptManage.roster.list.invalidate();
     },
@@ -280,14 +292,15 @@ export function RosterRow({
         setSaved(false);
         upsert.reset();
       }}
-      onSave={() =>
+      onSave={() => {
+        submitted.current = draft;
         upsert.mutate({
           ccaID,
           academicYear,
           userID: row.userID,
           ...upsertFields(draft),
-        })
-      }
+        });
+      }}
       saving={upsert.isPending}
       saved={saved}
       error={error}
