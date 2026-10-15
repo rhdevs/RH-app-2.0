@@ -294,7 +294,7 @@ const ProfilePage: React.FC = () => {
                     className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-emerald-800 hover:text-emerald-600"
                   >
                     <FileText className="h-4 w-4" />
-                    CCA Transcript (preview)
+                    Transcript
                   </Link>
                 </div>
               </div>

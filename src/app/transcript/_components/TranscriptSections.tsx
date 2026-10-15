@@ -191,9 +191,12 @@ function Awards({ rows }: { rows: AwardRow[] }) {
 export function NotesBody({
   notes,
   verificationCode,
+  verifyUrl,
 }: {
   notes: NoteRow[];
   verificationCode: string;
+  /** The site's own verification address, e.g. "https://example.org/verify". */
+  verifyUrl?: string;
 }) {
   return (
     <>
@@ -221,10 +224,14 @@ export function NotesBody({
           Generated from Raffles Hall&rsquo;s records. Scan the QR code on the
           first page, or enter the verification code{" "}
           <span className="font-mono font-bold">{verificationCode}</span> at{" "}
-          <span className="font-bold">rhapp.lol/verify</span>, to confirm its
-          authenticity. The verification page shows the record as held by
-          Raffles Hall; any difference from this copy means this copy has been
-          altered.
+          {verifyUrl ? (
+            <span className="font-bold">{verifyUrl}</span>
+          ) : (
+            "the verification page of this site"
+          )}
+          , to confirm its authenticity. The verification page shows the record
+          as held by Raffles Hall; any difference from this copy means this copy
+          has been altered.
         </p>
         <p className="mt-3 text-center font-bold tracking-[0.06em]">
           — END OF TRANSCRIPT —

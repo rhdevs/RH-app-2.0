@@ -1,36 +1,82 @@
 import { type Metadata } from "next";
-import { notFound } from "next/navigation";
-import { getFixtureBySlug } from "~/lib/transcript/fixtures";
-import { TranscriptPageShell } from "./_components/TranscriptPageShell";
+import { redirect } from "next/navigation";
+import { TRPCError } from "@trpc/server";
+import { currentAcademicYear } from "~/lib/transcript/academicYear";
+import {
+  parseAyParam,
+  selectTranscriptState,
+} from "~/lib/transcript/pageState";
+import { auth } from "~/server/auth";
+import { api } from "~/trpc/server";
+import { NotAvailable } from "./_components/NotAvailable";
+import { getVerifyUrl } from "./_components/siteOrigin";
+import { TranscriptFrame } from "./_components/TranscriptFrame";
 
 export const metadata: Metadata = {
-  title: "Transcript (Specimen) · RHApp",
+  title: "Transcript",
+  robots: { index: false, follow: false },
 };
 
-const SHOWCASE_FIXTURE = "jcrc-sports-secretary";
+export const dynamic = "force-dynamic";
 
 /**
- * SHOWCASE. Renders a specimen, not the signed-in resident's record: there is
- * no stored per-year membership data to build a real one from yet. One
- * document per academic year, picked with `?ay=2026-27`; no `ay` shows the
- * latest.
+ * THE SIGNED-IN RESIDENT'S OWN TRANSCRIPT. Gated the way the repo gates its
+ * other server pages: `auth()` and a redirect to /login. The identity comes
+ * only from the session (transcript.mine.get takes no userID), so there is no
+ * way to ask for anyone else's.
  *
- * Not login-gated (MatricGate only ever redirects SIGNED-IN users), which is
- * fine while it shows nothing but a specimen. WHEN IT SHOWS A REAL RECORD it
- * must read the session server-side and render only the signed-in resident's
- * own transcript.
+ * What is shown is the SNAPSHOT stored when the transcript was issued, never a
+ * recomputation, so it is exactly what /verify/<code> shows. Opening a published
+ * year for the first time issues it (idempotent).
+ *
+ * `?ay=2026-27` picks a published year; anything else falls back to the latest
+ * published year. While nothing is published there is a calm "not available" page.
  */
-export default function TranscriptPage({
+export default async function TranscriptPage({
   searchParams,
 }: {
   searchParams: { ay?: string | string[] };
 }) {
-  const fixture = getFixtureBySlug(SHOWCASE_FIXTURE);
-  if (!fixture) notFound();
-  const ay = Array.isArray(searchParams.ay)
-    ? searchParams.ay[0]
-    : searchParams.ay;
+  const session = await auth();
+  const now = currentAcademicYear(new Date());
+
+  let published: string[] = [];
+  if (session?.user) {
+    try {
+      published = await api.transcript.mine.years();
+    } catch (error) {
+      if (error instanceof TRPCError && error.code === "UNAUTHORIZED") {
+        redirect("/login");
+      }
+      // FORBIDDEN (no canonical identity): nothing can be issued for them.
+    }
+  }
+
+  const state = selectTranscriptState({
+    authenticated: Boolean(session?.user),
+    published,
+    requested: parseAyParam(searchParams.ay),
+    currentAcademicYear: now,
+  });
+
+  if (state.kind === "unauthenticated") redirect("/login");
+  if (state.kind === "none_published") {
+    return <NotAvailable academicYear={state.currentAcademicYear} />;
+  }
+
+  const result = await api.transcript.mine.get({
+    academicYear: state.academicYear,
+  });
+  if (result.status !== "ready") {
+    return <NotAvailable academicYear={state.academicYear} />;
+  }
+
   return (
-    <TranscriptPageShell fixture={fixture} ay={ay} basePath="/transcript" />
+    <TranscriptFrame
+      transcript={result.transcript}
+      years={state.published}
+      basePath="/transcript"
+      verifyUrl={getVerifyUrl()}
+    />
   );
 }

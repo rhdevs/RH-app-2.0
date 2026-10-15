@@ -64,8 +64,11 @@ const DOCUMENT_CSS = `
  */
 export function TranscriptDocument({
   transcript,
+  verifyUrl,
 }: {
   transcript: TranscriptViewModel;
+  /** The site's own verification address, printed on the notes page. */
+  verifyUrl?: string;
 }) {
   const { resident } = transcript;
 
@@ -81,7 +84,7 @@ export function TranscriptDocument({
           index={index}
           total={transcript.pages.length}
           transcript={transcript}
-          {...pageParts(page, transcript)}
+          {...pageParts(page, transcript, verifyUrl)}
         />
       ))}
     </article>
@@ -155,6 +158,7 @@ function Sheet({
 function pageParts(
   page: TranscriptPage,
   transcript: TranscriptViewModel,
+  verifyUrl: string | undefined,
 ): { header: ReactNode; body: ReactNode } {
   const { resident, issue, academicYear } = transcript;
   const code = issue.verificationCode;
@@ -227,7 +231,13 @@ function pageParts(
     case "notes":
       return {
         header: <PageHeader title="Explanatory notes" />,
-        body: <NotesBody notes={page.notes} verificationCode={code} />,
+        body: (
+          <NotesBody
+            notes={page.notes}
+            verificationCode={code}
+            verifyUrl={verifyUrl}
+          />
+        ),
       };
   }
 }
