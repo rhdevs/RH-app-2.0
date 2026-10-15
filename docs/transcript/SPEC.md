@@ -560,3 +560,24 @@ Members who have left get no entry. After publish the loader reads only frozen e
 **MongoDB gotcha, handled.** Prisma's `where: { field: null }` does not match a document where the field is absent, which is how `create` stores an omitted nullable field. Every "not voided / not revoked" query therefore uses `NOT_VOIDED` / `NOT_REVOKED` (null OR unset) from `loader.ts`.
 
 **Block and year of residence.** The app keeps no residence history, so `yearOfResidence` is now optional and the loader leaves it null; the document prints whichever of block and year is known.
+
+---
+
+## 16. Phase 3d resident pages
+
+`/transcript` and `/verify` now show real data. Specimens remain only at the development-only `/transcript/preview/[fixture]` (404 in production), and the SPECIMEN watermark appears only when the data is a fixture.
+
+**`/transcript`** (signed in)
+- Gated like the repo's other server pages: `auth()` then `redirect("/login")`. The identity comes only from the session; `mine.get` takes no userID.
+- `mine.years` (new, names only) lists the published academic years. `?ay=2026-27` picks one; a missing, invalid or unpublished value falls back to the latest published year and never errors. Logic: `src/lib/transcript/pageState.ts`.
+- With no published year, a calm page: "Your transcript for <current AY> isn't available yet." and "It opens once the hall publishes transcripts." No dates are promised.
+- A published year issues on first visit (idempotent) and renders the STORED SNAPSHOT, never a recomputation, so it is exactly what `/verify` shows. A resident with no involvements gets the empty-year document and still receives a code.
+- The Save-as-PDF button, QR, crest and footers are unchanged. The `/profile` page already linked to `/transcript`; only its label changed (from "CCA Transcript (preview)" to "Transcript").
+
+**`/verify` and `/verify/<code>`** (public, no login, `noindex`)
+- `transcript.verify` decides (rate limited per client address); the page renders the answer. valid: "This record is valid." plus the document from the snapshot with the matric masked. superseded: a prominent plain note, "This record has been superseded by a later version. Ask the resident for the current transcript.", plus the document. revoked: only "This record has been revoked." Unknown, malformed or oversized codes: "We could not verify this code. Check it for typing mistakes." Rate limited: "Too many attempts. Try again later." Nothing else is revealed: no resident list, no year list, no near matches.
+- Development only: a made-up specimen code still renders its specimen, so the preview's "see what a verifier sees" link works. In production only real issued codes verify.
+
+**No hard-coded domain.** The notes page prints the site's own address, taken from the request host (so a preview deploy prints its own) with `NEXTAUTH_URL` as the fallback, or words around it ("the verification page of this site") when neither is usable. A test scans the sources to keep it that way.
+
+**Print.** Real issued transcripts were printed from `/verify/<code>` with headless Chrome: a plain member is 2 pages and a JCRC member 3, with the crest, the page footer and the (masked) name on every page, and no SPECIMEN text.
