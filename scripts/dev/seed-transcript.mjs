@@ -202,6 +202,7 @@ for (const [n, ccaID] of [
 async function reset() {
   const mine = { startsWith: PREFIX };
   await db.transcriptAccess.deleteMany({ where: { userID: mine } });
+  await db.ccaYearFreeze.deleteMany({ where: { ccaID: { in: CCA_IDS } } });
   await db.jcrcService.deleteMany({ where: { userID: mine } });
   await db.award.deleteMany({ where: { userID: mine } });
   await db.volunteerRecord.deleteMany({ where: { userID: mine } });
@@ -350,6 +351,37 @@ async function seed() {
     ],
   });
 
+  // Two CCAs whose member list is already frozen for the year, so the admin
+  // table shows each state: 9014 at its handover (earlier, by its old head
+  // resident 01 acting as admin), 9013 locked by its head. Everyone else is
+  // not frozen. A frozen CCA reads its frozen entries, whoever is in it now.
+  for (const [ccaID, reason, frozenAt, frozenBy] of [
+    [9014, "handover", new Date("2026-09-20T04:00:00Z"), uid(1)],
+    [9013, "lock", new Date("2026-10-05T04:00:00Z"), uid(2)],
+  ]) {
+    const members = [...memberships.values()].filter((m) => m.ccaID === ccaID);
+    await db.transcriptRosterEntry.createMany({
+      data: members.map((m) => ({
+        academicYear: AY,
+        userID: uid(m.n),
+        ccaID,
+        frozen: true,
+        duration: "full",
+        updatedBy: frozenBy,
+      })),
+    });
+    await db.ccaYearFreeze.create({
+      data: {
+        academicYear: AY,
+        ccaID,
+        reason,
+        frozenAt,
+        frozenBy,
+        memberCount: members.length,
+      },
+    });
+  }
+
   const vol = (n, ccaID, kind, activity, hours, date, extra) => ({
     academicYear: AY,
     userID: uid(n),
@@ -489,6 +521,12 @@ async function summary() {
     }),
     TranscriptRosterEntry: await db.transcriptRosterEntry.count({
       where: { academicYear: AY },
+    }),
+    "CcaYearFreeze (active)": await db.ccaYearFreeze.count({
+      where: {
+        academicYear: AY,
+        OR: [{ unfrozenAt: null }, { unfrozenAt: { isSet: false } }],
+      },
     }),
     "VolunteerRecord (voided)": `${await db.volunteerRecord.count({ where: { academicYear: AY } })} (${await db.volunteerRecord.count({ where: { academicYear: AY, voidedAt: { not: null } } })})`,
     "Award (voided)": `${await db.award.count({ where: { academicYear: AY } })} (${await db.award.count({ where: { academicYear: AY, voidedAt: { not: null } } })})`,
