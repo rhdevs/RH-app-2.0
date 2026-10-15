@@ -719,7 +719,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           defaultRoleLabel: null,
           defaultRoleDuration: null,
         });
-        expect(plain.matric).toBe("A9912000X");
+        expect("matric" in plain).toBe(false);
         expect(plain.displayName).toBe("Seed Resident 12");
 
         // A member accepted after semester 2 began defaults to sem2.
@@ -846,7 +846,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
         expect(listed.find((r) => r.id === id)).toMatchObject({
           displayName: "Seed Resident 20",
-          matric: "A9920000X",
           activityDate: "2026-09-12",
         });
       });
@@ -1329,7 +1328,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ------------------------------------------------------------------ */
     describe("resident search", () => {
-      it("returns at most 10, only a key, a name and a matric", async () => {
+      it("returns at most 10, only a key, a name and a masked matric", async () => {
         const hits = await as(JCRC).transcriptManage.residents.search({
           query: "Seed",
         });
@@ -1338,9 +1337,42 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         for (const h of hits)
           expect(Object.keys(h).sort()).toEqual([
             "displayName",
-            "matric",
+            "maskedMatric",
             "userID",
           ]);
+      });
+
+      it("never returns a full matric, for any seeded resident", async () => {
+        const hits = await as(JCRC).transcriptManage.residents.search({
+          query: "Seed",
+        });
+
+        expect(hits.length).toBeGreaterThan(0);
+        expect(JSON.stringify(hits)).not.toMatch(/A99\d{2}000X/);
+        for (const h of hits) expect(h.maskedMatric).toMatch(/^A\*{5}00X$/);
+      });
+
+      it("is limited to 60 requests per user per 10 minutes", async () => {
+        const who = as(RVC_PROJECTS_HEAD).transcriptManage.residents;
+        await db.rateLimit.deleteMany({
+          where: { key: { startsWith: "transcript-search:" } },
+        });
+
+        for (let i = 0; i < 60; i += 1) await who.search({ query: "Seed" });
+        const refused = await errorOf(who.search({ query: "Seed" }));
+        expect(refused).toMatch(/^TOO_MANY_REQUESTS:RATE_LIMITED:\d+$/);
+
+        // Another user's allowance is untouched.
+        expect(
+          await errorOf(
+            as(RVC_CHILDREN_HEAD).transcriptManage.residents.search({
+              query: "Seed",
+            }),
+          ),
+        ).toBe("ok");
+        await db.rateLimit.deleteMany({
+          where: { key: { startsWith: "transcript-search:" } },
+        });
       });
 
       it("finds by name and by matric", async () => {
@@ -1351,7 +1383,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           {
             userID: R12.id,
             displayName: "Seed Resident 12",
-            matric: "A9912000X",
+            maskedMatric: "A*****00X",
           },
         ]);
 
@@ -1380,7 +1412,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
 
         expect(hits.length).toBeGreaterThan(0);
-        expect(Object.keys(hits[0]!).sort()).toEqual(["displayName", "matric", "userID"]);
+        expect(Object.keys(hits[0]!).sort()).toEqual(["displayName", "maskedMatric", "userID"]);
       });
 
       it("is refused to residents, heads and hall office", async () => {
@@ -1455,6 +1487,23 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           academicYear: AY,
         });
         expect(reopened.superseded).toBe(0);
+      });
+
+      it("sends no full matric in any list a head or manager can read", async () => {
+        const head = as(RVC_CHILDREN_HEAD).transcriptManage;
+        const payloads = [
+          await head.roster.list({ ccaID: RVC_CHILDREN, academicYear: AY }),
+          await head.volunteer.list({ ccaID: RVC_CHILDREN, academicYear: AY }),
+          await as(JCRC).transcriptManage.awards.list({
+            academicYear: AY,
+            includeVoided: true,
+          }),
+        ];
+
+        for (const p of payloads) {
+          expect(JSON.stringify(p)).not.toMatch(/A99\d{2}000X/);
+          expect(JSON.stringify(p)).not.toContain("matric");
+        }
       });
 
       it("keeps the admin tab's capability in step with who may manage transcripts", async () => {

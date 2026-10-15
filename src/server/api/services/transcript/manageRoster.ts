@@ -33,7 +33,6 @@ import { STATUS_PUBLISHED, getPeriod } from "./periods";
 export interface RosterRow {
   userID: string;
   displayName: string | null;
-  matric: string | null;
   isHead: boolean;
   defaultDuration: Duration | null;
   /** The stored override, or null for "use the default". */
@@ -124,7 +123,6 @@ export async function rosterList(
       return {
         userID: e.userID,
         displayName: names.get(e.userID)?.displayName ?? null,
-        matric: names.get(e.userID)?.matric ?? null,
         isHead: Boolean(e.roleLabel),
         defaultDuration: null,
         duration,
@@ -171,7 +169,6 @@ export async function rosterList(
     return {
       userID: key,
       displayName: entry.displayName ?? names.get(key)?.displayName ?? null,
-      matric: names.get(key)?.matric ?? null,
       isHead: entry.isHead,
       defaultDuration: defaultMembershipDuration(decidedAt, sem2Start),
       duration: asDuration(own?.duration),

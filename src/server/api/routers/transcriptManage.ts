@@ -1,4 +1,7 @@
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+
+import { rateLimit } from "~/lib/rateLimit";
 
 import {
   academicYearInput,
@@ -64,6 +67,10 @@ import {
  * (`assertWritable`; PRECONDITION_FAILED once it is published). The one
  * exception is the volunteering tag, which belongs to no year.
  */
+/** Resident search: 60 requests per signed-in user per 10 minutes. */
+const SEARCH_LIMIT = 60;
+const SEARCH_WINDOW_MS = 10 * 60 * 1000;
+
 const managerProcedure = roleManagerProcedure.use(async ({ ctx, next }) => {
   await requireManager(ctx.db, ctx.session.user.userID);
   return next();
@@ -147,10 +154,19 @@ export const transcriptManageRouter = createTRPCRouter({
     search: identifiedProcedure
       .input(z.object({ query: searchQueryInput }))
       .query(async ({ ctx, input }) => {
-        await requireManagerOrVolunteeringHead(
-          ctx.db,
-          ctx.session.user.userID,
+        const userID = ctx.session.user.userID;
+        await requireManagerOrVolunteeringHead(ctx.db, userID);
+        const limited = await rateLimit(
+          `transcript-search:${userID}`,
+          SEARCH_LIMIT,
+          SEARCH_WINDOW_MS,
         );
+        if (!limited.allowed) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: `RATE_LIMITED:${limited.retryAfter}`,
+          });
+        }
         return searchResidents(ctx.db, input.query);
       }),
   }),

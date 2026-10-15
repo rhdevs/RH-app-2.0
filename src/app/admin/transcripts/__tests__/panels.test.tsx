@@ -384,7 +384,7 @@ describe("awards panel", () => {
 const HIT: PickedResident = {
   userID: "SEED-R12",
   displayName: "Seed Resident 12",
-  matric: "A9912000X",
+  maskedMatric: "A*****00X",
 };
 const pickerProps = (
   over: Partial<Parameters<typeof ResidentPickerView>[0]> = {},
@@ -425,7 +425,7 @@ describe("resident picker", () => {
     expect(html).toContain('role="alert"');
   });
 
-  it("lists results with the matric a manager is allowed to see", () => {
+  it("lists results with the masked matric only", () => {
     const html = renderPicker({
       status: "results",
       hits: [HIT],
@@ -433,7 +433,8 @@ describe("resident picker", () => {
     });
 
     expect(html).toContain("Seed Resident 12");
-    expect(html).toContain("A9912000X");
+    expect(html).toContain("A*****00X");
+    expect(html).not.toContain("A9912000X");
   });
 
   it("shows the chosen resident with a Change button instead of the search box", () => {

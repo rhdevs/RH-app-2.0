@@ -4,6 +4,7 @@ import {
   findUserByAnyKey,
   membershipKeysFor,
 } from "~/server/api/services/ccaMembers";
+import { maskMatricForSearch } from "~/lib/transcript/matric";
 import { personKey } from "./loader";
 
 /**
@@ -11,9 +12,9 @@ import { personKey } from "./loader";
  *
  * NO REUSABLE HELPER EXISTED: the admin user search lives inside
  * admin.listUsers' body and returns far more than these screens may see. This is
- * a minimal one, reachable only through manager-only procedures, returning a
- * resident's key, display name and matric and nothing else (no email, no
- * roles).
+ * a minimal one, reachable only through guarded procedures, returning a
+ * resident's key, display name and a MASKED matric and nothing else (no email,
+ * no roles).
  */
 
 export const SEARCH_LIMIT = 10;
@@ -25,7 +26,11 @@ export const escapeRegex = (s: string) =>
 export interface ResidentSummary {
   userID: string;
   displayName: string | null;
-  matric: string | null;
+}
+
+export interface ResidentHit extends ResidentSummary {
+  /** First character and last three only; null when none is on file. */
+  maskedMatric: string | null;
 }
 
 type UserRow = {
@@ -52,7 +57,7 @@ async function matricsFor(db: PrismaClient, keys: string[]) {
   return new Map(rows.map((r) => [r.userID, r.matric]));
 }
 
-/** Names and matrics for resident keys, in one pass. Unknown keys are absent. */
+/** Names for resident keys, in one pass. Unknown keys are absent. Never a matric. */
 export async function lookupResidents(
   db: PrismaClient,
   keys: readonly string[],
@@ -75,14 +80,11 @@ export async function lookupResidents(
     },
     select: USER_SELECT,
   });
-  const matrics = await matricsFor(db, unique);
-
   for (const u of users) {
     const key = personKey(u, u.userID ?? "");
     const summary: ResidentSummary = {
       userID: key,
       displayName: u.displayName,
-      matric: matrics.get(key) ?? null,
     };
     out.set(key, summary);
     if (u.userID) out.set(u.userID, summary);
@@ -130,7 +132,7 @@ export async function keysOf(
 export async function searchResidents(
   db: PrismaClient,
   query: string,
-): Promise<ResidentSummary[]> {
+): Promise<ResidentHit[]> {
   const esc = escapeRegex(query);
   const [byName, byMatric] = await Promise.all([
     db.user.findMany({
@@ -173,6 +175,8 @@ export async function searchResidents(
     .map(({ u, key }) => ({
       userID: key,
       displayName: u.displayName,
-      matric: matrics.get(key) ?? null,
+      maskedMatric: matrics.has(key)
+        ? maskMatricForSearch(matrics.get(key)!)
+        : null,
     }));
 }

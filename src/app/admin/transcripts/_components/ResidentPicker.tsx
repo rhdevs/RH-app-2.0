@@ -11,7 +11,8 @@ import { ErrorLine, FIELD_LABEL } from "./Bits";
 export interface PickedResident {
   userID: string;
   displayName: string | null;
-  matric: string | null;
+  /** First character and last three only. */
+  maskedMatric: string | null;
 }
 
 export const MIN_SEARCH_CHARACTERS = 3;
@@ -22,8 +23,8 @@ export type PickerStatus = "short" | "loading" | "error" | "empty" | "results";
 /**
  * Pick a resident by name, email or matric. Residents are found through
  * transcriptManage.residents.search (managers and heads of volunteering CCAs,
- * at most 10 hits). The matric is shown in full here, on the search results,
- * and nowhere else on these screens.
+ * at most 10 hits). Only a masked matric is shown, on the search results, and
+ * nowhere else on these screens.
  */
 export function ResidentPickerView({
   idPrefix,
@@ -60,8 +61,8 @@ export function ResidentPickerView({
           <span className="font-medium">
             {selected.displayName ?? selected.userID}
           </span>
-          {selected.matric && !hideSelectedMatric && (
-            <span className="text-gray-500">{selected.matric}</span>
+          {selected.maskedMatric && !hideSelectedMatric && (
+            <span className="text-gray-500">{selected.maskedMatric}</span>
           )}
           <Button
             type="button"
@@ -114,7 +115,7 @@ export function ResidentPickerView({
                   {hit.displayName ?? hit.userID}
                 </span>
                 <span className="text-xs text-gray-500">
-                  {hit.matric ?? ""}
+                  {hit.maskedMatric ?? ""}
                 </span>
               </button>
             </li>

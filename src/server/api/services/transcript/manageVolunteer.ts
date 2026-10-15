@@ -48,7 +48,6 @@ export async function volunteerList(
     id: r.id,
     userID: r.userID,
     displayName: names.get(r.userID)?.displayName ?? null,
-    matric: names.get(r.userID)?.matric ?? null,
     kind: r.kind,
     activity: r.activity,
     activityDate: r.activityDate
