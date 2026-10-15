@@ -53,7 +53,7 @@ npm run dev:db:seed
 
 ## What the seed creates
 
-Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications before and after the 2027-01-11 semester-2 start, roster entries (sem1-only, sem2-only, a head whose role starts in sem2), volunteer activities, awards, JCRC service for two members, and CCA activities (Soccer: a full-year league that `SEED-R20`, who is not in Soccer, also took part in; Hall Choir: a semester 2 activity; RVC Children: one live activity and one removed).
+Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications before and after the 2027-01-11 semester-2 start, roster entries (sem1-only, sem2-only, a head whose role starts in sem2), volunteer activities, awards, JCRC service for two members, and CCA activities (Soccer: a full-year league that `SEED-R20`, who is not in Soccer, also took part in; Hall Choir: a semester 2 activity; RVC Children: one live activity and one removed), and one manual CCA entry with its history line (`SEED-R17` in Dance Crew, semester 2). The year starts collecting: nothing is unlocked or withheld.
 
 ## A caveat
 
@@ -233,5 +233,34 @@ The seed gives a catalogue of five awards (Colours Award, Soccer; Service Excell
 | Published | `seed-r01` | Publish the year, open the page | A note that changes are locked; the Awards and History tabs are read-only; the Catalogue still works. |
 | On a transcript | `seed-r01` | Preview as resident `seed-r04` | "Award | Year": "Colours Award, Soccer", 2026/27, and the citation in small italics beneath. |
 | Roster layout | `seed-r04` | `/cca/9005/transcript` at 1280px | The roster is cards (the column beside the side menu is narrower than the table needs); on a wider screen the table shows with Save fixed at the right edge. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+
+## Manual check: per-resident corrections
+
+The seed keeps the year COLLECTING and adds one manual CCA entry (`seed-r17` in Dance Crew, semester 2) with its history line. After pulling this change, `prisma db push` adds `ResidentUnlock`, `ResidentWithhold`, `ManualMembership` and `ResidentEvent` and two fields on `JcrcService`. Only admin and JCRC can open `/admin/transcripts/residents`. To get a published year to work on, use the admin buttons yourself: sign in as `seed-r01`, open `/admin/transcripts`, press Close year and then Publish (the seed already has the semester 2 date). Run `npm run dev:db:seed` afterwards to go back to the seeded state.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| The link | `seed-r01` | `/admin/transcripts` | "Resident corrections" beside "Your JCRC page". `seed-r04` is sent back to `/admin` from the new address. |
+| Published is read-only | `seed-r01` | Close year, Publish, then `/admin/transcripts/residents`, find Seed Resident 12 | Status "Published"; every section read-only with "Published. Unlock this resident to make corrections."; Unlock and Withhold offered. |
+| Unlock | `seed-r01` | Unlock, leave the reason empty, then type "Wrong role on file" | The button stays disabled until a reason of 3 or more characters. Then "Unlocked" shows with the reason, and Relock replaces Unlock. |
+| Correct a role | `seed-r01` | CCA memberships, Soccer (MALE), type "Vice-Captain" as the role, Save | "Saved". Preview transcript shows it with no mark of amendment. |
+| Another resident stays locked | `seed-r01` | Open Seed Resident 20, try the same | Read-only. A request made some other way is refused with "This year is published. Unlock the resident first, and change only their records." |
+| Clear and reset | `seed-r04` (collecting year only) | A Soccer member's row on `/cca/9005/transcript` | Clear role, Clear contribution and Reset to default appear under the fields that hold something; Reset blanks every override in the draft and Save applies it. Not offered on a frozen list. |
+| Manual entry | `seed-r01` | Seed Resident 20, CCA memberships, "Add manual CCA entry": Soccer (MALE), Full year, Add | The entry shows with a "Manual" tag. In the preview, Soccer is a CCA row and "Inter-hall league" moved from Other involvement to under it; no "Manual" word on the document. Choosing a role period outside a semester 2 membership is refused. |
+| Manual remove and restore | `seed-r01` | Remove, Show removed, Restore | It leaves the transcript while removed and comes back. |
+| Roster wins | `seed-r01` | Seed Resident 12, add a manual Soccer entry | It is flagged as also in the membership data and the roster entry is what renders. |
+| Activities | `seed-r01` | Seed Resident 12, Activities, change a role, Save; Remove; Restore; "Add to an existing activity" | Each saves on its own; the activity itself cannot be edited (a published year keeps those locked). |
+| Volunteer hours | `seed-r01` | Seed Resident 12, Volunteer hours, untick a session, set 1.5 on another, Save | The total follows as you type; only this resident's ticks change. |
+| Awards | `seed-r01` | Seed Resident 12, Awards: edit a citation, Remove, Show removed, Restore, assign from the catalogue | Each change shows in the preview. |
+| JCRC page | `seed-r01` | Seed Resident 02 (a JCRC member), JCRC page, Remove page, Restore page | The page leaves the transcript while removed and a save is refused until it is restored. Seed Resident 12 has no JCRC page and shows "Only JCRC members have a JCRC page." |
+| Relock | `seed-r01` | Relock with a note | The sections go read-only again. |
+| History | `seed-r01` | History tab | Newest first: Relocked, Correction ("Roster: Soccer (MALE) role set to Vice-Captain"), Unlocked with the reason, each with who (a name) and the time in Singapore. Seed Resident 17 shows the seeded "Manual entry: Dance Crew added". |
+| Withhold | `seed-r01`, then `seed-r12` | Withhold Seed Resident 12 with a reason; sign in as `seed-r12`, open `/transcript` | Only "Your transcript is on hold. Contact the hall office."; no Ready badge or dot; no transcript. Other residents are unaffected. |
+| Preview of a held transcript | `seed-r01` | Preview transcript for Seed Resident 12 | The document, with "Withheld from the resident" on screen only (not in print). |
+| Release | `seed-r01`, then `seed-r12` | Release with a note; reload `/transcript` | The transcript is back; the Ready badge returns if they never opened it. |
+| Phone | `seed-r01` | The resident panel at 375px wide | Fields wrap inside each card, tabs wrap, no sideways scroll. |
 
 Run `npm run dev:db:seed` afterwards to restore the seeded state.

@@ -809,3 +809,88 @@ A published year makes the year-bound tabs read-only with the existing note. The
 - **Screens.** The preview shows counts per status, a status chip in words as well as colour, a reason column, a Skip toggle on Ready rows, and a "Decide unknown awards" panel; "Import N rows" is enabled only when every new name has a decision. Below 704px of its own width the preview is one card per row. While a file is open and not imported, the unsaved-changes guard applies. The summary reads "48 imported, 2 skipped" and links to History, where Undo removes the batch. A published year makes the tab read-only. The write itself is one request, so the progress bar is an animation, not a count.
 
 **Roster layout.** The roster on a CCA's transcript tab chooses cards or the table from its own container's width (a ResizeObserver; cards below 896px, the table's width), not from the window, because the side menu leaves a narrow column even on a wide window. In the table the Save column is sticky at the right edge, so it is never hidden by sideways scrolling.
+
+
+## 27. Per-resident corrections
+
+A PUBLISHED year is read-only for everyone. Admin and JCRC can correct ONE resident at a time, after unlocking that resident. Nothing is shown on the document: the transcript renders from the data, so a correction shows at once, with no "amended" mark.
+
+**Data (all new, all year-keyed, all in the retention registry, so a year's purge removes them with the rest).**
+- `ResidentUnlock { academicYear, userID, reason, unlockedBy/At, relockedBy/At }`, index `unlock_year_user`. ACTIVE while `relockedAt` is empty; at most one active per resident and year (kept by the service: a second unlock is `ALREADY_UNLOCKED`).
+- `ResidentWithhold { academicYear, userID, reason, withheldBy/At, releasedBy/At, releaseNote }`, index `withhold_year_user`. ACTIVE while `releasedAt` is empty; at most one (`ALREADY_WITHHELD`).
+- `ManualMembership { academicYear, userID, ccaID, duration?, roleLabel?, roleDuration?, extraContribution?, createdBy/At, updatedBy/At, removedAt/By }`, unique `manual_year_user_cca`.
+- `ResidentEvent { academicYear, userID, action, reason?, summary?, actor, at }`, index `revent_year_user`. `action` is `unlock | relock | withhold | release | manual_add | manual_edit | manual_remove | manual_restore | correction`.
+- `JcrcService` gained `removedAt/By` (the only change to an existing transcript model; nothing outside our own collections changed).
+
+**The guard.** `assertCanEditForResidents(db, actor, { ccaID?, academicYear, affectedUserIDs })` (services/transcript/residentRecords.ts, decided by the pure `decideWrite` in lib/transcript/corrections.ts):
+1. If the ordinary edit guard (`assertCanEditCcaYear`, or for awards and JCRC pages "a manager, and the year is not published") allows it, the write is allowed and is NOT a correction.
+2. Otherwise, only when the year is PUBLISHED, the actor is a manager (admin or jcrc, a live role read), the write names at least one resident, and EVERY affected resident has an ACTIVE unlock, the write is allowed as a CORRECTION: the caller logs one `correction` event per affected resident with a short summary, for example "Roster: Soccer (MALE) role set to Captain".
+3. A manager touching a published year with some affected resident still locked is refused as `FORBIDDEN:ONLY_UNLOCKED_RESIDENTS` ("This year is published. Unlock the resident first, and change only their records."), and nothing is written, not even for the unlocked residents of the same batch.
+4. Everyone else (a head, anyone else, or a write that names no resident) gets the ordinary refusal, `PRECONDITION_FAILED:PERIOD_PUBLISHED` or the head-specific one. Heads never get correction powers, with or without an unlock.
+The affected residents are always worked out on the server, from the stored rows and the change itself (the diff), never from what the client claims.
+
+| Write | Affected residents |
+| --- | --- |
+| `roster.upsert` | the member named (resolved to their canonical key) |
+| `participants.set` | everyone added, restored, changed or removed by the diff against the stored participants |
+| volunteer `people.set` | everyone added, restored or dropped |
+| volunteer `attendance.save` | everyone named in the change set |
+| `awards.assign` | the recipients |
+| `awards.update / remove / restore` | the holder of that award |
+| `awards.bulkRemove / bulkRestore` | the holders of the selected awards, guarded year by year |
+| `awardBatches.undo` | everyone still holding an active award of the upload |
+| `awardImport.commit` | the resident on every Ready row that is not skipped (checked before the catalogue is touched) |
+| `jcrc.saveFor / saveMine / remove / restore` | the member |
+| manual CCA entry writes | the resident |
+
+Still locked on a published year, even with an unlock: every activity-level field (an activity's title, general description, period and sessions), and creating, removing or restoring an activity. Use Reopen for review to change those.
+
+**Unlock and relock** (`corrections.unlock / relock`). Unlock needs a reason (3 to 500 characters) and a year that is closed or published (`YEAR_NOT_IN_REVIEW` while collecting). Relock takes an optional note. Both add an event; relocking closes the unlock (it is never deleted).
+
+**Manual CCA entries** (`corrections.memberships.saveManual / removeManual / restoreManual`). For a resident missing from the membership data. A manual entry counts as MEMBERSHIP of that CCA wherever the roster rule is used: the CCA row, which activities nest under it (the rest stay under "Other involvement"), and the notes. If the roster also has the CCA for that resident, the roster entry WINS and the manual one is ignored (the admin screen says so). A manual row renders like any other; "Manual" is shown on the admin screens only. The role period must fit inside the membership period (`ROLE_PERIOD_OUTSIDE_MEMBERSHIP`). A removed entry cannot be saved over (`MANUAL_REMOVED`): restore it first. Manual writes always add their own event (`manual_add`, `manual_edit`, `manual_remove`, `manual_restore`); in a published year they also need the unlock.
+
+**History** (`corrections.history`). Every event for the resident and year, newest first, with the person's display name and the time in Singapore.
+
+**Screen** `/admin/transcripts/residents` (linked from `/admin/transcripts`, admin and jcrc only, gated by the segment layout and re-checked by every procedure):
+- A year selector and the resident picker. The resident panel shows the status line (Collecting, Draft or Published, "withheld from the resident" when on hold), an "Unlocked" badge, and the buttons Preview transcript, Unlock (a dialog with a required reason) or Relock (optional note), Withhold (required reason) or Release (optional note).
+- Six sections as tabs: CCA memberships (roster entries edited with the same `roster.upsert` the heads use, and manual entries with "Add manual CCA entry": CCA, duration, role, role period, contribution), Activities (their role and description on each activity of any CCA, Remove and Restore, and "Add to an existing activity"), Volunteer hours (a tick and an optional hours override per session, saved with `attendance.save` for this one resident, with a live total), Awards (inline edit, remove, restore, Show removed, assign from the catalogue), JCRC page (the whole page, Remove page and Restore page), and History.
+- Every section is read-only with "Published. Unlock this resident to make corrections." until the resident is unlocked; the server enforces it either way. The year, the resident and the tab change only after unsaved typing is confirmed away, and a reload asks too. Records are cards whose fields wrap by the card's own width, so there is no sideways scroll at 375px.
+
+## 28. Withholding a transcript
+
+`corrections.withhold` puts ONE resident's transcript on hold for a year; `corrections.release` lifts it. Needs a reason (withhold) and takes an optional note (release). Both add an event.
+- While a hold is on, `/transcript` shows only "Your transcript is on hold. Contact the hall office." for that year, draft or published (`transcript.mine.get` returns `status: "on_hold"` and loads nothing else). The year is still listed. No `TranscriptAccess` row is written and the "Ready" badge and the dot on the profile button are not shown for it (`readiness` skips a held year). A hold in a collecting year changes nothing the resident can see.
+- A manager's preview still renders the document, with the on-screen note "Withheld from the resident" (hidden in print).
+- Releasing restores the transcript and, if the resident never opened it, the Ready badge.
+- A hold does not affect anyone else's transcript, and it is independent of unlocking.
+
+## 29. CRUD matrix
+
+Every editable item can be created, viewed, edited, removed (softly) and restored, with who and when recorded on every change. "Locked" is when writes are refused. A published year is locked for everyone except a manager correcting an UNLOCKED resident's own records (section 27). Nothing in the transcript collections is hard-deleted from a screen: removal sets `removedAt/By` (or `voidedAt/By`, `archivedAt/By`), and the only delete is the per-year purge function (no UI).
+
+| Entity | Create | View | Edit | Remove | Restore | Who | Locked when |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Academic year (period) | first save of the semester 2 date | Academic year panel | semester 2 date; download-by date (any time) | none (purge only) | none | admin, jcrc | semester 2 date: published |
+| Year status | Close, Publish | status and history on the panel | Reopen, Back to collecting | n/a | n/a | admin, jcrc | by the status machine |
+| CCA member list freeze | at handover, head change, Lock roster, Close year | Member lists table | n/a | Unfreeze (reason) | Freeze again | system; head (Lock roster); admin, jcrc (Unfreeze) | Unfreeze: published |
+| Roster entry (duration, role, role period, contribution) | Save a row | head tab; resident panel | Save; Clear role, Clear contribution | Clear, or Reset to default (live list) | type it again | head of that CCA; admin, jcrc | head: after handover or close; everyone: published (admin, jcrc with an unlock) |
+| Manual CCA entry | Add manual CCA entry | resident panel | Save | Remove | Restore | admin, jcrc | published without an unlock |
+| CCA activity | Add activity | head tab | Edit | Remove | Restore | head of that CCA; admin, jcrc | head: after handover or close; everyone: published (no unlock) |
+| Activity participant | Add (list or "Add to an existing activity") | head tab; resident panel | role, description | Remove | Restore, or list again | head of that CCA; admin, jcrc | published without an unlock |
+| Volunteer activity | Add | head tab | Edit | Remove | Restore | head of that CCA; admin, jcrc | as an activity |
+| Volunteer session | Add session | head tab | Edit | Remove | Restore | as above | as an activity |
+| Volunteer person | people list | head tab | n/a | drop from the list | list again | as above | published without an unlock |
+| Volunteer tick and hours override | tick | grid; resident panel | override | untick (the tick is a state, so the row is deleted) | tick again | as above | published without an unlock |
+| Award type (catalogue) | Add | Catalogue tab | Edit | Archive | Restore | admin, jcrc | never (no year) |
+| Award | Assign; CSV import | Awards tab; resident panel | inline edit | Remove; bulk | Restore; bulk | admin, jcrc | published without an unlock |
+| Award upload (batch) | Import | History tab | none | Undo | none (assign again) | admin, jcrc | published without an unlock for each holder |
+| JCRC page | Save (the member, or a manager) | JCRC page; resident panel | Save | Remove page | Restore page | the member (own); admin, jcrc | published without an unlock |
+| Resident unlock | Unlock | resident panel; History | none | Relock | Unlock again | admin, jcrc | year must be closed or published |
+| Resident withhold | Withhold | resident panel; History | none | Release | Withhold again | admin, jcrc | never |
+| Resident history | written by each change | History tab | none | none | none | system | never |
+| First-opened record | when a resident opens a published year | drives the Ready badge | none | none | none | system | never |
+| Volunteering tag | switch on | Volunteering CCAs | n/a | switch off | switch on | admin, jcrc | never |
+
+**Gaps this pass closed.** Roster rows now have Clear role, Clear contribution and Reset to default (a live list only: a frozen list has no defaults to go back to; Save applies it). A JCRC page can be removed and restored (soft) by a manager. A manual CCA entry has the whole cycle. A resident's activity participation, volunteer ticks and awards can be edited from one place.
+
+**Gaps left, on purpose.** A volunteer person can only be added or dropped from the CCA's own volunteering screen (the resident panel edits ticks, not who is on the activity). An award upload cannot be redone, only its awards assigned again. An unlock or a hold cannot be edited, only ended and made again. A transcript period and a catalogue entry have no remove (the purge function and archiving cover them). A tick is a state, so unticking deletes the row.
