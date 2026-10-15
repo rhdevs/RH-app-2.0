@@ -203,6 +203,10 @@ async function reset() {
   const mine = { startsWith: PREFIX };
   await db.transcriptAccess.deleteMany({ where: { userID: mine } });
   await db.ccaYearFreeze.deleteMany({ where: { ccaID: { in: CCA_IDS } } });
+  await db.ccaActivityParticipant.deleteMany({
+    where: { ccaID: { in: CCA_IDS } },
+  });
+  await db.ccaActivity.deleteMany({ where: { ccaID: { in: CCA_IDS } } });
   await db.jcrcService.deleteMany({ where: { userID: mine } });
   await db.award.deleteMany({ where: { userID: mine } });
   await db.volunteerRecord.deleteMany({ where: { userID: mine } });
@@ -413,6 +417,82 @@ async function seed() {
     ],
   });
 
+  // CCA activities. Soccer (9005): one full-year activity with a participant
+  // who is NOT in the CCA (R20 shows under "Other involvement"). 9007: a
+  // semester 2 activity. 9002: one activity that was removed, and one that was
+  // not.
+  const makeActivity = async (ccaID, data, people) => {
+    const head = uid(HEADS[ccaID]);
+    const activity = await db.ccaActivity.create({
+      data: {
+        academicYear: AY,
+        ccaID,
+        description: null,
+        period: "full",
+        createdBy: head,
+        createdAt: new Date("2026-10-08T04:00:00Z"),
+        ...data,
+      },
+    });
+    await db.ccaActivityParticipant.createMany({
+      data: people.map(([n, role, description]) => ({
+        activityID: activity.id,
+        academicYear: AY,
+        ccaID,
+        userID: uid(n),
+        role: role ?? null,
+        description: description ?? null,
+        addedBy: head,
+        addedAt: new Date("2026-10-08T04:00:00Z"),
+      })),
+    });
+  };
+  await makeActivity(
+    9005,
+    {
+      title: "Inter-hall league",
+      description: "The hall's team in the inter-hall football league.",
+    },
+    [
+      [4, "Captain", "Led the squad through ten league matches."],
+      [12, "Midfielder", null],
+      [20, "Guest goalkeeper", "Covered two fixtures at short notice."],
+    ],
+  );
+  await makeActivity(
+    9007,
+    {
+      title: "Hall Night preparation",
+      description: "Rehearsals and set-up for the annual hall variety night.",
+      period: "sem2",
+    },
+    [
+      [5, null, null],
+      [12, "Stage crew", null],
+    ],
+  );
+  await makeActivity(
+    9002,
+    {
+      title: "Exam-period care packs",
+      description: "Snack packs handed out to residents during exams.",
+    },
+    [
+      [6, "Organiser", null],
+      [9, "Packer", null],
+    ],
+  );
+  await makeActivity(
+    9002,
+    {
+      title: "Cancelled workshop",
+      description: "A workshop that did not go ahead.",
+      removedAt: new Date("2026-10-12T04:00:00Z"),
+      removedBy: uid(6),
+    },
+    [[6, null, null]],
+  );
+
   const award = (n, title, citation, extra) => ({
     academicYear: AY,
     userID: uid(n),
@@ -531,6 +611,10 @@ async function summary() {
     "VolunteerRecord (voided)": `${await db.volunteerRecord.count({ where: { academicYear: AY } })} (${await db.volunteerRecord.count({ where: { academicYear: AY, voidedAt: { not: null } } })})`,
     "Award (voided)": `${await db.award.count({ where: { academicYear: AY } })} (${await db.award.count({ where: { academicYear: AY, voidedAt: { not: null } } })})`,
     JcrcService: await db.jcrcService.count({ where: { academicYear: AY } }),
+    "CcaActivity (removed)": `${await db.ccaActivity.count({ where: { academicYear: AY } })} (${await db.ccaActivity.count({ where: { academicYear: AY, removedAt: { not: null } } })})`,
+    CcaActivityParticipant: await db.ccaActivityParticipant.count({
+      where: { academicYear: AY },
+    }),
   };
   const r12 = await db.userCCA.count({ where: { userID: uid(12) } });
   console.log(`Seeded ${REQUIRED_DB} (${AY}):`);
