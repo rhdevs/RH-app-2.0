@@ -202,6 +202,11 @@ for (const [n, ccaID] of [
 async function reset() {
   const mine = { startsWith: PREFIX };
   await db.transcriptAccess.deleteMany({ where: { userID: mine } });
+  // Per-resident corrections: unlocks, holds, manual CCA entries and history.
+  await db.residentUnlock.deleteMany({ where: { userID: mine } });
+  await db.residentWithhold.deleteMany({ where: { userID: mine } });
+  await db.manualMembership.deleteMany({ where: { userID: mine } });
+  await db.residentEvent.deleteMany({ where: { userID: mine } });
   await db.ccaYearFreeze.deleteMany({ where: { ccaID: { in: CCA_IDS } } });
   await db.ccaActivityParticipant.deleteMany({
     where: { ccaID: { in: CCA_IDS } },
@@ -729,6 +734,30 @@ async function seed() {
       },
     ],
   });
+
+  // Per-resident corrections: one manual CCA entry (R17 was in Dance Crew in
+  // semester 2 but is missing from the membership data) and the history line
+  // that records it. The year stays collecting; nothing is unlocked or withheld.
+  await db.manualMembership.create({
+    data: {
+      academicYear: AY,
+      userID: uid(17),
+      ccaID: 9008,
+      duration: "sem2",
+      createdBy: uid(2),
+      createdAt: new Date("2026-10-14T04:00:00Z"),
+    },
+  });
+  await db.residentEvent.create({
+    data: {
+      academicYear: AY,
+      userID: uid(17),
+      action: "manual_add",
+      summary: "Manual entry: Dance Crew added",
+      actor: uid(2),
+      at: new Date("2026-10-14T04:00:00Z"),
+    },
+  });
 }
 
 async function summary() {
@@ -776,6 +805,7 @@ async function summary() {
     CcaActivityParticipant: await db.ccaActivityParticipant.count({
       where: { academicYear: AY },
     }),
+    "ManualMembership / ResidentEvent": `${await db.manualMembership.count({ where: { academicYear: AY } })} / ${await db.residentEvent.count({ where: { academicYear: AY } })}`,
   };
   const r12 = await db.userCCA.count({ where: { userID: uid(12) } });
   console.log(`Seeded ${REQUIRED_DB} (${AY}):`);

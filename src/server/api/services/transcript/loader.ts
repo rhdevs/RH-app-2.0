@@ -9,6 +9,7 @@ import {
   type ResolvedEntry,
 } from "~/lib/transcript/duration";
 import { readPeriod } from "~/lib/transcript/activities";
+import { mergeManualMemberships } from "~/lib/transcript/manualMembership";
 import { personTotals, readKind } from "~/lib/transcript/volunteer";
 import type {
   ActivityInput,
@@ -352,6 +353,8 @@ async function loadMemberships(
   memberships: CcaMembershipInput[];
   /** The CCAs the person counts as a member of for this year. */
   memberCcaIDs: Set<number>;
+  /** The ones that come from the roster (frozen or live), not from a manual entry. */
+  rosterCcaIDs: number[];
 }> {
   const frozenRows = await db.transcriptRosterEntry.findMany({
     where: { academicYear, userID: key, frozen: true },
@@ -407,8 +410,18 @@ async function loadMemberships(
     }
   }
 
-  if (entries.length === 0) return { memberships: [], memberCcaIDs: new Set() };
-  const ids = entries.map((e) => e.ccaID);
+  // A manager's manual entries count as membership too; a roster entry for the
+  // same CCA wins, so a manual one never doubles it.
+  const manual = await db.manualMembership.findMany({
+    where: { academicYear, userID: key, ...NOT_REMOVED },
+  });
+  const all = mergeManualMemberships(entries, manual);
+
+  const rosterCcaIDs = entries.map((e) => e.ccaID);
+  if (all.length === 0) {
+    return { memberships: [], memberCcaIDs: new Set(), rosterCcaIDs };
+  }
+  const ids = all.map((e) => e.ccaID);
   const [ccas, profiles] = await Promise.all([
     db.cCA.findMany({ where: { ccaID: { in: ids } } }),
     db.ccaProfile.findMany({
@@ -420,7 +433,7 @@ async function loadMemberships(
   const descBy = new Map(profiles.map((p) => [p.ccaID, p.description]));
 
   const memberCcaIDs = new Set<number>();
-  const memberships = entries.flatMap((e): CcaMembershipInput[] => {
+  const memberships = all.flatMap((e): CcaMembershipInput[] => {
     const cca = ccaBy.get(e.ccaID);
     if (!cca) return []; // a membership of a CCA that no longer exists
     memberCcaIDs.add(e.ccaID);
@@ -437,7 +450,33 @@ async function loadMemberships(
       },
     ];
   });
-  return { memberships, memberCcaIDs };
+  return { memberships, memberCcaIDs, rosterCcaIDs };
+}
+
+/**
+ * Which CCAs count as this resident's for the year and where each comes from
+ * (the roster, or a manual entry): what the resident panel needs to show.
+ */
+export async function loadResidentCcaIDs(
+  db: PrismaClient,
+  userID: string,
+  academicYear: string,
+  options: LoadOptions = {},
+): Promise<{ key: string; rosterCcaIDs: number[]; memberCcaIDs: Set<number> }> {
+  const user = await findUserByAnyKey(db, userID);
+  const key = personKey(user, userID);
+  const period = await db.transcriptPeriod.findUnique({
+    where: { academicYear },
+  });
+  const { memberCcaIDs, rosterCcaIDs } = await loadMemberships(
+    db,
+    key,
+    user,
+    academicYear,
+    options.now ?? new Date(),
+    period?.sem2Start ?? null,
+  );
+  return { key, rosterCcaIDs, memberCcaIDs };
 }
 
 /** What a transcript shows when the resident has no matric on record. Never masked. */

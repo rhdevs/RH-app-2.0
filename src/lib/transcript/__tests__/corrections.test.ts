@@ -7,7 +7,9 @@ import {
   fieldChange,
   joinChanges,
   participantSummaries,
+  ON_HOLD_MESSAGE,
   residentStateOf,
+  residentViewOf,
   SUMMARY_MAX,
 } from "../corrections";
 import { editRefusal, type YearStatus } from "../lifecycle";
@@ -206,5 +208,28 @@ describe("event summary wording", () => {
         summary: "Activities: Open House participation removed",
       },
     ]);
+  });
+});
+
+describe("what /transcript shows (hold selection)", () => {
+  it("shows nothing while the year is collecting, hold or not", () => {
+    expect(residentViewOf("collecting", false)).toBe("not_open");
+    expect(residentViewOf("collecting", true)).toBe("not_open");
+  });
+
+  it("shows the draft or the real thing when there is no hold", () => {
+    expect(residentViewOf("closed", false)).toBe("draft");
+    expect(residentViewOf("published", false)).toBe("published");
+  });
+
+  it("puts a hold over both the draft and the published transcript", () => {
+    expect(residentViewOf("closed", true)).toBe("on_hold");
+    expect(residentViewOf("published", true)).toBe("on_hold");
+  });
+
+  it("says the hold in one sentence", () => {
+    expect(ON_HOLD_MESSAGE).toBe(
+      "Your transcript is on hold. Contact the hall office.",
+    );
   });
 });

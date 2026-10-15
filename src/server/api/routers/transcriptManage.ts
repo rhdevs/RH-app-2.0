@@ -108,6 +108,7 @@ import {
   volunteerSessionUpdate,
 } from "~/server/api/services/transcript/manageVolunteer";
 import { searchResidents } from "~/server/api/services/transcript/residents";
+import { transcriptResidentRouter } from "./transcriptResident";
 import {
   createTRPCRouter,
   identifiedProcedure,
@@ -284,6 +285,9 @@ export const transcriptManageRouter = createTRPCRouter({
         return jcrcSave(ctx.db, me, me, input);
       }),
   }),
+
+  /** Per-resident corrections (admin and jcrc): see transcriptResident.ts. */
+  corrections: transcriptResidentRouter,
 
   residents: createTRPCRouter({
     /** A manager, or the head of any CCA (hours for anyone, activity participants). */

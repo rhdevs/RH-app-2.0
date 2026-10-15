@@ -8,14 +8,19 @@ import {
 } from "~/lib/transcript/academicYear";
 import { assembleTranscript } from "~/lib/transcript/assemble";
 import { instantToSgDate, sgDateToInstant } from "~/lib/transcript/sgDate";
+import { residentViewOf } from "~/lib/transcript/corrections";
 import { normaliseYearStatus } from "~/lib/transcript/lifecycle";
 import { canManageTranscriptPeriods } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
-import { actorLabels } from "~/server/api/services/transcript/residents";
+import {
+  actorLabels,
+  requireResident,
+} from "~/server/api/services/transcript/residents";
 import {
   readiness,
   recordAccess,
 } from "~/server/api/services/transcript/access";
+import { isWithheld } from "~/server/api/services/transcript/residentManage";
 import {
   listFreezes,
   unfreezeCca,
@@ -181,8 +186,11 @@ export const transcriptRouter = createTRPCRouter({
         input.academicYear,
         {},
       );
+      const resident = await requireResident(ctx.db, input.userID);
       return {
         status: normaliseYearStatus(period?.status),
+        // The resident sees "on hold" instead; the preview still shows the document.
+        withheld: await isWithheld(ctx.db, input.academicYear, resident.key),
         transcript: assembleTranscript(data, input.academicYear, {
           draft: period?.status === STATUS_CLOSED,
         }),
@@ -208,8 +216,17 @@ export const transcriptRouter = createTRPCRouter({
         const userID = ctx.session.user.userID;
         const period = await getPeriod(ctx.db, year);
         const status = normaliseYearStatus(period?.status);
-        if (status === "collecting" || !period) {
+        const view = residentViewOf(
+          status,
+          status !== "collecting" && (await isWithheld(ctx.db, year, userID)),
+        );
+        if (view === "not_open" || !period) {
           return { status: "not_open" as const, academicYear: year };
+        }
+        // A hold shows the resident nothing but the hold, draft or published,
+        // and records no opening, so the Ready badge is not cleared either.
+        if (view === "on_hold") {
+          return { status: "on_hold" as const, academicYear: year };
         }
         const data = await loadTranscriptInput(ctx.db, userID, year, {});
         // While the year is closed this is a DRAFT: nothing is recorded as

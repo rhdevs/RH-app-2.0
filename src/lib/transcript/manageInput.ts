@@ -86,7 +86,7 @@ export const block = (min: number, max: number) =>
  * An OPTIONAL override. `undefined` = leave as it is; `null` or blank = clear it;
  * anything else = set it (validated).
  */
-const clearable = <T extends z.ZodTypeAny>(inner: T) =>
+export const clearable = <T extends z.ZodTypeAny>(inner: T) =>
   z
     .union([z.null(), z.string().max(2000)])
     .optional()

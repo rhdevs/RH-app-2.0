@@ -142,3 +142,21 @@ export function participantSummaries(
     ...diff.remove.map((d) => line(d.userID, "participation removed")),
   ];
 }
+
+/* ---- what the resident sees ------------------------------------------------- */
+
+export type ResidentView = "not_open" | "on_hold" | "draft" | "published";
+
+/** What /transcript shows for a year: a hold wins over a draft or the real thing. */
+export function residentViewOf(
+  status: YearStatus,
+  withheld: boolean,
+): ResidentView {
+  if (status === "collecting") return "not_open";
+  if (withheld) return "on_hold";
+  return status === "closed" ? "draft" : "published";
+}
+
+/** The one sentence a resident on hold sees. */
+export const ON_HOLD_MESSAGE =
+  "Your transcript is on hold. Contact the hall office.";

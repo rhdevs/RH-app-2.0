@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { listPublishedYears } from "./periods";
+import { NOT_RELEASED } from "./residentRecords";
 
 /**
  * When a resident first and last opened their published transcript. It exists
@@ -35,8 +36,9 @@ export async function recordAccess(
 }
 
 /**
- * The newest published year the resident has not opened, if any. Two small
- * reads: the published years, then this resident's access rows for them.
+ * The newest published year the resident has not opened and that is not on
+ * hold, if any. Small reads: the published years, then this resident's access
+ * rows and holds for them.
  */
 export async function readiness(
   db: PrismaClient,
@@ -44,11 +46,21 @@ export async function readiness(
 ): Promise<{ ready: boolean; academicYear: string | null }> {
   const published = await listPublishedYears(db);
   if (published.length === 0) return { ready: false, academicYear: null };
-  const opened = await db.transcriptAccess.findMany({
-    where: { userID, academicYear: { in: published } },
-    select: { academicYear: true },
-  });
-  const seen = new Set(opened.map((o) => o.academicYear));
+  const [opened, held] = await Promise.all([
+    db.transcriptAccess.findMany({
+      where: { userID, academicYear: { in: published } },
+      select: { academicYear: true },
+    }),
+    db.residentWithhold.findMany({
+      where: { userID, academicYear: { in: published }, ...NOT_RELEASED },
+      select: { academicYear: true },
+    }),
+  ]);
+  // A year on hold is not ready, and is not "opened" either.
+  const seen = new Set([
+    ...opened.map((o) => o.academicYear),
+    ...held.map((h) => h.academicYear),
+  ]);
   const unseen = published.filter((y) => !seen.has(y));
   const latest = unseen[unseen.length - 1] ?? null;
   return { ready: latest !== null, academicYear: latest };
