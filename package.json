@@ -6,6 +6,9 @@
   "scripts": {
     "build": "next build",
     "db:studio": "prisma studio",
+    "dev:db:up": "docker compose -f dev/docker-compose.mongo.yml up -d --wait",
+    "dev:db:down": "docker compose -f dev/docker-compose.mongo.yml down",
+    "dev:db:seed": "node scripts/dev/seed-transcript.mjs",
     "dev": "next dev",
     "postinstall": "prisma generate",
     "lint": "next lint",
