@@ -53,7 +53,7 @@ npm run dev:db:seed
 
 ## What the seed creates
 
-Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications before and after the 2027-01-11 semester-2 start, roster entries (sem1-only, sem2-only, a head whose role starts in sem2), volunteer records, awards, and JCRC service for two members.
+Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications before and after the 2027-01-11 semester-2 start, roster entries (sem1-only, sem2-only, a head whose role starts in sem2), volunteer records, awards, JCRC service for two members, and CCA activities (Soccer: a full-year league that `SEED-R20`, who is not in Soccer, also took part in; Hall Choir: a semester 2 activity; RVC Children: one live activity and one removed).
 
 ## A caveat
 
@@ -164,3 +164,24 @@ The seed freezes two CCAs for AY2026/27 so the admin table shows each state: "Ra
 Dev only: `/transcript/preview/plain-member?draft=1` shows a specimen as the draft.
 
 Run `npm run dev:db:seed` afterwards to restore the seeded state. After pulling this change, `prisma db push` adds the `CcaYearFreeze` collection and its index.
+
+## Manual check: CCA activities and the roster editor
+
+The seed gives AY2026/27 four activities: Soccer (9005, head `seed-r04`) "Inter-hall league" with `seed-r04` (Captain), `seed-r12` and `seed-r20` (not in Soccer); Hall Choir (9007, head `seed-r05`) "Hall Night preparation" in semester 2; RVC Children (9002, head `seed-r06`) "Exam-period care packs" and a removed "Cancelled workshop". After pulling this change, `prisma db push` adds the `CcaActivity` and `CcaActivityParticipant` collections and the `closedAt`, `closedBy`, `backToCollectingAt` and `backToCollectingBy` fields on the period.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Activities section | `seed-r04` | `/cca/9005/transcript` | "Activities" above the roster, "1 of 20", Add activity, and "Inter-hall league" with Edit and Remove. |
+| Add an activity | `seed-r04` | Add activity, fill the title, tick members, Add activity | The dialog closes and the list shows "2 of 20". On a phone the editor fills the screen. |
+| Filter and tick | `seed-r04` | In the editor, type part of a name, Select all, Clear all | Only matching members show; the two buttons act on those only. "N people selected" follows. |
+| Outside people | `seed-r04` | In the editor, search `Seed` under "Other people", pick one | A chip appears; the x removes it. Heads search by name only. |
+| Customise | `seed-r04` | "Customise each person" | A Role and Description per person with the two placeholders; empty means the general description. |
+| Remove and restore | `seed-r04` | Remove, confirm; tick Show removed; Restore | It leaves the count and the transcripts; Restore brings it back. At 20 activities Add and Restore are refused. |
+| On a transcript | `seed-r12` and `seed-r20` | Preview as resident (`seed-r01`), AY2026/27 | `seed-r12`: the league nested under Soccer. `seed-r20`: "Other involvement" with the league and "Organised by Soccer (MALE)". |
+| Frozen is read-only | `seed-r04` | After a handover, `/cca/9005/transcript` | The Activities section shows the frozen note and no buttons. `seed-r02` can still edit. |
+| Unsaved changes | any head | Edit two roster rows, change the year | A sticky bar says "2 unsaved changes"; Save all saves both; Discard asks first; changing the year asks before leaving. |
+| Phone roster | any head | Roster at 375 px wide | Cards instead of a table, a name filter, and no horizontal scroll. |
+
+Dev only: `/transcript/preview/member-with-activities` and `/transcript/preview/other-involvement-only` show specimens 13 and 14.
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
