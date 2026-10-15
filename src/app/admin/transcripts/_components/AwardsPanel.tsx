@@ -353,7 +353,7 @@ export default function AwardsPanel() {
         residentName: a.displayName ?? a.userID,
         title: a.title,
         citation: a.citation,
-        recordedBy: a.recordedBy,
+        recordedBy: a.recordedByName ?? a.recordedBy,
         voided: a.voidedAt != null,
       }))}
       loadingAwards={awards.isPending && awards.fetchStatus !== "idle"}

@@ -76,6 +76,21 @@ const ERROR_TEXT: Record<string, string> = {
   INSUFFICIENT_ROLE: "You do not have access to this.",
   INVALID_ACADEMIC_YEAR: "That is not a valid academic year.",
   RATE_LIMITED: "Too many attempts. Try again later.",
+  NOT_A_MEMBER: "That person is no longer a member of this CCA.",
+  NOT_A_HEAD_OF_THIS_CCA: "You do not head this CCA.",
+  NOT_A_VOLUNTEERING_CCA: "This CCA does not record volunteer hours.",
+  NOT_A_VOLUNTEERING_HEAD:
+    "Only heads of volunteering CCAs can search residents.",
+  JCRC_MEMBER_REQUIRED: "Only JCRC members have a JCRC page.",
+  RECORD_NOT_FOUND: "That record no longer exists.",
+  DATE_REQUIRED_FOR_ONEOFF: "A one-off activity needs a date.",
+  DATE_OUTSIDE_ACADEMIC_YEAR:
+    "The date must fall inside the academic year, 1 August to 31 July.",
+  DATE_ONLY_FOR_ONEOFF: "Only a one-off activity has a date.",
+  HOURS_TOO_SMALL: "Hours must be at least 0.25.",
+  HOURS_TOO_LARGE: "Hours must be at most 200.",
+  HOURS_MUST_BE_QUARTERS: "Hours go up in steps of 0.25.",
+  AT_MOST_10_CONTRIBUTIONS: "Use at most 10 contributions.",
 };
 
 /** The server's validation codes (see manageInput.ts), as sentences. */

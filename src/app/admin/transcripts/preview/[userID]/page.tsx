@@ -17,6 +17,19 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 /**
+ * Printing: the admin shell (site header and tab bar) sits beside <main> in the
+ * layout above this page, so it is hidden here, by the one fact that this page
+ * is inside it, rather than by editing the shell. Padding and width caps go too,
+ * so the document prints exactly as the resident's own transcript does.
+ */
+const PRINT_CSS = `
+@media print {
+  div:has(> main > .rh-preview-root) > :not(main) { display: none !important; }
+  div:has(> main > .rh-preview-root) { margin-bottom: 0 !important; background: none !important; }
+  main:has(> .rh-preview-root) { max-width: none !important; padding: 0 !important; }
+}`;
+
+/**
  * A manager's preview of one resident's transcript, assembled from LIVE data
  * (or the frozen roster once the year is published) with the Template C
  * document. transcript.preview never creates an issue, so previewing leaves no
@@ -47,7 +60,8 @@ export default async function TranscriptPreviewPage({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="rh-preview-root space-y-4">
+      <style>{PRINT_CSS}</style>
       {/* On screen only: the document is what prints. */}
       <div
         role="status"

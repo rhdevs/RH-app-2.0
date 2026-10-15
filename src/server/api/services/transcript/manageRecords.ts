@@ -71,15 +71,17 @@ export async function awardsList(
     },
     orderBy: { recordedAt: "desc" },
   });
-  const names = await lookupResidents(
-    db,
-    rows.map((r) => r.userID),
-  );
+  const names = await lookupResidents(db, [
+    ...rows.map((r) => r.userID),
+    ...rows.flatMap((r) => [r.recordedBy ?? "", r.voidedBy ?? ""]),
+  ]);
   return rows.map((r) => ({
     id: r.id,
     userID: r.userID,
     displayName: names.get(r.userID)?.displayName ?? null,
     matric: names.get(r.userID)?.matric ?? null,
+    recordedByName: names.get(r.recordedBy ?? "")?.displayName ?? null,
+    voidedByName: names.get(r.voidedBy ?? "")?.displayName ?? null,
     title: r.title,
     citation: r.citation,
     ceremony: r.ceremony,

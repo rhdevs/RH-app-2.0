@@ -401,7 +401,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           "FORBIDDEN:INSUFFICIENT_ROLE",
         );
         expect(await errorOf(head.residents.search({ query: "Seed" }))).toBe(
-          "FORBIDDEN:INSUFFICIENT_ROLE",
+          "FORBIDDEN:NOT_A_VOLUNTEERING_HEAD",
         );
         expect(
           await errorOf(
@@ -1372,6 +1372,15 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
         expect(await m.search({ query: "(.*)+" })).toEqual([]);
         expect(await m.search({ query: "[a-" })).toEqual([]);
+      });
+
+      it("is open to the head of a volunteering CCA, but only for finding residents", async () => {
+        const hits = await as(RVC_CHILDREN_HEAD).transcriptManage.residents.search({
+          query: "Seed",
+        });
+
+        expect(hits.length).toBeGreaterThan(0);
+        expect(Object.keys(hits[0]!).sort()).toEqual(["displayName", "matric", "userID"]);
       });
 
       it("is refused to residents, heads and hall office", async () => {

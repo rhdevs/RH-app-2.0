@@ -18,6 +18,7 @@ import {
   requireCcaAccess,
   requireJcrcSelf,
   requireManager,
+  requireManagerOrVolunteeringHead,
 } from "~/server/api/services/transcript/manageAccess";
 import {
   awardCreate,
@@ -142,9 +143,16 @@ export const transcriptManageRouter = createTRPCRouter({
   }),
 
   residents: createTRPCRouter({
-    search: managerProcedure
+    /** A manager, or the head of a volunteering CCA (to log hours for anyone). */
+    search: identifiedProcedure
       .input(z.object({ query: searchQueryInput }))
-      .query(({ ctx, input }) => searchResidents(ctx.db, input.query)),
+      .query(async ({ ctx, input }) => {
+        await requireManagerOrVolunteeringHead(
+          ctx.db,
+          ctx.session.user.userID,
+        );
+        return searchResidents(ctx.db, input.query);
+      }),
   }),
 
   roster: createTRPCRouter({
@@ -153,7 +161,14 @@ export const transcriptManageRouter = createTRPCRouter({
       .query(async ({ ctx, input }) => {
         await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
         await requireCca(ctx.db, input.ccaID);
-        return rosterList(ctx.db, input.ccaID, input.academicYear);
+        const [list, profile] = await Promise.all([
+          rosterList(ctx.db, input.ccaID, input.academicYear),
+          ctx.db.ccaProfile.findUnique({
+            where: { ccaID: input.ccaID },
+            select: { isVolunteering: true },
+          }),
+        ]);
+        return { ...list, isVolunteering: profile?.isVolunteering === true };
       }),
 
     upsert: identifiedProcedure
