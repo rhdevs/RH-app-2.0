@@ -1430,29 +1430,80 @@ model TranscriptRosterEntry {
   @@index([academicYear, ccaID], map: "transcript_roster_cca")
 }
 
-/// Volunteer hours for one resident, recorded by the head of a volunteering CCA
-/// (CcaProfile.isVolunteering) or by JCRC/admin. `ccaID` is the volunteering CCA
-/// that recorded it. kind: regular | oneoff (activityDate is for one-offs).
-/// Never deleted: a mistake is VOIDED (voidedAt) so the audit trail survives.
-model VolunteerRecord {
+/// A volunteer activity of a volunteering CCA (one tagged
+/// CcaProfile.isVolunteering) for one academic year. regular = recurring
+/// sessions, oneoff = exactly one session. Soft-removed, never deleted.
+model VolunteerActivity {
   id           String    @id @default(auto()) @map("_id") @db.ObjectId
   academicYear String
-  userID       String
-  ccaID        Int?
+  ccaID        Int
+  title        String
   /// regular | oneoff
-  kind         String?
-  activity     String?
-  activityDate DateTime?
-  hours        Float?
-  recordedBy   String?
-  recordedAt   DateTime? @default(now())
-  voidedAt     DateTime?
-  /// Who voided it (canonical userID). Null while not voided.
-  voidedBy     String?
+  kind         String
+  description  String?
+  /// What a new session defaults to (hours).
+  defaultHours Float?
+  createdBy    String?
+  createdAt    DateTime? @default(now())
+  updatedBy    String?
+  updatedAt    DateTime?
+  removedAt    DateTime?
+  removedBy    String?
 
-  /// One resident's hours for one year (the transcript read).
-  @@index([academicYear, userID], map: "volunteer_year_user")
-  @@index([ccaID, academicYear], map: "volunteer_cca_year")
+  @@index([academicYear, ccaID], map: "vact_year_cca")
+}
+
+/// One session of a volunteer activity: a date (Singapore midnight) and its
+/// hours. academicYear and ccaID are repeated so a year can be purged.
+model VolunteerSession {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  activityID   String    @db.ObjectId
+  academicYear String
+  ccaID        Int
+  date         DateTime
+  hours        Float
+  createdBy    String?
+  createdAt    DateTime? @default(now())
+  updatedBy    String?
+  updatedAt    DateTime?
+  removedAt    DateTime?
+  removedBy    String?
+
+  @@index([activityID], map: "vsession_activity")
+}
+
+/// A resident who took part in a volunteer activity (anyone in the hall).
+/// One row per person per activity; removing sets removedAt/By.
+model VolunteerPerson {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  activityID   String    @db.ObjectId
+  academicYear String
+  ccaID        Int
+  userID       String
+  addedBy      String?
+  addedAt      DateTime? @default(now())
+  removedAt    DateTime?
+  removedBy    String?
+
+  @@unique([activityID, userID], map: "vperson_activity_user")
+  @@index([academicYear, userID], map: "vperson_year_user")
+}
+
+/// A tick: the person attended the session. The presence of the row is the
+/// state (unticking deletes it); hoursOverride replaces the session's hours.
+model VolunteerAttendance {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  sessionID     String    @db.ObjectId
+  activityID    String    @db.ObjectId
+  academicYear  String
+  ccaID         Int
+  userID        String
+  hoursOverride Float?
+  markedBy      String?
+  markedAt      DateTime?
+
+  @@unique([sessionID, userID], map: "vattend_session_user")
+  @@index([academicYear, userID], map: "vattend_year_user")
 }
 
 /// An award from the end-of-year Colours Awards, entered by JCRC/admin. Voided,

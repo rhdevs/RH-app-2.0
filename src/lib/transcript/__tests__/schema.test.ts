@@ -51,7 +51,6 @@ const NEW_MODELS: Record<string, string[]> = {
   // model -> its KEY fields: the columns that identify the row, so required.
   TranscriptPeriod: ["academicYear"],
   TranscriptRosterEntry: ["academicYear", "userID", "ccaID"],
-  VolunteerRecord: ["academicYear", "userID"],
   Award: ["academicYear", "userID"],
   JcrcService: ["academicYear", "userID"],
   TranscriptAccess: ["academicYear", "userID"],
@@ -231,10 +230,51 @@ describe("schema: new transcript models", () => {
     expect(field!.decl).toBe("DateTime?");
   });
 
-  it("indexes volunteer records by CCA and year", () => {
-    expect(readFileSync("prisma/schema.prisma", "utf8")).toContain(
-      '@@index([ccaID, academicYear], map: "volunteer_cca_year")',
+  it("stores volunteer activities, sessions, people and attendance, indexed and unique", () => {
+    const raw = readFileSync("prisma/schema.prisma", "utf8");
+    for (const decl of [
+      '@@index([academicYear, ccaID], map: "vact_year_cca")',
+      '@@index([activityID], map: "vsession_activity")',
+      '@@unique([activityID, userID], map: "vperson_activity_user")',
+      '@@index([academicYear, userID], map: "vperson_year_user")',
+      '@@unique([sessionID, userID], map: "vattend_session_user")',
+      '@@index([academicYear, userID], map: "vattend_year_user")',
+    ]) {
+      expect(raw, decl).toContain(decl);
+    }
+    const names = (model: string) => current.get(model)!.map((f) => f.name);
+    // Every child repeats the year and the CCA so a year can be purged.
+    for (const model of [
+      "VolunteerActivity",
+      "VolunteerSession",
+      "VolunteerPerson",
+      "VolunteerAttendance",
+    ]) {
+      expect(names(model), model).toEqual(
+        expect.arrayContaining(["academicYear", "ccaID"]),
+      );
+    }
+    for (const f of ["kind", "defaultHours", "removedAt", "removedBy"]) {
+      expect(names("VolunteerActivity"), f).toContain(f);
+    }
+    expect(names("VolunteerAttendance")).toEqual(
+      expect.arrayContaining(["hoursOverride", "markedBy", "markedAt"]),
     );
+    for (const [model, field] of [
+      ["VolunteerSession", "activityID"],
+      ["VolunteerPerson", "activityID"],
+      ["VolunteerAttendance", "sessionID"],
+      ["VolunteerAttendance", "activityID"],
+    ] as const) {
+      expect(
+        current.get(model)!.find((f) => f.name === field)!.decl,
+        `${model}.${field}`,
+      ).toContain("@db.ObjectId");
+    }
+  });
+
+  it("no longer has the single-record VolunteerRecord model", () => {
+    expect(current.has("VolunteerRecord")).toBe(false);
   });
 });
 
@@ -282,12 +322,11 @@ describe("schema: guarded collections are untouched", () => {
     expect(changed).toEqual(["CcaProfile"]);
   });
 
-  it("records who voided an award or volunteer record, and who last saved a JCRC record", () => {
+  it("records who voided an award, and who last saved a JCRC record", () => {
     const field = (model: string, name: string) =>
       current.get(model)!.find((f) => f.name === name);
 
     expect(field("Award", "voidedBy")?.decl).toBe("String?");
-    expect(field("VolunteerRecord", "voidedBy")?.decl).toBe("String?");
     expect(field("JcrcService", "updatedBy")?.decl).toBe("String?");
   });
 
@@ -322,6 +361,10 @@ describe("schema: guarded collections are untouched", () => {
         "CcaYearFreeze",
         "CcaActivity",
         "CcaActivityParticipant",
+        "VolunteerActivity",
+        "VolunteerSession",
+        "VolunteerPerson",
+        "VolunteerAttendance",
       ].sort(),
     );
   });

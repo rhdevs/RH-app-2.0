@@ -20,7 +20,10 @@ import { isValidAcademicYear } from "~/lib/transcript/academicYear";
 export const TRANSCRIPT_COLLECTIONS = [
   "TranscriptPeriod",
   "TranscriptRosterEntry",
-  "VolunteerRecord",
+  "VolunteerActivity",
+  "VolunteerSession",
+  "VolunteerPerson",
+  "VolunteerAttendance",
   "Award",
   "JcrcService",
   "TranscriptAccess",
@@ -38,7 +41,10 @@ function delegateOf(db: PrismaClient, name: TranscriptCollection) {
   const delegates = {
     TranscriptPeriod: db.transcriptPeriod,
     TranscriptRosterEntry: db.transcriptRosterEntry,
-    VolunteerRecord: db.volunteerRecord,
+    VolunteerActivity: db.volunteerActivity,
+    VolunteerSession: db.volunteerSession,
+    VolunteerPerson: db.volunteerPerson,
+    VolunteerAttendance: db.volunteerAttendance,
     Award: db.award,
     JcrcService: db.jcrcService,
     TranscriptAccess: db.transcriptAccess,
