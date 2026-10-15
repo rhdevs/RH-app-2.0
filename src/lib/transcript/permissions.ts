@@ -38,3 +38,35 @@ export function canManageExtraContribution(
 export function canManageTranscriptPeriods(roles: readonly string[]): boolean {
   return roles.includes(JCRC_ROLE) || roles.includes(ADMIN_ROLE);
 }
+
+/** The kinds of management access the transcript has. */
+export type AccessFamily = "manager" | "cca" | "jcrcSelf";
+
+/**
+ * THE management access matrix, as one pure function.
+ *
+ *  - "manager"  : jcrc or admin. Awards, JCRC records for anyone, volunteering
+ *                 tags, resident search.
+ *  - "cca"      : a manager, OR the head of THIS CCA. `headsThisCca` must come
+ *                 from a live CcaHead read (assertHeadsCca), never from the
+ *                 scope-free `cca_head` role string, which only says "heads
+ *                 something" and is ignored here on purpose.
+ *  - "jcrcSelf" : holds the live `jcrc` role, for their OWN JCRC record. Admin
+ *                 alone does not qualify: it is not a JCRC member.
+ *
+ * `scrc` and `resident` never grant anything.
+ */
+export function accessFor(
+  family: AccessFamily,
+  roles: readonly string[],
+  headsThisCca = false,
+): boolean {
+  switch (family) {
+    case "manager":
+      return canManageTranscriptPeriods(roles);
+    case "cca":
+      return canManageTranscriptPeriods(roles) || headsThisCca;
+    case "jcrcSelf":
+      return roles.includes(JCRC_ROLE);
+  }
+}

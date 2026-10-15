@@ -47,3 +47,25 @@ export function currentAcademicYear(date: Date): string {
     sg.getUTCMonth() >= 7 ? sg.getUTCFullYear() : sg.getUTCFullYear() - 1;
   return `AY${startYear}/${String((startYear + 1) % 100).padStart(2, "0")}`;
 }
+
+/** "2026-09-12" yes; "2026-02-30", "2026-9-1" and "2026-09-12T10:00" no. */
+export function isRealIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+}
+
+/**
+ * Is the calendar date "2026-09-12" inside the academic year, 1 August to
+ * 31 July inclusive? Compares the date text, so no timezone can shift it.
+ */
+export function isDateInAcademicYear(
+  isoDate: string,
+  academicYear: string,
+): boolean {
+  const ay = parseAcademicYear(academicYear);
+  if (!ay || !isRealIsoDate(isoDate)) return false;
+  return (
+    isoDate >= `${ay.startYear}-08-01` && isoDate <= `${ay.startYear + 1}-07-31`
+  );
+}
