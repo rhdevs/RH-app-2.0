@@ -688,3 +688,35 @@ This section supersedes every earlier mention of verification, issuing, snapshot
 - **Phones.** Under Save as PDF: "On a phone, use Share, then Print, then save as PDF." At 375 px the page has no horizontal scroll.
 - **Roster header** cells are real table header cells (they had `display: block`).
 - **Left as is.** `qrcode.react` stays in package.json (the events check-in uses it). The 60-second MongoDB transaction limit is no concern at hall scale (2,000 memberships publish in about 2 seconds).
+
+## 23. Year lifecycle and handover freeze
+
+CCA memberships are cleared and re-recruited after each CCA's handover, so freezing a whole year's member lists at publish time would capture the wrong people. Each CCA's list is frozen at its own handover instead. This section supersedes section 22's description of publish freezing the roster.
+
+**Term year.** A CCA's term year is the earliest year, from AY2026/27 up to the year after the current one, in which it has no ACTIVE freeze. A CCA's head screen defaults to it, and memberships made after a handover therefore count toward the next year even before 1 August (`termAcademicYear`, pure and tested; every service takes an injectable `now`).
+
+**Freeze record.** `CcaYearFreeze { academicYear, ccaID, reason, frozenAt, frozenBy, memberCount, unfrozenAt, unfrozenBy, unfreezeReason }`, unique per year and CCA (`freeze_year_cca`). Reasons: `handover`, `head_removed`, `lock`, `close_year`. ACTIVE means `unfrozenAt` is empty. A later freeze of the same year reuses the document (the unfreeze fields are cleared).
+
+**`freezeCca`.** The target year is the CCA's term year, never later than the current one: if the term year is already ahead, nothing happens (`skipped`). Refused if the target year is published. In one transaction it re-reads the live roster, writes a frozen `TranscriptRosterEntry` for every live member (overrides, else defaults, with the role inside the membership), clears the freeze flag of anyone who has left, and writes the freeze record, with batched writes. Idempotent.
+
+**Head-change hooks.** The freeze runs BEFORE the head change, from `cca.handoverHeads` (when it removes a current head), `admin.revokeCcaHead` and `admin.transferCcaHead` (`freezeBeforeHeadChange`). Grant-only paths never freeze. If the freeze fails the change is refused (`TRANSCRIPT_FREEZE_FAILED`); a skipped freeze never blocks it. The handover dialog warns heads to finish their records first and links to the transcript tab.
+
+**Reading a roster.** For year X and CCA c: an active freeze for X shows the frozen entries; otherwise, if X is c's term year, the live members; otherwise "No member list was recorded for this year". A resident's transcript is assembled the same way, per CCA.
+
+**Edit rights** (`editRefusal`, one guard `assertCanEditCcaYear`, used by roster edits and volunteer hours). Nobody edits a published year. Managers (admin, jcrc) edit any CCA while the year is collecting or closed. The head of the CCA edits only while the year is collecting and the CCA has no active freeze, or one made by the head's own lock. After a handover, head removal or close the head sees a read-only view: "Frozen on {date}. Ask the JCRC for changes."
+
+**Year status.** `collecting -> closed -> published`.
+- **Close year** (needs semester 2 start, a year that has begun): freezes every CCA with no active freeze (`close_year`), then closes.
+- **Publish** (from closed only): freezes nothing.
+- **Reopen for review**: published to closed. **Back to collecting**: closed to collecting; frozen lists stay frozen.
+- **Unfreeze** one CCA (manager, reason required, year not published): its entries become annotations again and the current member list is used until it is frozen again.
+
+**Residents.** While a year is closed, `/transcript` shows a DRAFT: the same assembly, a note "Draft - check your information. If something is wrong, tell your CCA head or the JCRC." on page 1 and a DRAFT watermark on every page (printed too). Nothing is recorded as opened, there is no Ready badge and no download-by banner. Published behaviour is unchanged.
+
+**Admin screen.** The Academic year section offers only the valid actions, and a "CCA member lists" table (state, date, who, member count, Unfreeze, "Not frozen only"). From 1 June until the year is closed a banner says how many CCAs are not frozen yet.
+
+**Head's tab.** "Lock member list for {year}" (confirmation says edits stay open until the JCRC closes the year). The year selector defaults to the CCA's term year.
+
+### Data retention
+
+`purgeAcademicYear(db, academicYear, { dryRun })` (`services/transcript/retention.ts`) deletes every document of one year across `TRANSCRIPT_COLLECTIONS` (period, roster entries, volunteer records, awards, JCRC records, access records, freezes), in one transaction, and returns counts per collection; `dryRun` only counts. Every record is keyed by its year and never refers to another year's, so other years are untouched. A test parses `prisma/schema.prisma` and fails if a model with an `academicYear` field is missing from the registry, so a later collection cannot be forgotten. Whether and when to purge old years is a future decision; there is no script and no screen.

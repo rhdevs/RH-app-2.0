@@ -142,3 +142,25 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 | Phone | any | `/transcript/preview/many-ccas` at 375 px wide | No horizontal scroll; the Year column stays on one line. |
 
 Run `npm run dev:db:seed` afterwards to restore the seeded state. If `prisma db push` complains about old local TranscriptIssue or JcrcService documents (their shapes changed), drop the local TranscriptIssue collection and delete the local JcrcService documents first, then re-seed.
+
+## Manual check: year lifecycle and handover freeze
+
+The seed freezes two CCAs for AY2026/27 so the admin table shows each state: "Raffles Hall Dance" (id 9014) at handover and "Hall Choir" (9013) locked by its head. Everything else is not frozen.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Handover warning | `seed-r04` (Soccer head) | CCA dashboard, Overview, Hand over | An amber note: finish this year's transcript records; handing over freezes the member list for AY2026/27; link "Open transcript records". |
+| Handover freezes | `seed-r04` | Hand over to `seed-r09` | `/cca` closes for you. As `seed-r01`, the table shows Soccer "Frozen at handover", dated today, by Seed Resident 04. |
+| Admin removes a head | `seed-r01` | Admin, CCAs: remove or transfer a head | The CCA shows "Head removed" in the table. Adding a head does not freeze. |
+| Lock | a head | Transcript tab, "Lock member list for AY2026/27", confirm | Table: "Locked by head". The head can still edit roles, contributions and hours. |
+| Frozen is read-only | a head of a handover-frozen CCA | Transcript tab | "Frozen on {date}. Ask the JCRC for changes." and every field is read-only. `seed-r02` can still edit. |
+| 1 June warning | `seed-r01` | Academic year section after 1 June | "N CCAs are not frozen for AY2026/27 yet. Close the year before memberships change." |
+| Close year | `seed-r01` | Close year, confirm (it states how many CCAs it will freeze) | Status Closed; every CCA frozen; only Publish and Back to collecting are offered. Without a semester 2 date it refuses. |
+| Draft view | `seed-r12` | `/transcript` while closed | "Draft - check your information..." on page 1, DRAFT across every page, also when printed. No "Ready" badge, no banner. |
+| Publish | `seed-r01` | Publish | Residents get a Ready badge; the draft note is gone. Only "Reopen for review" is offered. |
+| Reopen / back | `seed-r01` | Reopen for review, then Back to collecting | Closed again (residents see a draft), then Collecting. Frozen lists stay frozen. |
+| Unfreeze | `seed-r01` | Unfreeze on a CCA, give a reason | The CCA reads "Not frozen"; its current members are used until it is frozen again. Not offered once published. |
+
+Dev only: `/transcript/preview/plain-member?draft=1` shows a specimen as the draft.
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state. After pulling this change, `prisma db push` adds the `CcaYearFreeze` collection and its index.
