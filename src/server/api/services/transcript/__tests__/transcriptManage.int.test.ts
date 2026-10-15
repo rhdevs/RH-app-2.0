@@ -41,7 +41,6 @@ const ADMIN = R(1, ["admin", "resident"]);
 const JCRC = R(2, ["jcrc", "resident"]);
 const JCRC_HEAD = R(3, ["jcrc", "cca_head", "resident"]); // also heads RHMP Sets (9011)
 const SOCCER_HEAD = R(4, ["cca_head", "resident"]); // heads Soccer (9005)
-const CHOIR_HEAD = R(5, ["cca_head", "resident"]); // heads Hall Choir (9007)
 const RVC_CHILDREN_HEAD = R(6, ["cca_head", "resident"]); // heads RVC Children (9002)
 const RVC_PROJECTS_HEAD = R(7, ["cca_head", "resident"]); // heads RVC Special Projects (9001)
 const PLAIN = R(9, ["resident"]);
@@ -1008,19 +1007,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(after.isVolunteering).toBe(true);
         expect(after.updatedBy).toBe(JCRC.id);
         expect(after.updatedAt).toBeInstanceOf(Date);
-        const {
-          isVolunteering: _a,
-          updatedAt: _b,
-          updatedBy: _c,
-          ...rest
-        } = after;
-        const {
-          isVolunteering: _d,
-          updatedAt: _e,
-          updatedBy: _f,
-          ...restBefore
-        } = withImages;
-        expect(rest).toEqual(restBefore);
+        // Everything except the three fields the tag may touch is unchanged.
+        const untouchedPart = (row: typeof after) => ({
+          ...row,
+          isVolunteering: undefined,
+          updatedAt: undefined,
+          updatedBy: undefined,
+        });
+        expect(untouchedPart(after)).toEqual(untouchedPart(withImages));
       });
 
       it("creates a profile with only those fields for a CCA that had none, and can untag", async () => {

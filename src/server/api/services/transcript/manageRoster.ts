@@ -63,7 +63,7 @@ const asDuration = (v: string | null | undefined): Duration | null =>
   isDuration(v) ? v : null;
 
 const blankToNull = (v: string | null | undefined) =>
-  v && v.trim() ? v.trim() : null;
+  v?.trim() ? v.trim() : null;
 
 type Resolved = { entry: RosterResolved; key: string; keys: string[] };
 

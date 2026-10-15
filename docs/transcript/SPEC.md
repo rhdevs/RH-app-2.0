@@ -581,3 +581,42 @@ Members who have left get no entry. After publish the loader reads only frozen e
 **No hard-coded domain.** The notes page prints the site's own address, taken from the request host (so a preview deploy prints its own) with `NEXTAUTH_URL` as the fallback, or words around it ("the verification page of this site") when neither is usable. A test scans the sources to keep it that way.
 
 **Print.** Real issued transcripts were printed from `/verify/<code>` with headless Chrome: a plain member is 2 pages and a JCRC member 3, with the crest, the page footer and the (masked) name on every page, and no SPECIMEN text.
+
+---
+
+## 17. Phase 3e management API
+
+Router `transcriptManage` (`src/server/api/routers/transcriptManage.ts`, registered in `root.ts`), services in `src/server/api/services/transcript/manage*.ts` and `residents.ts`, input rules in `src/lib/transcript/manageInput.ts`. No UI yet. Opening, publishing and issuing stay in the `transcript` router (section 15).
+
+**Who.** Every check reads LIVE roles (I-5), never the session copy.
+- **manager** = admin or jcrc (`roleManagerProcedure` plus a live re-check).
+- **head or manager** = a live CcaHead row for THAT CCA (`assertHeadsCca`), or a manager. The scope-free `cca_head` role string is never used. The head of another CCA, and a plain resident, get FORBIDDEN.
+- **JCRC member** = the live `jcrc` role, for their own record only. Admin alone does not qualify.
+- hall office (`scrc`) and residents get nothing here.
+
+**AY rule.** Every write to a year's data needs the year to be `collecting`; once `published` it fails with `PRECONDITION_FAILED: PERIOD_PUBLISHED`, and works again after a reopen. Reads are always allowed.
+
+| Procedure | Who | AY status rule |
+| --- | --- | --- |
+| `ccaTags.list` | manager | any |
+| `ccaTags.setVolunteering` | manager | any (the tag belongs to no year); touches only `isVolunteering`, `updatedAt`, `updatedBy` on CcaProfile |
+| `awards.list` | manager | any |
+| `awards.create` | manager | collecting only; the resident must exist |
+| `awards.void` | manager | collecting only; sets `voidedAt`, never deletes |
+| `jcrc.saveFor` | manager | collecting only; any existing resident |
+| `jcrc.mine` | JCRC member (own) | any |
+| `jcrc.saveMine` | JCRC member (own) | collecting only; `isPlaceholder` stays true |
+| `residents.search` | manager | n/a. 3+ characters, at most 10 hits of `{userID, displayName, matric}` |
+| `roster.list` | head of this CCA, or manager | any: live while collecting, frozen once published. Shows each default beside any override |
+| `roster.upsert` | head of this CCA, or manager | collecting only; the user must be a current member; null or blank clears an override |
+| `volunteer.list` | head of this CCA, or manager | any |
+| `volunteer.create` | head of this CCA, or manager | collecting only; the CCA must be tagged `isVolunteering` (managers too); any existing resident; a one-off needs a date inside 1 Aug to 31 Jul; hours 0.25 to 200 in quarters |
+| `volunteer.void` | head of the record's CCA, or manager | collecting only; sets `voidedAt`, never deletes |
+
+**Text.** Plain text, trimmed, length-bounded, control characters rejected (a newline is allowed in the multi-line fields only: description, testimonial, extra contribution). Limits: award title 120, citation 300; role label 60, extra contribution 500; activity 120; JCRC portfolio and position 80, description 800, up to 10 contributions of 200, testimonial 1500.
+
+**Not recorded.** The schema has no `voidedBy` on awards or volunteer records and no `updatedBy` on JCRC records, so those writes record the time but not the actor. Adding the fields is a schema change and was not made.
+
+**Resident search.** No reusable helper existed (the admin search lives inside `admin.listUsers` and returns far more), so a minimal manager-only one was written. It escapes regex characters and returns no email or roles.
+
+**Dev logins.** Seeded residents can now sign in locally (`docs/transcript/DEV-SETUP.md`).
