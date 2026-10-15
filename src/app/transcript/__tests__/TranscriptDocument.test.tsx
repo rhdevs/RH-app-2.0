@@ -458,3 +458,32 @@ describe("TranscriptDocument: activities", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 });
+
+describe("TranscriptDocument: volunteer hours", () => {
+  it("prints Activity, Type, Organised by and Hours, one row per activity, then a Total", () => {
+    const html = render("volunteering");
+
+    expect(html).toMatch(/<th[^>]*>Activity<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Type<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Organised by<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Hours<\/th>/);
+    expect(html).toContain("Weekly tuition for neighbourhood children");
+    expect(html).toContain(">Regular<");
+    expect(html).toContain(">One-off<");
+    expect(html).toMatch(/>Total<\/td><td[^>]*>55<\/td>/);
+  });
+
+  it("prints hours without trailing zeros and never a session count", () => {
+    const html = render("volunteering");
+
+    expect(html).toContain(">32.5<");
+    expect(html).toContain(">12<");
+    expect(html).toContain(">4.5<");
+    expect(html).not.toMatch(/\d+ sessions?/i);
+    expect(html).not.toMatch(/>(32\.50|12\.0|4\.50)</);
+  });
+
+  it("leaves the section out when there are no hours", () => {
+    expect(render("no-volunteering")).not.toContain("Volunteer hours");
+  });
+});

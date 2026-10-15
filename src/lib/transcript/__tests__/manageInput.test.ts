@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import { isDateInAcademicYear } from "../academicYear";
 import {
   awardCreateInput,
-  hoursInput,
   idInput,
   jcrcSaveForInput,
   jcrcSaveMineInput,
   rosterUpsertInput,
   searchQueryInput,
-  volunteerCreateInput,
+  volunteerActivityCreateInput,
+  volunteerActivityUpdateInput,
+  volunteerAttendanceSaveInput,
+  volunteerPeopleSetInput,
+  volunteerSessionAddInput,
 } from "../manageInput";
 import { accessFor, type AccessFamily } from "../permissions";
 
@@ -263,137 +266,157 @@ describe("rosterUpsertInput: overrides", () => {
   });
 });
 
-describe("hours", () => {
-  it.each([0.25, 0.5, 1, 7.75, 42, 200])("accepts %s", (h) => {
-    expect(hoursInput.safeParse(h).success).toBe(true);
-  });
-
-  it.each([
-    0,
-    0.1,
-    0.24,
-    0.3,
-    1.1,
-    200.25,
-    201,
-    -1,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-  ])("rejects %s", (h) => {
-    expect(hoursInput.safeParse(h).success).toBe(false);
-  });
-});
-
-describe("volunteerCreateInput", () => {
+describe("volunteerActivityCreateInput", () => {
   const base = {
     ccaID: 9001,
     academicYear: AY,
-    userID: "SEED-R12",
-    activity: "Beach clean-up",
-    hours: 4,
+    title: "Weekly tuition",
+    description: "",
+    kind: "regular" as const,
   };
+  const ID = "0123456789abcdef01234567";
 
-  it("needs a date for a one-off, inside the academic year", () => {
+  it("accepts a regular activity with no session fields", () => {
+    expect(volunteerActivityCreateInput.safeParse(base).success).toBe(true);
     expect(
-      volunteerCreateInput.safeParse({ ...base, kind: "oneoff" }).success,
-    ).toBe(false);
-    expect(
-      volunteerCreateInput.safeParse({
-        ...base,
-        kind: "oneoff",
-        activityDate: "2026-09-12",
-      }).success,
+      volunteerActivityCreateInput.safeParse({ ...base, defaultHours: 1.5 })
+        .success,
     ).toBe(true);
-    expect(
-      volunteerCreateInput.safeParse({
-        ...base,
-        kind: "oneoff",
-        activityDate: "2026-08-01",
-      }).success,
-    ).toBe(true);
-    expect(
-      volunteerCreateInput.safeParse({
-        ...base,
-        kind: "oneoff",
-        activityDate: "2027-07-31",
-      }).success,
-    ).toBe(true);
-    expect(
-      volunteerCreateInput.safeParse({
-        ...base,
-        kind: "oneoff",
-        activityDate: "2026-07-31",
-      }).success,
-    ).toBe(false);
-    expect(
-      volunteerCreateInput.safeParse({
-        ...base,
-        kind: "oneoff",
-        activityDate: "2027-08-01",
-      }).success,
-    ).toBe(false);
   });
 
-  it("rejects an impossible date", () => {
-    for (const activityDate of [
-      "2026-02-30",
-      "2026-13-01",
-      "2026-9-1",
-      "tomorrow",
-      "2026-09-12T10:00",
-    ]) {
-      expect(
-        volunteerCreateInput.safeParse({
-          ...base,
-          kind: "oneoff",
-          activityDate,
-        }).success,
-      ).toBe(false);
-    }
-  });
-
-  it("accepts a regular record with no date, and refuses one with a date", () => {
+  it("needs a date and hours for a one-off, the date inside the year", () => {
+    const oneoff = { ...base, kind: "oneoff" as const };
+    expect(volunteerActivityCreateInput.safeParse(oneoff).success).toBe(false);
     expect(
-      volunteerCreateInput.safeParse({ ...base, kind: "regular" }).success,
-    ).toBe(true);
-    expect(
-      volunteerCreateInput.safeParse({
-        ...base,
-        kind: "regular",
-        activityDate: "2026-09-12",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("bounds the activity text, the kind and the hours", () => {
-    expect(
-      volunteerCreateInput.safeParse({
-        ...base,
-        kind: "regular",
-        activity: "a".repeat(121),
-      }).success,
-    ).toBe(false);
-    expect(
-      volunteerCreateInput.safeParse({
-        ...base,
-        kind: "regular",
-        activity: "   ",
-      }).success,
-    ).toBe(false);
-    expect(
-      volunteerCreateInput.safeParse({ ...base, kind: "weekly" }).success,
-    ).toBe(false);
-    expect(
-      volunteerCreateInput.safeParse({ ...base, kind: "regular", hours: 0.3 })
+      volunteerActivityCreateInput.safeParse({ ...oneoff, date: "2026-11-02" })
         .success,
     ).toBe(false);
     expect(
-      volunteerCreateInput.safeParse({
-        ...base,
-        kind: "regular",
-        hours: 200.25,
+      volunteerActivityCreateInput.safeParse({ ...oneoff, hours: 3 }).success,
+    ).toBe(false);
+    expect(
+      volunteerActivityCreateInput.safeParse({
+        ...oneoff,
+        date: "2026-11-02",
+        hours: 3,
+      }).success,
+    ).toBe(true);
+    expect(
+      volunteerActivityCreateInput.safeParse({
+        ...oneoff,
+        date: "2027-08-01",
+        hours: 3,
       }).success,
     ).toBe(false);
+  });
+
+  it("refuses a date or hours on a regular activity", () => {
+    expect(
+      volunteerActivityCreateInput.safeParse({ ...base, date: "2026-11-02" })
+        .success,
+    ).toBe(false);
+    expect(
+      volunteerActivityCreateInput.safeParse({ ...base, hours: 2 }).success,
+    ).toBe(false);
+  });
+
+  it("limits the title to 80 and the description to 300", () => {
+    const parse = (extra: object) =>
+      volunteerActivityCreateInput.safeParse({ ...base, ...extra }).success;
+    expect(parse({ title: "x".repeat(80) })).toBe(true);
+    expect(parse({ title: "x".repeat(81) })).toBe(false);
+    expect(parse({ title: "   " })).toBe(false);
+    expect(parse({ description: "x".repeat(300) })).toBe(true);
+    expect(parse({ description: "x".repeat(301) })).toBe(false);
+  });
+
+  it("takes only a real kind", () => {
+    expect(
+      volunteerActivityCreateInput.safeParse({ ...base, kind: "weekly" })
+        .success,
+    ).toBe(false);
+  });
+
+  it.each([0.25, 0.5, 1, 7.75, 24])("accepts %s hours", (h) => {
+    expect(
+      volunteerActivityCreateInput.safeParse({ ...base, defaultHours: h })
+        .success,
+    ).toBe(true);
+  });
+
+  it.each([0, 0.1, 0.3, 1.1, 24.25, 25, 200, -1, Number.NaN])(
+    "rejects %s hours",
+    (h) => {
+      expect(
+        volunteerActivityCreateInput.safeParse({ ...base, defaultHours: h })
+          .success,
+      ).toBe(false);
+    },
+  );
+
+  it("updates by id with the same text rules", () => {
+    const body = { ccaID: 9001, title: "T", description: "" };
+    expect(
+      volunteerActivityUpdateInput.safeParse({ ...body, id: ID }).success,
+    ).toBe(true);
+    expect(
+      volunteerActivityUpdateInput.safeParse({ ...body, id: "nope" }).success,
+    ).toBe(false);
+    expect(
+      volunteerActivityUpdateInput.safeParse({
+        ...body,
+        id: ID,
+        hours: 0.3,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("adds a session with optional date and hours, 0.25 to 24", () => {
+    const add = (extra: object) =>
+      volunteerSessionAddInput.safeParse({
+        activityID: ID,
+        ccaID: 9001,
+        ...extra,
+      }).success;
+    expect(add({})).toBe(true);
+    expect(add({ date: "2026-10-08", hours: 1.5 })).toBe(true);
+    expect(add({ hours: 25 })).toBe(false);
+    expect(add({ date: "2026-02-30" })).toBe(false);
+  });
+
+  it("sets people by key, at most 300", () => {
+    const people = (n: number) =>
+      volunteerPeopleSetInput.safeParse({
+        activityID: ID,
+        ccaID: 9001,
+        userIDs: Array.from({ length: n }, (_, i) => `e${i}`),
+      }).success;
+    expect(people(300)).toBe(true);
+    expect(people(301)).toBe(false);
+    expect(people(0)).toBe(true);
+  });
+
+  it("saves attendance as ticks with an optional override", () => {
+    const save = (changes: object[]) =>
+      volunteerAttendanceSaveInput.safeParse({
+        activityID: ID,
+        ccaID: 9001,
+        changes,
+      }).success;
+    expect(save([{ sessionID: ID, userID: "a", attended: true }])).toBe(true);
+    expect(
+      save([
+        { sessionID: ID, userID: "a", attended: true, hoursOverride: 2.5 },
+        { sessionID: ID, userID: "b", attended: true, hoursOverride: null },
+        { sessionID: ID, userID: "c", attended: false },
+      ]),
+    ).toBe(true);
+    expect(
+      save([
+        { sessionID: ID, userID: "a", attended: true, hoursOverride: 0.1 },
+      ]),
+    ).toBe(false);
+    expect(save([{ sessionID: "x", userID: "a", attended: true }])).toBe(false);
   });
 });
 

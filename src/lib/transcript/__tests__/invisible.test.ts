@@ -6,7 +6,7 @@ import {
   jcrcSaveMineInput,
   line,
   rosterUpsertInput,
-  volunteerCreateInput,
+  volunteerActivityCreateInput,
 } from "../manageInput";
 
 const RANGES: Array<[string, number, number]> = [
@@ -92,11 +92,12 @@ describe("invisible and direction-changing characters", () => {
       rosterUpsertInput.safeParse({ ...base, extraContribution: bad }).success,
     ).toBe(false);
     expect(
-      volunteerCreateInput.safeParse({
-        ...base,
+      volunteerActivityCreateInput.safeParse({
+        ccaID: base.ccaID,
+        academicYear: base.academicYear,
         kind: "regular",
-        activity: bad,
-        hours: 1,
+        title: bad,
+        description: "",
       }).success,
     ).toBe(false);
     expect(

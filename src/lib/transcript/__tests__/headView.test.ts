@@ -6,17 +6,13 @@ import {
   counterText,
   draftOf,
   durationOptions,
-  formatHours,
   headYearOptions,
-  hoursByResident,
-  hoursProblem,
   isDirty,
-  parseHours,
   remainingCharacters,
   rowProblem,
   upsertFields,
 } from "../headView";
-import { rosterUpsertInput, volunteerCreateInput } from "../manageInput";
+import { rosterUpsertInput } from "../manageInput";
 
 const saved = draftOf({
   duration: null,
@@ -174,53 +170,6 @@ describe("limits", () => {
       /at most 500/,
     );
     expect(rowProblem(saved)).toBeNull();
-  });
-});
-
-describe("hours", () => {
-  it("accepts quarter hours from 0.25 to 200", () => {
-    for (const ok of ["0.25", "1", "2.5", "199.75", "200"]) {
-      expect(parseHours(ok), ok).not.toBeNull();
-      expect(hoursProblem(ok), ok).toBeNull();
-    }
-  });
-
-  it("rejects everything else, with a reason", () => {
-    for (const bad of ["0", "0.2", "0.1", "200.25", "-1", "abc", ""]) {
-      expect(parseHours(bad), bad).toBeNull();
-    }
-    expect(hoursProblem("0")).toMatch(/at least 0.25/);
-    expect(hoursProblem("201")).toMatch(/at most 200/);
-    expect(hoursProblem("1.3")).toMatch(/steps of 0.25/);
-    expect(hoursProblem("abc")).toMatch(/number/);
-    expect(hoursProblem("")).toBeNull();
-  });
-
-  it("builds input the server accepts", () => {
-    const parsed = volunteerCreateInput.safeParse({
-      ccaID: 9002,
-      academicYear: "AY2026/27",
-      userID: "SEED-R12",
-      kind: "oneoff",
-      activity: "Beach clean-up",
-      activityDate: "2026-11-02",
-      hours: parseHours("2.5"),
-    });
-    expect(parsed.success).toBe(true);
-  });
-
-  it("totals hours per resident, most first", () => {
-    const totals = hoursByResident([
-      { userID: "A", displayName: "Ann", hours: 2 },
-      { userID: "B", displayName: null, hours: 5 },
-      { userID: "A", displayName: "Ann", hours: 1.5 },
-    ]);
-    expect(totals).toEqual([
-      { userID: "B", name: "B", hours: 5 },
-      { userID: "A", name: "Ann", hours: 3.5 },
-    ]);
-    expect(formatHours(1)).toBe("1 hour");
-    expect(formatHours(3.5)).toBe("3.5 hours");
   });
 });
 
