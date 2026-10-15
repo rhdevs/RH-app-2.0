@@ -4,7 +4,8 @@ import { normaliseVerificationCode } from "~/lib/transcript/assemble";
 import { Crest } from "../transcript/_components/PageHeader";
 
 export const metadata: Metadata = {
-  title: "Verify a CCA Transcript · Raffles Hall",
+  title: "Verify a transcript",
+  robots: { index: false, follow: false },
 };
 
 /**
@@ -21,14 +22,16 @@ export default function VerifyIndexPage({
     ? searchParams.code[0]
     : searchParams.code;
   if (raw?.trim()) {
-    redirect(`/verify/${encodeURIComponent(normaliseVerificationCode(raw))}`);
+    redirect(
+      `/verify/${encodeURIComponent(normaliseVerificationCode(raw).slice(0, 64))}`,
+    );
   }
 
   return (
     <div className="mx-auto flex max-w-md flex-col items-center px-4 py-16 text-center">
       <Crest />
       <h1 className="mt-4 text-2xl font-semibold text-gray-900">
-        Verify a CCA Transcript
+        Verify a transcript
       </h1>
       <p className="mt-2 text-sm text-gray-600">
         Enter the verification code printed on the first page of a Raffles Hall
@@ -38,10 +41,10 @@ export default function VerifyIndexPage({
         <input
           name="code"
           required
-          placeholder="RH-CCT-XXXX-XXXX"
+          placeholder="RH-XXXXXXXXXXXXXXXX"
           autoComplete="off"
           spellCheck={false}
-          maxLength={40}
+          maxLength={24}
           className="flex-1 rounded-lg border border-gray-300 px-3 py-2 font-mono uppercase focus:border-emerald-700 focus:outline-none focus:ring-1 focus:ring-emerald-700"
         />
         <button
