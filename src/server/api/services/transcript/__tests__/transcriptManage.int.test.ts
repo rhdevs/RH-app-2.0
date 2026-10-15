@@ -932,6 +932,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           where: { id },
         });
         expect(first.voidedAt).toBeInstanceOf(Date);
+        expect(first.voidedBy).toBe(RVC_CHILDREN_HEAD.id);
         expect(await db.volunteerRecord.count()).toBe(before);
 
         expect(await as(JCRC).transcriptManage.volunteer.void({ id })).toEqual({
@@ -942,6 +943,11 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           (await db.volunteerRecord.findUniqueOrThrow({ where: { id } }))
             .voidedAt,
         ).toEqual(first.voidedAt);
+        // A later void by someone else does not rewrite who voided it.
+        expect(
+          (await db.volunteerRecord.findUniqueOrThrow({ where: { id } }))
+            .voidedBy,
+        ).toBe(RVC_CHILDREN_HEAD.id);
         const listed = await as(
           RVC_CHILDREN_HEAD,
         ).transcriptManage.volunteer.list({
@@ -1117,6 +1123,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toEqual([id]);
 
         expect(await m.awards.void({ id })).toEqual({ id, voided: true });
+        expect(
+          (await db.award.findUniqueOrThrow({ where: { id } })).voidedBy,
+        ).toBe(JCRC.id);
         expect(await db.award.count()).toBe(total + 1); // still there
         expect(
           (await db.award.findUniqueOrThrow({ where: { id } })).voidedAt,
@@ -1202,6 +1211,11 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           userID: JCRC_HEAD.id,
         } as never);
 
+        const row = await db.jcrcService.findUniqueOrThrow({
+          where: { academicYear_userID: { academicYear: AY, userID: JCRC.id } },
+        });
+        expect(row.updatedBy).toBe(JCRC.id);
+        expect(row.updatedAt).toBeInstanceOf(Date);
         const mine = await as(JCRC).transcriptManage.jcrc.mine({
           academicYear: AY,
         });
@@ -1289,7 +1303,11 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               academicYear_userID: { academicYear: AY, userID: JCRC_HEAD.id },
             },
           }),
-        ).toMatchObject({ position: "Treasurer", isPlaceholder: true });
+        ).toMatchObject({
+          position: "Treasurer",
+          isPlaceholder: true,
+          updatedBy: JCRC.id,
+        });
         expect(
           await errorOf(
             as(JCRC).transcriptManage.jcrc.saveFor({

@@ -155,6 +155,15 @@ describe("schema: guarded collections are untouched", () => {
     expect(changed).toEqual(["CcaProfile"]);
   });
 
+  it("records who voided an award or volunteer record, and who last saved a JCRC record", () => {
+    const field = (model: string, name: string) =>
+      current.get(model)!.find((f) => f.name === name);
+
+    expect(field("Award", "voidedBy")?.decl).toBe("String?");
+    expect(field("VolunteerRecord", "voidedBy")?.decl).toBe("String?");
+    expect(field("JcrcService", "updatedBy")?.decl).toBe("String?");
+  });
+
   it("adds only the nullable isVolunteering flag to CcaProfile", () => {
     const names = current.get("CcaProfile")!.map((f) => f.name);
 

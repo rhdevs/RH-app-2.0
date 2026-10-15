@@ -109,6 +109,9 @@ export async function volunteerVoid(
   }
   await assertWritable(db, record.academicYear);
   if (record.voidedAt) return { id, voided: true as const };
-  await db.volunteerRecord.update({ where: { id }, data: { voidedAt: now } });
+  await db.volunteerRecord.update({
+    where: { id },
+    data: { voidedAt: now, voidedBy: actorUserID },
+  });
   return { id, voided: true as const };
 }

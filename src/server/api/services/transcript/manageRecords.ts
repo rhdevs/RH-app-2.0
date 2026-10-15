@@ -86,6 +86,7 @@ export async function awardsList(
     recordedBy: r.recordedBy,
     recordedAt: r.recordedAt,
     voidedAt: r.voidedAt,
+    voidedBy: r.voidedBy,
   }));
 }
 
@@ -110,9 +111,10 @@ export async function awardCreate(
   return { id: row.id };
 }
 
-/** Void an award. It stays in the database; the model has no field for who voided it. */
+/** Void an award. It stays in the database, with who voided it and when. */
 export async function awardVoid(
   db: PrismaClient,
+  actorUserID: string,
   id: string,
   now: Date = new Date(),
 ) {
@@ -122,7 +124,10 @@ export async function awardVoid(
   }
   await assertWritable(db, award.academicYear);
   if (!award.voidedAt) {
-    await db.award.update({ where: { id }, data: { voidedAt: now } });
+    await db.award.update({
+      where: { id },
+      data: { voidedAt: now, voidedBy: actorUserID },
+    });
   }
   return { id, voided: true as const };
 }
@@ -133,11 +138,12 @@ type JcrcFields = Omit<z.infer<typeof jcrcSaveForInput>, "userID">;
 
 /**
  * Save a JCRC service record for the resident filed under `key`. `isPlaceholder`
- * is never touched (a new record takes the model's default, true). The model has
- * no updatedBy, so only the time is stamped.
+ * is never touched (a new record takes the model's default, true). Stamps who
+ * saved it (`actorUserID`: the member, or the manager acting for them) and when.
  */
 export async function jcrcSave(
   db: PrismaClient,
+  actorUserID: string,
   key: string,
   fields: JcrcFields,
   now: Date = new Date(),
@@ -150,6 +156,7 @@ export async function jcrcSave(
     contributions: fields.contributions,
     testimonial: fields.testimonial,
     updatedAt: now,
+    updatedBy: actorUserID,
   };
   await db.jcrcService.upsert({
     where: {
@@ -163,11 +170,12 @@ export async function jcrcSave(
 
 export async function jcrcSaveFor(
   db: PrismaClient,
+  actorUserID: string,
   fields: JcrcFields & { userID: string },
   now: Date = new Date(),
 ) {
   const resident = await requireResident(db, fields.userID);
-  return jcrcSave(db, resident.key, fields, now);
+  return jcrcSave(db, actorUserID, resident.key, fields, now);
 }
 
 export async function jcrcGet(
@@ -189,6 +197,7 @@ export async function jcrcGet(
         testimonial: row.testimonial ?? "",
         isPlaceholder: row.isPlaceholder ?? true,
         updatedAt: row.updatedAt,
+        updatedBy: row.updatedBy,
       }
     : null;
 }

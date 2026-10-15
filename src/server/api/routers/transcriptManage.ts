@@ -110,14 +110,18 @@ export const transcriptManageRouter = createTRPCRouter({
 
     void: managerProcedure
       .input(idInput)
-      .mutation(({ ctx, input }) => awardVoid(ctx.db, input.id)),
+      .mutation(({ ctx, input }) =>
+        awardVoid(ctx.db, ctx.session.user.userID, input.id),
+      ),
   }),
 
   jcrc: createTRPCRouter({
     /** A manager saves anyone's JCRC record. */
     saveFor: managerProcedure
       .input(jcrcSaveForInput)
-      .mutation(({ ctx, input }) => jcrcSaveFor(ctx.db, input)),
+      .mutation(({ ctx, input }) =>
+        jcrcSaveFor(ctx.db, ctx.session.user.userID, input),
+      ),
 
     /** A JCRC member's own record, for the year. */
     mine: identifiedProcedure
@@ -132,7 +136,8 @@ export const transcriptManageRouter = createTRPCRouter({
       .input(jcrcSaveMineInput)
       .mutation(async ({ ctx, input }) => {
         await requireJcrcSelf(ctx.db, ctx.session.user.userID);
-        return jcrcSave(ctx.db, ctx.session.user.userID, input);
+        const me = ctx.session.user.userID;
+        return jcrcSave(ctx.db, me, me, input);
       }),
   }),
 
