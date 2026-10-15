@@ -2,6 +2,11 @@ import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { errorText } from "~/lib/transcript/adminView";
+import {
+  captureFreezes,
+  restoreFreezes,
+  type FreezeBaseline,
+} from "./intHelpers";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 
 /**
@@ -126,10 +131,20 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await db.ccaProfile.findMany({ where: { ccaID: { in: CCA_IDS } } }),
       );
       expect(baseline.roster.length).toBeGreaterThan(0);
+      baselineFreezes = await captureFreezes(db);
       expect(baseline.volunteer.length).toBeGreaterThan(0);
     }, 120_000);
 
+    let baselineFreezes: FreezeBaseline = [];
+
+    /** Close the year (freezing every CCA), then publish it. */
+    const publishAy = async (who: Who = JCRC) => {
+      await as(who).transcript.periods.close({ academicYear: AY });
+      return as(who).transcript.periods.publish({ academicYear: AY });
+    };
+
     const reset = async () => {
+      await restoreFreezes(db, baselineFreezes);
       await db.transcriptAccess.deleteMany({ where: seeded });
       await db.transcriptRosterEntry.deleteMany({
         where: { academicYear: AY },
@@ -173,8 +188,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       }
     }, 60_000);
 
-    const publish = () =>
-      as(JCRC).transcript.periods.publish({ academicYear: AY });
+    const publish = () => publishAy(JCRC);
 
     const aVolunteerRecordOf = (ccaID: number) =>
       db.volunteerRecord.findFirstOrThrow({
@@ -596,6 +610,21 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("ok");
 
         await as(JCRC).transcript.periods.reopen({ academicYear: AY });
+        await as(JCRC).transcript.periods.backToCollecting({
+          academicYear: AY,
+        });
+        // The close froze every CCA, so their heads are read-only until a CCA is
+        // unfrozen; the JCRC can unfreeze it while the year is not published.
+        expect(await errorOf(writes[0]![1]())).toBe(
+          "FORBIDDEN:CCA_YEAR_FROZEN",
+        );
+        for (const ccaID of [SOCCER, RVC_CHILDREN]) {
+          await as(JCRC).transcript.freezes.unfreeze({
+            academicYear: AY,
+            ccaID,
+            reason: "Heads still need to finish",
+          });
+        }
         for (const [name, run] of writes.slice(0, 2)) {
           expect(await errorOf(run()), name).toBe("ok");
         }
@@ -766,7 +795,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           },
         });
 
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
 
         const frozen = await db.transcriptRosterEntry.findFirstOrThrow({
           where: { academicYear: AY, userID: "SEED-R05", ccaID: CHOIR },
@@ -1725,7 +1754,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           academicYear: AY,
           sem2Start: "2027-01-12",
         });
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
         const listed = await as(ADMIN).transcript.periods.list();
         const period = listed.periods.find((x) => x.academicYear === AY)!;
         expect(period.publishedByName).toBe("Seed Resident 02");
@@ -1749,6 +1778,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
 
         await c.setSem2Start({ academicYear: AY, sem2Start: "2027-01-12" });
+        await c.close({ academicYear: AY });
         await c.publish({ academicYear: AY });
         // still editable once published
         expect(
@@ -1795,13 +1825,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await c.reopen({ academicYear: AY });
       });
 
-      it("returns the published count and the unmatched count for the publish summary", async () => {
-        const result = await as(JCRC).transcript.periods.publish({
+      it("tells a close how many CCAs it froze, and reopens to review", async () => {
+        const closed = await as(JCRC).transcript.periods.close({
           academicYear: AY,
         });
-
-        expect(result.frozen).toBeGreaterThan(0);
-        expect(result.skippedUnresolved).toBe(0);
+        expect(closed.frozenNow + closed.alreadyFrozen).toBe(14);
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
         const reopened = await as(JCRC).transcript.periods.reopen({
           academicYear: AY,
         });

@@ -2,6 +2,11 @@ import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  captureFreezes,
+  restoreFreezes,
+  type FreezeBaseline,
+} from "./intHelpers";
 
 /**
  * INTEGRATION TESTS against the LOCAL development database. They run ONLY when
@@ -47,6 +52,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let db: PrismaClient;
     let createCaller: typeof CreateCaller;
     let baselineAnnotations: Array<Record<string, unknown>> = [];
+    let baselineFreezes: FreezeBaseline = [];
     let ipCounter = 0;
 
     const as = (who: { id: string; roles: string[] } | null, ip?: string) =>
@@ -91,6 +97,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         })
       ).map(({ id: _id, ...rest }) => rest);
       expect(baselineAnnotations.length).toBeGreaterThan(0);
+      baselineFreezes = await captureFreezes(db);
     }, 120_000);
 
     /** Back to the seeded baseline: collecting, nothing opened, annotations as seeded. */
@@ -104,6 +111,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       await db.transcriptRosterEntry.createMany({
         data: baselineAnnotations as never,
       });
+      await restoreFreezes(db, baselineFreezes);
       await db.transcriptPeriod.upsert({
         where: { academicYear: AY },
         create: {
@@ -133,6 +141,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       }
     }, 60_000);
 
+    /** Close the year (freezing every CCA), then publish it. */
+    const publishAy = async (who: { id: string; roles: string[] } = JCRC) => {
+      await as(who).transcript.periods.close({ academicYear: AY });
+      return as(who).transcript.periods.publish({ academicYear: AY });
+    };
+
     const entryOf = (userID: string, ccaID: number) =>
       db.transcriptRosterEntry.findUnique({
         where: {
@@ -147,11 +161,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           expect(await errorOf(as(who).transcript.periods.list())).toBe(
             "FORBIDDEN:INSUFFICIENT_ROLE",
           );
-          expect(
-            await errorOf(
-              as(who).transcript.periods.publish({ academicYear: AY }),
-            ),
-          ).toBe("FORBIDDEN:INSUFFICIENT_ROLE");
+          expect(await errorOf(publishAy(who))).toBe(
+            "FORBIDDEN:INSUFFICIENT_ROLE",
+          );
         }
         // scrc is stopped by the builder; the live role read stops a stale session.
         expect(
@@ -196,8 +208,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     /* ------------------------------------------------------------------ */
-    describe("publish", () => {
-      it("publishes a hall-sized roster (2,000 memberships) well inside the transaction limit", async () => {
+    describe("close year and publish", () => {
+      it("closes a hall-sized year (2,000 memberships) well inside the transaction limit", async () => {
         const PEOPLE = 400;
         const CCAS_EACH = [9001, 9002, 9003, 9004, 9005]; // 400 x 5 = 2,000
         const id = (n: number) => `SEED-T${String(n).padStart(4, "0")}`;
@@ -253,19 +265,22 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           });
 
           const started = Date.now();
-          const result = await as(JCRC).transcript.periods.publish({
+          const result = await as(JCRC).transcript.periods.close({
             academicYear: AY,
           });
           const seconds = (Date.now() - started) / 1000;
+          const frozenEntries = await db.transcriptRosterEntry.count({
+            where: { academicYear: AY, frozen: true },
+          });
           // eslint-disable-next-line no-console
           console.info(
-            `[scale] published ${result.frozen} entries in ${seconds.toFixed(1)}s`,
+            `[scale] closed the year: ${frozenEntries} entries frozen in ${seconds.toFixed(1)}s`,
           );
 
-          expect(result.frozen).toBe(
+          expect(frozenEntries).toBe(
             MEMBERS_SEEDED + PEOPLE * CCAS_EACH.length,
           );
-          expect(result.skippedUnresolved).toBe(0);
+          expect(result.frozenNow + result.alreadyFrozen).toBe(14);
           expect(seconds).toBeLessThan(30);
           expect(
             await db.transcriptRosterEntry.count({
@@ -285,7 +300,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
       }, 120_000);
 
-      it("refuses without a semester-2 start date", async () => {
+      it("refuses to close without a semester-2 start date", async () => {
         await as(JCRC).transcript.periods.setSem2Start({
           academicYear: AY,
           sem2Start: null,
@@ -293,7 +308,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
         expect(
           await errorOf(
-            as(JCRC).transcript.periods.publish({ academicYear: AY }),
+            as(JCRC).transcript.periods.close({ academicYear: AY }),
           ),
         ).toBe("PRECONDITION_FAILED:SEM2_START_REQUIRED");
         expect(
@@ -303,9 +318,15 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             })
           )?.status,
         ).toBe("collecting");
+        // nothing was frozen by the refused close
+        expect(
+          await db.ccaYearFreeze.count({
+            where: { academicYear: AY, reason: "close_year" },
+          }),
+        ).toBe(0);
       });
 
-      it("freezes the roster with the right default durations", async () => {
+      it("closing freezes every CCA with the right default durations", async () => {
         // A late-accepted plain member (no seeded override) and an early one.
         const apps = await db.ccaApplication.findMany({
           where: { userID: { startsWith: "SEED-" }, status: "accepted" },
@@ -329,12 +350,18 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           data: { grantedAt: new Date("2027-02-01T00:00:00Z") },
         });
         try {
-          const result = await as(JCRC).transcript.periods.publish({
+          const closed = await as(JCRC).transcript.periods.close({
             academicYear: AY,
           });
+          await as(JCRC).transcript.periods.publish({ academicYear: AY });
 
-          expect(result.frozen).toBe(MEMBERS_SEEDED);
-          expect(result.skippedUnresolved).toBe(0);
+          // 12 CCAs were not frozen; the 2 the seed froze already were left alone.
+          expect(closed).toMatchObject({ frozenNow: 12, alreadyFrozen: 2 });
+          expect(
+            await db.ccaYearFreeze.count({
+              where: { academicYear: AY, reason: "close_year" },
+            }),
+          ).toBe(12);
           expect((await entryOf(late.userID, late.ccaID))?.duration).toBe(
             "sem2",
           );
@@ -379,8 +406,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
       });
 
-      it("keeps members who left, and ignores anyone who joined, after publish", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+      it("keeps members who left, and ignores anyone who joined, after the close", async () => {
+        await publishAy(JCRC);
 
         const left = await db.userCCA.findMany({
           where: { userID: "SEED-R13", ccaID: 9009 },
@@ -400,7 +427,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             academicYear: AY,
           });
 
-          expect(gone.mode).toBe("frozen");
+          expect(gone.status).toBe("published");
           const row = gone.transcript.pages
             .flatMap((p) => (p.kind === "main" ? p.sections : []))
             .flatMap((s) => (s.kind === "involvements" ? s.rows : []))
@@ -423,7 +450,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("locks edits while published", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
 
         expect(
           await errorOf(
@@ -435,17 +462,29 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("FORBIDDEN:PERIOD_PUBLISHED");
       });
 
-      it("refuses a second publish", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+      it("refuses to publish a year that is not closed, and a second publish", async () => {
+        expect(
+          await errorOf(
+            as(JCRC).transcript.periods.publish({ academicYear: AY }),
+          ),
+        ).toBe("CONFLICT:NOT_CLOSED");
+
+        await publishAy(JCRC);
 
         expect(
           await errorOf(
             as(JCRC).transcript.periods.publish({ academicYear: AY }),
           ),
-        ).toBe("CONFLICT:ALREADY_PUBLISHED");
+        ).toBe("CONFLICT:NOT_CLOSED");
+        expect(
+          await errorOf(
+            as(JCRC).transcript.periods.close({ academicYear: AY }),
+          ),
+        ).toBe("CONFLICT:NOT_COLLECTING");
       });
 
       it("leaves one consistent state when two publishes race", async () => {
+        await as(JCRC).transcript.periods.close({ academicYear: AY });
         const results = await Promise.allSettled([
           as(JCRC).transcript.periods.publish({ academicYear: AY }),
           as(ADMIN).transcript.periods.publish({ academicYear: AY }),
@@ -490,7 +529,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("is assembled from the frozen record once the year is published", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
 
         const result = await as(RESIDENT_12).transcript.mine.get({
           academicYear: AY,
@@ -516,7 +555,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("dates the transcript with the day the year was published, in Singapore, on every view", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
         const period = await db.transcriptPeriod.findUniqueOrThrow({
           where: { academicYear: AY },
         });
@@ -546,12 +585,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           academicYear: AY,
         });
 
-        expect(preview.mode).toBe("live");
+        expect(preview.status).toBe("collecting");
         expect(preview.transcript.issue.issuedOn).toBeNull();
       });
 
       it("notes the first and last time it was opened, once, even when opened many times at once", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
 
         await Promise.all(
           Array.from({ length: 6 }, () =>
@@ -575,7 +614,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("can only ever be the signed-in resident's own", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
 
         // A client-supplied userID is not an input, so it is stripped, not honoured.
         const result = await as(RESIDENT_12).transcript.mine.get({
@@ -595,7 +634,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("shows current data on every view, with no stored copy", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
         const first = await as(RESIDENT_12).transcript.mine.get({
           academicYear: AY,
         });
@@ -619,7 +658,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("shows an empty year for a resident with no involvements", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
         // SEED-R20 is in a couple of CCAs; unfreeze their entries to make the year empty.
         await db.transcriptRosterEntry.updateMany({
           where: { academicYear: AY, userID: "SEED-R20" },
@@ -649,7 +688,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("is ready for a published year the resident has not opened, then clears once they open it", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
 
         expect(await as(RESIDENT_12).transcript.mine.readiness()).toEqual({
           ready: true,
@@ -696,8 +735,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ------------------------------------------------------------------ */
     describe("reopen", () => {
-      it("is a plain status change: residents lose access, and see corrected data after re-publish", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+      it("goes back to review: residents see a draft, and the corrected data after re-publish", async () => {
+        await publishAy(JCRC);
         await as(RESIDENT_12).transcript.mine.get({ academicYear: AY });
 
         const reopened = await as(ADMIN).transcript.periods.reopen({
@@ -708,12 +747,15 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const period = await db.transcriptPeriod.findUniqueOrThrow({
           where: { academicYear: AY },
         });
-        expect(period.status).toBe("collecting");
+        expect(period.status).toBe("closed");
         expect(period.reopenedBy).toBe(ADMIN.id);
-        expect(
-          (await as(RESIDENT_12).transcript.mine.get({ academicYear: AY }))
-            .status,
-        ).toBe("not_open");
+        // The year is back in review: the resident sees a DRAFT, and opening it
+        // is not recorded as having downloaded.
+        const draft = await as(RESIDENT_12).transcript.mine.get({
+          academicYear: AY,
+        });
+        expect(draft).toMatchObject({ status: "ready", draft: true });
+        expect(draft.status === "ready" && draft.transcript.isDraft).toBe(true);
         // Reopening cleared nothing: the annotations are still there.
         expect((await entryOf("SEED-R12", 9007))?.duration).toBe("sem1");
 
@@ -726,6 +768,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           academicYear: AY,
         });
         if (second.status !== "ready") throw new Error("not ready");
+        expect(second.draft).toBe(false);
+        expect(second.transcript.isDraft).toBe(false);
         expect(second.transcript.hasAwards).toBe(false);
         await db.award.updateMany({
           where: { userID: RESIDENT_12.id },
@@ -744,19 +788,21 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ------------------------------------------------------------------ */
     describe("what the pages rely on", () => {
-      it("lists only published years, as names", async () => {
+      it("lists the years a resident can open: published ones, and closed ones as drafts", async () => {
         expect(await as(RESIDENT).transcript.mine.years()).toEqual([]);
 
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
 
-        expect(await as(RESIDENT).transcript.mine.years()).toEqual([AY]);
+        expect(await as(RESIDENT).transcript.mine.years()).toEqual([
+          { academicYear: AY, draft: false },
+        ]);
         expect(await errorOf(as(null).transcript.mine.years())).toBe(
           "UNAUTHORIZED:UNAUTHORIZED",
         );
       });
 
       it("shows the resident the same transcript as the admin preview of a published year", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await publishAy(JCRC);
 
         const mine = await as(RESIDENT_12).transcript.mine.get({
           academicYear: AY,
@@ -767,7 +813,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
 
         if (mine.status !== "ready") throw new Error("not ready");
-        expect(preview.mode).toBe("frozen");
+        expect(preview.status).toBe("published");
         expect(preview.transcript).toEqual(mine.transcript);
         expect(mine.transcript.resident.isSpecimen).toBe(false);
       });
