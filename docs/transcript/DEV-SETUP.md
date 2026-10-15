@@ -207,3 +207,24 @@ The seed gives AY2026/27 two RVC activities. RVC Children (9002, head `seed-r06`
 | Unsaved changes | `seed-r06` | Tick cells, then open another activity or reload | The browser or an in-app prompt asks before leaving. |
 
 Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: awards
+
+The seed gives a catalogue of five awards (Colours Award, Soccer; Service Excellence Award; Outstanding Newcomer; Full Colours; Retired Award, archived), the awards `seed-r04` and `seed-r12` already had, and one upload, "colours-2026.csv", whose three "Full Colours" awards belong to `seed-r13` to `seed-r15`. After pulling this change, `prisma db push` adds `AwardType` and `AwardImportBatch` and the new `Award` fields and index. Only admin and JCRC can open `/admin/transcripts/awards`; `seed-r04` is sent back to `/admin`.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| The link | `seed-r01` | `/admin/transcripts` | The Awards section is a short count ("7 awards for AY2026/27") with "Manage awards". |
+| Awards tab | `seed-r02` | `/admin/transcripts/awards` | "Assign an award", then the year's awards grouped: "Full Colours: 3 residents" and so on, collapsed. |
+| Group and search | `seed-r02` | Open a group; type `colours`; turn "Group by award" off | The people and citations show; search opens every group; off gives one flat list naming each award. |
+| Assign | `seed-r02` | Choose "Full Colours", add `seed-r13` and `seed-r20` as chips, Assign | "1 assigned. Skipped (already have it): Seed Resident 13." Typing a citation for a person overrides the default. |
+| New award | `seed-r02` | Choose "New award", name it, add someone, Assign | The award is created in the catalogue and assigned. A name that clashes (any case or spacing) is refused. |
+| Edit and remove | `seed-r02` | Edit a row, change the title and citation, Save; Remove; Show removed; Restore | The row changes; a removed row is struck through and can be restored. |
+| Bulk | `seed-r02` | Tick several rows or a group, Remove selected, confirm; Restore selected | A confirmation first; a restore skips anyone who now has the award again and names them. |
+| Catalogue | `seed-r02` | Catalogue tab: add, edit, Archive, Show archived, Restore | An archived award disappears from "Assign an award" but its awards stay on transcripts; renaming leaves past awards' names alone. |
+| History | `seed-r02` | History tab, Undo on "colours-2026.csv", confirm | "3 awards removed."; the three "Full Colours" awards are gone from the Awards tab (Show removed shows them); Undo is no longer offered. |
+| Published | `seed-r01` | Publish the year, open the page | A note that changes are locked; the Awards and History tabs are read-only; the Catalogue still works. |
+| On a transcript | `seed-r01` | Preview as resident `seed-r04` | "Award | Year": "Colours Award, Soccer", 2026/27, and the citation in small italics beneath. |
+| Roster layout | `seed-r04` | `/cca/9005/transcript` at 1280px | The roster is cards (the column beside the side menu is narrower than the table needs); on a wider screen the table shows with Save fixed at the right edge. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.

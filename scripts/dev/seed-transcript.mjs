@@ -209,6 +209,9 @@ async function reset() {
   await db.ccaActivity.deleteMany({ where: { ccaID: { in: CCA_IDS } } });
   await db.jcrcService.deleteMany({ where: { userID: mine } });
   await db.award.deleteMany({ where: { userID: mine } });
+  // The catalogue has no year; only the entries this script made are ours.
+  await db.awardType.deleteMany({ where: { createdBy: mine } });
+  await db.awardImportBatch.deleteMany({ where: { createdBy: mine } });
   for (const model of [
     db.volunteerAttendance,
     db.volunteerPerson,
@@ -603,13 +606,48 @@ async function seed() {
     [[6, null, null]],
   );
 
+  // The award catalogue: five entries, one archived.
+  const typeOf = {};
+  for (const [name, defaultCitation, archivedAt] of [
+    ["Colours Award, Soccer", "For service to hall soccer.", null],
+    ["Service Excellence Award", null, null],
+    ["Outstanding Newcomer", null, null],
+    ["Full Colours", "For outstanding contribution to hall life.", null],
+    ["Retired Award", null, new Date("2026-09-30T00:00:00Z")],
+  ]) {
+    typeOf[name] = await db.awardType.create({
+      data: {
+        name,
+        normalizedName: name.trim().replace(/\s+/g, " ").toLowerCase(),
+        defaultCitation,
+        archivedAt,
+        archivedBy: archivedAt ? uid(2) : null,
+        createdBy: uid(2),
+        createdAt: new Date("2026-08-15T04:00:00Z"),
+      },
+    });
+  }
+
   const award = (n, title, citation, extra) => ({
     academicYear: AY,
     userID: uid(n),
     title,
     citation,
+    awardTypeID: typeOf[title]?.id ?? null,
     recordedBy: uid(2),
     ...extra,
+  });
+  // One upload of awards (3 of its 4 rows imported), so History has an entry.
+  const batch = await db.awardImportBatch.create({
+    data: {
+      academicYear: AY,
+      fileName: "colours-2026.csv",
+      rowCount: 4,
+      importedCount: 3,
+      skippedCount: 1,
+      createdBy: uid(2),
+      createdAt: new Date("2026-10-10T04:00:00Z"),
+    },
   });
   await db.award.createMany({
     data: [
@@ -623,6 +661,11 @@ async function seed() {
       award(17, "Recorded in error", null, {
         voidedAt: new Date("2027-04-02T00:00:00Z"),
       }),
+      ...[13, 14, 15].map((n) =>
+        award(n, "Full Colours", "For outstanding contribution to hall life.", {
+          importBatchID: batch.id,
+        }),
+      ),
     ],
   });
 
@@ -726,6 +769,7 @@ async function summary() {
       await db.volunteerPerson.count({ where: { academicYear: AY } }),
       await db.volunteerAttendance.count({ where: { academicYear: AY } }),
     ].join(" / "),
+    "AwardType (archived) / AwardImportBatch": `${await db.awardType.count({ where: { createdBy: { startsWith: PREFIX } } })} (${await db.awardType.count({ where: { createdBy: { startsWith: PREFIX }, archivedAt: { not: null } } })}) / ${await db.awardImportBatch.count({ where: { academicYear: AY } })}`,
     "Award (voided)": `${await db.award.count({ where: { academicYear: AY } })} (${await db.award.count({ where: { academicYear: AY, voidedAt: { not: null } } })})`,
     JcrcService: await db.jcrcService.count({ where: { academicYear: AY } }),
     "CcaActivity (removed)": `${await db.ccaActivity.count({ where: { academicYear: AY } })} (${await db.ccaActivity.count({ where: { academicYear: AY, removedAt: { not: null } } })})`,

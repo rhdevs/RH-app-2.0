@@ -704,6 +704,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               VolunteerPerson: db.volunteerPerson,
               VolunteerAttendance: db.volunteerAttendance,
               Award: db.award,
+              AwardImportBatch: db.awardImportBatch,
               JcrcService: db.jcrcService,
               TranscriptAccess: db.transcriptAccess,
               CcaYearFreeze: db.ccaYearFreeze,
@@ -774,6 +775,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
         await db.award.createMany({
           data: strip(await db.award.findMany({ where })) as never,
+        });
+        await db.awardImportBatch.createMany({
+          data: strip(await db.awardImportBatch.findMany({ where })) as never,
         });
         await db.jcrcService.createMany({
           data: strip(await db.jcrcService.findMany({ where })) as never,

@@ -228,6 +228,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         },
       });
 
+    /** A live catalogue entry, for assigning in tests. */
+    const anAwardType = () =>
+      db.awardType.findFirstOrThrow({
+        where: { normalizedName: "full colours" },
+      });
+
     const newActivity = (ccaID: number, over: object = {}) => ({
       ccaID,
       academicYear: AY,
@@ -259,11 +265,21 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           ],
           ["awards.list", () => c.awards.list({ academicYear: AY })],
           [
-            "awards.create",
-            () =>
-              c.awards.create({ academicYear: AY, userID: R12.id, title: "T" }),
+            "awards.assign",
+            async () =>
+              c.awards.assign({
+                academicYear: AY,
+                awardTypeID: (await anAwardType()).id,
+                recipients: [{ userID: R12.id }],
+              }),
           ],
-          ["awards.void", () => c.awards.void({ id: award.id })],
+          ["awards.remove", () => c.awards.remove({ id: award.id })],
+          ["awardTypes.list", () => c.awardTypes.list({})],
+          ["awardTypes.create", () => c.awardTypes.create({ name: "Sneaky" })],
+          [
+            "awardBatches.list",
+            () => c.awardBatches.list({ academicYear: AY }),
+          ],
           [
             "jcrc.saveFor",
             () =>
@@ -523,10 +539,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           expect(await errorOf(m.awards.list({ academicYear: AY }))).toBe("ok");
           expect(
             await errorOf(
-              m.awards.create({
+              m.awards.assign({
                 academicYear: AY,
-                userID: R12.id,
-                title: "Award",
+                awardTypeID: (await anAwardType()).id,
+                recipients: [{ userID: R20.id }],
               }),
             ),
           ).toBe("ok");
@@ -588,17 +604,17 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               }),
           ],
           [
-            "awards.create",
-            () =>
-              as(JCRC).transcriptManage.awards.create({
+            "awards.assign",
+            async () =>
+              as(JCRC).transcriptManage.awards.assign({
                 academicYear: AY,
-                userID: R12.id,
-                title: "T",
+                awardTypeID: (await anAwardType()).id,
+                recipients: [{ userID: R20.id }],
               }),
           ],
           [
-            "awards.void",
-            () => as(JCRC).transcriptManage.awards.void({ id: award.id }),
+            "awards.remove",
+            () => as(JCRC).transcriptManage.awards.remove({ id: award.id }),
           ],
           [
             "jcrc.saveFor",
@@ -1114,99 +1130,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     /* ------------------------------------------------------------------ */
-    describe("awards", () => {
-      it("creates, lists, and voids without ever deleting", async () => {
-        const m = as(JCRC).transcriptManage;
-        const total = await db.award.count();
-
-        const { id } = await m.awards.create({
-          academicYear: AY,
-          userID: R20.id,
-          title: "  Best Newcomer  ",
-          citation: "  For effort.  ",
-        });
-        expect(await db.award.count()).toBe(total + 1);
-        expect(
-          await db.award.findUniqueOrThrow({ where: { id } }),
-        ).toMatchObject({
-          userID: R20.id,
-          title: "Best Newcomer",
-          citation: "For effort.",
-          ceremony: "Colours Awards",
-          recordedBy: JCRC.id,
-        });
-        expect(
-          (await m.awards.list({ academicYear: AY, userID: R20.id })).map(
-            (a) => a.id,
-          ),
-        ).toEqual([id]);
-
-        expect(await m.awards.void({ id })).toEqual({ id, voided: true });
-        expect(
-          (await db.award.findUniqueOrThrow({ where: { id } })).voidedBy,
-        ).toBe(JCRC.id);
-        expect(await db.award.count()).toBe(total + 1); // still there
-        expect(
-          (await db.award.findUniqueOrThrow({ where: { id } })).voidedAt,
-        ).toBeInstanceOf(Date);
-        expect(
-          await m.awards.list({ academicYear: AY, userID: R20.id }),
-        ).toEqual([]);
-        expect(
-          (
-            await m.awards.list({
-              academicYear: AY,
-              userID: R20.id,
-              includeVoided: true,
-            })
-          ).map((a) => a.id),
-        ).toEqual([id]);
-        expect(await m.awards.void({ id })).toEqual({ id, voided: true });
-      });
-
-      it("checks the resident and the bounds", async () => {
-        const m = as(ADMIN).transcriptManage;
-
-        expect(
-          await errorOf(
-            m.awards.create({
-              academicYear: AY,
-              userID: "SEED-R99",
-              title: "T",
-            }),
-          ),
-        ).toBe("NOT_FOUND:RESIDENT_NOT_FOUND");
-        expect(
-          await errorOf(
-            m.awards.create({ academicYear: AY, userID: R12.id, title: "" }),
-          ),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(
-            m.awards.create({
-              academicYear: AY,
-              userID: R12.id,
-              title: "t".repeat(121),
-            }),
-          ),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(
-            m.awards.create({
-              academicYear: AY,
-              userID: R12.id,
-              title: "T",
-              citation: "c".repeat(301),
-            }),
-          ),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(m.awards.void({ id: "0123456789abcdef01234567" })),
-        ).toBe("NOT_FOUND:RECORD_NOT_FOUND");
-      });
-    });
-
-    /* ------------------------------------------------------------------ */
     describe("JCRC records", () => {
       const ROW = { activity: "Ran it", role: "", description: "" };
       const fields = {
@@ -1568,22 +1491,25 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("shows who did it as a name, falling back to the key only when there is no name", async () => {
+        await as(JCRC).transcriptManage.awards.assign({
+          academicYear: AY,
+          awardTypeID: (await anAwardType()).id,
+          recipients: [{ userID: R20.id }],
+        });
         const id = (
-          await as(JCRC).transcriptManage.awards.create({
-            academicYear: AY,
-            userID: R12.id,
-            title: "Names check",
+          await db.award.findFirstOrThrow({
+            where: { userID: R20.id, academicYear: AY, title: "Full Colours" },
           })
         ).id;
-        await as(ADMIN).transcriptManage.awards.void({ id });
+        await as(ADMIN).transcriptManage.awards.remove({ id });
 
         const awards = await as(JCRC).transcriptManage.awards.list({
           academicYear: AY,
-          includeVoided: true,
+          includeRemoved: true,
         });
         const mine = awards.find((a) => a.id === id)!;
         expect(mine.recordedByName).toBe("Seed Resident 02");
-        expect(mine.voidedByName).toBe("Seed Resident 01");
+        expect(mine.removedByName).toBe("Seed Resident 01");
 
         // a recorder with no account falls back to the key
         await db.award.update({
@@ -1592,7 +1518,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
         const again = await as(JCRC).transcriptManage.awards.list({
           academicYear: AY,
-          includeVoided: true,
+          includeRemoved: true,
         });
         expect(again.find((a) => a.id === id)!.recordedByName).toBe(
           "GHOST-KEY",
@@ -1713,7 +1639,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           }),
           await as(JCRC).transcriptManage.awards.list({
             academicYear: AY,
-            includeVoided: true,
+            includeRemoved: true,
           }),
         ];
 
