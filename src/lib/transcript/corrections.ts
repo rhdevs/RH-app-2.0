@@ -108,6 +108,47 @@ export function fieldChange(field: string, value: string | null): string {
     : `${field} set to ${value}`;
 }
 
+/** The four membership fields, as stored or as sent (blank and absent are the same). */
+export interface MembershipFieldValues {
+  duration?: string | null;
+  roleLabel?: string | null;
+  roleDuration?: string | null;
+  extraContribution?: string | null;
+}
+
+const norm = (v: string | null | undefined) => (v ?? "").trim();
+
+/**
+ * Phrases for the fields a save really CHANGES: a field left out, or sent with
+ * the value it already has, is not mentioned (a screen sends every field on each
+ * save, so comparing is what keeps the history to what changed).
+ */
+export function membershipChangeParts(
+  before: MembershipFieldValues | null,
+  input: MembershipFieldValues,
+): string[] {
+  const changed = (key: keyof MembershipFieldValues): boolean =>
+    input[key] !== undefined && norm(input[key]) !== norm(before?.[key]);
+  const parts: string[] = [];
+  if (changed("duration")) {
+    parts.push(fieldChange("duration", input.duration ?? null));
+  }
+  if (changed("roleLabel")) {
+    parts.push(fieldChange("role", input.roleLabel ?? null));
+  }
+  if (changed("roleDuration")) {
+    parts.push(fieldChange("role period", input.roleDuration ?? null));
+  }
+  if (changed("extraContribution")) {
+    parts.push(
+      norm(input.extraContribution) === ""
+        ? "contribution cleared"
+        : "contribution edited",
+    );
+  }
+  return parts;
+}
+
 /** Several field phrases joined for one summary: "role set to X, contribution cleared". */
 export function joinChanges(parts: readonly string[]): string {
   return parts.length === 0 ? "saved" : parts.join(", ");

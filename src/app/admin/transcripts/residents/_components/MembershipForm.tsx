@@ -172,7 +172,7 @@ export function MembershipFormView(p: MembershipFormViewProps) {
         </label>
         <Textarea
           id={`extra-${p.idKey}`}
-          rows={3}
+          rows={2}
           value={draft.extra}
           maxLength={EXTRA_MAX}
           disabled={off}

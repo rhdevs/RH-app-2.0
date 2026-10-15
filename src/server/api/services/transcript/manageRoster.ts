@@ -24,8 +24,8 @@ import { liveMembers } from "./liveRoster";
 import { NOT_UNFROZEN } from "./loader";
 import {
   correctionSummary,
-  fieldChange,
   joinChanges,
+  membershipChangeParts,
 } from "~/lib/transcript/corrections";
 import { assertCanEditForResidents, logCorrections } from "./residentRecords";
 import { getPeriod } from "./periods";
@@ -312,20 +312,6 @@ async function assertRoleFitsMembership(
   }
 }
 
-/** The fields an upsert touches, as short phrases for the history. */
-function rosterChangeParts(input: UpsertInput): string[] {
-  return [
-    input.duration !== undefined && fieldChange("duration", input.duration),
-    input.roleLabel !== undefined && fieldChange("role", input.roleLabel),
-    input.roleDuration !== undefined &&
-      fieldChange("role period", input.roleDuration),
-    input.extraContribution !== undefined &&
-      (input.extraContribution
-        ? "contribution edited"
-        : "contribution cleared"),
-  ].filter((p): p is string => typeof p === "string");
-}
-
 /**
  * Set or clear one member's overrides. The edit guard applies (a published year
  * only for a manager correcting an unlocked resident) and the user
@@ -363,6 +349,19 @@ export async function rosterUpsert(
     updatedAt: now,
   };
 
+  // Before the write, so the history can say what really changed.
+  const before = guard.correction
+    ? await db.transcriptRosterEntry.findUnique({
+        where: {
+          academicYear_userID_ccaID: {
+            academicYear: input.academicYear,
+            userID: target.key,
+            ccaID: input.ccaID,
+          },
+        },
+      })
+    : null;
+
   const row = await db.transcriptRosterEntry.upsert({
     where: {
       academicYear_userID_ccaID: {
@@ -396,7 +395,7 @@ export async function rosterUpsert(
           summary: correctionSummary(
             "Roster",
             cca?.ccaName ?? `CCA ${input.ccaID}`,
-            joinChanges(rosterChangeParts(input)),
+            joinChanges(membershipChangeParts(before, input)),
           ),
         },
       ],

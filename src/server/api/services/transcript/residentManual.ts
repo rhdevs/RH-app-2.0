@@ -3,8 +3,8 @@ import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
 import {
   correctionSummary,
-  fieldChange,
   joinChanges,
+  membershipChangeParts,
 } from "~/lib/transcript/corrections";
 import { isDuration, type Duration } from "~/lib/transcript/duration";
 import {
@@ -177,20 +177,6 @@ async function guardManual(
   );
 }
 
-/** Which fields a save touches, as short phrases for the history. */
-function saveParts(input: SaveInput): string[] {
-  return [
-    input.duration !== undefined && fieldChange("duration", input.duration),
-    input.roleLabel !== undefined && fieldChange("role", input.roleLabel),
-    input.roleDuration !== undefined &&
-      fieldChange("role period", input.roleDuration),
-    input.extraContribution !== undefined &&
-      (input.extraContribution
-        ? "contribution edited"
-        : "contribution cleared"),
-  ].filter((p): p is string => typeof p === "string");
-}
-
 /**
  * Add a manual entry, or edit the one that exists (one per resident, CCA and
  * year). Fields left out are untouched; null or blank clears one. The role
@@ -257,7 +243,7 @@ export async function manualSave(
     summary: correctionSummary(
       "Manual entry",
       cca.ccaName,
-      existing ? joinChanges(saveParts(input)) : "added",
+      existing ? joinChanges(membershipChangeParts(existing, input)) : "added",
     ),
     actor: actorUserID,
     at: now,

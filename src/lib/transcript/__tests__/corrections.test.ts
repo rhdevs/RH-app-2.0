@@ -6,6 +6,7 @@ import {
   decideWrite,
   fieldChange,
   joinChanges,
+  membershipChangeParts,
   participantSummaries,
   ON_HOLD_MESSAGE,
   residentStateOf,
@@ -231,5 +232,48 @@ describe("what /transcript shows (hold selection)", () => {
     expect(ON_HOLD_MESSAGE).toBe(
       "Your transcript is on hold. Contact the hall office.",
     );
+  });
+});
+
+describe("membershipChangeParts (only what really changed)", () => {
+  const before = {
+    duration: "full",
+    roleLabel: "Captain",
+    roleDuration: null,
+    extraContribution: "Led the squad.",
+  };
+
+  it("says nothing for a save that changes nothing", () => {
+    expect(
+      membershipChangeParts(before, {
+        duration: "full",
+        roleLabel: " Captain ",
+        roleDuration: null,
+        extraContribution: "Led the squad.",
+      }),
+    ).toEqual([]);
+  });
+
+  it("names only the fields that differ", () => {
+    expect(
+      membershipChangeParts(before, {
+        duration: "full",
+        roleLabel: "Vice-Captain",
+        roleDuration: null,
+        extraContribution: null,
+      }),
+    ).toEqual(["role set to Vice-Captain", "contribution cleared"]);
+  });
+
+  it("leaves out fields that were not sent, and treats blank and absent alike", () => {
+    expect(membershipChangeParts(before, { roleLabel: "Striker" })).toEqual([
+      "role set to Striker",
+    ]);
+    expect(
+      membershipChangeParts(null, { roleLabel: "", duration: null }),
+    ).toEqual([]);
+    expect(
+      membershipChangeParts(null, { duration: "sem2", extraContribution: "x" }),
+    ).toEqual(["duration set to sem2", "contribution edited"]);
   });
 });
