@@ -46,6 +46,19 @@ export interface LoadOptions {
 
 export const PREVIEW_CODE = "NOT-ISSUED";
 
+/**
+ * "This nullable timestamp is not set." On MongoDB, Prisma's `field: null` does
+ * NOT match a document where the field is simply ABSENT, which is how `create`
+ * stores an omitted nullable field. Without the `isSet: false` branch a row that
+ * was never voided or revoked would silently fall out of every "live" query.
+ */
+export const NOT_VOIDED = {
+  OR: [{ voidedAt: null }, { voidedAt: { isSet: false } }],
+};
+export const NOT_REVOKED = {
+  OR: [{ revokedAt: null }, { revokedAt: { isSet: false } }],
+};
+
 const SGT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 /** ISO date ("2027-05-10") of `date` in Singapore. */
@@ -162,11 +175,11 @@ export async function loadTranscriptInput(
 
   const [volunteer, awards, jcrc] = await Promise.all([
     db.volunteerRecord.findMany({
-      where: { academicYear, userID: key, voidedAt: null },
+      where: { academicYear, userID: key, ...NOT_VOIDED },
       orderBy: { activityDate: "asc" },
     }),
     db.award.findMany({
-      where: { academicYear, userID: key, voidedAt: null },
+      where: { academicYear, userID: key, ...NOT_VOIDED },
     }),
     db.jcrcService.findUnique({
       where: { academicYear_userID: { academicYear, userID: key } },
@@ -228,9 +241,11 @@ export async function loadTranscriptInput(
       }
     : null;
 
+  const displayName = profile?.displayName?.trim();
+
   return {
     resident: {
-      name: profile?.displayName?.trim() || "Resident",
+      name: displayName ? displayName : "Resident",
       matric: matric?.matric ?? "Not on file",
       isSpecimen: false,
     },

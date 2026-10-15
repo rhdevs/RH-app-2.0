@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { canonicalUserID } from "~/lib/identity";
 import { parseAcademicYear } from "~/lib/transcript/academicYear";
 import { resolveEntry } from "~/lib/transcript/duration";
+import { NOT_REVOKED } from "./loader";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
 
 /**
@@ -56,6 +57,22 @@ const BLOCKER_CODE = {
 
 function fail(reason: keyof typeof BLOCKER_CODE): never {
   throw new TRPCError({ code: BLOCKER_CODE[reason], message: reason });
+}
+
+/**
+ * MongoDB aborts the loser of two overlapping transactions with a write
+ * conflict (Prisma P2034). That is the same outcome as losing the status claim:
+ * someone else is changing this year right now.
+ */
+async function transitioning<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if ((error as { code?: string }).code === "P2034") {
+      throw new TRPCError({ code: "CONFLICT", message: "PERIOD_CHANGING" });
+    }
+    throw error;
+  }
 }
 
 function requireValidYear(academicYear: string) {
@@ -270,34 +287,36 @@ export async function publish(
       });
   }
 
-  await db.$transaction(
-    async (tx) => {
-      const claimed = await tx.transcriptPeriod.updateMany({
-        where: { academicYear, NOT: { status: STATUS_PUBLISHED } },
-        data: {
-          status: STATUS_PUBLISHED,
-          publishedAt: now,
-          publishedBy: actorUserID,
-        },
-      });
-      if (claimed.count !== 1) fail("ALREADY_PUBLISHED");
-
-      // The published roster is exactly today's: clear every old freeze first.
-      await tx.transcriptRosterEntry.updateMany({
-        where: { academicYear },
-        data: { frozen: false },
-      });
-      for (const u of toUpdate) {
-        await tx.transcriptRosterEntry.update({
-          where: { id: u.id },
-          data: u.data,
+  await transitioning(() =>
+    db.$transaction(
+      async (tx) => {
+        const claimed = await tx.transcriptPeriod.updateMany({
+          where: { academicYear, NOT: { status: STATUS_PUBLISHED } },
+          data: {
+            status: STATUS_PUBLISHED,
+            publishedAt: now,
+            publishedBy: actorUserID,
+          },
         });
-      }
-      if (toCreate.length > 0) {
-        await tx.transcriptRosterEntry.createMany({ data: toCreate });
-      }
-    },
-    { maxWait: 10_000, timeout: 120_000 },
+        if (claimed.count !== 1) fail("ALREADY_PUBLISHED");
+
+        // The published roster is exactly today's: clear every old freeze first.
+        await tx.transcriptRosterEntry.updateMany({
+          where: { academicYear },
+          data: { frozen: false },
+        });
+        for (const u of toUpdate) {
+          await tx.transcriptRosterEntry.update({
+            where: { id: u.id },
+            data: u.data,
+          });
+        }
+        if (toCreate.length > 0) {
+          await tx.transcriptRosterEntry.createMany({ data: toCreate });
+        }
+      },
+      { maxWait: 10_000, timeout: 120_000 },
+    ),
   );
 
   return {
@@ -333,46 +352,48 @@ export async function reopen(
   const blocker = reopenBlocker(await getPeriod(db, academicYear));
   if (blocker) fail(blocker);
 
-  return db.$transaction(
-    async (tx) => {
-      const claimed = await tx.transcriptPeriod.updateMany({
-        where: { academicYear, status: STATUS_PUBLISHED },
-        data: {
-          status: STATUS_COLLECTING,
-          reopenedAt: now,
-          reopenedBy: actorUserID,
-        },
-      });
-      if (claimed.count !== 1) fail("NOT_PUBLISHED");
-
-      const live = await tx.transcriptIssue.findMany({
-        where: { academicYear, revokedAt: null },
-      });
-      for (const issue of live) {
-        const snapshot =
-          issue.snapshot &&
-          typeof issue.snapshot === "object" &&
-          !Array.isArray(issue.snapshot)
-            ? (issue.snapshot as Record<string, unknown>)
-            : {};
-        const meta =
-          snapshot.meta && typeof snapshot.meta === "object"
-            ? (snapshot.meta as Record<string, unknown>)
-            : {};
-        await tx.transcriptIssue.update({
-          where: { id: issue.id },
+  return transitioning(() =>
+    db.$transaction(
+      async (tx) => {
+        const claimed = await tx.transcriptPeriod.updateMany({
+          where: { academicYear, status: STATUS_PUBLISHED },
           data: {
-            revokedAt: now,
-            revokedBy: actorUserID,
-            snapshot: {
-              ...snapshot,
-              meta: { ...meta, superseded: true, reason: SUPERSEDED_REASON },
-            } as Prisma.InputJsonValue,
+            status: STATUS_COLLECTING,
+            reopenedAt: now,
+            reopenedBy: actorUserID,
           },
         });
-      }
-      return { academicYear, superseded: live.length };
-    },
-    { maxWait: 10_000, timeout: 60_000 },
+        if (claimed.count !== 1) fail("NOT_PUBLISHED");
+
+        const live = await tx.transcriptIssue.findMany({
+          where: { academicYear, ...NOT_REVOKED },
+        });
+        for (const issue of live) {
+          const snapshot =
+            issue.snapshot &&
+            typeof issue.snapshot === "object" &&
+            !Array.isArray(issue.snapshot)
+              ? (issue.snapshot as Record<string, unknown>)
+              : {};
+          const meta =
+            snapshot.meta && typeof snapshot.meta === "object"
+              ? (snapshot.meta as Record<string, unknown>)
+              : {};
+          await tx.transcriptIssue.update({
+            where: { id: issue.id },
+            data: {
+              revokedAt: now,
+              revokedBy: actorUserID,
+              snapshot: {
+                ...snapshot,
+                meta: { ...meta, superseded: true, reason: SUPERSEDED_REASON },
+              } as Prisma.InputJsonValue,
+            },
+          });
+        }
+        return { academicYear, superseded: live.length };
+      },
+      { maxWait: 10_000, timeout: 60_000 },
+    ),
   );
 }

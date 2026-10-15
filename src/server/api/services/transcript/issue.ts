@@ -6,7 +6,7 @@ import {
   normaliseVerificationCode,
 } from "~/lib/transcript/assemble";
 import type { TranscriptViewModel } from "~/lib/transcript/types";
-import { loadTranscriptInput } from "./loader";
+import { loadTranscriptInput, NOT_REVOKED } from "./loader";
 import { STATUS_PUBLISHED, getPeriod } from "./periods";
 
 /**
@@ -97,7 +97,7 @@ export async function issueForResident(
 
   const find = () =>
     db.transcriptIssue.findFirst({
-      where: { academicYear, userID, revokedAt: null },
+      where: { academicYear, userID, ...NOT_REVOKED },
       orderBy: { id: "asc" },
     });
   const toResult = (row: NonNullable<Awaited<ReturnType<typeof find>>>) => {
