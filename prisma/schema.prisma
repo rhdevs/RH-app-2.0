@@ -1382,6 +1382,9 @@ model TranscriptPeriod {
   id           String    @id @default(auto()) @map("_id") @db.ObjectId
   academicYear String    @unique(map: "transcript_period_ay")
   sem2Start    DateTime?
+  /// Last day residents are asked to download by (a Singapore calendar date,
+  /// stored as midnight Singapore time). Shown as a banner; nothing is enforced.
+  downloadBy   DateTime?
   /// collecting | published
   status       String?   @default("collecting")
   publishedAt  DateTime?
@@ -1464,6 +1467,13 @@ model Award {
   @@index([academicYear, userID], map: "award_year_user")
 }
 
+/// One row of a JCRC member's "Contributions during the year" table.
+type JcrcContribution {
+  activity    String
+  role        String?
+  description String?
+}
+
 /// A JCRC member's service record for one year: the content of the dedicated
 /// JCRC page. `isPlaceholder` stays true until the real positions and sign-off
 /// flow exist; the Master and President signatures are never stored.
@@ -1474,7 +1484,7 @@ model JcrcService {
   portfolio     String?
   position      String?
   description   String?
-  contributions String[]  @default([])
+  contributions JcrcContribution[]
   /// The member's own text, for now.
   testimonial   String?
   isPlaceholder Boolean?  @default(true)
@@ -1485,25 +1495,14 @@ model JcrcService {
   @@unique([academicYear, userID], map: "jcrc_service_member")
 }
 
-/// An issued, FROZEN transcript: `snapshot` holds exactly what was rendered, so
-/// /verify/<code> shows the record as issued even if the live data later
-/// changes. `code` is random and unguessable (never derived from userID).
-/// Revoked, never deleted.
-model TranscriptIssue {
-  id           String    @id @default(auto()) @map("_id") @db.ObjectId
-  code         String    @unique(map: "transcript_issue_code")
-  academicYear String
-  userID       String
-  issuedAt     DateTime? @default(now())
-  snapshot     Json?
-  revokedAt    DateTime?
-  revokedBy    String?
-  /// "<academicYear>|<userID>" while the issue is valid; rewritten to
-  /// "<academicYear>|<userID>|revoked|<id>" when it is revoked or superseded.
-  /// Unique, so a resident has at most one valid issue per year even under
-  /// concurrent first downloads. Never null or absent: MongoDB unique indexes
-  /// treat a missing value as a duplicate.
-  activeKey    String    @unique(map: "issue_active_key")
+/// When a resident first and last opened their published transcript. Drives the
+/// "Ready" badge: a published year with no row here is one they have not seen.
+model TranscriptAccess {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear  String
+  userID        String
+  firstOpenedAt DateTime? @default(now())
+  lastOpenedAt  DateTime?
 
-  @@index([academicYear, userID], map: "transcript_issue_year_user")
+  @@unique([academicYear, userID], map: "access_year_user")
 }

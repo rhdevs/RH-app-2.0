@@ -54,7 +54,7 @@ const NEW_MODELS: Record<string, string[]> = {
   VolunteerRecord: ["academicYear", "userID"],
   Award: ["academicYear", "userID"],
   JcrcService: ["academicYear", "userID"],
-  TranscriptIssue: ["code", "academicYear", "userID", "activeKey"],
+  TranscriptAccess: ["academicYear", "userID"],
 };
 
 describe("schema: new transcript models", () => {
@@ -105,24 +105,45 @@ describe("schema: new transcript models", () => {
     }
   });
 
-  it("keys a valid issue uniquely, with a required (never nullable) activeKey", () => {
-    const key = current
-      .get("TranscriptIssue")!
-      .find((f) => f.name === "activeKey");
-    expect(key!.decl).toContain('@unique(map: "issue_active_key")');
-    expect(key!.decl.startsWith("String ")).toBe(true);
-    expect(key!.decl).not.toContain("?");
+  it("has no issue or verification model any more", () => {
+    expect(current.has("TranscriptIssue")).toBe(false);
+    expect(readFileSync("prisma/schema.prisma", "utf8")).not.toContain(
+      "activeKey",
+    );
+  });
+
+  it("records first and last open once per resident and year", () => {
+    expect(readFileSync("prisma/schema.prisma", "utf8")).toContain(
+      '@@unique([academicYear, userID], map: "access_year_user")',
+    );
+    const first = current
+      .get("TranscriptAccess")!
+      .find((f) => f.name === "firstOpenedAt");
+    expect(first!.decl).toContain("DateTime?");
+  });
+
+  it("stores JCRC contributions as a list of structured rows", () => {
+    const raw = readFileSync("prisma/schema.prisma", "utf8");
+    expect(raw).toMatch(
+      /type JcrcContribution \{\s+activity\s+String\s+role\s+String\?\s+description\s+String\?\s+\}/,
+    );
+    const field = current
+      .get("JcrcService")!
+      .find((f) => f.name === "contributions");
+    expect(field!.decl).toBe("JcrcContribution[]");
+  });
+
+  it("lets a year carry an optional download-by date", () => {
+    const field = current
+      .get("TranscriptPeriod")!
+      .find((f) => f.name === "downloadBy");
+    expect(field!.decl).toBe("DateTime?");
   });
 
   it("indexes volunteer records by CCA and year", () => {
     expect(readFileSync("prisma/schema.prisma", "utf8")).toContain(
       '@@index([ccaID, academicYear], map: "volunteer_cca_year")',
     );
-  });
-
-  it("makes the issue code unique", () => {
-    const code = current.get("TranscriptIssue")!.find((f) => f.name === "code");
-    expect(code!.decl).toContain("@unique");
   });
 });
 
