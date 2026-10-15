@@ -70,3 +70,30 @@ npm run test:db
 ```
 
 `test:db` loads `.env` (Node's `--env-file`) and runs only the `*.int.test.ts` files. The suite re-runs the seed script first to get a known baseline, and before each test restores the period, the roster annotations and the issued transcripts. It temporarily edits one seeded CcaHead date and one seeded UserCCA row and puts them back. Run it after any change to `periods.ts`, `loader.ts`, `issue.ts` or the router.
+
+## Signing in locally
+
+Every seeded resident can sign in at `/login` with email and password. All of them share one development password:
+
+```text
+Transcript-Dev-2026
+```
+
+It works only against the local `rhapp_transcript_dev` database (the seed refuses any other). The emails are `seed-rNN@u.nus.edu`: that is an address the app's sign-in rule admits, and its canonical id (`SEED-RNN`) is exactly the key the seeded data is filed under. Nothing is ever sent to them. Re-run `npm run dev:db:seed` after pulling to refresh the accounts.
+
+| Email | Role | Notes |
+| --- | --- | --- |
+| `seed-r01@u.nus.edu` | admin | |
+| `seed-r02@u.nus.edu` | JCRC member | Sports Secretary; not a CCA head |
+| `seed-r03@u.nus.edu` | JCRC member and CCA head | Heads RHMP Sets (a normal CCA) |
+| `seed-r04@u.nus.edu` | head of a normal CCA | Heads Soccer (MALE) |
+| `seed-r05@u.nus.edu` | head of a normal CCA | Heads Hall Choir; took over in semester 2 |
+| `seed-r06@u.nus.edu` | head of a volunteering CCA | Heads RVC Children |
+| `seed-r07@u.nus.edu` | head of a volunteering CCA | Heads RVC Special Projects |
+| `seed-r10@u.nus.edu` | head of a volunteering CCA | Heads RVC Pioneers |
+| `seed-r11@u.nus.edu` | head of a volunteering CCA | Heads RVC Special Needs |
+| `seed-r08@u.nus.edu` | head of a normal CCA | Heads Phoenix Press |
+| `seed-r12@u.nus.edu` | plain member | In 13 CCAs; has volunteering, awards and part-year memberships |
+| `seed-r09@u.nus.edu`, `seed-r13@u.nus.edu` to `seed-r20@u.nus.edu` | plain member | A few CCAs each |
+
+A caveat: the addresses end in `@u.nus.edu`, the real NUS student domain, so they could in principle collide with a real mailbox if someone triggered a password reset against a database with a real mail key. Keep `RESEND_API_KEY` a placeholder locally.
