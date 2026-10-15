@@ -251,12 +251,12 @@ describe("schema: guarded collections are untouched", () => {
     });
   });
 
-  it("adds no model other than the six transcript ones", () => {
+  it("adds no model other than the transcript ones", () => {
     if (!upstreamModels) return;
     const added = [...current.keys()]
       .filter((n) => !upstreamModels.has(n))
       .sort();
 
-    expect(added).toEqual(Object.keys(NEW_MODELS).sort());
+    expect(added).toEqual([...Object.keys(NEW_MODELS), "CcaYearFreeze"].sort());
   });
 });
