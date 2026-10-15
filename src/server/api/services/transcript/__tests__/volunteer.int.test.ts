@@ -737,7 +737,16 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
                 changes: [],
               }),
           ];
-          for (const call of calls) expect(await errorOf(call())).toBe(denied);
+          for (const call of calls) {
+            const result = await errorOf(call());
+            const isPeopleSet = call === calls[7];
+            // Taking people off is a per-resident correction for a manager.
+            expect(result).toBe(
+              isPeopleSet && who !== CHILDREN_HEAD
+                ? "FORBIDDEN:ONLY_UNLOCKED_RESIDENTS"
+                : denied,
+            );
+          }
         }
         expect(
           (

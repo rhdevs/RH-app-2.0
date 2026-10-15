@@ -23,6 +23,8 @@ import {
 } from "~/lib/transcript/volunteer";
 import { instantToSgDate, sgDateToInstant } from "~/lib/transcript/sgDate";
 import { assertCanEditCcaYear } from "./editRights";
+import { correctionSummary } from "~/lib/transcript/corrections";
+import { assertCanEditForResidents, logCorrections } from "./residentRecords";
 import { NOT_REMOVED } from "./loader";
 import { actorLabels, lookupResidents, requireResident } from "./residents";
 
@@ -69,6 +71,27 @@ async function assertCanWrite(
 ) {
   await assertCanEditCcaYear(db, { userID: actorUserID }, ccaID, academicYear);
   await requireVolunteeringCca(db, ccaID);
+}
+
+/**
+ * The guard for a write that changes known residents' hours: the edit guard,
+ * or (a manager, in a published year, for UNLOCKED residents only) a correction;
+ * then the volunteering tag.
+ */
+async function assertCanWriteForResidents(
+  db: PrismaClient,
+  actorUserID: string,
+  ccaID: number,
+  academicYear: string,
+  affectedUserIDs: readonly string[],
+) {
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    { ccaID, academicYear, affectedUserIDs },
+  );
+  await requireVolunteeringCca(db, ccaID);
+  return guard;
 }
 
 async function requireActivity(db: PrismaClient, id: string, ccaID: number) {
@@ -620,7 +643,6 @@ export async function volunteerPeopleSet(
   now: Date = new Date(),
 ) {
   const activity = await requireActivity(db, input.activityID, input.ccaID);
-  await assertCanWrite(db, actorUserID, input.ccaID, activity.academicYear);
   if (activity.removedAt) throw fail("CONFLICT", "ACTIVITY_REMOVED");
   if (firstDuplicate(input.userIDs)) {
     throw fail("BAD_REQUEST", "DUPLICATE_PARTICIPANT");
@@ -631,7 +653,38 @@ export async function volunteerPeopleSet(
   if (firstDuplicate(keys)) throw fail("BAD_REQUEST", "DUPLICATE_PARTICIPANT");
   const wanted = new Set(keys);
 
-  return db.$transaction(async (tx) => {
+  // Who this change touches: people added or restored, and people dropped.
+  const stored = await db.volunteerPerson.findMany({
+    where: { activityID: activity.id },
+  });
+  const storedBy = new Map(stored.map((e) => [e.userID, e]));
+  const summaries = [
+    ...keys
+      .filter((k) => !storedBy.has(k) || storedBy.get(k)!.removedAt)
+      .map((userID) => ({
+        userID,
+        summary: correctionSummary("Volunteer hours", activity.title, "added"),
+      })),
+    ...stored
+      .filter((e) => !e.removedAt && !wanted.has(e.userID))
+      .map((e) => ({
+        userID: e.userID,
+        summary: correctionSummary(
+          "Volunteer hours",
+          activity.title,
+          "removed",
+        ),
+      })),
+  ];
+  const guard = await assertCanWriteForResidents(
+    db,
+    actorUserID,
+    input.ccaID,
+    activity.academicYear,
+    summaries.map((x) => x.userID),
+  );
+
+  const result = await db.$transaction(async (tx) => {
     const existing = await tx.volunteerPerson.findMany({
       where: { activityID: activity.id },
     });
@@ -675,6 +728,15 @@ export async function volunteerPeopleSet(
     });
     return { id: activity.id, added, removed };
   });
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    activity.academicYear,
+    summaries,
+    now,
+  );
+  return result;
 }
 
 /* ---- attendance ----------------------------------------------------------- */
@@ -694,13 +756,33 @@ export async function volunteerAttendanceSave(
   now: Date = new Date(),
 ) {
   const activity = await requireActivity(db, input.activityID, input.ccaID);
-  await assertCanWrite(db, actorUserID, input.ccaID, activity.academicYear);
   if (activity.removedAt) throw fail("CONFLICT", "ACTIVITY_REMOVED");
 
   const pairs = input.changes.map((c) => `${c.sessionID}:${c.userID}`);
   if (firstDuplicate(pairs)) throw fail("BAD_REQUEST", "DUPLICATE_CHANGE");
 
-  return db.$transaction(async (tx: Prisma.TransactionClient) => {
+  // Who this change touches: everyone named in the change set.
+  const perUser = new Map<string, number>();
+  for (const c of input.changes) {
+    perUser.set(c.userID, (perUser.get(c.userID) ?? 0) + 1);
+  }
+  const summaries = [...perUser].map(([userID, count]) => ({
+    userID,
+    summary: correctionSummary(
+      "Volunteer hours",
+      activity.title,
+      `attendance changed (${count} ${count === 1 ? "session" : "sessions"})`,
+    ),
+  }));
+  const guard = await assertCanWriteForResidents(
+    db,
+    actorUserID,
+    input.ccaID,
+    activity.academicYear,
+    [...perUser.keys()],
+  );
+
+  const result = await db.$transaction(async (tx: Prisma.TransactionClient) => {
     const [sessions, people, existing] = await Promise.all([
       tx.volunteerSession.findMany({
         where: { activityID: activity.id, ...NOT_REMOVED },
@@ -773,4 +855,13 @@ export async function volunteerAttendanceSave(
       deleted: toDelete.length,
     };
   }, SAVE_TX);
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    activity.academicYear,
+    summaries,
+    now,
+  );
+  return result;
 }

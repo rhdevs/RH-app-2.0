@@ -22,7 +22,12 @@ import {
 import { activeFreeze, termYearOf } from "./freeze";
 import { liveMembers } from "./liveRoster";
 import { NOT_UNFROZEN } from "./loader";
-import { assertWritable } from "./manageAccess";
+import {
+  correctionSummary,
+  fieldChange,
+  joinChanges,
+} from "~/lib/transcript/corrections";
+import { assertCanEditForResidents, logCorrections } from "./residentRecords";
 import { getPeriod } from "./periods";
 import { actorLabels } from "./residents";
 
@@ -307,8 +312,23 @@ async function assertRoleFitsMembership(
   }
 }
 
+/** The fields an upsert touches, as short phrases for the history. */
+function rosterChangeParts(input: UpsertInput): string[] {
+  return [
+    input.duration !== undefined && fieldChange("duration", input.duration),
+    input.roleLabel !== undefined && fieldChange("role", input.roleLabel),
+    input.roleDuration !== undefined &&
+      fieldChange("role period", input.roleDuration),
+    input.extraContribution !== undefined &&
+      (input.extraContribution
+        ? "contribution edited"
+        : "contribution cleared"),
+  ].filter((p): p is string => typeof p === "string");
+}
+
 /**
- * Set or clear one member's overrides. The year must be collecting and the user
+ * Set or clear one member's overrides. The edit guard applies (a published year
+ * only for a manager correcting an unlocked resident) and the user
  * must be a CURRENT member of THIS CCA (the same resolver publish uses). Fields
  * left out are untouched; null or blank clears one.
  */
@@ -318,9 +338,16 @@ export async function rosterUpsert(
   input: UpsertInput,
   now: Date = new Date(),
 ) {
-  await assertWritable(db, input.academicYear);
-
   const target = await findTarget(db, input, now);
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    {
+      ccaID: input.ccaID,
+      academicYear: input.academicYear,
+      affectedUserIDs: [target.key],
+    },
+  );
   await assertRoleFitsMembership(db, input, target);
 
   const changes = {
@@ -353,6 +380,29 @@ export async function rosterUpsert(
     },
     update: changes,
   });
+  if (guard.correction) {
+    const cca = await db.cCA.findUnique({
+      where: { ccaID: input.ccaID },
+      select: { ccaName: true },
+    });
+    await logCorrections(
+      db,
+      guard,
+      actorUserID,
+      input.academicYear,
+      [
+        {
+          userID: target.key,
+          summary: correctionSummary(
+            "Roster",
+            cca?.ccaName ?? `CCA ${input.ccaID}`,
+            joinChanges(rosterChangeParts(input)),
+          ),
+        },
+      ],
+      now,
+    );
+  }
   return {
     userID: row.userID,
     ccaID: row.ccaID,

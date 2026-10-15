@@ -1,8 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
+import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
+import { correctionSummary } from "~/lib/transcript/corrections";
 import type { jcrcSaveForInput } from "~/lib/transcript/manageInput";
 import { NOT_VOIDED } from "./loader";
-import { assertWritable, requireCca } from "./manageAccess";
+import { requireCca } from "./manageAccess";
+import { assertCanEditForResidents, logCorrections } from "./residentRecords";
 import {
   actorLabels,
   keysOf,
@@ -71,7 +74,20 @@ export async function jcrcSave(
   fields: JcrcFields,
   now: Date = new Date(),
 ) {
-  await assertWritable(db, fields.academicYear);
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    { academicYear: fields.academicYear, affectedUserIDs: [key] },
+  );
+  const current = await db.jcrcService.findUnique({
+    where: {
+      academicYear_userID: { academicYear: fields.academicYear, userID: key },
+    },
+    select: { removedAt: true },
+  });
+  if (current?.removedAt) {
+    throw new TRPCError({ code: "CONFLICT", message: "JCRC_PAGE_REMOVED" });
+  }
   const data = {
     portfolio: fields.portfolio,
     position: fields.position,
@@ -93,8 +109,99 @@ export async function jcrcSave(
     create: { academicYear: fields.academicYear, userID: key, ...data },
     update: data,
   });
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    fields.academicYear,
+    [
+      {
+        userID: key,
+        summary: correctionSummary(
+          "JCRC page",
+          fields.position.trim() ? fields.position : "record",
+          "saved",
+        ),
+      },
+    ],
+    now,
+  );
   return jcrcGet(db, key, fields.academicYear);
 }
+
+/**
+ * Take a member's JCRC page off their transcript (soft: removedAt/removedBy,
+ * never deleted) or put it back. A manager's act; in a published year the
+ * resident must be unlocked, like any other correction.
+ */
+async function setJcrcRemoved(
+  db: PrismaClient,
+  actorUserID: string,
+  fields: { userID: string; academicYear: string },
+  removed: boolean,
+  now: Date,
+) {
+  const resident = await requireResident(db, fields.userID);
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    { academicYear: fields.academicYear, affectedUserIDs: [resident.key] },
+  );
+  const row = await db.jcrcService.findUnique({
+    where: {
+      academicYear_userID: {
+        academicYear: fields.academicYear,
+        userID: resident.key,
+      },
+    },
+  });
+  if (!row)
+    throw new TRPCError({ code: "NOT_FOUND", message: "RECORD_NOT_FOUND" });
+  if (Boolean(row.removedAt) === removed) return { userID: resident.key };
+  await db.jcrcService.update({
+    where: { id: row.id },
+    data: removed
+      ? { removedAt: now, removedBy: actorUserID }
+      : {
+          removedAt: null,
+          removedBy: null,
+          updatedAt: now,
+          updatedBy: actorUserID,
+        },
+  });
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    fields.academicYear,
+    [
+      {
+        userID: resident.key,
+        summary: correctionSummary(
+          "JCRC page",
+          row.position?.trim() ? row.position : "record",
+          removed ? "removed" : "restored",
+        ),
+      },
+    ],
+    now,
+  );
+  return { userID: resident.key };
+}
+
+export const jcrcRemove = (
+  db: PrismaClient,
+  actorUserID: string,
+  fields: { userID: string; academicYear: string },
+  now: Date = new Date(),
+) => setJcrcRemoved(db, actorUserID, fields, true, now);
+
+export const jcrcRestore = (
+  db: PrismaClient,
+  actorUserID: string,
+  fields: { userID: string; academicYear: string },
+  now: Date = new Date(),
+) => setJcrcRemoved(db, actorUserID, fields, false, now);
 
 export async function jcrcSaveFor(
   db: PrismaClient,
@@ -130,6 +237,9 @@ export async function jcrcGet(
         isPlaceholder: row.isPlaceholder ?? true,
         updatedAt: row.updatedAt,
         updatedBy: row.updatedBy,
+        removed: row.removedAt != null,
+        removedAt: row.removedAt ?? null,
+        removedBy: row.removedBy ?? null,
       }
     : null;
 }

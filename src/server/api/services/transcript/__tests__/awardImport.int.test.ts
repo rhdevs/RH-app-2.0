@@ -188,8 +188,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             as(JCRC).awardImport.preview({ academicYear: AY, rows: sample() }),
           ),
         ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+        // The commit names residents, so it is a per-resident correction:
+        // refused until every one of them is unlocked.
         expect(await errorOf(commit(JCRC))).toBe(
-          "PRECONDITION_FAILED:PERIOD_PUBLISHED",
+          "FORBIDDEN:ONLY_UNLOCKED_RESIDENTS",
         );
         expect(
           await db.awardImportBatch.count({

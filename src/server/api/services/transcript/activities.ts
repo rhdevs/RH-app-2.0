@@ -15,7 +15,9 @@ import type {
   activityUpdateInput,
   participantsSetInput,
 } from "~/lib/transcript/manageInput";
+import { participantSummaries } from "~/lib/transcript/corrections";
 import { NOT_REMOVED } from "./loader";
+import { assertCanEditForResidents, logCorrections } from "./residentRecords";
 import { actorLabels, lookupResidents, requireResident } from "./residents";
 
 /**
@@ -293,20 +295,42 @@ export async function participantsSet(
   if (activity.removedAt) throw fail("CONFLICT", "ACTIVITY_REMOVED");
   const desired = await resolveDesired(db, input.participants);
 
-  return db.$transaction(async (tx) => {
+  const asExisting = (
+    rows: Awaited<ReturnType<typeof db.ccaActivityParticipant.findMany>>,
+  ) =>
+    rows.map((e) => ({
+      id: e.id,
+      userID: e.userID,
+      role: e.role ?? null,
+      description: e.description ?? null,
+      removed: e.removedAt != null,
+    }));
+  // Who this change touches, worked out here from the stored rows: the guard
+  // lets a manager correct a PUBLISHED year only for residents it names.
+  const planned = diffParticipants(
+    asExisting(
+      await db.ccaActivityParticipant.findMany({
+        where: { activityID: activity.id },
+      }),
+    ),
+    desired,
+  );
+  const summaries = participantSummaries("Activities", activity.title, planned);
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    {
+      ccaID: activity.ccaID,
+      academicYear: activity.academicYear,
+      affectedUserIDs: summaries.map((s) => s.userID),
+    },
+  );
+
+  const result = await db.$transaction(async (tx) => {
     const existing = await tx.ccaActivityParticipant.findMany({
       where: { activityID: activity.id },
     });
-    const diff = diffParticipants(
-      existing.map((e) => ({
-        id: e.id,
-        userID: e.userID,
-        role: e.role ?? null,
-        description: e.description ?? null,
-        removed: e.removedAt != null,
-      })),
-      desired,
-    );
+    const diff = diffParticipants(asExisting(existing), desired);
     const text = (d: DesiredParticipant) => ({
       role: d.role === "" ? null : d.role,
       description: d.description === "" ? null : d.description,
@@ -361,4 +385,13 @@ export async function participantsSet(
       unchanged: diff.unchanged,
     };
   });
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    activity.academicYear,
+    summaries,
+    now,
+  );
+  return result;
 }

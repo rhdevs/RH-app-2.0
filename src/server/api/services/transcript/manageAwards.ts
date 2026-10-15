@@ -15,7 +15,8 @@ import type {
   awardsListInput,
 } from "~/lib/transcript/manageInput";
 import { NOT_VOIDED } from "./loader";
-import { assertWritable } from "./manageAccess";
+import { correctionSummary } from "~/lib/transcript/corrections";
+import { assertCanEditForResidents, logCorrections } from "./residentRecords";
 import { actorLabels, lookupResidents, requireResident } from "./residents";
 
 /**
@@ -201,7 +202,6 @@ export async function awardsAssign(
   input: z.infer<typeof awardsAssignInput>,
   now: Date = new Date(),
 ) {
-  await assertWritable(db, input.academicYear);
   const type = await requireType(db, input.awardTypeID);
   if (type.archivedAt) throw fail("CONFLICT", "AWARD_TYPE_ARCHIVED");
 
@@ -216,8 +216,16 @@ export async function awardsAssign(
     displayName: p.resident.displayName,
     citation: p.citation,
   }));
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    {
+      academicYear: input.academicYear,
+      affectedUserIDs: recipients.map((r) => r.userID),
+    },
+  );
 
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const existing = await tx.award.findMany({
       where: {
         academicYear: input.academicYear,
@@ -251,12 +259,29 @@ export async function awardsAssign(
     return {
       assigned: plan.create.length,
       assignedNames: plan.create.map((r) => r.displayName ?? r.userID),
+      created: plan.create.map((r) => r.userID),
       skipped: plan.skipped.map((r) => ({
         userID: r.userID,
         displayName: r.displayName,
       })),
     };
   });
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    input.academicYear,
+    result.created.map((userID) => ({
+      userID,
+      summary: correctionSummary("Awards", type.name, "assigned"),
+    })),
+    now,
+  );
+  return {
+    assigned: result.assigned,
+    assignedNames: result.assignedNames,
+    skipped: result.skipped,
+  };
 }
 
 /* ---- the awards of a year ------------------------------------------------------------- */
@@ -316,7 +341,11 @@ export async function awardUpdate(
   now: Date = new Date(),
 ) {
   const award = await requireAward(db, input.id);
-  await assertWritable(db, award.academicYear);
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    { academicYear: award.academicYear, affectedUserIDs: [award.userID] },
+  );
   if (award.voidedAt) throw fail("CONFLICT", "AWARD_REMOVED");
   await db.award.update({
     where: { id: award.id },
@@ -327,6 +356,19 @@ export async function awardUpdate(
       updatedAt: now,
     },
   });
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    award.academicYear,
+    [
+      {
+        userID: award.userID,
+        summary: correctionSummary("Awards", input.title, "edited"),
+      },
+    ],
+    now,
+  );
   return { id: award.id };
 }
 
@@ -337,12 +379,33 @@ export async function awardRemove(
   now: Date = new Date(),
 ) {
   const award = await requireAward(db, id);
-  await assertWritable(db, award.academicYear);
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    { academicYear: award.academicYear, affectedUserIDs: [award.userID] },
+  );
   if (!award.voidedAt) {
     await db.award.update({
       where: { id },
       data: { voidedAt: now, voidedBy: actorUserID },
     });
+    await logCorrections(
+      db,
+      guard,
+      actorUserID,
+      award.academicYear,
+      [
+        {
+          userID: award.userID,
+          summary: correctionSummary(
+            "Awards",
+            award.title ?? "Award",
+            "removed",
+          ),
+        },
+      ],
+      now,
+    );
   }
   return { id };
 }
@@ -383,7 +446,11 @@ export async function awardRestore(
   now: Date = new Date(),
 ) {
   const award = await requireAward(db, id);
-  await assertWritable(db, award.academicYear);
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    { academicYear: award.academicYear, affectedUserIDs: [award.userID] },
+  );
   if (!award.voidedAt) return { id };
   if (await activeTwin(db, award)) throw fail("CONFLICT", "AWARD_DUPLICATE");
   await db.award.update({
@@ -395,20 +462,88 @@ export async function awardRestore(
       updatedAt: now,
     },
   });
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    award.academicYear,
+    [
+      {
+        userID: award.userID,
+        summary: correctionSummary(
+          "Awards",
+          award.title ?? "Award",
+          "restored",
+        ),
+      },
+    ],
+    now,
+  );
   return { id };
 }
 
-/** Every id must exist; every year they belong to must not be published. */
-async function bulkTargets(db: PrismaClient, ids: readonly string[]) {
+/**
+ * Every id must exist, and the guard must pass for each year they belong to,
+ * for exactly the residents holding them. Returns the rows and, per year, the
+ * guard result, so the caller can log corrections for the rows it changes.
+ */
+async function bulkTargets(
+  db: PrismaClient,
+  actorUserID: string,
+  ids: readonly string[],
+) {
   const unique = [...new Set(ids)];
   const rows = await db.award.findMany({ where: { id: { in: unique } } });
   if (rows.length !== unique.length) {
     throw fail("NOT_FOUND", "RECORD_NOT_FOUND");
   }
+  const guards = new Map<string, { correction: boolean }>();
   for (const year of new Set(rows.map((r) => r.academicYear))) {
-    await assertWritable(db, year);
+    guards.set(
+      year,
+      await assertCanEditForResidents(
+        db,
+        { userID: actorUserID },
+        {
+          academicYear: year,
+          affectedUserIDs: rows
+            .filter((r) => r.academicYear === year)
+            .map((r) => r.userID),
+        },
+      ),
+    );
   }
-  return rows;
+  return { rows, guards };
+}
+
+/** Log a bulk change's corrections, year by year. */
+async function logBulk(
+  db: PrismaClient,
+  actorUserID: string,
+  guards: Map<string, { correction: boolean }>,
+  changed: ReadonlyArray<{
+    academicYear: string;
+    userID: string;
+    title: string | null;
+  }>,
+  verb: string,
+  now: Date,
+) {
+  for (const [year, guard] of guards) {
+    await logCorrections(
+      db,
+      guard,
+      actorUserID,
+      year,
+      changed
+        .filter((c) => c.academicYear === year)
+        .map((c) => ({
+          userID: c.userID,
+          summary: correctionSummary("Awards", c.title ?? "Award", verb),
+        })),
+      now,
+    );
+  }
 }
 
 export async function awardsBulkRemove(
@@ -417,13 +552,14 @@ export async function awardsBulkRemove(
   ids: readonly string[],
   now: Date = new Date(),
 ) {
-  const rows = await bulkTargets(db, ids);
-  const live = rows.filter((r) => !r.voidedAt).map((r) => r.id);
+  const { rows, guards } = await bulkTargets(db, actorUserID, ids);
+  const live = rows.filter((r) => !r.voidedAt);
   if (live.length > 0) {
     await db.award.updateMany({
-      where: { id: { in: live } },
+      where: { id: { in: live.map((r) => r.id) } },
       data: { voidedAt: now, voidedBy: actorUserID },
     });
+    await logBulk(db, actorUserID, guards, live, "removed", now);
   }
   return { removed: live.length };
 }
@@ -435,7 +571,7 @@ export async function awardsBulkRestore(
   ids: readonly string[],
   now: Date = new Date(),
 ) {
-  const rows = await bulkTargets(db, ids);
+  const { rows, guards } = await bulkTargets(db, actorUserID, ids);
   const removed = rows.filter((r) => r.voidedAt);
   const restorable: string[] = [];
   const skipped: string[] = [];
@@ -474,6 +610,14 @@ export async function awardsBulkRestore(
         updatedAt: now,
       },
     });
+    await logBulk(
+      db,
+      actorUserID,
+      guards,
+      removed.filter((r) => restorable.includes(r.id)),
+      "restored",
+      now,
+    );
   }
   return { restored: restorable.length, skipped };
 }
@@ -535,8 +679,20 @@ export async function awardBatchUndo(
     where: { id: batchId },
   });
   if (!batch) throw fail("NOT_FOUND", "BATCH_NOT_FOUND");
-  await assertWritable(db, batch.academicYear);
-  return db.$transaction(async (tx) => {
+  // Who the undo touches: everyone still holding an active award of the upload.
+  const active = await db.award.findMany({
+    where: { importBatchID: batchId, ...NOT_VOIDED },
+    select: { userID: true, title: true },
+  });
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    {
+      academicYear: batch.academicYear,
+      affectedUserIDs: active.map((a) => a.userID),
+    },
+  );
+  const undone = await db.$transaction(async (tx) => {
     const claimed = await tx.awardImportBatch.updateMany({
       where: {
         id: batchId,
@@ -551,4 +707,20 @@ export async function awardBatchUndo(
     });
     return { id: batchId, removed: result.count };
   });
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    batch.academicYear,
+    active.map((a) => ({
+      userID: a.userID,
+      summary: correctionSummary(
+        "Awards",
+        a.title ?? "Award",
+        "removed (upload undone)",
+      ),
+    })),
+    now,
+  );
+  return undone;
 }

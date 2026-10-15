@@ -406,7 +406,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await errorOf(create(SOCCER_HEAD, "After the lock"))).toBe("ok");
       });
 
-      it("refuses everyone, managers included, once the year is published", async () => {
+      it("refuses everyone, managers included, once the year is published, unless a resident is unlocked", async () => {
         const id = await seeded(SOCCER, "Inter-hall league");
         await db.transcriptPeriod.update({
           where: { academicYear: AY },
@@ -444,7 +444,13 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
                 participants: [],
               }),
             ),
-          ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+            // A manager changing people is a per-resident correction: it needs
+            // each of them unlocked. A head just gets the published refusal.
+          ).toBe(
+            who === SOCCER_HEAD
+              ? "PRECONDITION_FAILED:PERIOD_PUBLISHED"
+              : "FORBIDDEN:ONLY_UNLOCKED_RESIDENTS",
+          );
         }
         // Reading is still allowed.
         expect((await list(SOCCER_HEAD)).activeCount).toBe(1);

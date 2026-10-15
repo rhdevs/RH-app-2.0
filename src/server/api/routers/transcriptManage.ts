@@ -367,12 +367,7 @@ export const transcriptManageRouter = createTRPCRouter({
       .mutation(async ({ ctx, input }) => {
         await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
         await requireCca(ctx.db, input.ccaID);
-        await assertCanEditCcaYear(
-          ctx.db,
-          { userID: ctx.session.user.userID },
-          input.ccaID,
-          input.academicYear,
-        );
+        // The edit guard runs inside, once the member is known.
         return rosterUpsert(ctx.db, ctx.session.user.userID, input);
       }),
   }),
@@ -454,8 +449,7 @@ export const transcriptManageRouter = createTRPCRouter({
         const actor = { userID: ctx.session.user.userID };
         await requireCcaAccess(ctx.db, actor.userID, input.ccaID);
         await requireCca(ctx.db, input.ccaID);
-        const year = await activityYear(ctx.db, input.id, input.ccaID);
-        await assertCanEditCcaYear(ctx.db, actor, input.ccaID, year);
+        // The edit guard runs inside, on the residents the change touches.
         return participantsSet(ctx.db, actor.userID, input);
       }),
   }),

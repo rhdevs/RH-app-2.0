@@ -619,7 +619,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const batch = await db.awardImportBatch.findFirstOrThrow();
         const t = await fullColours();
         await publish();
-        const denied = "PRECONDITION_FAILED:PERIOD_PUBLISHED";
+        // Every award write names residents, so a manager is refused until
+        // each of them is unlocked.
+        const denied = "FORBIDDEN:ONLY_UNLOCKED_RESIDENTS";
 
         for (const who of [JCRC, ADMIN]) {
           const m = as(who);

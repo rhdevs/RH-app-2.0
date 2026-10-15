@@ -442,7 +442,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await as(JCRC).transcript.periods.close({ academicYear: AY });
         await as(JCRC).transcript.periods.publish({ academicYear: AY });
 
-        expect(await edit(JCRC)).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+        // A manager is refused until the resident is unlocked (a correction);
+        // a head never gets that power.
+        expect(await edit(JCRC)).toBe("FORBIDDEN:ONLY_UNLOCKED_RESIDENTS");
         expect(await edit(SOCCER_HEAD)).toBe(
           "PRECONDITION_FAILED:PERIOD_PUBLISHED",
         );
@@ -710,6 +712,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               CcaYearFreeze: db.ccaYearFreeze,
               CcaActivity: db.ccaActivity,
               CcaActivityParticipant: db.ccaActivityParticipant,
+              ResidentUnlock: db.residentUnlock,
+              ResidentWithhold: db.residentWithhold,
+              ManualMembership: db.manualMembership,
+              ResidentEvent: db.residentEvent,
             } as Record<string, { count: (a: object) => Promise<number> }>
           )[name]!;
           out[name] = await delegate.count({ where: { academicYear: ay } });
@@ -787,6 +793,19 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
         await db.ccaYearFreeze.createMany({
           data: strip(await db.ccaYearFreeze.findMany({ where })) as never,
+        });
+        // The per-resident records have no counterpart to copy: file one of each.
+        await db.residentUnlock.create({
+          data: { academicYear: OLD, userID: R12.id, reason: "test" },
+        });
+        await db.residentWithhold.create({
+          data: { academicYear: OLD, userID: R12.id, reason: "test" },
+        });
+        await db.manualMembership.create({
+          data: { academicYear: OLD, userID: R12.id, ccaID: 1 },
+        });
+        await db.residentEvent.create({
+          data: { academicYear: OLD, userID: R12.id, action: "unlock" },
         });
         // A participant belongs to one activity, so each activity is copied
         // first and its people follow it under the new id.

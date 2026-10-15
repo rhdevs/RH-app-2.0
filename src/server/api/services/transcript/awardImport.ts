@@ -25,6 +25,8 @@ import { bulkResolver } from "~/server/api/routers/admin";
 import { awardTypeCreate } from "./manageAwards";
 import { NOT_VOIDED } from "./loader";
 import { assertWritable } from "./manageAccess";
+import { correctionSummary } from "~/lib/transcript/corrections";
+import { assertCanEditForResidents, logCorrections } from "./residentRecords";
 import { lookupResidents } from "./residents";
 
 /**
@@ -154,7 +156,6 @@ export async function awardImportCommit(
   input: z.infer<typeof awardImportCommitInput>,
   now: Date = new Date(),
 ) {
-  await assertWritable(db, input.academicYear);
   const { rows, catalogue, held } = await prepare(
     db,
     input.academicYear,
@@ -162,6 +163,19 @@ export async function awardImportCommit(
   );
   const skippedByUser = new Set(input.skipRows ?? []);
   const decisions: Decision[] = input.decisions;
+
+  // Who the import may touch: every resident on a Ready row not skipped. Checked
+  // before anything is written, so a refusal leaves the catalogue alone too.
+  const guard = await assertCanEditForResidents(
+    db,
+    { userID: actorUserID },
+    {
+      academicYear: input.academicYear,
+      affectedUserIDs: rows
+        .filter((r) => r.status === "ready" && !skippedByUser.has(r.row))
+        .map((r) => r.userID!),
+    },
+  );
 
   // Every new name among the rows that would be imported needs a decision.
   const unknown = unknownNames(rows, skippedByUser);
@@ -301,6 +315,18 @@ export async function awardImportCommit(
       data: { importedCount: imported, skippedCount: rows.length - imported },
     });
   }
+
+  await logCorrections(
+    db,
+    guard,
+    actorUserID,
+    input.academicYear,
+    toWrite.slice(0, imported).map((a) => ({
+      userID: a.userID,
+      summary: correctionSummary("Awards", a.title, "assigned (upload)"),
+    })),
+    now,
+  );
 
   return {
     batchId: batch.id,

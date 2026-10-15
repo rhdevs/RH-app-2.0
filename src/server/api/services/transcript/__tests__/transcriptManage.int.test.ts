@@ -642,9 +642,19 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               }),
           ],
         ];
+        // Writes that name residents are corrections: a manager needs each
+        // of them unlocked. Activity-level writes get the published refusal.
+        const perResident = new Set([
+          "awards.assign",
+          "awards.remove",
+          "jcrc.saveFor",
+          "jcrc.saveMine",
+        ]);
         for (const [name, run] of writes) {
           expect(await errorOf(run()), name).toBe(
-            "PRECONDITION_FAILED:PERIOD_PUBLISHED",
+            perResident.has(name)
+              ? "FORBIDDEN:ONLY_UNLOCKED_RESIDENTS"
+              : "PRECONDITION_FAILED:PERIOD_PUBLISHED",
           );
         }
         // Nothing was written.

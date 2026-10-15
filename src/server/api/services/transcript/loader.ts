@@ -184,21 +184,22 @@ export async function loadTranscriptInput(
     citation: a.citation ?? null,
   }));
 
-  const jcrcInput: JcrcServiceInput | null = jcrc
-    ? {
-        portfolio: jcrc.portfolio ?? "",
-        position: jcrc.position ?? "",
-        term: academicYear,
-        description: jcrc.description ?? "",
-        contributions: jcrc.contributions.map((c) => ({
-          activity: c.activity,
-          role: c.role ?? "",
-          description: c.description ?? "",
-        })),
-        testimonial: { text: jcrc.testimonial ?? "", author: "Hall Master" },
-        isPlaceholder: jcrc.isPlaceholder ?? true,
-      }
-    : null;
+  const jcrcInput: JcrcServiceInput | null =
+    jcrc && !jcrc.removedAt
+      ? {
+          portfolio: jcrc.portfolio ?? "",
+          position: jcrc.position ?? "",
+          term: academicYear,
+          description: jcrc.description ?? "",
+          contributions: jcrc.contributions.map((c) => ({
+            activity: c.activity,
+            role: c.role ?? "",
+            description: c.description ?? "",
+          })),
+          testimonial: { text: jcrc.testimonial ?? "", author: "Hall Master" },
+          isPlaceholder: jcrc.isPlaceholder ?? true,
+        }
+      : null;
 
   const displayName = profile?.displayName?.trim();
 
