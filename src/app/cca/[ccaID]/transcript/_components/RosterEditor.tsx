@@ -71,6 +71,54 @@ export interface RosterRowViewProps {
   readOnly: boolean;
   /** Set when the role period was changed to fit a narrower membership. */
   roleNote?: string | null;
+  /** Clear every override in the draft, back to the defaults (Save applies it). */
+  onReset?: () => void;
+}
+
+/** A small text button under a field, for the clear and reset actions. */
+const TEXT_BUTTON =
+  "text-xs font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-900 disabled:opacity-50";
+
+/** Does the draft hold any override at all? */
+export const hasOverrides = (draft: RowDraft) =>
+  draft.duration !== "" ||
+  draft.roleLabel.trim() !== "" ||
+  draft.roleDuration !== "" ||
+  draft.extra.trim() !== "";
+
+/**
+ * Reset to default: only where there IS a default to go back to (a live list,
+ * not a frozen one, whose entries hold the settled values) and something to clear.
+ */
+export const canReset = (row: RosterRowData, draft: RowDraft) =>
+  row.defaultDuration !== null && hasOverrides(draft);
+
+export const BLANK_ROW_DRAFT: RowDraft = {
+  duration: "",
+  roleLabel: "",
+  roleDuration: "",
+  extra: "",
+};
+
+function ClearButton({
+  label,
+  name,
+  onClick,
+}: {
+  label: string;
+  name: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={TEXT_BUTTON}
+      aria-label={`${label} for ${name}`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
 }
 
 /** A real table header cell: not `block`, so the header row lines up with the columns. */
@@ -168,6 +216,15 @@ export function RosterRowView(p: RosterRowViewProps) {
             }
             onChange={(e) => p.onDraft({ roleLabel: e.target.value })}
           />
+          {!p.readOnly && draft.roleLabel.trim() !== "" && (
+            <div className="mt-1">
+              <ClearButton
+                label="Clear role"
+                name={name}
+                onClick={() => p.onDraft({ roleLabel: "", roleDuration: "" })}
+              />
+            </div>
+          )}
         </td>
         <td className="min-w-[10rem] px-3 py-3">
           {hasRole && (
@@ -199,6 +256,15 @@ export function RosterRowView(p: RosterRowViewProps) {
           <p className="mt-1 text-xs text-gray-500">
             {counterText(draft.extra, EXTRA_MAX)}
           </p>
+          {!p.readOnly && draft.extra.trim() !== "" && (
+            <div className="mt-1">
+              <ClearButton
+                label="Clear contribution"
+                name={name}
+                onClick={() => p.onDraft({ extra: "" })}
+              />
+            </div>
+          )}
           <ErrorLine message={problem ?? p.error} />
         </td>
         <td className={`${STICKY_END} px-3 py-3`}>
@@ -227,6 +293,13 @@ export function RosterRowView(p: RosterRowViewProps) {
                   <Check className="h-3 w-3" />
                   Saved
                 </span>
+              )}
+              {p.onReset && canReset(row, draft) && (
+                <ClearButton
+                  label="Reset to default"
+                  name={name}
+                  onClick={p.onReset}
+                />
               )}
             </div>
           )}
@@ -305,6 +378,15 @@ export function RosterCardView(p: RosterRowViewProps) {
           }
           onChange={(e) => p.onDraft({ roleLabel: e.target.value })}
         />
+        {!p.readOnly && draft.roleLabel.trim() !== "" && (
+          <div className="mt-1">
+            <ClearButton
+              label="Clear role"
+              name={name}
+              onClick={() => p.onDraft({ roleLabel: "", roleDuration: "" })}
+            />
+          </div>
+        )}
       </div>
       {hasRole && (
         <div>
@@ -346,6 +428,15 @@ export function RosterCardView(p: RosterRowViewProps) {
         <p className="mt-1 text-xs text-gray-500">
           {counterText(draft.extra, EXTRA_MAX)}
         </p>
+        {!p.readOnly && draft.extra.trim() !== "" && (
+          <div className="mt-1">
+            <ClearButton
+              label="Clear contribution"
+              name={name}
+              onClick={() => p.onDraft({ extra: "" })}
+            />
+          </div>
+        )}
       </div>
       {p.roleNote && (
         <p className="text-xs text-gray-600" role="status">
@@ -378,6 +469,13 @@ export function RosterCardView(p: RosterRowViewProps) {
               <Check className="h-3 w-3" />
               Saved
             </span>
+          )}
+          {p.onReset && canReset(row, draft) && (
+            <ClearButton
+              label="Reset to default"
+              name={name}
+              onClick={p.onReset}
+            />
           )}
         </div>
       )}
@@ -633,6 +731,10 @@ export function RosterEditor({
       error: ui?.error ?? null,
       readOnly,
       roleNote: ui?.note ?? null,
+      onReset: () => {
+        setFailed(0);
+        setState((s) => applyEdit(s, row, BLANK_ROW_DRAFT));
+      },
     };
   };
 
