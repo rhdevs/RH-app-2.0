@@ -36,6 +36,7 @@ import {
   sameContributions,
   type ContributionDraft,
 } from "~/lib/transcript/headView";
+import { useUnsavedChangesGuard } from "~/lib/transcript/useUnsavedChangesGuard";
 import { api } from "~/trpc/react";
 import { ErrorLine, FIELD_LABEL, SectionCard, YearSelect } from "./Bits";
 import { previewHref } from "./PreviewPicker";
@@ -417,6 +418,8 @@ export default function JcrcSelf({ userID }: { userID: string }) {
 
   const [draft, setDraft] = useState<JcrcDraft>(EMPTY_JCRC);
   const [saved, setSaved] = useState(false);
+  const dirty = !same(draft, savedDraft);
+  const confirmLeave = useUnsavedChangesGuard(dirty);
   // Reload the form when the saved record changes (a year change, or a save
   // from elsewhere). Unsaved typing is never overwritten: the form is replaced
   // only if it still matched what was loaded before, or the year changed.
@@ -498,6 +501,7 @@ export default function JcrcSelf({ userID }: { userID: string }) {
       academicYear={selected}
       years={yearOptions(periods.data?.periods ?? [], current)}
       onYear={(y) => {
+        if (y !== selected && !confirmLeave()) return;
         setYear(y);
         setSaved(false);
         save.reset();
@@ -519,7 +523,7 @@ export default function JcrcSelf({ userID }: { userID: string }) {
       }}
       saving={save.isPending}
       saved={saved}
-      dirty={!same(draft, savedDraft)}
+      dirty={dirty}
       error={
         save.error && !hasFieldError ? errorText(save.error.message) : null
       }

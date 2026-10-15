@@ -271,3 +271,171 @@ describe("activity editor", () => {
     expect(html).toContain('role="alert"');
   });
 });
+
+/* ---- roster: cards, Save all bar ---------------------------------------- */
+
+import {
+  RosterCardView,
+  RosterTableView,
+  SaveAllBar,
+  type RosterRowData,
+  type RosterRowViewProps,
+} from "../_components/RosterEditor";
+import { draftOf } from "~/lib/transcript/headView";
+
+const rosterRow = (over: Partial<RosterRowData> = {}): RosterRowData => ({
+  userID: "SEED-R12",
+  displayName: "Seed Twelve",
+  isHead: false,
+  defaultDuration: "full",
+  duration: null,
+  defaultRoleLabel: null,
+  roleLabel: null,
+  defaultRoleDuration: null,
+  roleDuration: null,
+  extraContribution: null,
+  ...over,
+});
+
+const cardProps = (
+  over: Partial<RosterRowViewProps> = {},
+  row: RosterRowData = rosterRow(),
+): RosterRowViewProps => ({
+  row,
+  draft: draftOf(row),
+  onDraft: noop,
+  onSave: noop,
+  saving: false,
+  saved: false,
+  error: null,
+  readOnly: false,
+  ...over,
+});
+
+describe("roster cards (below the md breakpoint)", () => {
+  it("shows the same fields as the table row, with ids that never clash", () => {
+    const html = renderToStaticMarkup(
+      <ul>
+        <RosterCardView {...cardProps()} />
+      </ul>,
+    );
+
+    expect(html).toContain("Seed Twelve");
+    expect(html).toContain('id="duration-m-SEED-R12"');
+    expect(html).toContain('id="role-m-SEED-R12"');
+    expect(html).toContain('id="extra-m-SEED-R12"');
+    expect(html).toContain("Default (Full year)");
+    expect(html).toContain("500 characters left");
+    expect(html).not.toContain('id="duration-SEED-R12"');
+  });
+
+  it("shows the role period only when there is a role", () => {
+    const plain = renderToStaticMarkup(
+      <ul>
+        <RosterCardView {...cardProps()} />
+      </ul>,
+    );
+    const head = renderToStaticMarkup(
+      <ul>
+        <RosterCardView
+          {...cardProps(
+            {},
+            rosterRow({ isHead: true, defaultRoleLabel: "Head" }),
+          )}
+        />
+      </ul>,
+    );
+
+    expect(plain).not.toContain("roleDuration-m-");
+    expect(head).toContain("roleDuration-m-");
+  });
+
+  it("keeps Save on the card, disabled until something changed", () => {
+    const row = rosterRow();
+    const html = renderToStaticMarkup(
+      <ul>
+        <RosterCardView {...cardProps({}, row)} />
+      </ul>,
+    );
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Save<\/button>/);
+
+    const dirty = renderToStaticMarkup(
+      <ul>
+        <RosterCardView
+          {...cardProps({ draft: { ...draftOf(row), roleLabel: "Head" } }, row)}
+        />
+      </ul>,
+    );
+    expect(dirty).not.toMatch(/<button[^>]*disabled=""[^>]*>Save<\/button>/);
+  });
+
+  it("is read-only without Save", () => {
+    const html = renderToStaticMarkup(
+      <ul>
+        <RosterCardView {...cardProps({ readOnly: true })} />
+      </ul>,
+    );
+    expect(html).not.toContain(">Save<");
+    expect(html).toMatch(/<select[^>]*disabled=""/);
+  });
+
+  it("shows cards on phones and the table from md up", () => {
+    const html = renderToStaticMarkup(
+      <RosterTableView
+        count={1}
+        rows={<tr />}
+        cards={<li data-card="1">card</li>}
+      />,
+    );
+
+    expect(html).toMatch(/<ul class="[^"]*md:hidden[^"]*"><li data-card="1">/);
+    expect(html).toMatch(/<div class="[^"]*hidden[^"]*md:block[^"]*">/);
+    expect(html).toContain("<table");
+  });
+});
+
+describe("Save all bar", () => {
+  const bar = (over: Partial<Parameters<typeof SaveAllBar>[0]> = {}) =>
+    renderToStaticMarkup(
+      <SaveAllBar
+        count={2}
+        busy={false}
+        failureLine={null}
+        onSaveAll={noop}
+        onDiscard={noop}
+        {...over}
+      />,
+    );
+
+  it("says how many changes are unsaved, with Save all and Discard", () => {
+    const html = bar();
+
+    expect(html).toContain("2 unsaved changes");
+    expect(html).toContain("Save all");
+    expect(html).toContain("Discard");
+    expect(html).toContain("sticky bottom-0");
+  });
+
+  it("uses the singular for one change", () => {
+    expect(bar({ count: 1 })).toContain("1 unsaved change<");
+  });
+
+  it("is not there when nothing is unsaved", () => {
+    expect(bar({ count: 0 })).toBe("");
+  });
+
+  it("disables both buttons while saving", () => {
+    const html = bar({ busy: true });
+    expect(disabledButtons(html)).toHaveLength(2);
+    expect(html).toContain("Saving");
+  });
+
+  it("lists how many rows failed, as an alert", () => {
+    const html = bar({
+      count: 1,
+      failureLine: "1 row could not be saved. See the message on each.",
+    });
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("1 row could not be saved");
+  });
+});

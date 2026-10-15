@@ -28,6 +28,7 @@ import {
 } from "~/lib/transcript/adminView";
 import { validActions, type YearAction } from "~/lib/transcript/lifecycle";
 import { formatSgDate, instantToSgDate } from "~/lib/transcript/sgDate";
+import { useUnsavedChangesGuard } from "~/lib/transcript/useUnsavedChangesGuard";
 import { api } from "~/trpc/react";
 import {
   ErrorLine,
@@ -337,6 +338,11 @@ export default function PeriodPanel() {
     setDownloadBy(savedDownloadBy);
   }, [year, savedDownloadBy]);
 
+  // Unsaved dates: warned about on reload, and before the year changes.
+  const confirmLeave = useUnsavedChangesGuard(
+    sem2 !== saved || downloadBy !== savedDownloadBy,
+  );
+
   const unfrozen = api.transcript.periods.unfrozenCount.useQuery(
     { academicYear: year },
     { enabled: year !== "", retry: false },
@@ -412,6 +418,7 @@ export default function PeriodPanel() {
       years={yearOptions(list.data.periods, current)}
       selected={year}
       onSelect={(y) => {
+        if (y !== year && !confirmLeave()) return;
         setSelected(y);
         setResultLine(null);
         setSem2Start.reset();

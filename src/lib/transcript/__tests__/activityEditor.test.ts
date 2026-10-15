@@ -17,7 +17,6 @@ import {
   removePerson,
   selectAll,
   togglePerson,
-  unsavedChangesLine,
 } from "../activityEditor";
 import { errorText } from "../adminView";
 import { DISCARD_CHANGES_QUESTION, mayLeave } from "../useUnsavedChangesGuard";
@@ -174,11 +173,9 @@ describe("activity editor dirty tracking and problems", () => {
     ).toMatch(/60/);
   });
 
-  it("counts people and unsaved changes in plain words", () => {
+  it("counts people in plain words", () => {
     expect(peopleCountLine(1)).toBe("1 person selected");
     expect(peopleCountLine(3)).toBe("3 people selected");
-    expect(unsavedChangesLine(1)).toBe("1 unsaved change");
-    expect(unsavedChangesLine(2)).toBe("2 unsaved changes");
   });
 });
 

@@ -34,9 +34,10 @@ import {
   nextAcademicYear,
 } from "~/lib/transcript/lifecycle";
 import { formatSgDate } from "~/lib/transcript/sgDate";
+import { useUnsavedChangesGuard } from "~/lib/transcript/useUnsavedChangesGuard";
 import { api } from "~/trpc/react";
 import ActivitiesSection from "./ActivitiesSection";
-import { RosterRow, RosterTableView, type RosterRowData } from "./RosterEditor";
+import { RosterEditor, type RosterRowData } from "./RosterEditor";
 import VolunteerSection from "./VolunteerSection";
 
 export interface TranscriptNotesProps {
@@ -138,6 +139,9 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
     { retry: false },
   );
   const [picked, setPicked] = useState<string | null>(null);
+  // Unsaved roster edits: warned about on reload, and before the year changes.
+  const [rosterUnsaved, setRosterUnsaved] = useState(0);
+  const confirmLeave = useUnsavedChangesGuard(rosterUnsaved > 0);
   const year = picked ?? term.data?.termAcademicYear ?? "";
   const years = [
     ...academicYearsUpTo(nextAcademicYear(currentAcademicYear(new Date()))),
@@ -180,6 +184,43 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
 
   return (
     <div className="space-y-6">
+      <SectionCard
+        title="Transcript year"
+        description="Activities and the member roster below are for this academic year."
+      >
+        <div className="mb-4 flex flex-wrap items-end gap-4">
+          <YearSelect
+            id="transcript-year"
+            label="Academic year"
+            value={year}
+            options={years}
+            onChange={(next) => {
+              if (next !== year && confirmLeave()) setPicked(next);
+            }}
+          />
+          {canLock && (
+            <LockRoster
+              academicYear={year}
+              ccaID={ccaID}
+              onLocked={() => {
+                void utils.transcriptManage.roster.list.invalidate();
+                void utils.transcriptManage.roster.term.invalidate();
+              }}
+            />
+          )}
+        </div>
+        <TranscriptNotes
+          stateNote={stateNote}
+          showDefaultsNote={
+            data.status !== "published" && data.sem2Start === null
+          }
+          descriptionEmpty={
+            profile.data ? profile.data.description.trim() === "" : null
+          }
+          detailsHref={`/cca/${ccaID}/details`}
+        />
+      </SectionCard>
+
       <ActivitiesSection
         ccaID={ccaID}
         academicYear={year}
@@ -195,48 +236,13 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
         title="Member roster"
         description={`${ROSTER_HELPER} Changes here shape the CCA line on each member's transcript.`}
       >
-        <div className="mb-4 flex flex-wrap items-end gap-4">
-          <YearSelect
-            id="transcript-year"
-            label="Academic year"
-            value={year}
-            options={years}
-            onChange={setPicked}
-          />
-          {canLock && (
-            <LockRoster
-              academicYear={year}
-              ccaID={ccaID}
-              onLocked={() => {
-                void utils.transcriptManage.roster.list.invalidate();
-                void utils.transcriptManage.roster.term.invalidate();
-              }}
-            />
-          )}
-        </div>
-        <div className="mb-4">
-          <TranscriptNotes
-            stateNote={stateNote}
-            showDefaultsNote={
-              data.status !== "published" && data.sem2Start === null
-            }
-            descriptionEmpty={
-              profile.data ? profile.data.description.trim() === "" : null
-            }
-            detailsHref={`/cca/${ccaID}/details`}
-          />
-        </div>
-        <RosterTableView
-          count={rows.length}
-          rows={rows.map((row) => (
-            <RosterRow
-              key={`${year}:${row.userID}`}
-              ccaID={ccaID}
-              academicYear={year}
-              row={row}
-              readOnly={readOnly}
-            />
-          ))}
+        <RosterEditor
+          key={year}
+          ccaID={ccaID}
+          academicYear={year}
+          rows={rows}
+          readOnly={readOnly}
+          onUnsavedChange={setRosterUnsaved}
         />
       </SectionCard>
 
