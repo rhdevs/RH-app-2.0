@@ -72,6 +72,8 @@ const ERROR_TEXT: Record<string, string> = {
   INSUFFICIENT_ROLE: "You do not have access to this.",
   INVALID_ACADEMIC_YEAR: "That is not a valid academic year.",
   RATE_LIMITED: "Too many attempts. Try again later.",
+  ROLE_PERIOD_OUTSIDE_MEMBERSHIP:
+    "The role period must fit inside the membership period.",
   NOT_A_MEMBER: "That person is no longer a member of this CCA.",
   NOT_A_HEAD_OF_THIS_CCA: "You do not head this CCA.",
   NOT_A_VOLUNTEERING_CCA: "This CCA does not record volunteer hours.",

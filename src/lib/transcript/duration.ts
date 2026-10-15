@@ -38,6 +38,27 @@ export function defaultRoleDuration(
   return grantedAt.getTime() >= sem2Start.getTime() ? "sem2" : "full";
 }
 
+/**
+ * A role must fit inside the membership: a full-year member may hold a role for
+ * any period, a semester member only for that semester.
+ */
+export function roleFits(membership: Duration, role: Duration): boolean {
+  return membership === "full" || role === membership;
+}
+
+/**
+ * The role period actually in force: the wanted one (a missing one means the
+ * full year), narrowed to the membership when it would stick out of it. A sem2
+ * member is therefore never "Head (full year)".
+ */
+export function clampRoleDuration(
+  membership: Duration,
+  role: Duration | null | undefined,
+): Duration {
+  const wanted = role ?? "full";
+  return roleFits(membership, wanted) ? wanted : membership;
+}
+
 /** "Semester 2" for sem2, "Semester 1" for sem1, null for a full year or unknown. */
 export function durationLabel(value: string | null | undefined): string | null {
   if (value === "sem1") return "Semester 1";
@@ -82,15 +103,18 @@ export function resolveEntry(
     : null;
 
   const roleLabel = storedLabel ?? (live.isHead ? "Head" : null);
+  const duration =
+    storedDuration ?? defaultMembershipDuration(live.decidedAt, sem2Start);
   const roleDuration =
     storedRoleDuration ??
     (live.isHead ? defaultRoleDuration(live.grantedAt, sem2Start) : null);
 
   return {
-    duration:
-      storedDuration ?? defaultMembershipDuration(live.decidedAt, sem2Start),
+    duration,
     roleLabel,
-    roleDuration: roleLabel ? roleDuration : null,
+    // Always inside the membership, so a stored or seeded value that sticks
+    // out of it can never render.
+    roleDuration: roleLabel ? clampRoleDuration(duration, roleDuration) : null,
     extraContribution: stored?.extraContribution?.trim()
       ? stored.extraContribution.trim()
       : null,

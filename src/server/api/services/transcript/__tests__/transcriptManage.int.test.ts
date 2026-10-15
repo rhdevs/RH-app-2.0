@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { errorText } from "~/lib/transcript/adminView";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 
 /**
@@ -630,7 +631,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           userID: R12.id,
           duration: "sem2",
           roleLabel: "Treasurer",
-          roleDuration: "sem1",
+          roleDuration: "sem2",
           extraContribution: "  Kept the books.  ",
         });
         let row = (await rosterOf(SOCCER_HEAD, SOCCER)).find(
@@ -639,13 +640,13 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(row).toMatchObject({
           duration: "sem2",
           roleLabel: "Treasurer",
-          roleDuration: "sem1",
+          roleDuration: "sem2",
           extraContribution: "Kept the books.",
         });
         expect(row.effective).toEqual({
           duration: "sem2",
           roleLabel: "Treasurer",
-          roleDuration: "sem1",
+          roleDuration: "sem2",
           extraContribution: "Kept the books.",
         });
 
@@ -663,11 +664,137 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(row).toMatchObject({
           duration: "sem2",
           roleLabel: null,
-          roleDuration: "sem1",
+          roleDuration: "sem2",
           extraContribution: null,
         });
         expect(row.effective.duration).toBe("sem2");
         expect(row.effective.roleLabel).toBeNull();
+      });
+
+      it("refuses a role period that sticks out of the membership period", async () => {
+        const soccer = as(SOCCER_HEAD).transcriptManage;
+        const base = { ccaID: SOCCER, academicYear: AY, userID: R12.id };
+
+        // semester 2 member, role for semester 1 or the full year
+        expect(
+          await errorOf(
+            soccer.roster.upsert({
+              ...base,
+              duration: "sem2",
+              roleLabel: "Treasurer",
+              roleDuration: "sem1",
+            }),
+          ),
+        ).toBe("BAD_REQUEST:ROLE_PERIOD_OUTSIDE_MEMBERSHIP");
+        expect(
+          await errorOf(
+            soccer.roster.upsert({
+              ...base,
+              duration: "sem2",
+              roleLabel: "Treasurer",
+              roleDuration: "full",
+            }),
+          ),
+        ).toBe("BAD_REQUEST:ROLE_PERIOD_OUTSIDE_MEMBERSHIP");
+        // nothing was stored by the refused calls
+        expect(
+          await db.transcriptRosterEntry.count({
+            where: {
+              academicYear: AY,
+              userID: R12.id,
+              ccaID: SOCCER,
+              roleDuration: "sem1",
+            },
+          }),
+        ).toBe(0);
+
+        // a compatible pair is accepted
+        expect(
+          await errorOf(
+            soccer.roster.upsert({
+              ...base,
+              duration: "sem2",
+              roleLabel: "Treasurer",
+              roleDuration: "sem2",
+            }),
+          ),
+        ).toBe("ok");
+        // narrowing the membership under a stored role period is refused too
+        expect(
+          await errorOf(soccer.roster.upsert({ ...base, duration: "sem1" })),
+        ).toBe("BAD_REQUEST:ROLE_PERIOD_OUTSIDE_MEMBERSHIP");
+        // narrowing both together is fine
+        expect(
+          await errorOf(
+            soccer.roster.upsert({
+              ...base,
+              duration: "sem1",
+              roleDuration: "sem1",
+            }),
+          ),
+        ).toBe("ok");
+        // a full-year member may hold a role for one semester
+        expect(
+          await errorOf(
+            soccer.roster.upsert({
+              ...base,
+              duration: "full",
+              roleDuration: "sem2",
+            }),
+          ),
+        ).toBe("ok");
+        expect(errorText("ROLE_PERIOD_OUTSIDE_MEMBERSHIP")).toBe(
+          "The role period must fit inside the membership period.",
+        );
+      });
+
+      it("never lets a semester 2 member publish or render as a full-year head", async () => {
+        // Seeded data that disagrees with itself: a head with a full-year role
+        // inside a semester 2 membership, written straight to the database.
+        await db.transcriptRosterEntry.deleteMany({
+          where: { academicYear: AY, userID: "SEED-R05", ccaID: CHOIR },
+        });
+        await db.transcriptRosterEntry.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R05",
+            ccaID: CHOIR,
+            frozen: false,
+            duration: "sem2",
+            roleLabel: "Head",
+            roleDuration: "full",
+          },
+        });
+
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+
+        const frozen = await db.transcriptRosterEntry.findFirstOrThrow({
+          where: { academicYear: AY, userID: "SEED-R05", ccaID: CHOIR },
+        });
+        expect(frozen).toMatchObject({
+          duration: "sem2",
+          roleDuration: "sem2",
+          frozen: true,
+        });
+        // Even if bad data reaches a frozen row, the transcript clamps it.
+        await db.transcriptRosterEntry.update({
+          where: { id: frozen.id },
+          data: { roleDuration: "full" },
+        });
+        const preview = await as(JCRC).transcript.preview({
+          userID: "SEED-R05",
+          academicYear: AY,
+        });
+        const main = preview.transcript.pages.find((x) => x.kind === "main");
+        const rows =
+          main?.kind === "main"
+            ? main.sections.flatMap((x) =>
+                x.kind === "involvements" ? x.rows : [],
+              )
+            : [];
+        const choir = rows.find((r) => r.ccaName.includes("Choir"));
+        expect(choir?.role).toMatch(/Sem 2/);
+        expect(choir?.role).not.toMatch(/full/i);
       });
 
       it("validates what it is given", async () => {

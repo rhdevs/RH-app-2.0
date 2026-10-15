@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { instantToSgDate, storedCalendarDate } from "~/lib/transcript/sgDate";
 import { canonicalUserID } from "~/lib/identity";
 import {
+  clampRoleDuration,
   isDuration,
   resolveEntry,
   type ResolvedEntry,
@@ -276,13 +277,21 @@ async function loadMemberships(
     const rows = await db.transcriptRosterEntry.findMany({
       where: { academicYear, userID: key, frozen: true },
     });
-    entries = rows.map((r) => ({
-      ccaID: r.ccaID,
-      duration: isDuration(r.duration) ? r.duration : "full",
-      roleLabel: r.roleLabel,
-      roleDuration: isDuration(r.roleDuration) ? r.roleDuration : null,
-      extraContribution: r.extraContribution,
-    }));
+    entries = rows.map((r) => {
+      const duration = isDuration(r.duration) ? r.duration : "full";
+      return {
+        ccaID: r.ccaID,
+        duration,
+        roleLabel: r.roleLabel,
+        roleDuration: r.roleLabel?.trim()
+          ? clampRoleDuration(
+              duration,
+              isDuration(r.roleDuration) ? r.roleDuration : null,
+            )
+          : null,
+        extraContribution: r.extraContribution,
+      };
+    });
   } else {
     const [live, stored] = await Promise.all([
       liveMemberships(db, key, user),

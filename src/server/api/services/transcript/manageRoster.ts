@@ -1,10 +1,12 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import {
+  clampRoleDuration,
   defaultMembershipDuration,
   defaultRoleDuration,
   isDuration,
   resolveEntry,
+  roleFits,
   type Duration,
 } from "~/lib/transcript/duration";
 import type { rosterUpsertInput } from "~/lib/transcript/manageInput";
@@ -119,7 +121,9 @@ export async function rosterList(
     );
     const rows = entries.map((e): RosterRow => {
       const duration = asDuration(e.duration) ?? "full";
-      const roleDuration = asDuration(e.roleDuration);
+      const roleDuration = e.roleLabel?.trim()
+        ? clampRoleDuration(duration, asDuration(e.roleDuration))
+        : null;
       return {
         userID: e.userID,
         displayName: names.get(e.userID)?.displayName ?? null,
@@ -198,6 +202,62 @@ const sortRows = (rows: RosterRow[]) =>
 type UpsertInput = z.infer<typeof rosterUpsertInput>;
 
 /**
+ * A role must fit inside the membership. Works out the membership period that
+ * will be in force after this change (the override, else the default from when
+ * the application was accepted), and the role period that will be in force, and
+ * refuses a role period that sticks out of it.
+ */
+async function assertRoleFitsMembership(
+  db: PrismaClient,
+  input: UpsertInput,
+  target: { key: string; keys: string[] },
+) {
+  const [existing, period, apps] = await Promise.all([
+    db.transcriptRosterEntry.findUnique({
+      where: {
+        academicYear_userID_ccaID: {
+          academicYear: input.academicYear,
+          userID: target.key,
+          ccaID: input.ccaID,
+        },
+      },
+    }),
+    getPeriod(db, input.academicYear),
+    db.ccaApplication.findMany({
+      where: {
+        ccaID: input.ccaID,
+        status: "accepted",
+        userID: { in: target.keys },
+      },
+      select: { decidedAt: true },
+    }),
+  ]);
+  let decidedAt: Date | null = null;
+  for (const a of apps) {
+    if (a.decidedAt && (!decidedAt || a.decidedAt < decidedAt)) {
+      decidedAt = a.decidedAt;
+    }
+  }
+  const duration =
+    input.duration !== undefined
+      ? input.duration
+      : asDuration(existing?.duration);
+  const roleDuration =
+    input.roleDuration !== undefined
+      ? input.roleDuration
+      : asDuration(existing?.roleDuration);
+  const membership =
+    duration ?? defaultMembershipDuration(decidedAt, period?.sem2Start ?? null);
+
+  if (roleDuration && !roleFits(membership, roleDuration)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "ROLE_PERIOD_OUTSIDE_MEMBERSHIP",
+    });
+  }
+}
+
+/**
  * Set or clear one member's overrides. The year must be collecting and the user
  * must be a CURRENT member of THIS CCA (the same resolver publish uses). Fields
  * left out are untouched; null or blank clears one.
@@ -215,6 +275,8 @@ export async function rosterUpsert(
   if (!target) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "NOT_A_MEMBER" });
   }
+
+  await assertRoleFitsMembership(db, input, target);
 
   const changes = {
     ...(input.duration !== undefined && { duration: input.duration }),

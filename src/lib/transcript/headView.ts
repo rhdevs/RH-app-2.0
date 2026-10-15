@@ -1,5 +1,5 @@
 import type { Duration } from "./duration";
-import { isDuration } from "./duration";
+import { clampRoleDuration, isDuration, roleFits } from "./duration";
 
 /**
  * View-model helpers for the CCA head's Transcript tab and the JCRC page. PURE:
@@ -314,4 +314,49 @@ export function contributionsPayload(rows: readonly ContributionDraft[]) {
     role: r.role.trim(),
     description: r.description.trim(),
   }));
+}
+
+/* ---- role period inside the membership period ------------------------------ */
+
+/** The membership period in force for a draft: the choice, else the default. */
+export function effectiveMembership(
+  choice: DurationChoice,
+  defaultDuration: Duration | null | undefined,
+): Duration {
+  return choice === "" ? (defaultDuration ?? "full") : choice;
+}
+
+/**
+ * The role period choices for a membership. A full-year member may choose any;
+ * a semester member only that semester (and the default, which is clamped to
+ * it, so a sem2 member's default role period is Semester 2, never Full year).
+ */
+export function roleDurationOptions(
+  membership: Duration,
+  defaultRoleDuration: Duration | null | undefined,
+): DurationOption[] {
+  const all = durationOptions(
+    clampRoleDuration(membership, defaultRoleDuration),
+  );
+  return membership === "full"
+    ? all
+    : all.filter((o) => o.value === "" || o.value === membership);
+}
+
+/**
+ * After a change, make the role period fit the membership. A role period that
+ * would stick out is changed to match, with the one line to show for it.
+ */
+export function fitRolePeriod(
+  draft: RowDraft,
+  defaultDuration: Duration | null | undefined,
+): { draft: RowDraft; note: string | null } {
+  const membership = effectiveMembership(draft.duration, defaultDuration);
+  if (draft.roleDuration === "" || roleFits(membership, draft.roleDuration)) {
+    return { draft, note: null };
+  }
+  return {
+    draft: { ...draft, roleDuration: membership },
+    note: `Role period changed to ${DURATION_LABEL[membership]} to match membership.`,
+  };
 }

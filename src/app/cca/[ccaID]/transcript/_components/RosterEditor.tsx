@@ -15,6 +15,10 @@ import {
   counterText,
   draftOf,
   durationOptions,
+  effectiveMembership,
+  fitRolePeriod,
+  roleDurationOptions,
+  type DurationOption,
   isDirty,
   reconcileAfterSave,
   rowProblem,
@@ -46,6 +50,8 @@ export interface RosterRowViewProps {
   saved: boolean;
   error: string | null;
   readOnly: boolean;
+  /** Set when the role period was changed to fit a narrower membership. */
+  roleNote?: string | null;
 }
 
 /** A real table header cell: not `block`, so the header row lines up with the columns. */
@@ -58,14 +64,14 @@ function DurationSelect({
   id,
   label,
   value,
-  computedDefault,
+  options,
   disabled,
   onChange,
 }: {
   id: string;
   label: string;
   value: DurationChoice;
-  computedDefault: Duration | null;
+  options: DurationOption[];
   disabled: boolean;
   onChange: (v: DurationChoice) => void;
 }) {
@@ -81,7 +87,7 @@ function DurationSelect({
         onChange={(e) => onChange(e.target.value as DurationChoice)}
         className={SELECT}
       >
-        {durationOptions(computedDefault).map((o) => (
+        {options.map((o) => (
           <option key={o.value || "default"} value={o.value}>
             {o.label}
           </option>
@@ -103,100 +109,116 @@ export function RosterRowView(p: RosterRowViewProps) {
     draft.roleLabel.trim() !== "" || row.defaultRoleLabel !== null;
 
   return (
-    <tr className="align-top">
-      <td className="px-3 py-3 text-sm font-medium text-gray-900">
-        {name}
-        {row.isHead && (
-          <span className="ml-2 text-xs font-normal text-gray-500">Head</span>
-        )}
-      </td>
-      <td className="min-w-[10rem] px-3 py-3">
-        <DurationSelect
-          id={`duration-${key}`}
-          label={`Duration for ${name}`}
-          value={draft.duration}
-          computedDefault={row.defaultDuration}
-          disabled={p.readOnly}
-          onChange={(v) => p.onDraft({ duration: v })}
-        />
-      </td>
-      <td className="min-w-[11rem] px-3 py-3">
-        <label htmlFor={`role-${key}`} className="sr-only">
-          {`Role for ${name}`}
-        </label>
-        <Input
-          id={`role-${key}`}
-          value={draft.roleLabel}
-          maxLength={ROLE_MAX}
-          disabled={p.readOnly}
-          placeholder={
-            row.defaultRoleLabel
-              ? `Default: ${row.defaultRoleLabel}`
-              : "Leave blank for member"
-          }
-          onChange={(e) => p.onDraft({ roleLabel: e.target.value })}
-        />
-      </td>
-      <td className="min-w-[10rem] px-3 py-3">
-        {hasRole && (
+    <>
+      <tr className="align-top">
+        <td className="px-3 py-3 text-sm font-medium text-gray-900">
+          {name}
+          {row.isHead && (
+            <span className="ml-2 text-xs font-normal text-gray-500">Head</span>
+          )}
+        </td>
+        <td className="min-w-[10rem] px-3 py-3">
           <DurationSelect
-            id={`roleDuration-${key}`}
-            label={`Role period for ${name}`}
-            value={draft.roleDuration}
-            computedDefault={row.defaultRoleDuration}
+            id={`duration-${key}`}
+            label={`Duration for ${name}`}
+            value={draft.duration}
+            options={durationOptions(row.defaultDuration)}
             disabled={p.readOnly}
-            onChange={(v) => p.onDraft({ roleDuration: v })}
+            onChange={(v) => p.onDraft({ duration: v })}
           />
-        )}
-      </td>
-      <td className="min-w-[16rem] px-3 py-3">
-        <label htmlFor={`extra-${key}`} className="sr-only">
-          {`Additional contribution for ${name}`}
-        </label>
-        <Textarea
-          id={`extra-${key}`}
-          rows={2}
-          value={draft.extra}
-          maxLength={EXTRA_MAX}
-          disabled={p.readOnly}
-          onChange={(e) => p.onDraft({ extra: e.target.value })}
-        />
-        <p className="mt-1 text-xs text-gray-500">
-          {counterText(draft.extra, EXTRA_MAX)}
-        </p>
-        <ErrorLine message={problem ?? p.error} />
-      </td>
-      <td className="px-3 py-3">
-        {!p.readOnly && (
-          <div className="flex flex-col items-start gap-1">
-            <Button
-              type="button"
-              size="sm"
-              disabled={!dirty || p.saving || problem !== null}
-              onClick={p.onSave}
-            >
-              {p.saving ? (
-                <>
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  Saving
-                </>
-              ) : (
-                "Save"
+        </td>
+        <td className="min-w-[11rem] px-3 py-3">
+          <label htmlFor={`role-${key}`} className="sr-only">
+            {`Role for ${name}`}
+          </label>
+          <Input
+            id={`role-${key}`}
+            value={draft.roleLabel}
+            maxLength={ROLE_MAX}
+            disabled={p.readOnly}
+            placeholder={
+              row.defaultRoleLabel
+                ? `Default: ${row.defaultRoleLabel}`
+                : "Leave blank for member"
+            }
+            onChange={(e) => p.onDraft({ roleLabel: e.target.value })}
+          />
+        </td>
+        <td className="min-w-[10rem] px-3 py-3">
+          {hasRole && (
+            <DurationSelect
+              id={`roleDuration-${key}`}
+              label={`Role period for ${name}`}
+              value={draft.roleDuration}
+              options={roleDurationOptions(
+                effectiveMembership(draft.duration, row.defaultDuration),
+                row.defaultRoleDuration,
               )}
-            </Button>
-            {p.saved && !dirty && (
-              <span
-                className="inline-flex items-center gap-1 text-xs text-emerald-700"
-                role="status"
+              disabled={p.readOnly}
+              onChange={(v) => p.onDraft({ roleDuration: v })}
+            />
+          )}
+        </td>
+        <td className="min-w-[16rem] px-3 py-3">
+          <label htmlFor={`extra-${key}`} className="sr-only">
+            {`Additional contribution for ${name}`}
+          </label>
+          <Textarea
+            id={`extra-${key}`}
+            rows={2}
+            value={draft.extra}
+            maxLength={EXTRA_MAX}
+            disabled={p.readOnly}
+            onChange={(e) => p.onDraft({ extra: e.target.value })}
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            {counterText(draft.extra, EXTRA_MAX)}
+          </p>
+          <ErrorLine message={problem ?? p.error} />
+        </td>
+        <td className="px-3 py-3">
+          {!p.readOnly && (
+            <div className="flex flex-col items-start gap-1">
+              <Button
+                type="button"
+                size="sm"
+                disabled={!dirty || p.saving || problem !== null}
+                onClick={p.onSave}
               >
-                <Check className="h-3 w-3" />
-                Saved
-              </span>
-            )}
-          </div>
-        )}
-      </td>
-    </tr>
+                {p.saving ? (
+                  <>
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    Saving
+                  </>
+                ) : (
+                  "Save"
+                )}
+              </Button>
+              {p.saved && !dirty && (
+                <span
+                  className="inline-flex items-center gap-1 text-xs text-emerald-700"
+                  role="status"
+                >
+                  <Check className="h-3 w-3" />
+                  Saved
+                </span>
+              )}
+            </div>
+          )}
+        </td>
+      </tr>
+      {p.roleNote && (
+        <tr>
+          <td
+            colSpan={6}
+            className="px-3 pb-2 text-xs text-gray-600"
+            role="status"
+          >
+            {p.roleNote}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -253,6 +275,7 @@ export function RosterRow({
   const utils = api.useUtils();
   const [draft, setDraft] = useState<RowDraft>(() => draftOf(row));
   const [saved, setSaved] = useState(false);
+  const [roleNote, setRoleNote] = useState<string | null>(null);
   // What was sent, to tell whether more was typed while it was saving.
   const submitted = useRef<RowDraft>(draft);
 
@@ -268,6 +291,7 @@ export function RosterRow({
         ),
       );
       setSaved(true);
+      setRoleNote(null);
       await utils.transcriptManage.roster.list.invalidate();
     },
   });
@@ -283,8 +307,17 @@ export function RosterRow({
     <RosterRowView
       row={row}
       draft={draft}
+      roleNote={roleNote}
       onDraft={(patch) => {
-        setDraft((d) => ({ ...d, ...patch }));
+        // A narrower membership pulls a role period that would stick out of it
+        // back inside, and says so.
+        const next = { ...draft, ...patch };
+        const fitted =
+          patch.duration !== undefined
+            ? fitRolePeriod(next, row.defaultDuration)
+            : { draft: next, note: null };
+        setDraft(fitted.draft);
+        setRoleNote(fitted.note);
         setSaved(false);
         upsert.reset();
       }}
