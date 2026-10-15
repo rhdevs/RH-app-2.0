@@ -179,7 +179,7 @@ function pageParts(
                 {
                   label: "Residency",
                   value: academicYear,
-                  detail: `${issue.block} · ${yearOfResidence(issue.yearOfResidence)}`,
+                  detail: residenceDetail(issue.block, issue.yearOfResidence),
                 },
                 { label: "Date issued", value: formatIssuedOn(issue.issuedOn) },
                 { label: "Verification", value: code },
@@ -236,4 +236,15 @@ const ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth"];
 
 function yearOfResidence(n: number): string {
   return `${ORDINALS[n - 1] ?? `${n}th`} year`;
+}
+
+/** "Block 3 · Second year", or whichever half is known; undefined when neither. */
+function residenceDetail(
+  block: string | null,
+  year: number | null,
+): string | undefined {
+  const parts = [block, year === null ? null : yearOfResidence(year)].filter(
+    (part): part is string => Boolean(part),
+  );
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }

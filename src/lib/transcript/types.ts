@@ -31,10 +31,11 @@ export interface YearIssueInput {
   verificationCode: string;
   /** ISO date, "2027-05-10". */
   issuedOn: string;
-  /** "Block 3" — the hall owns this, unlike faculty. */
-  block: string;
-  /** 1 for a resident's first year in hall, 2 for their second, ... */
-  yearOfResidence: number;
+  /** "Block 3" — the hall owns this, unlike faculty. Null when not on file. */
+  block: string | null;
+  /** 1 for a resident's first year in hall, 2 for their second, ... Null when
+   *  the app does not know (it keeps no residence history). */
+  yearOfResidence: number | null;
 }
 
 /** One CCA membership in one academic year. */
@@ -48,6 +49,10 @@ export interface CcaMembershipInput {
   description: string | null;
   /** Free text on what this person did, entered by the head or exco. */
   extraContribution: string | null;
+  /** How long they were in the CCA this year. Shown only when not "full". */
+  duration?: "full" | "sem1" | "sem2" | null;
+  /** How long they held the role. Shown only when not "full". */
+  roleDuration?: "full" | "sem1" | "sem2" | null;
 }
 
 /** Hours attested through a CCA the resident is in. */

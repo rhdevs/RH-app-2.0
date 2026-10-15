@@ -13,6 +13,7 @@ import {
   type TranscriptViewModel,
   type VolunteerHoursModel,
 } from "./types";
+import { durationLabel } from "./duration";
 
 /** Shown in the Explanatory notes when a CCA has no description yet. */
 export const MISSING_DESCRIPTION_TEXT = "Description not yet available.";
@@ -159,6 +160,18 @@ function dedupeMemberships(
   return [...byName.values()];
 }
 
+/**
+ * Appends the duration only when it is not a full year: "2026/27 (Semester 2)",
+ * "Head (Semester 2)". A missing value or "full" prints nothing extra.
+ */
+function withDuration(
+  text: string | null,
+  duration: string | null | undefined,
+): string | null {
+  const label = durationLabel(duration);
+  return text && label ? `${text} (${label})` : text;
+}
+
 function shortYear(academicYear: string): string {
   return academicYear.replace(/^AY/, "");
 }
@@ -172,7 +185,9 @@ function buildInvolvements(
   const rows: InvolvementRow[] = [];
   if (jcrc) {
     rows.push({
-      ccaName: `Junior Common Room Committee (JCRC), ${jcrc.portfolio}`,
+      ccaName: cleaned(jcrc.portfolio)
+        ? `Junior Common Room Committee (JCRC), ${jcrc.portfolio.trim()}`
+        : "Junior Common Room Committee (JCRC)",
       role: cleaned(jcrc.position),
       year,
       extraContribution: null,
@@ -183,8 +198,8 @@ function buildInvolvements(
   for (const m of memberships) {
     rows.push({
       ccaName: m.ccaName,
-      role: cleaned(m.leadershipRole),
-      year,
+      role: withDuration(cleaned(m.leadershipRole), m.roleDuration),
+      year: withDuration(year, m.duration) ?? year,
       extraContribution: cleaned(m.extraContribution),
       footnote: 0,
       isJcrc: false,

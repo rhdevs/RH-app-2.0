@@ -347,11 +347,13 @@ export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
           cca("Raffles Hall Dance", "Performing Arts", {
             academicYear: NEXT_ACADEMIC_YEAR,
             leadershipRole: "Head",
+            roleDuration: "sem2", // took over the committee in semester 2
             extraContribution:
               "Choreographed and directed the Hall Night finale.",
           }),
           cca("Hall Orientation Committee", "Committees", {
             academicYear: NEXT_ACADEMIC_YEAR,
+            duration: "sem1", // orientation runs in semester 1 only
           }),
           cca("Soccer (MALE)", "Sports Activities", {
             academicYear: NEXT_ACADEMIC_YEAR,
@@ -359,6 +361,7 @@ export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
           cca("RH Welfare", "Committees", {
             academicYear: NEXT_ACADEMIC_YEAR,
             description: null,
+            duration: "sem2", // joined in semester 2
           }),
           cca("Raffles Hall Photography", "Media Committees", {
             academicYear: NEXT_ACADEMIC_YEAR,

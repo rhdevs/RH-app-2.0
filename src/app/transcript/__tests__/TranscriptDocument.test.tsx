@@ -138,6 +138,35 @@ describe("TranscriptDocument: content", () => {
     expect(html).toContain("Hall Orchestra: Description not yet available.");
   });
 
+  it("prints the semester in the Year and Role columns only when not a full year", () => {
+    const html = render("jcrc-sports-secretary", JCRC_AY);
+
+    expect(html).toContain("2027/28 (Semester 2)");
+    expect(html).toContain("Head (Semester 2)");
+    expect(render("cca-head")).not.toContain("Semester");
+  });
+
+  it("shows only the half of the residence line that is known", () => {
+    const fixture = getFixtureBySlug("plain-member")!;
+    const issue = fixture.input.issues[0]!;
+    const withIssue = (patch: object) =>
+      renderToStaticMarkup(
+        <TranscriptDocument
+          transcript={assembleTranscript(
+            { ...fixture.input, issues: [{ ...issue, ...patch }] },
+            AY,
+          )}
+        />,
+      );
+
+    expect(withIssue({ yearOfResidence: null })).toContain("Block 3<");
+    expect(withIssue({ yearOfResidence: null })).not.toContain("year<");
+    expect(withIssue({ block: null })).toContain("Second year<");
+    expect(withIssue({ block: null, yearOfResidence: null })).not.toContain(
+      "Block 3",
+    );
+  });
+
   it("shows block and year of residence", () => {
     expect(render("plain-member")).toContain("Block 3 · Second year");
   });

@@ -211,6 +211,83 @@ describe("assembleTranscript: roles", () => {
   });
 });
 
+describe("assembleTranscript: durations", () => {
+  it("prints nothing extra for a full year", () => {
+    const row = section(assembleFixture("cca-head"), "involvements")?.rows[0];
+
+    expect(row?.year).toBe("2026/27");
+    expect(row?.role).toBe("Captain");
+  });
+
+  it("shows the semester next to the year when the membership is not a full year", () => {
+    const vm = assembleFixture("jcrc-sports-secretary", JCRC_AY);
+
+    const rows = section(vm, "involvements")?.rows ?? [];
+    const years = Object.fromEntries(rows.map((r) => [r.ccaName, r.year]));
+    expect(years["Hall Orientation Committee"]).toBe("2027/28 (Semester 1)");
+    expect(years["RH Welfare"]).toBe("2027/28 (Semester 2)");
+    expect(years["Soccer (MALE)"]).toBe("2027/28");
+  });
+
+  it("shows the semester next to the role when the role was held for part of the year", () => {
+    const vm = assembleFixture("jcrc-sports-secretary", JCRC_AY);
+
+    const dance = section(vm, "involvements")?.rows.find(
+      (r) => r.ccaName === "Raffles Hall Dance",
+    );
+    expect(dance?.role).toBe("Head (Semester 2)");
+    expect(dance?.year).toBe("2027/28");
+  });
+
+  it("never prints a duration for a blank role", () => {
+    const input = blankInput();
+    input.memberships = [membership({ roleDuration: "sem2" })];
+
+    const vm = assembleTranscript(input, AY);
+
+    expect(section(vm, "involvements")?.rows[0]?.role).toBeNull();
+  });
+
+  it("treats a full or missing duration as nothing to print", () => {
+    const input = blankInput();
+    input.memberships = [
+      membership({
+        ccaName: "A",
+        duration: "full",
+        leadershipRole: "Head",
+        roleDuration: "full",
+      }),
+      membership({ ccaName: "B", duration: null, roleDuration: null }),
+    ];
+
+    const rows =
+      section(assembleTranscript(input, AY), "involvements")?.rows ?? [];
+
+    expect(rows.map((r) => [r.year, r.role])).toEqual([
+      ["2026/27", "Head"],
+      ["2026/27", null],
+    ]);
+  });
+
+  it("omits the portfolio from the JCRC row when it is blank", () => {
+    const input = blankInput();
+    input.jcrc = {
+      portfolio: "  ",
+      position: "Member",
+      term: AY,
+      description: "",
+      contributions: [],
+      testimonial: { text: "", author: "Hall Master" },
+      isPlaceholder: true,
+    };
+
+    const rows =
+      section(assembleTranscript(input, AY), "involvements")?.rows ?? [];
+
+    expect(rows[0]?.ccaName).toBe("Junior Common Room Committee (JCRC)");
+  });
+});
+
 describe("assembleTranscript: additional contributions", () => {
   it("attaches the contribution text to its CCA row", () => {
     const vm = assembleFixture("additional-contribution");
