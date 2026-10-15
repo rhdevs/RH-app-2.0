@@ -6,17 +6,31 @@ import { currentAcademicYear } from "~/lib/transcript/academicYear";
 
 import {
   academicYearInput,
+  activityCreateInput,
+  activityListInput,
+  activityRefInput,
+  activityUpdateInput,
   awardCreateInput,
   ccaIDInput,
   idInput,
   jcrcSaveForInput,
   jcrcSaveMineInput,
+  participantsSetInput,
   rosterScope,
   rosterUpsertInput,
   searchQueryInput,
   userIDInput,
   volunteerCreateInput,
 } from "~/lib/transcript/manageInput";
+import {
+  activitiesList,
+  activityCreate,
+  activityRemove,
+  activityRestore,
+  activityUpdate,
+  activityYear,
+  participantsSet,
+} from "~/server/api/services/transcript/activities";
 import {
   assertCanEditCcaYear,
   editRefusalFor,
@@ -244,6 +258,89 @@ export const transcriptManageRouter = createTRPCRouter({
           input.academicYear,
         );
         return rosterUpsert(ctx.db, ctx.session.user.userID, input);
+      }),
+  }),
+
+  /**
+   * A CCA's activities for a year, and who took part. Same access as the roster
+   * (the head of THIS CCA or a manager); every write runs the one edit guard, on
+   * the year the activity belongs to.
+   */
+  activities: createTRPCRouter({
+    list: identifiedProcedure
+      .input(activityListInput)
+      .query(async ({ ctx, input }) => {
+        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        return activitiesList(
+          ctx.db,
+          input.ccaID,
+          input.academicYear,
+          input.includeRemoved ?? false,
+        );
+      }),
+
+    create: identifiedProcedure
+      .input(activityCreateInput)
+      .mutation(async ({ ctx, input }) => {
+        const actor = { userID: ctx.session.user.userID };
+        await requireCcaAccess(ctx.db, actor.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        await assertCanEditCcaYear(
+          ctx.db,
+          actor,
+          input.ccaID,
+          input.academicYear,
+        );
+        return activityCreate(ctx.db, actor.userID, input);
+      }),
+
+    update: identifiedProcedure
+      .input(activityUpdateInput)
+      .mutation(async ({ ctx, input }) => {
+        const actor = { userID: ctx.session.user.userID };
+        await requireCcaAccess(ctx.db, actor.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        const year = await activityYear(ctx.db, input.id, input.ccaID);
+        await assertCanEditCcaYear(ctx.db, actor, input.ccaID, year);
+        return activityUpdate(ctx.db, actor.userID, input);
+      }),
+
+    /** Soft: the activity leaves every transcript but can be restored. */
+    remove: identifiedProcedure
+      .input(activityRefInput)
+      .mutation(async ({ ctx, input }) => {
+        const actor = { userID: ctx.session.user.userID };
+        await requireCcaAccess(ctx.db, actor.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        const year = await activityYear(ctx.db, input.id, input.ccaID);
+        await assertCanEditCcaYear(ctx.db, actor, input.ccaID, year);
+        return activityRemove(ctx.db, actor.userID, input.id, input.ccaID);
+      }),
+
+    restore: identifiedProcedure
+      .input(activityRefInput)
+      .mutation(async ({ ctx, input }) => {
+        const actor = { userID: ctx.session.user.userID };
+        await requireCcaAccess(ctx.db, actor.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        const year = await activityYear(ctx.db, input.id, input.ccaID);
+        await assertCanEditCcaYear(ctx.db, actor, input.ccaID, year);
+        return activityRestore(ctx.db, actor.userID, input.id, input.ccaID);
+      }),
+  }),
+
+  participants: createTRPCRouter({
+    /** Replace the activity's participants with exactly this list. */
+    set: identifiedProcedure
+      .input(participantsSetInput)
+      .mutation(async ({ ctx, input }) => {
+        const actor = { userID: ctx.session.user.userID };
+        await requireCcaAccess(ctx.db, actor.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        const year = await activityYear(ctx.db, input.id, input.ccaID);
+        await assertCanEditCcaYear(ctx.db, actor, input.ccaID, year);
+        return participantsSet(ctx.db, actor.userID, input);
       }),
   }),
 

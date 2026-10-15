@@ -54,6 +54,10 @@ export interface LoadOptions {
 export const NOT_VOIDED = {
   OR: [{ voidedAt: null }, { voidedAt: { isSet: false } }],
 };
+/** An activity or participant that has not been removed (the same rule). */
+export const NOT_REMOVED = {
+  OR: [{ removedAt: null }, { removedAt: { isSet: false } }],
+};
 /** A freeze that has not been undone (the same null-or-absent rule). */
 export const NOT_UNFROZEN = {
   OR: [{ unfrozenAt: null }, { unfrozenAt: { isSet: false } }],

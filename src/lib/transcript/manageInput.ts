@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  ACTIVITY_DESCRIPTION_MAX,
+  ACTIVITY_PERIODS,
+  ACTIVITY_TITLE_MAX,
+  MAX_PARTICIPANTS,
+  PARTICIPANT_DESCRIPTION_MAX,
+  PARTICIPANT_ROLE_MAX,
+} from "./activities";
 import { DURATIONS } from "./duration";
 import {
   isDateInAcademicYear,
@@ -168,9 +176,7 @@ const jcrcFields = {
   portfolio: line(0, 80),
   position: line(0, 80),
   description: block(0, 800),
-  contributions: z
-    .array(contributionRow)
-    .max(10, "AT_MOST_10_CONTRIBUTIONS"),
+  contributions: z.array(contributionRow).max(10, "AT_MOST_10_CONTRIBUTIONS"),
   testimonial: block(0, 1500),
 };
 
@@ -185,4 +191,38 @@ export const jcrcSaveForInput = jcrcSaveMineInput.extend({
 
 export const idInput = z.object({
   id: z.string().regex(/^[0-9a-f]{24}$/i, "INVALID_ID"),
+});
+
+/* ---- CCA activities ------------------------------------------------------ */
+
+const activityFields = {
+  title: line(1, ACTIVITY_TITLE_MAX),
+  description: block(0, ACTIVITY_DESCRIPTION_MAX),
+  period: z.enum(ACTIVITY_PERIODS),
+};
+
+export const activityCreateInput = rosterScope.extend(activityFields);
+
+/** The year is the activity's own; the CCA is checked against it. */
+export const activityUpdateInput = idInput.extend({
+  ccaID: ccaIDInput,
+  ...activityFields,
+});
+
+export const activityRefInput = idInput.extend({ ccaID: ccaIDInput });
+
+export const activityListInput = rosterScope.extend({
+  includeRemoved: z.boolean().optional(),
+});
+
+const participantRow = z.object({
+  userID: userIDInput,
+  role: line(0, PARTICIPANT_ROLE_MAX),
+  description: block(0, PARTICIPANT_DESCRIPTION_MAX),
+});
+
+export const participantsSetInput = activityRefInput.extend({
+  participants: z
+    .array(participantRow)
+    .max(MAX_PARTICIPANTS, `AT_MOST_${MAX_PARTICIPANTS}_PARTICIPANTS`),
 });
