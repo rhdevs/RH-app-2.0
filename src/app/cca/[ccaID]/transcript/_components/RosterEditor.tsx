@@ -3,7 +3,10 @@
 import { Check, Loader2 } from "lucide-react";
 import { useState } from "react";
 
-import { ErrorLine, FIELD_LABEL } from "~/app/admin/transcripts/_components/Bits";
+import {
+  ErrorLine,
+  FIELD_LABEL,
+} from "~/app/admin/transcripts/_components/Bits";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
@@ -95,7 +98,8 @@ export function RosterRowView(p: RosterRowViewProps) {
   const saved = draftOf(row);
   const dirty = isDirty(draft, saved);
   const problem = rowProblem(draft);
-  const hasRole = draft.roleLabel.trim() !== "" || row.defaultRoleLabel !== null;
+  const hasRole =
+    draft.roleLabel.trim() !== "" || row.defaultRoleLabel !== null;
 
   return (
     <tr className="align-top">

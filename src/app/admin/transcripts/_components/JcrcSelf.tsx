@@ -84,9 +84,7 @@ export function JcrcSelfView(p: JcrcSelfViewProps) {
           {PUBLISHED_NOTE(p.academicYear)}
         </p>
       )}
-      <p className="mt-3 text-sm text-gray-600">
-        {SIGNATURE_PLACEHOLDER_NOTE}
-      </p>
+      <p className="mt-3 text-sm text-gray-600">{SIGNATURE_PLACEHOLDER_NOTE}</p>
 
       <form
         className="mt-5 space-y-5"
@@ -370,9 +368,7 @@ export default function JcrcSelf({ userID }: { userID: string }) {
       saved={saved}
       dirty={!same(draft, savedDraft)}
       error={
-        save.error && !hasFieldError
-          ? errorText(save.error.message)
-          : null
+        save.error && !hasFieldError ? errorText(save.error.message) : null
       }
       fieldErrors={fieldErrors}
       previewUrl={previewHref(userID, selected)}
