@@ -6,7 +6,12 @@ import {
   normaliseVerificationCode,
 } from "~/lib/transcript/assemble";
 import type { TranscriptViewModel } from "~/lib/transcript/types";
-import { activeKeyFor, loadTranscriptInput, NOT_REVOKED } from "./loader";
+import {
+  activeKeyFor,
+  loadTranscriptInput,
+  NOT_ON_FILE,
+  NOT_REVOKED,
+} from "./loader";
 import { STATUS_PUBLISHED, getPeriod } from "./periods";
 
 /**
@@ -55,6 +60,7 @@ const isDuplicateKey = (error: unknown) =>
 
 /** Keep only the first and last character: "A0001000X" -> "A*******X". */
 export function maskMatric(matric: string): string {
+  if (matric === NOT_ON_FILE) return matric;
   if (matric.length <= 2) return "*".repeat(matric.length);
   return `${matric[0]}${"*".repeat(matric.length - 2)}${matric[matric.length - 1]}`;
 }

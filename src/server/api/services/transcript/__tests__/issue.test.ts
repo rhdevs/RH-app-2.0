@@ -95,6 +95,10 @@ describe("generateCode", () => {
 });
 
 describe("maskMatric", () => {
+  it("leaves the not-on-file placeholder readable", () => {
+    expect(maskMatric("Not on file")).toBe("Not on file");
+  });
+
   it("keeps only the first and last character", () => {
     expect(maskMatric("A0001000X")).toBe("A*******X");
     expect(maskMatric("A0001000X")).toHaveLength("A0001000X".length);

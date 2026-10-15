@@ -253,7 +253,7 @@ export async function loadTranscriptInput(
   return {
     resident: {
       name: displayName ? displayName : "Resident",
-      matric: matric?.matric ?? "Not on file",
+      matric: matric?.matric ?? NOT_ON_FILE,
       isSpecimen: false,
     },
     issues: [
@@ -352,3 +352,6 @@ export const revokedKeyFor = (
   userID: string,
   id: string,
 ) => `${academicYear}|${userID}|revoked|${id}`;
+
+/** What a transcript shows when the resident has no matric on record. Never masked. */
+export const NOT_ON_FILE = "Not on file";
