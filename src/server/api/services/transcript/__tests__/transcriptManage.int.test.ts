@@ -1388,5 +1388,88 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
       });
     });
+
+    /* ------------------------------------------------------------------ */
+    describe("the admin screens' assumptions", () => {
+      it("stores the semester 2 date as midnight Singapore and shows it back as the same date", async () => {
+        await as(JCRC).transcript.periods.setSem2Start({
+          academicYear: AY,
+          sem2Start: "2027-01-12",
+        });
+
+        const stored = await db.transcriptPeriod.findUniqueOrThrow({
+          where: { academicYear: AY },
+        });
+        expect(stored.sem2Start?.toISOString()).toBe(
+          "2027-01-11T16:00:00.000Z",
+        );
+        const roster = await as(JCRC).transcriptManage.roster.list({
+          ccaID: SOCCER,
+          academicYear: AY,
+        });
+        expect(roster.sem2Start).toBe("2027-01-12");
+      });
+
+      it("accepts a semester 2 date only inside the academic year", async () => {
+        const c = as(JCRC).transcript.periods;
+
+        expect(
+          await errorOf(
+            c.setSem2Start({ academicYear: AY, sem2Start: "2026-08-01" }),
+          ),
+        ).toBe("ok");
+        expect(
+          await errorOf(
+            c.setSem2Start({ academicYear: AY, sem2Start: "2027-07-31" }),
+          ),
+        ).toBe("ok");
+        expect(
+          await errorOf(
+            c.setSem2Start({ academicYear: AY, sem2Start: "2026-07-31" }),
+          ),
+        ).toBe("BAD_REQUEST:SEM2_START_OUTSIDE_YEAR");
+        expect(
+          await errorOf(
+            c.setSem2Start({ academicYear: AY, sem2Start: "2027-08-01" }),
+          ),
+        ).toBe("BAD_REQUEST:SEM2_START_OUTSIDE_YEAR");
+      });
+
+      it("returns the published count and the unmatched count for the publish summary", async () => {
+        const result = await as(JCRC).transcript.periods.publish({
+          academicYear: AY,
+        });
+
+        expect(result.frozen).toBeGreaterThan(0);
+        expect(result.skippedUnresolved).toBe(0);
+        const reopened = await as(JCRC).transcript.periods.reopen({
+          academicYear: AY,
+        });
+        expect(reopened.superseded).toBe(0);
+      });
+
+      it("keeps the admin tab's capability in step with who may manage transcripts", async () => {
+        const { computeCapabilities } = await import(
+          "~/server/api/services/roles"
+        );
+        const { canManageTranscriptPeriods } = await import(
+          "~/lib/transcript/permissions"
+        );
+
+        for (const roles of [
+          ["resident"],
+          ["resident", "cca_head"],
+          ["scrc"],
+          ["resident", "jcrc"],
+          ["admin", "resident"],
+          ["jcrc", "cca_head", "resident"],
+        ]) {
+          expect(
+            computeCapabilities(roles as never).manageCcaHeads,
+            roles.join("+"),
+          ).toBe(canManageTranscriptPeriods(roles));
+        }
+      });
+    });
   },
 );
