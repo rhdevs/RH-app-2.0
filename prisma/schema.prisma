@@ -1443,6 +1443,7 @@ model VolunteerRecord {
 
   /// One resident's hours for one year (the transcript read).
   @@index([academicYear, userID], map: "volunteer_year_user")
+  @@index([ccaID, academicYear], map: "volunteer_cca_year")
 }
 
 /// An award from the end-of-year Colours Awards, entered by JCRC/admin. Voided,
@@ -1497,6 +1498,12 @@ model TranscriptIssue {
   snapshot     Json?
   revokedAt    DateTime?
   revokedBy    String?
+  /// "<academicYear>|<userID>" while the issue is valid; rewritten to
+  /// "<academicYear>|<userID>|revoked|<id>" when it is revoked or superseded.
+  /// Unique, so a resident has at most one valid issue per year even under
+  /// concurrent first downloads. Never null or absent: MongoDB unique indexes
+  /// treat a missing value as a duplicate.
+  activeKey    String    @unique(map: "issue_active_key")
 
   @@index([academicYear, userID], map: "transcript_issue_year_user")
 }

@@ -330,3 +330,18 @@ async function loadMemberships(
     ];
   });
 }
+
+/**
+ * The unique key of a VALID issue: a resident has at most one per year, even
+ * under concurrent first downloads. Always a real string, never null or absent:
+ * MongoDB unique indexes treat a missing value as a duplicate.
+ */
+export const activeKeyFor = (academicYear: string, userID: string) =>
+  `${academicYear}|${userID}`;
+
+/** What the key becomes when an issue is revoked or superseded, freeing the valid one. */
+export const revokedKeyFor = (
+  academicYear: string,
+  userID: string,
+  id: string,
+) => `${academicYear}|${userID}|revoked|${id}`;

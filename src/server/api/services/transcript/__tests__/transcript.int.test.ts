@@ -511,7 +511,11 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         if (mine.status !== "ready") throw new Error("not ready");
         await db.transcriptIssue.updateMany({
           where: { code: mine.code },
-          data: { revokedAt: new Date(), revokedBy: ADMIN.id },
+          data: {
+            revokedAt: new Date(),
+            revokedBy: ADMIN.id,
+            activeKey: `revoked|${mine.code}`,
+          },
         });
 
         expect(await as(null).transcript.verify({ code: mine.code })).toEqual({
@@ -590,6 +594,53 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(
           (await as(null).transcript.verify({ code: first.code })).status,
         ).toBe("superseded");
+      });
+
+      it("keeps one valid issue under concurrent first downloads, and frees the key on reopen", async () => {
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+
+        const results = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            as(RESIDENT_12).transcript.mine.get({ academicYear: AY }),
+          ),
+        );
+
+        const codes = new Set(
+          results.map((r) => {
+            if (r.status !== "ready") throw new Error("not ready");
+            return r.code;
+          }),
+        );
+        expect(codes.size).toBe(1);
+        const rows = await db.transcriptIssue.findMany({
+          where: { academicYear: AY, userID: "SEED-R12" },
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.activeKey).toBe(`${AY}|SEED-R12`);
+
+        await as(ADMIN).transcript.periods.reopen({ academicYear: AY });
+        const old = await db.transcriptIssue.findUniqueOrThrow({
+          where: { id: rows[0]!.id },
+        });
+        expect(old.activeKey).toBe(`${AY}|SEED-R12|revoked|${old.id}`);
+
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        const fresh = await as(RESIDENT_12).transcript.mine.get({
+          academicYear: AY,
+        });
+        if (fresh.status !== "ready") throw new Error("not ready");
+        expect([...codes]).not.toContain(fresh.code);
+        expect(
+          (await as(null).transcript.verify({ code: [...codes][0]! })).status,
+        ).toBe("superseded");
+        expect(
+          (await as(null).transcript.verify({ code: fresh.code })).status,
+        ).toBe("valid");
+        expect(
+          await db.transcriptIssue.count({
+            where: { academicYear: AY, userID: "SEED-R12" },
+          }),
+        ).toBe(2);
       });
 
       it("refuses to reopen a year that is not published", async () => {

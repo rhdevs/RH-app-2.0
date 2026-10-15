@@ -105,6 +105,21 @@ describe("schema: new transcript models", () => {
     }
   });
 
+  it("keys a valid issue uniquely, with a required (never nullable) activeKey", () => {
+    const key = current
+      .get("TranscriptIssue")!
+      .find((f) => f.name === "activeKey");
+    expect(key!.decl).toContain('@unique(map: "issue_active_key")');
+    expect(key!.decl.startsWith("String ")).toBe(true);
+    expect(key!.decl).not.toContain("?");
+  });
+
+  it("indexes volunteer records by CCA and year", () => {
+    expect(readFileSync("prisma/schema.prisma", "utf8")).toContain(
+      '@@index([ccaID, academicYear], map: "volunteer_cca_year")',
+    );
+  });
+
   it("makes the issue code unique", () => {
     const code = current.get("TranscriptIssue")!.find((f) => f.name === "code");
     expect(code!.decl).toContain("@unique");

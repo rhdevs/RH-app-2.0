@@ -6,7 +6,7 @@ import {
   normaliseVerificationCode,
 } from "~/lib/transcript/assemble";
 import type { TranscriptViewModel } from "~/lib/transcript/types";
-import { loadTranscriptInput, NOT_REVOKED } from "./loader";
+import { activeKeyFor, loadTranscriptInput, NOT_REVOKED } from "./loader";
 import { STATUS_PUBLISHED, getPeriod } from "./periods";
 
 /**
@@ -48,6 +48,10 @@ export function generateCode(
   }
   return `RH-${out}`;
 }
+
+/** A duplicate-key error from the database, on any unique index. */
+const isDuplicateKey = (error: unknown) =>
+  (error as { code?: string }).code === "P2002";
 
 /** Keep only the first and last character: "A0001000X" -> "A*******X". */
 export function maskMatric(matric: string): string {
@@ -136,13 +140,17 @@ export async function issueForResident(
           userID,
           issuedAt: now,
           snapshot: snapshot as unknown as Prisma.InputJsonValue,
+          activeKey: activeKeyFor(academicYear, userID),
         },
       });
     } catch (error) {
-      // A (vanishingly unlikely) duplicate code: draw another.
-      if ((error as { code?: string }).code === "P2002" && attempt < 2)
-        continue;
-      throw error;
+      if (!isDuplicateKey(error)) throw error;
+      // Either a concurrent first download won (the unique key on the valid
+      // issue), in which case answer with theirs, or the code itself collided
+      // (vanishingly unlikely), in which case draw another.
+      const winner = await find();
+      if (winner) return toResult(winner);
+      continue;
     }
 
     // The year may have been reopened between the published check above and
@@ -154,15 +162,6 @@ export async function issueForResident(
         code: "PRECONDITION_FAILED",
         message: "NOT_PUBLISHED",
       });
-    }
-
-    // Two concurrent first requests both created an issue. The earliest id wins;
-    // the loser deletes its OWN row (its code was never returned to anyone) and
-    // answers with the winner's.
-    const winner = await find();
-    if (winner && winner.id !== created.id) {
-      await db.transcriptIssue.delete({ where: { id: created.id } });
-      return toResult(winner);
     }
     return { code, academicYear, issuedAt: snapshot.issuedAt, transcript };
   }

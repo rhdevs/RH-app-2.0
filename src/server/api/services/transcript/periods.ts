@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { canonicalUserID } from "~/lib/identity";
 import { parseAcademicYear } from "~/lib/transcript/academicYear";
 import { resolveEntry } from "~/lib/transcript/duration";
-import { NOT_REVOKED } from "./loader";
+import { NOT_REVOKED, revokedKeyFor } from "./loader";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
 
 /**
@@ -416,6 +416,7 @@ export async function reopen(
             data: {
               revokedAt: now,
               revokedBy: actorUserID,
+              activeKey: revokedKeyFor(academicYear, issue.userID, issue.id),
               snapshot: {
                 ...snapshot,
                 meta: { ...meta, superseded: true, reason: SUPERSEDED_REASON },
