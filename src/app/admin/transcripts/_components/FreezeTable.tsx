@@ -115,7 +115,7 @@ export function FreezeTableView(p: FreezeTableViewProps) {
             {p.onlyUnfrozen ? "Every CCA is frozen." : "No CCAs."}
           </p>
         ) : (
-          <div className="mt-3 overflow-x-auto">
+          <div className="relative mt-3 overflow-x-auto">
             <table className="w-full min-w-[40rem] divide-y divide-gray-200 text-left text-sm">
               <thead>
                 <tr className="text-xs font-medium text-gray-700">

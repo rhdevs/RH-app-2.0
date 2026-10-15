@@ -461,6 +461,10 @@ describe("award upload history", () => {
     expect(html).toContain("Undone by Seed Resident 01 on 11 Oct 2026");
   });
 
+  it("keeps its hidden Action heading inside the scrolling box, so the page never widens", () => {
+    expect(history()).toContain('class="relative overflow-x-auto');
+  });
+
   it("is read-only in a published year: no Undo", () => {
     expect(history({ readOnly: true })).not.toContain("Undo awards.csv");
   });

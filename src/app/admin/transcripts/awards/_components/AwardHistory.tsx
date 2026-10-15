@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   AlertDialog,
@@ -49,6 +49,10 @@ export interface AwardHistoryViewProps {
 
 /** Uploads of awards for the year, each with Undo while it still has awards. */
 export function AwardHistoryView(p: AwardHistoryViewProps) {
+  // The dialog keeps its words while it fades out, after `undoing` is cleared.
+  const last = useRef<BatchItem | null>(null);
+  if (p.undoing) last.current = p.undoing;
+  const shown = p.undoing ?? last.current;
   return (
     <AlertDialog
       open={p.undoing !== null}
@@ -69,7 +73,7 @@ export function AwardHistoryView(p: AwardHistoryViewProps) {
         ) : p.items.length === 0 ? (
           <p className="text-sm text-gray-500">No uploads for this year yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-md border border-gray-200">
+          <div className="relative overflow-x-auto rounded-md border border-gray-200">
             <table className="w-full min-w-[40rem] text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-200 text-xs font-medium text-gray-700">
@@ -135,7 +139,7 @@ export function AwardHistoryView(p: AwardHistoryViewProps) {
         <AlertDialogHeader>
           <AlertDialogTitle>Undo this upload?</AlertDialogTitle>
           <AlertDialogDescription>
-            {UNDO_BATCH_CONFIRMATION(p.undoing?.activeCount ?? 0)}
+            {UNDO_BATCH_CONFIRMATION(shown?.activeCount ?? 0)}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <ErrorLine message={p.actionError} />

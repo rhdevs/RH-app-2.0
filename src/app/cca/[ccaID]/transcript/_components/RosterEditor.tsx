@@ -420,8 +420,8 @@ export function RosterTableView({
           layout === "cards"
             ? "hidden"
             : cards && !layout
-              ? "hidden overflow-x-auto md:block"
-              : "overflow-x-auto"
+              ? "relative hidden overflow-x-auto md:block"
+              : "relative overflow-x-auto"
         }
       >
         <table className="w-full min-w-[56rem] divide-y divide-gray-200 text-left">

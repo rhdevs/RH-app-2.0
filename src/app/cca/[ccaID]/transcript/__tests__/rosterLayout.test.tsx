@@ -54,7 +54,7 @@ describe("RosterTableView layout", () => {
       <RosterTableView count={1} rows={<tr />} cards={cards} layout="table" />,
     );
     expect(html).not.toContain('data-card="1"');
-    expect(html).toContain('<div class="overflow-x-auto">');
+    expect(html).toContain('<div class="relative overflow-x-auto">');
     expect(html).toContain("<table");
   });
 
@@ -63,7 +63,7 @@ describe("RosterTableView layout", () => {
       <RosterTableView count={1} rows={<tr />} cards={cards} />,
     );
     expect(html).toContain("md:hidden");
-    expect(html).toContain("hidden overflow-x-auto md:block");
+    expect(html).toContain("relative hidden overflow-x-auto md:block");
   });
 });
 
