@@ -1,5 +1,7 @@
 # Transcript — Design and Data-Model Spec
 
+> **Current design:** verification, the QR code, issuing and stored snapshots were removed. Where an earlier section describes them, section 22 supersedes it.
+
 **Ask:** Each resident can download a generated end-of-Academic-Year (AY) transcript of their hall involvements, to (1) recognise their efforts and (2) formalise their involvements. Style target: an NUS Student Development Transcript.
 
 **Scope:** Phase 1 only. This document is a proposal; **nothing below is implemented**. No code, schema or dependency is changed by this PR.
@@ -668,3 +670,21 @@ Errors are inline red `role="alert"` lines (the app mounts no toaster). Resident
 - **Verify page.** The "Not on file" placeholder is no longer masked.
 - **Index.** `VolunteerRecord` is indexed by `(ccaID, academicYear)` (`volunteer_cca_year`).
 - **Production note.** Apply the schema (`prisma db push`) before the first publish: it creates the unique index on `TranscriptIssue.activeKey`. The collection has no rows in production, so no backfill is needed.
+
+## 22. Click-through fixes and verification removal
+
+This section supersedes every earlier mention of verification, issuing, snapshots, superseding and revoking (sections that describe them are history).
+
+- **No verification.** The transcript is a recognition document, not a verified source of truth. Removed: `/verify`, the QR code, the verification code and its generator, `transcript.verify` and its rate limit, stored snapshots, and the superseded and revoked states. Reopening a year is a plain status change (it records who and when). The notes page closes with one sentence: "Generated from Raffles Hall's records."
+- **Assembled from data on every view.** A published year's `/transcript` is built each time from the frozen roster entries plus the current activity, volunteer, award and JCRC records. "Date issued" is the day the year was published (Singapore date), the same on every view; an admin preview of an unpublished year says "Not yet issued".
+- **TranscriptAccess** replaces TranscriptIssue: `{academicYear, userID, firstOpenedAt, lastOpenedAt}`, unique per year and resident (`access_year_user`), written by an upsert that survives a race (a duplicate-key error turns into an update) whenever a resident's transcript is returned. `transcript.mine.readiness` answers whether a published year has no such row for the signed-in user.
+- **Entry point.** "My transcript" sits under "My applications" in the desktop profile menu and the mobile menu, with a "Ready" badge and a dot on the profile button while a published year is unopened. The link under My CCAs on the profile page is gone. A per-year **download by** date (a Singapore calendar date, stored as midnight Singapore time, editable even while published) shows a banner on `/transcript` through the end of that day.
+- **Role period inside the membership.** The effective role period is the override or default, narrowed to the membership (a semester 2 member's role is never full-year). The editor offers only the fitting options and changes a role period that no longer fits, with "Role period changed to Semester 2 only to match membership." `roster.upsert` refuses an incompatible pair (`ROLE_PERIOD_OUTSIDE_MEMBERSHIP`). Publish and the loader clamp, so stored or seeded data can never render "Head (full year)" for a semester 2 member.
+- **Year cell.** "2026/27", "2026/27 Sem 1" or "2026/27 Sem 2" on one line (the column is sized for it); a part-year role reads "Head (Sem 2)". The notes page gains "Sem 1 / Sem 2: involvement for that semester only." when any such item exists.
+- **JCRC contributions** are structured rows `{activity (80, required), role (60), description (300)}`, at most 10, stored as a composite type on `JcrcService`. The editor has a card per row with counters, Move up / Move down, Remove (shown as "Removed. Undo" until Save) and "N of 10". The JCRC page prints them as an Activity | Role | Description table.
+- **Volunteering CCAs page** lists only tagged CCAs (count line, Remove with confirmation, "No volunteering CCAs yet."), with a search (2+ characters) that suggests untagged CCAs to add.
+- **Names, not keys.** publishedBy, reopenedBy, recordedBy and voidedBy are shown as display names, resolved on the server by one helper (`actorLabels`); the key appears only when no name exists.
+- **Resident picker** is an ARIA combobox (combobox / listbox / option roles, `aria-activedescendant`, ArrowUp/Down, Home/End, Enter, Escape, results announced in the live line). Placeholder: "Name, email or matric" for managers, "Name" for heads.
+- **Phones.** Under Save as PDF: "On a phone, use Share, then Print, then save as PDF." At 375 px the page has no horizontal scroll.
+- **Roster header** cells are real table header cells (they had `display: block`).
+- **Left as is.** `qrcode.react` stays in package.json (the events check-in uses it). The 60-second MongoDB transaction limit is no concern at hall scale (2,000 memberships publish in about 2 seconds).

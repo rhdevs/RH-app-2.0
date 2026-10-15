@@ -127,3 +127,18 @@ The app's profile gate sends a seeded account to `/profile` until its profile (n
 | Preview print | `seed-r01` | Preview a resident, print or save as PDF | Only the transcript prints: no header or tabs, crest and footer on every page. |
 
 Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: click-through fixes
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Header entry | `seed-r12` | Open the profile menu (desktop), then the menu (phone) | "My transcript" directly under "My applications". No badge while the year is collecting. After `seed-r01` publishes the year: a "Ready" badge beside it and a dot on the profile button. Open the transcript: both go away. |
+| Download-by banner | `seed-r01`, then `seed-r12` | Academic year panel: set Download by, Save, publish. Open `/transcript` as the resident | "Download your AY2026/27 transcript before 31 Dec 2027." (the seeded date). Clear the date: no banner. |
+| Volunteering CCAs | `seed-r01` | `/admin/transcripts`, Volunteering CCAs | Only the four RVC CCAs, "4 volunteering CCAs". Type "soc", add Soccer: it joins the list. Remove it: a confirmation says hours already recorded stay. |
+| JCRC contributions | `seed-r02` | `/admin/transcripts/jcrc` | One card per contribution with counters. Move up and down, Remove (shows "Removed. Undo"), Undo, Add contribution ("N of 10"), Save. Preview: an Activity / Role / Description table. |
+| Role period | `seed-r04` | `/cca/9005/transcript`, give a member a role | With a semester 2 membership the role period offers only the default and "Semester 2 only". Narrow a full-year member who has a full-year role: the role period changes with a one-line note. |
+| Picker | `seed-r06` | Volunteer hours, search "Seed" | Placeholder "Name". Arrow keys move, Enter picks, Escape closes. As `seed-r01` the placeholder is "Name, email or matric". |
+| Names | `seed-r01` | Publish, add and void an award | "Published on ... by Seed Resident 01", "Recorded by ... Voided by ..." show names, not SEED- keys. |
+| Phone | any | `/transcript/preview/many-ccas` at 375 px wide | No horizontal scroll; the Year column stays on one line. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state. If `prisma db push` complains about old local TranscriptIssue or JcrcService documents (their shapes changed), drop the local TranscriptIssue collection and delete the local JcrcService documents first, then re-seed.
