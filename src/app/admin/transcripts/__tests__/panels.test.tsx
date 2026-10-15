@@ -17,8 +17,11 @@ import {
   type PickedResident,
 } from "../_components/ResidentPicker";
 import {
+  REMOVE_CONFIRMATION,
   VolunteeringTagsView,
-  filterCcas,
+  countLine,
+  suggestCcas,
+  taggedCcas,
   type TaggedCca,
   type VolunteeringTagsViewProps,
 } from "../_components/VolunteeringTags";
@@ -102,9 +105,7 @@ describe("academic year panel", () => {
     );
     expect(
       renderPeriod({ sem2Dirty: true, downloadByDirty: true }),
-    ).not.toMatch(
-      /<button[^>]*\sdisabled=""[^>]*>Save</,
-    );
+    ).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Save</);
   });
 
   it("shows the result of an action in words, and an error as an alert", () => {
@@ -188,7 +189,10 @@ const tags = (
   onQueryChange: noop,
   pendingID: null,
   error: null,
-  onToggle: noop,
+  onAdd: noop,
+  confirmRemoveID: null,
+  onConfirmRemove: noop,
+  onRemove: noop,
   loadError: null,
   ...over,
 });
@@ -196,58 +200,98 @@ const renderTags = (over?: Partial<VolunteeringTagsViewProps>) =>
   renderToStaticMarkup(<VolunteeringTagsView {...tags(over)} />);
 
 describe("volunteering CCAs panel", () => {
-  it("shows every CCA with the four RVC CCAs switched on", () => {
+  it("lists only the volunteering CCAs, with a count and a Remove button each", () => {
     const html = renderTags();
 
-    for (const cca of CCAS) expect(html).toContain(cca.ccaName);
-    expect(html.match(/role="switch"[^>]*aria-checked="true"/g)).toHaveLength(
-      4,
-    );
-    expect(html.match(/role="switch"[^>]*aria-checked="false"/g)).toHaveLength(
-      1,
-    );
-    expect(html).toContain("4 of 5 CCAs marked as volunteering.");
+    for (const cca of CCAS.filter((c) => c.isVolunteering)) {
+      expect(html).toContain(cca.ccaName);
+      expect(html).toContain(`aria-label="Remove ${cca.ccaName}"`);
+    }
+    expect(html).not.toContain("Soccer (MALE)");
+    expect(html).toContain("4 volunteering CCAs");
+    expect(html.match(/>Remove</g)).toHaveLength(4);
+    expect(html).not.toContain('role="switch"');
   });
 
-  it("filters by name or category, ignoring case", () => {
-    expect(filterCcas(CCAS, "rvc children").map((c) => c.ccaID)).toEqual([
-      9002,
-    ]);
-    expect(filterCcas(CCAS, "SPORTS").map((c) => c.ccaID)).toEqual([9005]);
-    expect(filterCcas(CCAS, "  ").length).toBe(5);
+  it("counts one in the singular", () => {
+    expect(countLine(1)).toBe("1 volunteering CCA");
+    expect(countLine(0)).toBe("0 volunteering CCAs");
+    expect(countLine(4)).toBe("4 volunteering CCAs");
+  });
 
-    const html = renderTags({ query: "soccer" });
+  it("says so when there are none", () => {
+    const html = renderTags({ ccas: CCAS.filter((c) => !c.isVolunteering) });
+
+    expect(html).toContain("No volunteering CCAs yet.");
+    expect(html).toContain("0 volunteering CCAs");
+  });
+
+  it("suggests only untagged CCAs, from two characters, by name or category", () => {
+    expect(suggestCcas(CCAS, "").map((c) => c.ccaID)).toEqual([]);
+    expect(suggestCcas(CCAS, "s").map((c) => c.ccaID)).toEqual([]);
+    expect(suggestCcas(CCAS, "so").map((c) => c.ccaID)).toEqual([9005]);
+    expect(suggestCcas(CCAS, "SPORTS").map((c) => c.ccaID)).toEqual([9005]);
+    // a tagged CCA is never suggested
+    expect(suggestCcas(CCAS, "rvc")).toEqual([]);
+    expect(suggestCcas(CCAS, "  so  ").map((c) => c.ccaID)).toEqual([9005]);
+  });
+
+  it("limits the suggestions to eight", () => {
+    const many: TaggedCca[] = Array.from({ length: 20 }, (_, i) => ({
+      ccaID: i + 1,
+      ccaName: `Club ${i}`,
+      category: "Clubs",
+      isVolunteering: false,
+    }));
+
+    expect(suggestCcas(many, "club")).toHaveLength(8);
+  });
+
+  it("shows the suggestions with an Add action, and the hint before two characters", () => {
+    const html = renderTags({ query: "soc" });
     expect(html).toContain("Soccer (MALE)");
-    expect(html).not.toContain("RVC Children");
+    expect(html).toContain(">Add<");
+    expect(renderTags({ query: "s" })).toContain(
+      "Type at least 2 characters to search.",
+    );
+    expect(renderTags({ query: "zzz" })).toContain("No CCAs to add match.");
+    expect(taggedCcas(CCAS)).toHaveLength(4);
   });
 
-  it("says so when nothing matches", () => {
-    expect(renderTags({ query: "zzz" })).toContain("No CCAs match.");
+  it("words the confirmation exactly, and keeps it out of the page until asked", () => {
+    // The dialog itself is a portal, which a static render does not draw.
+    expect(REMOVE_CONFIRMATION).toBe(
+      "Its heads will no longer be able to record new hours. Hours already recorded stay on residents’ transcripts.",
+    );
+    expect(renderTags()).not.toContain("no longer be able to record");
   });
 
-  it("shows an empty hall without breaking", () => {
-    const html = renderTags({ ccas: [] });
+  it("shows a saving state and disables only that CCA's Remove", () => {
+    const html = renderTags({ pendingID: 9002 });
 
-    expect(html).toContain("0 of 0 CCAs marked as volunteering.");
-    expect(html).toContain("No CCAs match.");
-  });
-
-  it("shows a saving state and disables only that CCA's switch", () => {
-    const html = renderTags({ pendingID: 9005 });
-
-    expect(html).toContain("Saving");
-    expect(html.match(/role="switch"[^>]*\sdisabled=""/g)).toHaveLength(1);
+    expect(html).toContain("Removing");
+    const buttons = html.match(/<button[^>]*aria-label="Remove[^>]*>/g) ?? [];
+    expect(buttons.filter((b) => b.includes(' disabled=""'))).toHaveLength(1);
   });
 
   it("shows a failed save beside that CCA, and a load error", () => {
     const html = renderTags({
-      error: { ccaID: 9005, message: "That CCA no longer exists." },
+      error: { ccaID: 9002, message: "That CCA no longer exists." },
       loadError: "Something went wrong. Try again.",
     });
 
     expect(html).toContain("That CCA no longer exists.");
     expect(html).toContain("Something went wrong. Try again.");
     expect(html.match(/role="alert"/g)).toHaveLength(2);
+  });
+
+  it("shows a failed add under the search box", () => {
+    const html = renderTags({
+      query: "soc",
+      error: { ccaID: 9005, message: "That CCA no longer exists." },
+    });
+
+    expect(html).toContain("That CCA no longer exists.");
   });
 });
 
