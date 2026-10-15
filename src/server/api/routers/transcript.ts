@@ -139,7 +139,7 @@ export const transcriptRouter = createTRPCRouter({
     backToCollecting: managerProcedure
       .input(z.object({ academicYear }))
       .mutation(({ ctx, input }) =>
-        backToCollecting(ctx.db, input.academicYear),
+        backToCollecting(ctx.db, input.academicYear, ctx.session.user.userID),
       ),
   }),
 

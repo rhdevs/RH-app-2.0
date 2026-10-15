@@ -269,7 +269,10 @@ export async function closeYear(
   await Promise.all(Array.from({ length: 4 }, worker));
 
   await transitioning(() =>
-    claimStatus(db, academicYear, "close", STATUS_COLLECTING),
+    claimStatus(db, academicYear, "close", STATUS_COLLECTING, {
+      closedAt: now,
+      closedBy: actorUserID,
+    }),
   );
   return {
     academicYear,
@@ -328,11 +331,15 @@ export async function reopen(
 export async function backToCollecting(
   db: PrismaClient,
   academicYear: string,
+  actorUserID: string,
   now: Date = new Date(),
 ): Promise<{ academicYear: string }> {
   await requireTransition(db, "backToCollecting", academicYear, now);
   await transitioning(() =>
-    claimStatus(db, academicYear, "backToCollecting", STATUS_CLOSED),
+    claimStatus(db, academicYear, "backToCollecting", STATUS_CLOSED, {
+      backToCollectingAt: now,
+      backToCollectingBy: actorUserID,
+    }),
   );
   return { academicYear };
 }

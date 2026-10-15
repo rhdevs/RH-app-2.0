@@ -1391,6 +1391,12 @@ model TranscriptPeriod {
   publishedBy  String?
   reopenedAt   DateTime?
   reopenedBy   String?
+  /// Who closed the year (Close year) and when.
+  closedAt     DateTime?
+  closedBy     String?
+  /// Who put a closed year back to collecting, and when.
+  backToCollectingAt DateTime?
+  backToCollectingBy String?
 }
 
 /// Per member, per CCA, per academic year ANNOTATIONS on top of the live
@@ -1514,6 +1520,50 @@ model CcaYearFreeze {
   unfreezeReason String?
 
   @@unique([academicYear, ccaID], map: "freeze_year_cca")
+}
+
+/// A CCA activity for one academic year: a project or event the CCA ran. It is
+/// shown under the CCA row for members who took part, and under "Other
+/// involvement" for people who are not members of the CCA. Removed softly.
+/// period: full | sem1 | sem2.
+model CcaActivity {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String
+  ccaID       Int
+  title       String
+  description String?
+  period      String?   @default("full")
+  createdBy   String?
+  createdAt   DateTime? @default(now())
+  updatedBy   String?
+  updatedAt   DateTime?
+  removedAt   DateTime?
+  removedBy   String?
+
+  @@index([academicYear, ccaID], map: "activity_year_cca")
+}
+
+/// One person in a CCA activity, with their own role and description (the
+/// activity's general description is used when theirs is empty). academicYear
+/// and ccaID repeat the activity's on purpose, so a year can be purged on its
+/// own; they must stay consistent with the parent.
+model CcaActivityParticipant {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  activityID   String    @db.ObjectId
+  academicYear String
+  ccaID        Int
+  userID       String
+  role         String?
+  description  String?
+  addedBy      String?
+  addedAt      DateTime? @default(now())
+  updatedBy    String?
+  updatedAt    DateTime?
+  removedAt    DateTime?
+  removedBy    String?
+
+  @@unique([activityID, userID], map: "participant_activity_user")
+  @@index([academicYear, userID], map: "participant_year_user")
 }
 
 /// When a resident first and last opened their published transcript. Drives the

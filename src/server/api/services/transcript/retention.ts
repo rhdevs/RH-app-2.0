@@ -25,6 +25,8 @@ export const TRANSCRIPT_COLLECTIONS = [
   "JcrcService",
   "TranscriptAccess",
   "CcaYearFreeze",
+  "CcaActivity",
+  "CcaActivityParticipant",
 ] as const;
 
 export type TranscriptCollection = (typeof TRANSCRIPT_COLLECTIONS)[number];
@@ -41,6 +43,8 @@ function delegateOf(db: PrismaClient, name: TranscriptCollection) {
     JcrcService: db.jcrcService,
     TranscriptAccess: db.transcriptAccess,
     CcaYearFreeze: db.ccaYearFreeze,
+    CcaActivity: db.ccaActivity,
+    CcaActivityParticipant: db.ccaActivityParticipant,
   } as const;
   return delegates[name] as unknown as {
     count: (args: { where: { academicYear: string } }) => Promise<number>;

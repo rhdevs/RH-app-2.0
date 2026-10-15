@@ -137,6 +137,65 @@ describe("schema: new transcript models", () => {
     expect(unfrozen!.decl).toBe("DateTime?");
   });
 
+  it("stores CCA activities and their participants, indexed and unique", () => {
+    const raw = readFileSync("prisma/schema.prisma", "utf8");
+    expect(raw).toContain(
+      '@@index([academicYear, ccaID], map: "activity_year_cca")',
+    );
+    expect(raw).toContain(
+      '@@unique([activityID, userID], map: "participant_activity_user")',
+    );
+    expect(raw).toContain(
+      '@@index([academicYear, userID], map: "participant_year_user")',
+    );
+    const activity = current.get("CcaActivity")!.map((f) => f.name);
+    for (const f of [
+      "academicYear",
+      "ccaID",
+      "title",
+      "description",
+      "period",
+      "removedAt",
+      "removedBy",
+      "createdBy",
+      "updatedBy",
+    ]) {
+      expect(activity, f).toContain(f);
+    }
+    const part = current.get("CcaActivityParticipant")!;
+    for (const f of [
+      "activityID",
+      "academicYear",
+      "ccaID",
+      "userID",
+      "role",
+      "description",
+      "removedAt",
+      "removedBy",
+      "addedBy",
+    ]) {
+      expect(
+        part.map((x) => x.name),
+        f,
+      ).toContain(f);
+    }
+    expect(part.find((f) => f.name === "activityID")!.decl).toContain(
+      "@db.ObjectId",
+    );
+  });
+
+  it("records who closed a year and who put it back to collecting", () => {
+    const names = current.get("TranscriptPeriod")!.map((f) => f.name);
+    for (const f of [
+      "closedAt",
+      "closedBy",
+      "backToCollectingAt",
+      "backToCollectingBy",
+    ]) {
+      expect(names, f).toContain(f);
+    }
+  });
+
   it("has no issue or verification model any more", () => {
     expect(current.has("TranscriptIssue")).toBe(false);
     expect(readFileSync("prisma/schema.prisma", "utf8")).not.toContain(
@@ -257,6 +316,13 @@ describe("schema: guarded collections are untouched", () => {
       .filter((n) => !upstreamModels.has(n))
       .sort();
 
-    expect(added).toEqual([...Object.keys(NEW_MODELS), "CcaYearFreeze"].sort());
+    expect(added).toEqual(
+      [
+        ...Object.keys(NEW_MODELS),
+        "CcaYearFreeze",
+        "CcaActivity",
+        "CcaActivityParticipant",
+      ].sort(),
+    );
   });
 });

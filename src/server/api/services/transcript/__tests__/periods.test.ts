@@ -163,10 +163,10 @@ describe("year transitions are checked before any write", () => {
 
   it("back to collecting works only from closed", async () => {
     expect(
-      await codeOf(backToCollecting(dbWith(collecting).db, "AY2026/27", NOW)),
+      await codeOf(backToCollecting(dbWith(collecting).db, "AY2026/27", "SEED-R02", NOW)),
     ).toBe("CONFLICT:NOT_CLOSED");
     expect(
-      await codeOf(backToCollecting(dbWith(published).db, "AY2026/27", NOW)),
+      await codeOf(backToCollecting(dbWith(published).db, "AY2026/27", "SEED-R02", NOW)),
     ).toBe("CONFLICT:NOT_CLOSED");
   });
 
