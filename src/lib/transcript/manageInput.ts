@@ -7,6 +7,12 @@ import {
   PARTICIPANT_DESCRIPTION_MAX,
   PARTICIPANT_ROLE_MAX,
 } from "./activities";
+import {
+  AWARD_CITATION_MAX,
+  AWARD_NAME_MAX,
+  MAX_ASSIGN,
+  MAX_BULK,
+} from "./awards";
 import { DURATIONS } from "./duration";
 import {
   MAX_VOLUNTEER_PEOPLE,
@@ -121,17 +127,6 @@ export const rosterUpsertInput = rosterScope.extend({
   roleLabel: clearable(line(1, 60)),
   roleDuration: clearable(durationInput),
   extraContribution: clearable(block(1, 500)),
-});
-
-export const awardCreateInput = z.object({
-  academicYear: academicYearInput,
-  userID: userIDInput,
-  title: line(1, 120),
-  citation: z
-    .union([z.null(), z.string()])
-    .optional()
-    .transform((v) => (v == null || v.trim() === "" ? null : v))
-    .pipe(z.union([z.null(), line(1, 300)])),
 });
 
 /** One row of a JCRC member's "Contributions during the year" table. */
@@ -303,3 +298,61 @@ export const volunteerAttendanceSaveInput = z.object({
     )
     .max(MAX_ATTENDANCE_CHANGES, "TOO_MANY_CHANGES"),
 });
+
+/* ---- awards -------------------------------------------------------------- */
+
+/** A blank citation is null; anything else is a plain single line. */
+const awardCitation = z
+  .union([z.null(), z.string()])
+  .optional()
+  .transform((v) => (v == null || v.trim() === "" ? null : v))
+  .pipe(z.union([z.null(), line(1, AWARD_CITATION_MAX)]));
+
+const awardIdInput = idInput.shape.id;
+
+export const awardTypeCreateInput = z.object({
+  name: line(1, AWARD_NAME_MAX),
+  defaultCitation: awardCitation,
+});
+
+export const awardTypeUpdateInput = awardTypeCreateInput.extend({
+  id: awardIdInput,
+});
+
+export const awardTypesListInput = z.object({
+  includeArchived: z.boolean().optional(),
+});
+
+export const awardsListInput = z.object({
+  academicYear: academicYearInput,
+  search: z.string().max(60).optional(),
+  includeRemoved: z.boolean().optional(),
+});
+
+export const awardsAssignInput = z.object({
+  academicYear: academicYearInput,
+  awardTypeID: awardIdInput,
+  recipients: z
+    .array(z.object({ userID: userIDInput, citation: awardCitation }))
+    .min(1, "REQUIRED")
+    .max(MAX_ASSIGN, `AT_MOST_${MAX_ASSIGN}_RECIPIENTS`),
+});
+
+export const awardUpdateInput = z.object({
+  id: awardIdInput,
+  title: line(1, AWARD_NAME_MAX),
+  citation: awardCitation,
+});
+
+export const awardsBulkInput = z.object({
+  ids: z
+    .array(awardIdInput)
+    .min(1, "REQUIRED")
+    .max(MAX_BULK, `AT_MOST_${MAX_BULK}_AWARDS`),
+});
+
+export const awardBatchesListInput = z.object({
+  academicYear: academicYearInput,
+});
+
+export const awardBatchUndoInput = z.object({ batchId: awardIdInput });

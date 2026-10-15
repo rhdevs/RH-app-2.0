@@ -1,10 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
-import type {
-  awardCreateInput,
-  jcrcSaveForInput,
-} from "~/lib/transcript/manageInput";
+import type { jcrcSaveForInput } from "~/lib/transcript/manageInput";
 import { NOT_VOIDED } from "./loader";
 import { assertWritable, requireCca } from "./manageAccess";
 import {
@@ -57,89 +54,6 @@ export async function setVolunteering(
     update: stamp,
   });
   return { ccaID, isVolunteering };
-}
-
-/* ---- awards -------------------------------------------------------------- */
-
-export async function awardsList(
-  db: PrismaClient,
-  academicYear: string,
-  userID: string | undefined,
-  includeVoided: boolean,
-) {
-  const keys = userID ? await keysOf(db, userID) : null;
-  const rows = await db.award.findMany({
-    where: {
-      academicYear,
-      ...(keys ? { userID: { in: keys } } : {}),
-      ...(includeVoided ? {} : NOT_VOIDED),
-    },
-    orderBy: { recordedAt: "desc" },
-  });
-  const names = await lookupResidents(
-    db,
-    rows.map((r) => r.userID),
-  );
-  const label = await actorLabels(
-    db,
-    rows.flatMap((r) => [r.recordedBy, r.voidedBy]),
-  );
-  return rows.map((r) => ({
-    id: r.id,
-    userID: r.userID,
-    displayName: names.get(r.userID)?.displayName ?? null,
-    recordedByName: label(r.recordedBy),
-    voidedByName: label(r.voidedBy),
-    title: r.title,
-    citation: r.citation,
-    ceremony: r.ceremony,
-    recordedBy: r.recordedBy,
-    recordedAt: r.recordedAt,
-    voidedAt: r.voidedAt,
-    voidedBy: r.voidedBy,
-  }));
-}
-
-export async function awardCreate(
-  db: PrismaClient,
-  actorUserID: string,
-  input: z.infer<typeof awardCreateInput>,
-  now: Date = new Date(),
-) {
-  await assertWritable(db, input.academicYear);
-  const resident = await requireResident(db, input.userID);
-  const row = await db.award.create({
-    data: {
-      academicYear: input.academicYear,
-      userID: resident.key,
-      title: input.title,
-      citation: input.citation,
-      recordedBy: actorUserID,
-      recordedAt: now,
-    },
-  });
-  return { id: row.id };
-}
-
-/** Void an award. It stays in the database, with who voided it and when. */
-export async function awardVoid(
-  db: PrismaClient,
-  actorUserID: string,
-  id: string,
-  now: Date = new Date(),
-) {
-  const award = await db.award.findUnique({ where: { id } });
-  if (!award) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "RECORD_NOT_FOUND" });
-  }
-  await assertWritable(db, award.academicYear);
-  if (!award.voidedAt) {
-    await db.award.update({
-      where: { id },
-      data: { voidedAt: now, voidedBy: actorUserID },
-    });
-  }
-  return { id, voided: true as const };
 }
 
 /* ---- JCRC service -------------------------------------------------------- */

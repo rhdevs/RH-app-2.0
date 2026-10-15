@@ -290,23 +290,40 @@ function VolunteerHours({ volunteer }: { volunteer: VolunteerHoursModel }) {
 function Awards({ rows }: { rows: AwardRow[] }) {
   return (
     <table className="w-full table-fixed border-collapse">
-      <tbody>
-        {rows.map((row) => (
-          <tr
-            key={`${row.academicYear}-${row.title}`}
-            className="break-inside-avoid"
-          >
-            <td className={TD}>
-              {row.title} ({row.academicYear})
-              {row.citation && (
-                <span className="block italic text-neutral-800">
-                  {row.citation}
-                </span>
-              )}
+      <colgroup>
+        <col />
+        <col className="w-[7.5rem]" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th scope="col" className={TH}>
+            Award
+          </th>
+          <th scope="col" className={`${TH} whitespace-nowrap`}>
+            Year
+          </th>
+        </tr>
+      </thead>
+      {rows.map((row, i) => (
+        <tbody key={`${i}-${row.title}`} className="break-inside-avoid">
+          <tr>
+            <td className={TD}>{row.title}</td>
+            <td className={`${TD} whitespace-nowrap`}>
+              {row.academicYear.replace(/^AY/, "")}
             </td>
           </tr>
-        ))}
-      </tbody>
+          {row.citation && (
+            <tr>
+              <td
+                colSpan={2}
+                className="px-1 pb-0.5 pl-[18px] text-[10.5px] italic text-neutral-800"
+              >
+                {row.citation}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      ))}
     </table>
   );
 }

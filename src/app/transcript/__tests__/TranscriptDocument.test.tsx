@@ -487,3 +487,34 @@ describe("TranscriptDocument: volunteer hours", () => {
     expect(render("no-volunteering")).not.toContain("Volunteer hours");
   });
 });
+
+describe("TranscriptDocument: awards", () => {
+  it("prints Award and Year columns with the short year, no brackets", () => {
+    const html = render("awards");
+
+    expect(html).toMatch(/<th[^>]*>Award<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Year<\/th>/);
+    expect(html).toContain("Colours Award for Sports");
+    expect(html).toMatch(/>2026\/27<\/td>/);
+    expect(html).not.toContain("(AY2026/27)");
+  });
+
+  it("puts the citation on its own line beneath, in smaller italic text", () => {
+    const html = render("awards");
+
+    expect(html).toMatch(
+      /<td[^>]*text-\[10\.5px\][^>]*italic[^>]*>For leading the hall swimming team/,
+    );
+  });
+
+  it("orders awards by title and leaves a citation row out when there is none", () => {
+    const html = render("awards");
+
+    expect(html.indexOf("Colours Award for Sports")).toBeLessThan(
+      html.indexOf("Service Excellence Award"),
+    );
+    const plain = render("no-volunteering");
+    expect(plain).toContain("Outstanding Newcomer");
+    expect(plain).not.toMatch(/italic[^>]*><\/td>/);
+  });
+});

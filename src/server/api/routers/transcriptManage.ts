@@ -10,7 +10,15 @@ import {
   activityListInput,
   activityRefInput,
   activityUpdateInput,
-  awardCreateInput,
+  awardBatchUndoInput,
+  awardBatchesListInput,
+  awardTypeCreateInput,
+  awardTypeUpdateInput,
+  awardTypesListInput,
+  awardUpdateInput,
+  awardsAssignInput,
+  awardsBulkInput,
+  awardsListInput,
   ccaIDInput,
   idInput,
   jcrcSaveForInput,
@@ -44,6 +52,22 @@ import {
 } from "~/server/api/services/transcript/editRights";
 import { freezeCca, termYearOf } from "~/server/api/services/transcript/freeze";
 import {
+  awardBatchUndo,
+  awardBatchesList,
+  awardRemove,
+  awardRestore,
+  awardTypeArchive,
+  awardTypeCreate,
+  awardTypeRestore,
+  awardTypeUpdate,
+  awardTypesList,
+  awardUpdate,
+  awardsAssign,
+  awardsBulkRemove,
+  awardsBulkRestore,
+  awardsList,
+} from "~/server/api/services/transcript/manageAwards";
+import {
   requireCca,
   requireCcaAccess,
   requireJcrcSelf,
@@ -51,9 +75,6 @@ import {
   requireManagerOrHead,
 } from "~/server/api/services/transcript/manageAccess";
 import {
-  awardCreate,
-  awardVoid,
-  awardsList,
   ccaTagsList,
   jcrcGet,
   jcrcSave,
@@ -128,34 +149,92 @@ export const transcriptManageRouter = createTRPCRouter({
       ),
   }),
 
-  awards: createTRPCRouter({
+  /** The award catalogue: not year-bound, so no year check. */
+  awardTypes: createTRPCRouter({
     list: managerProcedure
-      .input(
-        z.object({
-          academicYear: academicYearInput,
-          userID: userIDInput.optional(),
-          includeVoided: z.boolean().optional(),
-        }),
-      )
+      .input(awardTypesListInput)
       .query(({ ctx, input }) =>
-        awardsList(
-          ctx.db,
-          input.academicYear,
-          input.userID,
-          input.includeVoided ?? false,
-        ),
+        awardTypesList(ctx.db, input.includeArchived ?? false),
       ),
 
     create: managerProcedure
-      .input(awardCreateInput)
+      .input(awardTypeCreateInput)
       .mutation(({ ctx, input }) =>
-        awardCreate(ctx.db, ctx.session.user.userID, input),
+        awardTypeCreate(ctx.db, ctx.session.user.userID, input),
       ),
 
-    void: managerProcedure
+    update: managerProcedure
+      .input(awardTypeUpdateInput)
+      .mutation(({ ctx, input }) =>
+        awardTypeUpdate(ctx.db, ctx.session.user.userID, input),
+      ),
+
+    archive: managerProcedure
       .input(idInput)
       .mutation(({ ctx, input }) =>
-        awardVoid(ctx.db, ctx.session.user.userID, input.id),
+        awardTypeArchive(ctx.db, ctx.session.user.userID, input.id),
+      ),
+
+    restore: managerProcedure
+      .input(idInput)
+      .mutation(({ ctx, input }) =>
+        awardTypeRestore(ctx.db, ctx.session.user.userID, input.id),
+      ),
+  }),
+
+  /** Awards of a year. Every write needs the year not to be published. */
+  awards: createTRPCRouter({
+    list: managerProcedure
+      .input(awardsListInput)
+      .query(({ ctx, input }) => awardsList(ctx.db, input)),
+
+    assign: managerProcedure
+      .input(awardsAssignInput)
+      .mutation(({ ctx, input }) =>
+        awardsAssign(ctx.db, ctx.session.user.userID, input),
+      ),
+
+    update: managerProcedure
+      .input(awardUpdateInput)
+      .mutation(({ ctx, input }) =>
+        awardUpdate(ctx.db, ctx.session.user.userID, input),
+      ),
+
+    remove: managerProcedure
+      .input(idInput)
+      .mutation(({ ctx, input }) =>
+        awardRemove(ctx.db, ctx.session.user.userID, input.id),
+      ),
+
+    restore: managerProcedure
+      .input(idInput)
+      .mutation(({ ctx, input }) =>
+        awardRestore(ctx.db, ctx.session.user.userID, input.id),
+      ),
+
+    bulkRemove: managerProcedure
+      .input(awardsBulkInput)
+      .mutation(({ ctx, input }) =>
+        awardsBulkRemove(ctx.db, ctx.session.user.userID, input.ids),
+      ),
+
+    bulkRestore: managerProcedure
+      .input(awardsBulkInput)
+      .mutation(({ ctx, input }) =>
+        awardsBulkRestore(ctx.db, ctx.session.user.userID, input.ids),
+      ),
+  }),
+
+  /** Uploads of awards, so one can be undone as a whole. */
+  awardBatches: createTRPCRouter({
+    list: managerProcedure
+      .input(awardBatchesListInput)
+      .query(({ ctx, input }) => awardBatchesList(ctx.db, input.academicYear)),
+
+    undo: managerProcedure
+      .input(awardBatchUndoInput)
+      .mutation(({ ctx, input }) =>
+        awardBatchUndo(ctx.db, ctx.session.user.userID, input.batchId),
       ),
   }),
 
