@@ -13,7 +13,7 @@ import {
   type TranscriptViewModel,
   type VolunteerHoursModel,
 } from "./types";
-import { durationLabel } from "./duration";
+import { isDuration } from "./duration";
 
 /** Shown in the Explanatory notes when a CCA has no description yet. */
 export const MISSING_DESCRIPTION_TEXT = "Description not yet available.";
@@ -83,6 +83,12 @@ export function assembleTranscript(
     hasVolunteerHours: volunteer !== null,
     hasAwards: awardRows.length > 0,
     hasJcrc: jcrc !== null,
+    hasPartYear: memberships.some(
+      (m) =>
+        semLabel(m.duration) !== null ||
+        (cleaned(m.leadershipRole) !== null &&
+          semLabel(m.roleDuration) !== null),
+    ),
     pages,
   };
 }
@@ -155,16 +161,29 @@ function dedupeMemberships(
   return [...byName.values()];
 }
 
-/**
- * Appends the duration only when it is not a full year: "2026/27 (Semester 2)",
- * "Head (Semester 2)". A missing value or "full" prints nothing extra.
- */
-function withDuration(
-  text: string | null,
+/** "Sem 1" / "Sem 2" for a part-year period; null for a full year or unknown. */
+function semLabel(duration: string | null | undefined): string | null {
+  if (duration === "sem1") return "Sem 1";
+  if (duration === "sem2") return "Sem 2";
+  return null;
+}
+
+/** "Head" + sem2 -> "Head (Sem 2)". A full year or a missing period adds nothing. */
+function roleWithPeriod(
+  role: string | null,
   duration: string | null | undefined,
 ): string | null {
-  const label = durationLabel(duration);
-  return text && label ? `${text} (${label})` : text;
+  const label = semLabel(duration);
+  return role && label ? `${role} (${label})` : role;
+}
+
+/** "2026/27" + sem2 -> "2026/27 Sem 2", kept on one line by the table cell. */
+function yearWithPeriod(
+  year: string,
+  duration: string | null | undefined,
+): string {
+  const label = semLabel(duration);
+  return label ? `${year} ${label}` : year;
 }
 
 function shortYear(academicYear: string): string {
@@ -193,8 +212,8 @@ function buildInvolvements(
   for (const m of memberships) {
     rows.push({
       ccaName: m.ccaName,
-      role: withDuration(cleaned(m.leadershipRole), m.roleDuration),
-      year: withDuration(year, m.duration) ?? year,
+      role: roleWithPeriod(cleaned(m.leadershipRole), m.roleDuration),
+      year: yearWithPeriod(year, m.duration),
       extraContribution: cleaned(m.extraContribution),
       footnote: 0,
       isJcrc: false,

@@ -141,9 +141,38 @@ describe("TranscriptDocument: content", () => {
   it("prints the semester in the Year and Role columns only when not a full year", () => {
     const html = render("jcrc-sports-secretary", JCRC_AY);
 
-    expect(html).toContain("2027/28 (Semester 2)");
-    expect(html).toContain("Head (Semester 2)");
+    expect(html).toContain("2027/28 Sem 2");
+    expect(html).toContain("Head (Sem 2)");
     expect(render("cca-head")).not.toContain("Semester");
+  });
+
+  it("keeps the Year cell on one line, sized for '2026/27 Sem 2'", () => {
+    const html = render("jcrc-sports-secretary", JCRC_AY);
+
+    expect(html).toContain("whitespace-nowrap");
+    expect(html).toContain("2027/28 Sem 2</td>");
+    expect(html).toMatch(/whitespace-nowrap[^>]*>Year/);
+    expect(html).toContain("w-[7.5rem]");
+    // The part-year words never wrap onto a second line inside the cell.
+    expect(html).not.toContain("2027/28<br");
+  });
+
+  it("explains Sem 1 / Sem 2 on the notes page only when a part-year item exists", () => {
+    const withPart = render("jcrc-sports-secretary", JCRC_AY);
+    const without = render("plain-member");
+
+    expect(withPart).toContain(
+      "Sem 1 / Sem 2: involvement for that semester only.",
+    );
+    expect(without).not.toContain("Sem 1 / Sem 2");
+  });
+
+  it("closes the notes page with one neutral sentence and no verification text", () => {
+    const html = render("plain-member");
+
+    expect(html).toMatch(/Generated from Raffles Hall.s records./);
+    expect(html).not.toMatch(/verif|QR/i);
+    expect(html).not.toContain("<svg");
   });
 
   it("shows only the half of the residence line that is known", () => {

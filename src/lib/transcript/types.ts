@@ -128,7 +128,7 @@ export interface InvolvementRow {
   ccaName: string;
   /** Null for plain members: the Role column is left blank. */
   role: string | null;
-  /** "2026/27" */
+  /** "2026/27", or "2026/27 Sem 2" for one semester; always on one line. */
   year: string;
   /** Null when there is none: no "Additional contribution" sub-row. */
   extraContribution: string | null;
@@ -211,6 +211,8 @@ export interface TranscriptViewModel {
   hasVolunteerHours: boolean;
   hasAwards: boolean;
   hasJcrc: boolean;
+  /** True when any CCA row is for one semester only (the notes explain Sem 1 / Sem 2). */
+  hasPartYear: boolean;
   /** Always main first and notes last; the JCRC page sits between them. */
   pages: TranscriptPage[];
 }

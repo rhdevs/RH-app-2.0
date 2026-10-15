@@ -200,8 +200,8 @@ describe("assembleTranscript: durations", () => {
 
     const rows = section(vm, "involvements")?.rows ?? [];
     const years = Object.fromEntries(rows.map((r) => [r.ccaName, r.year]));
-    expect(years["Hall Orientation Committee"]).toBe("2027/28 (Semester 1)");
-    expect(years["RH Welfare"]).toBe("2027/28 (Semester 2)");
+    expect(years["Hall Orientation Committee"]).toBe("2027/28 Sem 1");
+    expect(years["RH Welfare"]).toBe("2027/28 Sem 2");
     expect(years["Soccer (MALE)"]).toBe("2027/28");
   });
 
@@ -211,8 +211,26 @@ describe("assembleTranscript: durations", () => {
     const dance = section(vm, "involvements")?.rows.find(
       (r) => r.ccaName === "Raffles Hall Dance",
     );
-    expect(dance?.role).toBe("Head (Semester 2)");
+    expect(dance?.role).toBe("Head (Sem 2)");
     expect(dance?.year).toBe("2027/28");
+  });
+
+  it("flags part-year involvement so the notes can explain it", () => {
+    expect(assembleFixture("jcrc-sports-secretary", JCRC_AY).hasPartYear).toBe(
+      true,
+    );
+    expect(assembleFixture("cca-head").hasPartYear).toBe(false);
+    const input = blankInput();
+    input.memberships = [membership({ ccaName: "A", roleDuration: "sem2" })];
+    expect(assembleTranscript(input, AY).hasPartYear).toBe(false);
+    input.memberships = [
+      membership({
+        ccaName: "A",
+        leadershipRole: "Head",
+        roleDuration: "sem2",
+      }),
+    ];
+    expect(assembleTranscript(input, AY).hasPartYear).toBe(true);
   });
 
   it("never prints a duration for a blank role", () => {

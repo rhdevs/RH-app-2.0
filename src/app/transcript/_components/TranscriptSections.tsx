@@ -71,6 +71,17 @@ function Columns() {
   );
 }
 
+/** The involvement table: the Year column is sized to "2026/27 Sem 2" and never wraps. */
+function InvolvementColumns() {
+  return (
+    <colgroup>
+      <col />
+      <col className="w-[28%]" />
+      <col className="w-[7.5rem]" />
+    </colgroup>
+  );
+}
+
 function SubRow({ children }: { children: ReactNode }) {
   return (
     <tr>
@@ -84,7 +95,7 @@ function SubRow({ children }: { children: ReactNode }) {
 function Involvements({ rows }: { rows: InvolvementRow[] }) {
   return (
     <table className="w-full table-fixed border-collapse">
-      <Columns />
+      <InvolvementColumns />
       <thead>
         <tr>
           <th scope="col" className={TH}>
@@ -93,7 +104,7 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
           <th scope="col" className={TH}>
             Role
           </th>
-          <th scope="col" className={TH}>
+          <th scope="col" className={`${TH} whitespace-nowrap`}>
             Year
           </th>
         </tr>
@@ -105,7 +116,7 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
               {row.ccaName} <sup>{row.footnote}</sup>
             </td>
             <td className={TD}>{row.role}</td>
-            <td className={TD}>{row.year}</td>
+            <td className={`${TD} whitespace-nowrap`}>{row.year}</td>
           </tr>
           {row.isJcrc && (
             <SubRow>
@@ -188,7 +199,14 @@ function Awards({ rows }: { rows: AwardRow[] }) {
 }
 
 /** The footnotes for the superscripts on page 1, then a neutral closing line. */
-export function NotesBody({ notes }: { notes: NoteRow[] }) {
+export function NotesBody({
+  notes,
+  hasPartYear = false,
+}: {
+  notes: NoteRow[];
+  /** Explain "Sem 1 / Sem 2" when any row uses it. */
+  hasPartYear?: boolean;
+}) {
   return (
     <>
       {notes.length > 0 && (
@@ -207,6 +225,12 @@ export function NotesBody({ notes }: { notes: NoteRow[] }) {
             </p>
           ))}
         </section>
+      )}
+
+      {hasPartYear && (
+        <p className="my-1 text-[10.5px]">
+          Sem 1 / Sem 2: involvement for that semester only.
+        </p>
       )}
 
       <section className="break-inside-avoid">
