@@ -600,5 +600,81 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("CONFLICT:NOT_PUBLISHED");
       });
     });
+
+    /* ------------------------------------------------------------------ */
+    describe("what the pages rely on", () => {
+      it("lists only published years, as names", async () => {
+        expect(await as(RESIDENT).transcript.mine.years()).toEqual([]);
+
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+
+        expect(await as(RESIDENT).transcript.mine.years()).toEqual([AY]);
+        expect(await errorOf(as(null).transcript.mine.years())).toBe(
+          "UNAUTHORIZED:UNAUTHORIZED",
+        );
+      });
+
+      it("shows the resident exactly what verify shows, apart from the masked matric", async () => {
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        const mine = await as(RESIDENT_12).transcript.mine.get({
+          academicYear: AY,
+        });
+        if (mine.status !== "ready") throw new Error("not ready");
+
+        const verified = await as(null).transcript.verify({ code: mine.code });
+
+        expect(verified.status).toBe("valid");
+        if (verified.status !== "valid") return;
+        const masked = {
+          ...mine.transcript,
+          resident: { ...mine.transcript.resident, matric: "A*******X" },
+        };
+        expect(verified.transcript).toEqual(masked);
+        expect(mine.transcript.resident.isSpecimen).toBe(false);
+      });
+
+      it("keeps showing the issued snapshot after live data changes", async () => {
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        const first = await as(RESIDENT_12).transcript.mine.get({
+          academicYear: AY,
+        });
+        if (first.status !== "ready") throw new Error("not ready");
+        await db.award.updateMany({
+          where: { userID: RESIDENT_12.id, title: "Service Excellence Award" },
+          data: { voidedAt: new Date() },
+        });
+
+        const again = await as(RESIDENT_12).transcript.mine.get({
+          academicYear: AY,
+        });
+
+        expect(again).toEqual(first);
+        await db.award.updateMany({
+          where: { userID: RESIDENT_12.id, title: "Service Excellence Award" },
+          data: { voidedAt: null },
+        });
+      });
+
+      it("issues a transcript with an empty year for a resident with no involvements", async () => {
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        // SEED-R20 is in a couple of CCAs; remove their frozen entries to make the year empty.
+        await db.transcriptRosterEntry.updateMany({
+          where: { academicYear: AY, userID: "SEED-R20" },
+          data: { frozen: false },
+        });
+
+        const result = await as({
+          id: "SEED-R20",
+          roles: ["resident"],
+        }).transcript.mine.get({
+          academicYear: AY,
+        });
+
+        expect(result.status).toBe("ready");
+        if (result.status !== "ready") return;
+        expect(result.transcript.isEmpty).toBe(true);
+        expect(result.code).toMatch(/^RH-/);
+      });
+    });
   },
 );
