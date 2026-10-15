@@ -8,8 +8,10 @@ import {
   ImportMapView,
   ImportPreviewView,
   ImportProgressView,
+  PREVIEW_TABLE_MIN_WIDTH,
   StatusChip,
   importableCount,
+  shortCitation,
   type ImportDoneViewProps,
   type ImportInputViewProps,
   type ImportMapViewProps,
@@ -296,6 +298,22 @@ describe("import: progress and the summary", () => {
     });
     expect(html).toContain("5 imported, 0 skipped");
     expect(html).not.toContain("Why it was skipped");
+  });
+
+  it("shows the preview as one card per row on a narrow container, with the status and Skip on the card", () => {
+    const html = preview({ layout: "cards" });
+    expect(html).not.toContain("<table");
+    expect((html.match(/<li class="rounded-md border/g) ?? []).length).toBe(6);
+    expect((html.match(/aria-label="Skip row \d+"/g) ?? []).length).toBe(3);
+    expect(html).toContain("Listed earlier in the file (row 1).");
+    expect(html).toContain(">Ready<");
+    expect(html).toContain("New award");
+  });
+
+  it("cuts a very long citation in the preview", () => {
+    expect(shortCitation("x".repeat(300))).toBe(`${"x".repeat(120)}…`);
+    expect(shortCitation("short")).toBe("short");
+    expect(PREVIEW_TABLE_MIN_WIDTH).toBe(704);
   });
 
   it("renders a status chip with its word", () => {

@@ -223,6 +223,13 @@ The seed gives a catalogue of five awards (Colours Award, Soccer; Service Excell
 | Bulk | `seed-r02` | Tick several rows or a group, Remove selected, confirm; Restore selected | A confirmation first; a restore skips anyone who now has the award again and names them. |
 | Catalogue | `seed-r02` | Catalogue tab: add, edit, Archive, Show archived, Restore | An archived award disappears from "Assign an award" but its awards stay on transcripts; renaming leaves past awards' names alone. |
 | History | `seed-r02` | History tab, Undo on "colours-2026.csv", confirm | "3 awards removed."; the three "Full Colours" awards are gone from the Awards tab (Show removed shows them); Undo is no longer offered. |
+| Template | `seed-r02` | Import tab, "Download template" | A file `awards-template.csv` with `identifier,award,citation` and one example row. |
+| Upload | `seed-r02` | Import tab, upload `scripts/dev/sample-awards.csv`, Continue | "12 rows found." The columns are mapped to identifier, award and citation; change one and the Preview button says what is wrong. |
+| Preview | `seed-r02` | Preview | "8 Ready, 1 Not found, 2 Duplicate, 1 Invalid", a reason on each row that is not Ready (row 9 no such person; row 10 listed earlier; row 11 already has it; row 12 citation too long) and a Skip box on Ready rows. |
+| Decisions | `seed-r02` | In "Decide unknown awards": Hall Spirit Award, Create new award; Retired Award, Use existing (archived) | "Import 8 rows" stays disabled until both are chosen. Create is not offered for Retired Award, and using it does not unarchive it. |
+| Import | `seed-r02` | Import 8 rows | "8 imported, 4 skipped" with the four reasons; "Hall Spirit Award" is now in the Catalogue (no default citation); "Retired Award" is still archived. |
+| Undo the upload | `seed-r02` | See it in History, Undo on "sample-awards.csv", confirm | "8 awards removed."; the eight awards are gone from the Awards tab (Show removed shows them). |
+| Phone | `seed-r02` | The Import tab at 375px wide | One card per preview row with the status and Skip on it, no sideways scroll. |
 | Published | `seed-r01` | Publish the year, open the page | A note that changes are locked; the Awards and History tabs are read-only; the Catalogue still works. |
 | On a transcript | `seed-r01` | Preview as resident `seed-r04` | "Award | Year": "Colours Award, Soccer", 2026/27, and the citation in small italics beneath. |
 | Roster layout | `seed-r04` | `/cca/9005/transcript` at 1280px | The roster is cards (the column beside the side menu is narrower than the table needs); on a wider screen the table shows with Save fixed at the right edge. |

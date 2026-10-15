@@ -34,6 +34,11 @@ import {
   type RowStatus,
   type UnknownName,
 } from "~/lib/transcript/awardImport";
+import {
+  rosterLayoutFor,
+  useContainerWidth,
+  type RosterLayout,
+} from "~/lib/transcript/useContainerWidth";
 import { api } from "~/trpc/react";
 import { ErrorLine, FIELD_LABEL } from "../../_components/Bits";
 
@@ -273,7 +278,16 @@ export function ImportMapView(p: ImportMapViewProps) {
 
 /* ---- step 3: the preview and the decisions ------------------------------------------- */
 
+/** The width the preview table needs (its min-w-[44rem]). */
+export const PREVIEW_TABLE_MIN_WIDTH = 704;
+
+/** A long citation is cut for the preview; the whole text is imported. */
+export const shortCitation = (c: string) =>
+  c.length > 120 ? `${c.slice(0, 120)}…` : c;
+
 export interface ImportPreviewViewProps {
+  /** Table or one card per row; the container picks it from its own width. */
+  layout?: RosterLayout;
   preview: ImportPreviewData;
   skipped: ReadonlySet<number>;
   onSkip: (row: number, skip: boolean) => void;
@@ -399,83 +413,140 @@ export function ImportPreviewView(p: ImportPreviewViewProps) {
         </section>
       )}
 
-      <div className="relative overflow-x-auto rounded-md border border-gray-200">
-        <table className="w-full min-w-[44rem] text-left text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 text-xs font-medium text-gray-700">
-              <th scope="col" className="px-3 py-2">
-                Row
-              </th>
-              <th scope="col" className="px-3 py-2">
-                Person
-              </th>
-              <th scope="col" className="px-3 py-2">
-                Award
-              </th>
-              <th scope="col" className="px-3 py-2">
-                Status
-              </th>
-              <th scope="col" className="px-3 py-2">
-                Reason
-              </th>
-              <th scope="col" className="px-3 py-2">
-                Skip
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {rows.map((r) => {
-              const skip = p.skipped.has(r.row);
-              return (
-                <tr
-                  key={r.row}
-                  className={`align-top ${skip ? "text-gray-400" : ""}`}
-                >
-                  <td className="px-3 py-2">{r.row}</td>
-                  <td className="max-w-[14rem] break-words px-3 py-2">
-                    {r.displayName ?? r.identifier}
-                    {r.displayName && (
-                      <span className="block text-xs text-gray-500">
-                        {r.identifier}
-                      </span>
-                    )}
-                  </td>
-                  <td className="max-w-[14rem] break-words px-3 py-2">
-                    {r.award}
-                    {r.status === "ready" && r.isNew && (
-                      <span className="ml-1 text-xs text-amber-800">
-                        New award
-                      </span>
-                    )}
-                    {r.citation && (
-                      <span className="block text-xs italic text-gray-600">
-                        {r.citation}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <StatusChip status={r.status} />
-                  </td>
-                  <td className="px-3 py-2 text-xs text-gray-700">
-                    {r.reason ?? ""}
-                  </td>
-                  <td className="px-3 py-2">
-                    {r.status === "ready" && (
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
-                        aria-label={`Skip row ${r.row}`}
-                        checked={skip}
-                        onChange={(e) => p.onSkip(r.row, e.target.checked)}
-                      />
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {p.layout === "cards" ? (
+        <ul className="space-y-3">
+          {rows.map((r) => {
+            const skip = p.skipped.has(r.row);
+            return (
+              <li
+                key={r.row}
+                className={`rounded-md border border-gray-200 p-3 ${skip ? "text-gray-400" : ""}`}
+              >
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-gray-600">
+                    Row {r.row}
+                  </span>
+                  <StatusChip status={r.status} />
+                </div>
+                <p className="break-words text-sm font-medium">
+                  {r.displayName ?? r.identifier}
+                </p>
+                {r.displayName && (
+                  <p className="break-all text-xs text-gray-500">
+                    {r.identifier}
+                  </p>
+                )}
+                <p className="mt-1 break-words text-sm">
+                  {r.award}
+                  {r.status === "ready" && r.isNew && (
+                    <span className="ml-1 text-xs text-amber-800">
+                      New award
+                    </span>
+                  )}
+                </p>
+                {r.citation && (
+                  <p className="break-all text-xs italic text-gray-600">
+                    {shortCitation(r.citation)}
+                  </p>
+                )}
+                {r.reason && (
+                  <p className="mt-1 text-xs text-gray-700">{r.reason}</p>
+                )}
+                {r.status === "ready" && (
+                  <label className="mt-2 inline-flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      aria-label={`Skip row ${r.row}`}
+                      checked={skip}
+                      onChange={(e) => p.onSkip(r.row, e.target.checked)}
+                    />
+                    Skip
+                  </label>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <div className="relative overflow-x-auto rounded-md border border-gray-200">
+          <table className="w-full min-w-[44rem] text-left text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 text-xs font-medium text-gray-700">
+                <th scope="col" className="px-3 py-2">
+                  Row
+                </th>
+                <th scope="col" className="px-3 py-2">
+                  Person
+                </th>
+                <th scope="col" className="px-3 py-2">
+                  Award
+                </th>
+                <th scope="col" className="px-3 py-2">
+                  Status
+                </th>
+                <th scope="col" className="px-3 py-2">
+                  Reason
+                </th>
+                <th scope="col" className="px-3 py-2">
+                  Skip
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {rows.map((r) => {
+                const skip = p.skipped.has(r.row);
+                return (
+                  <tr
+                    key={r.row}
+                    className={`align-top ${skip ? "text-gray-400" : ""}`}
+                  >
+                    <td className="px-3 py-2">{r.row}</td>
+                    <td className="max-w-[14rem] break-words px-3 py-2">
+                      {r.displayName ?? r.identifier}
+                      {r.displayName && (
+                        <span className="block text-xs text-gray-500">
+                          {r.identifier}
+                        </span>
+                      )}
+                    </td>
+                    <td className="max-w-[14rem] break-words px-3 py-2">
+                      {r.award}
+                      {r.status === "ready" && r.isNew && (
+                        <span className="ml-1 text-xs text-amber-800">
+                          New award
+                        </span>
+                      )}
+                      {r.citation && (
+                        <span className="block text-xs italic text-gray-600">
+                          {shortCitation(r.citation)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <StatusChip status={r.status} />
+                    </td>
+                    <td className="px-3 py-2 text-xs text-gray-700">
+                      {r.reason ?? ""}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.status === "ready" && (
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4"
+                          aria-label={`Skip row ${r.row}`}
+                          checked={skip}
+                          onChange={(e) => p.onSkip(r.row, e.target.checked)}
+                        />
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <ErrorLine message={p.error} />
       {open.length > 0 && (
@@ -546,7 +617,7 @@ export function ImportDoneView(p: ImportDoneViewProps) {
       )}
       {result.skipped.length > 0 && (
         <div className="relative overflow-x-auto rounded-md border border-gray-200">
-          <table className="w-full min-w-[30rem] text-left text-sm">
+          <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-gray-200 text-xs font-medium text-gray-700">
                 <th scope="col" className="px-3 py-2">
@@ -558,7 +629,7 @@ export function ImportDoneView(p: ImportDoneViewProps) {
                 <th scope="col" className="px-3 py-2">
                   Award
                 </th>
-                <th scope="col" className="px-3 py-2">
+                <th scope="col" className="hidden px-3 py-2 md:table-cell">
                   Why it was skipped
                 </th>
               </tr>
@@ -572,8 +643,11 @@ export function ImportDoneView(p: ImportDoneViewProps) {
                   </td>
                   <td className="max-w-[12rem] break-words px-3 py-2">
                     {s.award}
+                    <span className="block text-xs text-gray-700 md:hidden">
+                      {s.reason}
+                    </span>
                   </td>
-                  <td className="px-3 py-2 text-xs text-gray-700">
+                  <td className="hidden px-3 py-2 text-xs text-gray-700 md:table-cell">
                     {s.reason}
                   </td>
                 </tr>
@@ -637,6 +711,7 @@ export default function AwardImport({
   onOpenHistory: () => void;
 }) {
   const utils = api.useUtils();
+  const [boxRef, width] = useContainerWidth<HTMLDivElement>();
   const [step, setStep] = useState<Step>("input");
   const [text, setText] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
@@ -743,29 +818,32 @@ export default function AwardImport({
   }
   if (step === "preview" && preview) {
     return (
-      <ImportPreviewView
-        preview={preview}
-        skipped={skipped}
-        onSkip={(row, skip) =>
-          setSkipped((cur) => {
-            const next = new Set(cur);
-            if (skip) next.add(row);
-            else next.delete(row);
-            return next;
-          })
-        }
-        decisions={decisions}
-        onDecision={(d, nameKey) =>
-          setDecisions((cur) => [
-            ...cur.filter((x) => x.nameKey !== nameKey),
-            ...(d ? [d] : []),
-          ])
-        }
-        onBack={() => setStep("map")}
-        onImport={() => void runImport()}
-        importing={false}
-        error={error}
-      />
+      <div ref={boxRef}>
+        <ImportPreviewView
+          layout={rosterLayoutFor(width, PREVIEW_TABLE_MIN_WIDTH)}
+          preview={preview}
+          skipped={skipped}
+          onSkip={(row, skip) =>
+            setSkipped((cur) => {
+              const next = new Set(cur);
+              if (skip) next.add(row);
+              else next.delete(row);
+              return next;
+            })
+          }
+          decisions={decisions}
+          onDecision={(d, nameKey) =>
+            setDecisions((cur) => [
+              ...cur.filter((x) => x.nameKey !== nameKey),
+              ...(d ? [d] : []),
+            ])
+          }
+          onBack={() => setStep("map")}
+          onImport={() => void runImport()}
+          importing={false}
+          error={error}
+        />
+      </div>
     );
   }
   if (step === "map") {
