@@ -54,7 +54,7 @@ const NEW_MODELS: Record<string, string[]> = {
   VolunteerRecord: ["academicYear", "userID"],
   Award: ["academicYear", "userID"],
   JcrcService: ["academicYear", "userID"],
-  TranscriptIssue: ["code", "academicYear", "userID"],
+  TranscriptIssue: ["code", "academicYear", "userID", "activeKey"],
 };
 
 describe("schema: new transcript models", () => {

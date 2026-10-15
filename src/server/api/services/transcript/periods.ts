@@ -210,6 +210,38 @@ export interface PublishResult {
   skippedUnresolved: number;
 }
 
+/** Rows per write, so one call never carries thousands of documents. */
+const WRITE_CHUNK = 1000;
+
+function chunked<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+/**
+ * Updates that write the same values, as one `{ ids, data }` per distinct
+ * payload and at most WRITE_CHUNK ids each. Most members share a payload (a
+ * full year, no role, no extra), so a hall-sized publish needs a handful of
+ * round trips rather than one per member.
+ */
+export function groupByPayload<D extends object>(
+  updates: ReadonlyArray<{ id: string; data: D }>,
+): Array<{ ids: string[]; data: D }> {
+  const byPayload = new Map<string, { ids: string[]; data: D }>();
+  for (const u of updates) {
+    const key = JSON.stringify(u.data);
+    const group = byPayload.get(key);
+    if (group) group.ids.push(u.id);
+    else byPayload.set(key, { ids: [u.id], data: u.data });
+  }
+  return [...byPayload.values()].flatMap((g) =>
+    chunked(g.ids, WRITE_CHUNK).map((ids) => ({ ids, data: g.data })),
+  );
+}
+
 /**
  * PUBLISH: freeze the roster and open the year to residents, in ONE
  * transaction. The status claim is the first write, as a compare-and-set, so
@@ -337,14 +369,16 @@ export async function publish(
           where: { academicYear },
           data: { frozen: false },
         });
-        for (const u of toUpdate) {
-          await tx.transcriptRosterEntry.update({
-            where: { id: u.id },
-            data: u.data,
+        // Few round trips: entries that take the same values are updated
+        // together, and new ones are created in chunks.
+        for (const group of groupByPayload(toUpdate)) {
+          await tx.transcriptRosterEntry.updateMany({
+            where: { id: { in: group.ids } },
+            data: group.data,
           });
         }
-        if (toCreate.length > 0) {
-          await tx.transcriptRosterEntry.createMany({ data: toCreate });
+        for (const chunk of chunked(toCreate, WRITE_CHUNK)) {
+          await tx.transcriptRosterEntry.createMany({ data: chunk });
         }
       },
       { maxWait: 10_000, timeout: 120_000 },

@@ -197,6 +197,94 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ------------------------------------------------------------------ */
     describe("publish", () => {
+      it("publishes a hall-sized roster (2,000 memberships) well inside the transaction limit", async () => {
+        const PEOPLE = 400;
+        const CCAS_EACH = [9001, 9002, 9003, 9004, 9005]; // 400 x 5 = 2,000
+        const id = (n: number) => `SEED-T${String(n).padStart(4, "0")}`;
+        const people = Array.from({ length: PEOPLE }, (_, i) => i + 1);
+
+        const cleanup = async () => {
+          await db.userCCA.deleteMany({
+            where: { userID: { startsWith: "SEED-T" } },
+          });
+          await db.transcriptRosterEntry.deleteMany({
+            where: { userID: { startsWith: "SEED-T" } },
+          });
+          await db.user.deleteMany({
+            where: { userID: { startsWith: "SEED-T" } },
+          });
+        };
+        await cleanup();
+        try {
+          await db.user.createMany({
+            data: people.map((n) => ({
+              email: `seed-t${String(n).padStart(4, "0")}@u.nus.edu`,
+              passwordHash: "not-a-real-hash",
+              userID: id(n),
+              displayName: `Synthetic Resident ${n}`,
+              block: (n % 5) + 1,
+              telegramHandle: `synthetic_${n}`,
+            })),
+          });
+          await db.userCCA.createMany({
+            data: people.flatMap((n) =>
+              CCAS_EACH.map((ccaID) => ({ userID: id(n), ccaID })),
+            ),
+          });
+          // Annotations on 400 of the memberships: half share one payload, half
+          // carry their own extra text, so both update paths are exercised.
+          await db.transcriptRosterEntry.createMany({
+            data: people.slice(0, 200).flatMap((n) => [
+              {
+                academicYear: AY,
+                userID: id(n),
+                ccaID: 9001,
+                duration: "sem1",
+                frozen: false,
+              },
+              {
+                academicYear: AY,
+                userID: id(n),
+                ccaID: 9002,
+                extraContribution: `Contribution ${n}`,
+                frozen: false,
+              },
+            ]),
+          });
+
+          const started = Date.now();
+          const result = await as(JCRC).transcript.periods.publish({
+            academicYear: AY,
+          });
+          const seconds = (Date.now() - started) / 1000;
+          // eslint-disable-next-line no-console
+          console.info(
+            `[scale] published ${result.frozen} entries in ${seconds.toFixed(1)}s`,
+          );
+
+          expect(result.frozen).toBe(
+            MEMBERS_SEEDED + PEOPLE * CCAS_EACH.length,
+          );
+          expect(result.skippedUnresolved).toBe(0);
+          expect(seconds).toBeLessThan(30);
+          expect(
+            await db.transcriptRosterEntry.count({
+              where: {
+                academicYear: AY,
+                userID: { startsWith: "SEED-T" },
+                frozen: true,
+              },
+            }),
+          ).toBe(PEOPLE * CCAS_EACH.length);
+          expect((await entryOf(id(1), 9001))?.duration).toBe("sem1");
+          expect((await entryOf(id(1), 9002))?.extraContribution).toBe(
+            "Contribution 1",
+          );
+        } finally {
+          await cleanup();
+        }
+      }, 120_000);
+
       it("refuses without a semester-2 start date", async () => {
         await as(JCRC).transcript.periods.setSem2Start({
           academicYear: AY,
