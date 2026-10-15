@@ -76,20 +76,14 @@ function section<K extends TranscriptSection["kind"]>(
   vm: TranscriptViewModel,
   kind: K,
 ) {
-  const main = vm.pages.find((p) => p.kind === "main") as Extract<
-    TranscriptPage,
-    { kind: "main" }
-  >;
+  const main = vm.pages.find((p) => p.kind === "main")!;
   return main.sections.find(
     (s): s is Extract<TranscriptSection, { kind: K }> => s.kind === kind,
   );
 }
 
 const notesPage = (vm: TranscriptViewModel) =>
-  vm.pages.find((p) => p.kind === "notes") as Extract<
-    TranscriptPage,
-    { kind: "notes" }
-  >;
+  vm.pages.find((p) => p.kind === "notes")!;
 
 describe("activity limits", () => {
   it("fixes the limits the prompt names", () => {

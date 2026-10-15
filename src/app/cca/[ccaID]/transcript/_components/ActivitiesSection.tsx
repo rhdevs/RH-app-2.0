@@ -246,7 +246,7 @@ export default function ActivitiesSection({
 }) {
   const utils = api.useUtils();
   const [showRemoved, setShowRemoved] = useState(false);
-  const [editing, setEditing] = useState<"new" | string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const [removing, setRemoving] = useState<{
     id: string;
     title: string;
