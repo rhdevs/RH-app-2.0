@@ -15,11 +15,13 @@ import { ErrorLine, SectionCard, YearSelect } from "../../_components/Bits";
 import AssignAward from "./AssignAward";
 import AwardCatalogue from "./AwardCatalogue";
 import AwardHistory from "./AwardHistory";
+import AwardImport from "./AwardImport";
 import AwardsList from "./AwardsList";
 
 export const AWARD_TABS = [
   { value: "awards", label: "Awards" },
   { value: "catalogue", label: "Catalogue" },
+  { value: "import", label: "Import" },
   { value: "history", label: "History" },
 ] as const;
 export type AwardTab = (typeof AWARD_TABS)[number]["value"];
@@ -47,6 +49,7 @@ export default function AwardsAdmin() {
   const onAssignDirty = useCallback(mark("assign"), [mark]);
   const onListDirty = useCallback(mark("list"), [mark]);
   const onCatalogueDirty = useCallback(mark("catalogue"), [mark]);
+  const onImportDirty = useCallback(mark("import"), [mark]);
 
   if (periods.isPending) {
     return (
@@ -143,6 +146,23 @@ export default function AwardsAdmin() {
 
           <TabsContent value="catalogue" className="mt-5">
             <AwardCatalogue onDirty={onCatalogueDirty} />
+          </TabsContent>
+
+          <TabsContent value="import" className="mt-5">
+            {readOnly ? (
+              <p className="text-sm text-gray-600">
+                Importing is not available while the year is published.
+              </p>
+            ) : null}
+            <AwardImport
+              academicYear={year}
+              readOnly={readOnly}
+              onDirty={onImportDirty}
+              onOpenHistory={() => {
+                setDirty({});
+                setTab("history");
+              }}
+            />
           </TabsContent>
 
           <TabsContent value="history" className="mt-5">
