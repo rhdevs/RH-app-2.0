@@ -51,6 +51,13 @@ export default async function TranscriptsAdminPage() {
             >
               Your JCRC page
             </Link>
+            {" · "}
+            <Link
+              href="/admin/transcripts/residents"
+              className="font-medium text-emerald-800 underline underline-offset-2"
+            >
+              Resident corrections
+            </Link>
           </p>
         </header>
         <PeriodPanel />
