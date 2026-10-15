@@ -484,12 +484,41 @@ These supersede anything above that conflicts.
 Built on top of upstream PR #113 (one transcript per academic year, `?ay=`, one verification code per year). These supersede anything above that conflicts.
 
 - **Look:** formal and plain. Black text on white, Arial, thin rules, tables, no accent colour. The only colour on the page is the Raffles Hall crest, shown top left on every page (main, JCRC, notes) and on `/verify`. A faint paper hatch shows on screen only and is removed in print.
-- **Pages, in order:** page 1 (header, QR, resident row, summary strip, I. Leadership and CCA participation, II. Volunteer hours, III. Awards); the JCRC page (JCRC members only, always on a new printed page); the Explanatory notes page (numbered footnotes, "About this record", end marker). Empty sections are omitted. An empty year shows "No recorded involvements for this academic year."
+- **Pages, in order:** page 1 (header, QR, resident row, I. Leadership and CCA participation, II. Volunteer hours, III. Awards); the JCRC page (JCRC members only, always on a new printed page); the Explanatory notes page (numbered footnotes, "About this record", end marker). Empty sections are omitted. An empty year shows "No recorded involvements for this academic year."
 - **Per-year records:** each year has its own issue (verification code, issue date, block, year of residence). Block and year of residence are shown because #113 already models them; faculty is not shown.
 - **JCRC:** one `JcrcServiceInput` per resident, applied only to the year in its `term`. The JCRC appointment is the first row of the table and is counted as a leadership role, not as a CCA. All JCRC content is placeholder data.
 - **Signatures:** never data. The JCRC page always prints two empty boxes labelled "[Master signature placeholder]" and "[President signature placeholder]", each with a date placeholder, and never a person's name.
-- **Footer:** the browser counts pages. Print uses `@page` margin boxes (resident on the left, "Page X of Y" on the right), which need Chrome 131 or later; a browser without margin boxes prints no footer. On screen each page shows its own footer.
+- **Footer:** the resident name and matric are a plain `position: fixed` element pinned to the bottom of the content area, so every browser repeats it on every printed page; each sheet ends in a repeating empty table footer that reserves its space, so body text never prints under it. "Page X of Y" is progressive enhancement, an `@page` margin box counted by the browser (Chrome 131 or later); a browser without margin boxes prints the name but no page numbers. The name is not also in a margin box, so Chrome never prints it twice. On screen each page shows its own footer.
+- **Summary strip removed:** the four-cell strip (CCAs, leadership roles, volunteer hours, awards) that sat on page 1 was removed at the user's request, along with the assembler code that fed it.
+- **Continued pages:** the page header (crest and title) sits in a table head, so it repeats on every printed page a page runs onto.
 - **Page references:** the table says "See the Junior Common Room Committee page" rather than "See page 2", because page 1 can run to several printed pages for a resident in many CCAs.
 - **Notes order:** footnotes follow the table (JCRC row, then leaders, then members alphabetically), not alphabetical order.
 - **Single fixture source:** `src/lib/transcript/fixtures.ts` replaces `demoData.ts`. It holds twelve specimens, including a JCRC Sports Secretary (two years) and a JCRC member with no other CCAs.
 - **Vitest 3, not 5:** `npm ci` fails with vitest 5 because of its optional `@types/node@22+` peer against the repo's `@types/node@20`. Vitest 3 resolves cleanly, and the lockfile diff against `upstream/main` is additions only.
+
+---
+
+## 14. Phase 3 data model
+
+Decisions are locked in `CLAUDE.md` ("Data model decisions"). All models live in `prisma/schema.prisma` as NEW, UNVALIDATED collections, keyed on the canonical `userID` and the `ccaID` business key; key fields are required, every other scalar is nullable or defaulted (I-2). `CCA`, `UserCCA` and `User` are untouched (they are validator-guarded and silently reject new fields).
+
+**How it works.** Membership is read LIVE from `UserCCA` and `CcaHead` and FROZEN into `TranscriptIssue.snapshot` when an admin/JCRC publishes an academic year. A member who left is simply not on the transcript. The app has no notion of a term or semester, so `TranscriptPeriod` adds it. Hall points are a separate, future system and out of scope.
+
+| Model | Key | Fields |
+| --- | --- | --- |
+| `TranscriptPeriod` | `academicYear` (unique, "AY2026/27") | `sem2Start`, `status` (collecting | published, default collecting), `publishedAt/By`, `reopenedAt/By` |
+| `TranscriptRosterEntry` | unique (`academicYear`, `userID`, `ccaID`) | `duration` (full | sem1 | sem2), `roleLabel`, `roleDuration` (full | sem1 | sem2), `extraContribution`, `frozen` (default false), `updatedBy`, `updatedAt` |
+| `VolunteerRecord` | index (`academicYear`, `userID`) | `ccaID` (the volunteering CCA that recorded it), `kind` (regular | oneoff), `activity`, `activityDate`, `hours`, `recordedBy`, `recordedAt`, `voidedAt` |
+| `Award` | index (`academicYear`, `userID`) | `title`, `citation`, `ceremony` (default "Colours Awards"), `recordedBy`, `recordedAt`, `voidedAt` |
+| `JcrcService` | unique (`academicYear`, `userID`) | `portfolio`, `position`, `description`, `contributions[]`, `testimonial`, `isPlaceholder` (default true), `updatedAt` |
+| `TranscriptIssue` | `code` (unique, random) | `academicYear`, `userID`, `issuedAt`, `snapshot` (Json), `revokedAt`, `revokedBy` |
+
+**The one change to an existing model:** `CcaProfile.isVolunteering Boolean?`, set by admin/JCRC. The heads of a tagged CCA (the four "RVC ..." CCAs) may record volunteer hours for any resident.
+
+**Durations.** The default duration comes from `CcaApplication.decidedAt` against `TranscriptPeriod.sem2Start` (decided before: full; after: sem2). A head may override it. Roles can also be sem1, sem2 or full. The transcript prints a duration only when it is not a full year.
+
+**Status.** collecting (heads/JCRC edit; residents cannot download) -> published (residents download; edits locked). Admin and JCRC control it and may reopen.
+
+**Never deleted.** Volunteer records and awards are voided, and issued transcripts are revoked, so the audit trail survives.
+
+This phase adds the models, a local database and a seed only. Loaders, permission gates and screens come next.
