@@ -1,7 +1,6 @@
 import { type Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getFixtureBySlug } from "~/lib/transcript/fixtures";
-import { getVerifyUrl } from "../../_components/siteOrigin";
 import { TranscriptPageShell } from "../../_components/TranscriptPageShell";
 
 export const metadata: Metadata = {
@@ -31,7 +30,6 @@ export default function TranscriptPreviewPage({
       fixture={fixture}
       ay={ay}
       basePath={`/transcript/preview/${fixture.slug}`}
-      verifyUrl={getVerifyUrl()}
     />
   );
 }

@@ -1,4 +1,4 @@
-import { normaliseVerificationCode, yearFromParam } from "./assemble";
+import { yearFromParam } from "./assemble";
 import {
   type CcaMembershipInput,
   type JcrcServiceInput,
@@ -49,7 +49,6 @@ function issue(
 ): YearIssueInput {
   return {
     academicYear: AY,
-    verificationCode: `RH-CCT-DEMO-${String(n).padStart(4, "0")}`,
     issuedOn: "2027-05-10",
     block: "Block 3",
     yearOfResidence: 2,
@@ -334,7 +333,6 @@ export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
         issue(11, { yearOfResidence: 1 }),
         issue(11, {
           academicYear: NEXT_ACADEMIC_YEAR,
-          verificationCode: "RH-CCT-DEMO-0011-2728",
           issuedOn: "2028-05-09",
         }),
       ],
@@ -448,22 +446,4 @@ export function resolveFixtureYear(
   if (!param) return years[years.length - 1] ?? null;
   const wanted = yearFromParam(param);
   return years.includes(wanted) ? wanted : null;
-}
-
-/**
- * The only code lookup the /verify pages use: every transcript has its own
- * code, so a code names one resident AND one academic year. Returns null for
- * anything that is not a specimen code, including malformed input, which never
- * reaches the lookup.
- */
-export function getFixtureByCode(
-  raw: string,
-): { fixture: TranscriptFixture; academicYear: string } | null {
-  const code = normaliseVerificationCode(raw);
-  if (!/^[A-Z0-9-]{4,40}$/.test(code)) return null;
-  for (const fixture of TRANSCRIPT_FIXTURES) {
-    const found = fixture.input.issues.find((i) => i.verificationCode === code);
-    if (found) return { fixture, academicYear: found.academicYear };
-  }
-  return null;
 }

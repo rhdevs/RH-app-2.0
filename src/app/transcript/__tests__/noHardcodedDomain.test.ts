@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * The transcript and verify pages must not name a domain: the address printed
+ * The transcript pages must not name a domain: the address printed
  * on a transcript comes from the request (or NEXTAUTH_URL), so a preview deploy
  * and production each print their own. This reads the sources, so it keeps the
  * promise as the code changes.
@@ -19,12 +19,11 @@ function sourceFiles(dir: string): string[] {
 
 const FILES = [
   "src/app/transcript",
-  "src/app/verify",
   "src/lib/transcript",
 ].flatMap(sourceFiles);
 
 describe("no hard-coded domain", () => {
-  it("scans the transcript, verify and library sources", () => {
+  it("scans the transcript and library sources", () => {
     expect(FILES.length).toBeGreaterThan(10);
   });
 

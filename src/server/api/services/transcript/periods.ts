@@ -3,7 +3,6 @@ import { TRPCError } from "@trpc/server";
 import { canonicalUserID } from "~/lib/identity";
 import { parseAcademicYear } from "~/lib/transcript/academicYear";
 import { resolveEntry } from "~/lib/transcript/duration";
-import { NOT_REVOKED, revokedKeyFor } from "./loader";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
 
 /**
@@ -396,17 +395,13 @@ export async function publish(
 
 export interface ReopenResult {
   academicYear: string;
-  superseded: number;
 }
 
-export const SUPERSEDED_REASON = "Academic year reopened";
-
 /**
- * REOPEN: back to collecting. Clears nothing. Every issued transcript of the
- * year that has not been revoked is SUPERSEDED: revokedAt/revokedBy are set (the
- * schema has no other field for it) and `snapshot.meta` gets
- * `{ superseded: true, reason }`, which is what lets /verify say "superseded"
- * rather than "revoked". A resident then gets a fresh transcript on re-publish.
+ * REOPEN: back to collecting. Clears nothing, and there is nothing to withdraw:
+ * a transcript is assembled from the data each time it is opened, so once the
+ * year is published again residents see the corrected data. Who reopened it,
+ * and when, is recorded on the period.
  */
 export async function reopen(
   db: PrismaClient,
@@ -418,49 +413,16 @@ export async function reopen(
   const blocker = reopenBlocker(await getPeriod(db, academicYear));
   if (blocker) fail(blocker);
 
-  return transitioning(() =>
-    db.$transaction(
-      async (tx) => {
-        const claimed = await tx.transcriptPeriod.updateMany({
-          where: { academicYear, status: STATUS_PUBLISHED },
-          data: {
-            status: STATUS_COLLECTING,
-            reopenedAt: now,
-            reopenedBy: actorUserID,
-          },
-        });
-        if (claimed.count !== 1) fail("NOT_PUBLISHED");
-
-        const live = await tx.transcriptIssue.findMany({
-          where: { academicYear, ...NOT_REVOKED },
-        });
-        for (const issue of live) {
-          const snapshot =
-            issue.snapshot &&
-            typeof issue.snapshot === "object" &&
-            !Array.isArray(issue.snapshot)
-              ? (issue.snapshot as Record<string, unknown>)
-              : {};
-          const meta =
-            snapshot.meta && typeof snapshot.meta === "object"
-              ? (snapshot.meta as Record<string, unknown>)
-              : {};
-          await tx.transcriptIssue.update({
-            where: { id: issue.id },
-            data: {
-              revokedAt: now,
-              revokedBy: actorUserID,
-              activeKey: revokedKeyFor(academicYear, issue.userID, issue.id),
-              snapshot: {
-                ...snapshot,
-                meta: { ...meta, superseded: true, reason: SUPERSEDED_REASON },
-              } as Prisma.InputJsonValue,
-            },
-          });
-        }
-        return { academicYear, superseded: live.length };
+  return transitioning(async () => {
+    const claimed = await db.transcriptPeriod.updateMany({
+      where: { academicYear, status: STATUS_PUBLISHED },
+      data: {
+        status: STATUS_COLLECTING,
+        reopenedAt: now,
+        reopenedBy: actorUserID,
       },
-      { maxWait: 10_000, timeout: 60_000 },
-    ),
-  );
+    });
+    if (claimed.count !== 1) fail("NOT_PUBLISHED");
+    return { academicYear };
+  });
 }

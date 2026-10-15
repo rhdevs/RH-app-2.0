@@ -7,7 +7,6 @@ import { currentAcademicYear } from "~/lib/transcript/academicYear";
 import { parseAyParam } from "~/lib/transcript/pageState";
 import { api } from "~/trpc/server";
 import { TranscriptDocument } from "../../../../transcript/_components/TranscriptDocument";
-import { getVerifyUrl } from "../../../../transcript/_components/siteOrigin";
 
 export const metadata: Metadata = {
   title: "Transcript preview",
@@ -83,10 +82,7 @@ export default async function TranscriptPreviewPage({
               ? `Showing the frozen member list for ${academicYear}, as residents will receive it.`
               : `Showing the current member list for ${academicYear}. It is not frozen until the year is published.`}
           </p>
-          <TranscriptDocument
-            transcript={result.transcript}
-            verifyUrl={getVerifyUrl()}
-          />
+          <TranscriptDocument transcript={result.transcript} />
         </>
       ) : (
         <p className="text-sm text-red-700" role="alert">

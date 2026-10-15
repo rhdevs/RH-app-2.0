@@ -87,11 +87,6 @@ export function assembleTranscript(
   };
 }
 
-/** Codes are printed in upper case; a verifier typing one by hand may not. */
-export function normaliseVerificationCode(raw: string): string {
-  return raw.trim().toUpperCase();
-}
-
 /** "2026-10-06" -> "06/10/2026". */
 export function formatIssuedOn(iso: string): string {
   return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", {

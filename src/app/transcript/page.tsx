@@ -9,7 +9,6 @@ import {
 import { auth } from "~/server/auth";
 import { api } from "~/trpc/server";
 import { NotAvailable } from "./_components/NotAvailable";
-import { getVerifyUrl } from "./_components/siteOrigin";
 import { TranscriptFrame } from "./_components/TranscriptFrame";
 
 export const metadata: Metadata = {
@@ -25,9 +24,9 @@ export const dynamic = "force-dynamic";
  * only from the session (transcript.mine.get takes no userID), so there is no
  * way to ask for anyone else's.
  *
- * What is shown is the SNAPSHOT stored when the transcript was issued, never a
- * recomputation, so it is exactly what /verify/<code> shows. Opening a published
- * year for the first time issues it (idempotent).
+ * What is shown is ASSEMBLED FROM THE DATA on every view (the year's frozen
+ * roster plus the current activity, volunteer, award and JCRC records). Opening
+ * a published year is noted, to drive the "Ready" badge.
  *
  * `?ay=2026-27` picks a published year; anything else falls back to the latest
  * published year. While nothing is published there is a calm "not available" page.
@@ -87,7 +86,6 @@ export default async function TranscriptPage({
       transcript={result.transcript}
       years={state.published}
       basePath="/transcript"
-      verifyUrl={getVerifyUrl()}
     />
   );
 }

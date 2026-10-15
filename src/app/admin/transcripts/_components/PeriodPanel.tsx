@@ -20,7 +20,6 @@ import {
   errorText,
   normaliseStatus,
   publishSummary,
-  reopenSummary,
   statusLabel,
   yearOptions,
 } from "~/lib/transcript/adminView";
@@ -271,9 +270,9 @@ export default function PeriodPanel() {
     },
   });
   const reopen = api.transcript.periods.reopen.useMutation({
-    onSuccess: async (result) => {
+    onSuccess: async () => {
       setConfirming(null);
-      setResultLine(`${year} reopened. ${reopenSummary(result)}.`);
+      setResultLine(`${year} reopened.`);
       await refresh();
     },
   });

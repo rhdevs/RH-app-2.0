@@ -49,15 +49,11 @@ export function publishSummary(result: {
   return `${plural(result.frozen, "member", "members")} frozen, ${plural(result.skippedUnresolved, "row", "rows")} could not be matched`;
 }
 
-export function reopenSummary(result: { superseded: number }): string {
-  return `${plural(result.superseded, "transcript", "transcripts")} marked as superseded`;
-}
-
 export const PUBLISH_CONFIRMATION = (academicYear: string) =>
   `This freezes the member list for ${academicYear} and lets residents download their transcripts. Edits stop until you reopen.`;
 
 export const REOPEN_CONFIRMATION =
-  "This reopens editing. Transcripts already downloaded will be marked as superseded and residents will need to download again.";
+  "This reopens editing. Residents cannot open their transcripts until the year is published again, and then they see the corrected data.";
 
 /** The API's error codes, in plain words for an inline message. */
 const ERROR_TEXT: Record<string, string> = {

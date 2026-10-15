@@ -18,13 +18,11 @@ export function TranscriptPageShell({
   fixture,
   ay,
   basePath,
-  verifyUrl,
 }: {
   fixture: TranscriptFixture;
   ay: string | undefined;
   /** The route this shell is served from, for the year links. */
   basePath: string;
-  verifyUrl?: string;
 }) {
   const academicYear = resolveFixtureYear(fixture, ay);
   if (!academicYear) notFound();
@@ -34,7 +32,6 @@ export function TranscriptPageShell({
       transcript={assembleTranscript(fixture.input, academicYear)}
       years={getFixtureYears(fixture)}
       basePath={basePath}
-      verifyUrl={verifyUrl}
       notice={
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
           <p className="font-semibold">Specimen (development only)</p>

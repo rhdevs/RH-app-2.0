@@ -50,50 +50,8 @@ export function selectTranscriptState(input: {
   return { kind: "show", academicYear, published };
 }
 
-/** The exact wording of each /verify outcome. */
-export const VERIFY_NOTES = {
-  valid: "This record is valid.",
-  superseded:
-    "This record has been superseded by a later version. Ask the resident for the current transcript.",
-  revoked: "This record has been revoked.",
-  not_found: "We could not verify this code. Check it for typing mistakes.",
-  rate_limited: "Too many attempts. Try again later.",
-  specimen:
-    "Specimen record. This is a demonstration with made-up details; it does not confirm anyone\u2019s participation.",
-} as const;
-
 export const NOT_AVAILABLE_NOTES = {
   headline: (academicYear: string) =>
     `Your transcript for ${academicYear} isn’t available yet.`,
   detail: "It opens once the hall publishes transcripts.",
 } as const;
-
-/**
- * The site's own origin, for text printed on the document ("enter the code at
- * <origin>/verify"). The request host wins, so a preview deploy prints its own
- * address; NEXTAUTH_URL is the fallback. Null when neither is usable, and the
- * document then says "the verification page of this site".
- */
-export function resolveSiteOrigin(input: {
-  host?: string | null;
-  proto?: string | null;
-  envUrl?: string | null;
-}): string | null {
-  const host = input.host?.split(",")[0]?.trim();
-  if (host && /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i.test(host)) {
-    const local = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host);
-    const proto = input.proto?.split(",")[0]?.trim().toLowerCase();
-    const scheme =
-      proto === "http" || proto === "https" ? proto : local ? "http" : "https";
-    return `${scheme}://${host.toLowerCase()}`;
-  }
-  if (input.envUrl) {
-    try {
-      const u = new URL(input.envUrl);
-      if (u.protocol === "http:" || u.protocol === "https:") return u.origin;
-    } catch {
-      /* fall through */
-    }
-  }
-  return null;
-}

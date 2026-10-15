@@ -7,7 +7,6 @@ import {
 import { JcrcPageBody } from "./JcrcPageBody";
 import { MetaRow, PageHeader } from "./PageHeader";
 import { NotesBody, TranscriptSections } from "./TranscriptSections";
-import { VerifyQr } from "./VerifyQr";
 
 export const EMPTY_YEAR_MESSAGE =
   "No recorded involvements for this academic year.";
@@ -64,11 +63,8 @@ const DOCUMENT_CSS = `
  */
 export function TranscriptDocument({
   transcript,
-  verifyUrl,
 }: {
   transcript: TranscriptViewModel;
-  /** The site's own verification address, printed on the notes page. */
-  verifyUrl?: string;
 }) {
   const { resident } = transcript;
 
@@ -84,7 +80,7 @@ export function TranscriptDocument({
           index={index}
           total={transcript.pages.length}
           transcript={transcript}
-          {...pageParts(page, transcript, verifyUrl)}
+          {...pageParts(page, transcript)}
         />
       ))}
     </article>
@@ -158,10 +154,8 @@ function Sheet({
 function pageParts(
   page: TranscriptPage,
   transcript: TranscriptViewModel,
-  verifyUrl: string | undefined,
 ): { header: ReactNode; body: ReactNode } {
   const { resident, issue, academicYear } = transcript;
-  const code = issue.verificationCode;
 
   switch (page.kind) {
     case "main":
@@ -171,7 +165,6 @@ function pageParts(
             level="h1"
             title="Student Development Transcript"
             subtitle="Raffles Hall, National University of Singapore"
-            aside={<VerifyQr code={code} size={64} />}
           />
         ),
         body: (
@@ -185,8 +178,12 @@ function pageParts(
                   value: academicYear,
                   detail: residenceDetail(issue.block, issue.yearOfResidence),
                 },
-                { label: "Date issued", value: formatIssuedOn(issue.issuedOn) },
-                { label: "Verification", value: code },
+                {
+                  label: "Date issued",
+                  value: issue.issuedOn
+                    ? formatIssuedOn(issue.issuedOn)
+                    : "Not yet issued",
+                },
               ]}
             />
             {transcript.isEmpty ? (
@@ -221,7 +218,6 @@ function pageParts(
                   value: `${page.jcrc.position}, ${page.jcrc.portfolio}`,
                 },
                 { label: "Term", value: page.jcrc.term },
-                { label: "Verification", value: code },
               ]}
             />
             <JcrcPageBody jcrc={page.jcrc} />
@@ -231,13 +227,7 @@ function pageParts(
     case "notes":
       return {
         header: <PageHeader title="Explanatory notes" />,
-        body: (
-          <NotesBody
-            notes={page.notes}
-            verificationCode={code}
-            verifyUrl={verifyUrl}
-          />
-        ),
+        body: <NotesBody notes={page.notes} />,
       };
   }
 }

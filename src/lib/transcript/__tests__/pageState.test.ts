@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   NOT_AVAILABLE_NOTES,
-  VERIFY_NOTES,
   parseAyParam,
-  resolveSiteOrigin,
   selectTranscriptState,
 } from "../pageState";
 
@@ -91,16 +89,6 @@ describe("selectTranscriptState", () => {
 });
 
 describe("wording", () => {
-  it("states each verify outcome plainly", () => {
-    expect(VERIFY_NOTES.valid).toBe("This record is valid.");
-    expect(VERIFY_NOTES.revoked).toBe("This record has been revoked.");
-    expect(VERIFY_NOTES.rate_limited).toBe(
-      "Too many attempts. Try again later.",
-    );
-    expect(VERIFY_NOTES.superseded).toMatch(/superseded by a later version/);
-    expect(VERIFY_NOTES.not_found).not.toMatch(/close|similar|did you mean/i);
-  });
-
   it("names the year in the not-available headline and promises no date", () => {
     expect(NOT_AVAILABLE_NOTES.headline("AY2026/27")).toBe(
       "Your transcript for AY2026/27 isn’t available yet.",
@@ -108,62 +96,5 @@ describe("wording", () => {
     expect(NOT_AVAILABLE_NOTES.detail).toBe(
       "It opens once the hall publishes transcripts.",
     );
-  });
-});
-
-describe("resolveSiteOrigin", () => {
-  it("prefers the request host and its protocol", () => {
-    expect(
-      resolveSiteOrigin({
-        host: "rhapp.example.org",
-        proto: "https",
-        envUrl: "https://other.example.org",
-      }),
-    ).toBe("https://rhapp.example.org");
-  });
-
-  it("uses http for localhost when no protocol is given", () => {
-    expect(resolveSiteOrigin({ host: "localhost:3000" })).toBe(
-      "http://localhost:3000",
-    );
-  });
-
-  it("assumes https for a public host with no protocol header", () => {
-    expect(resolveSiteOrigin({ host: "Example.org" })).toBe(
-      "https://example.org",
-    );
-  });
-
-  it("takes the first entry of a forwarded chain", () => {
-    expect(
-      resolveSiteOrigin({
-        host: "a.example.org, b.example.org",
-        proto: "https, http",
-      }),
-    ).toBe("https://a.example.org");
-  });
-
-  it("rejects a host that is not a plain hostname and falls back to NEXTAUTH_URL", () => {
-    for (const host of [
-      "evil.com/path",
-      "a b",
-      "x@evil.com",
-      "javascript:alert(1)",
-      "",
-      "<b>",
-    ]) {
-      expect(
-        resolveSiteOrigin({
-          host,
-          envUrl: "https://hall.example.org/some/path",
-        }),
-      ).toBe("https://hall.example.org");
-    }
-  });
-
-  it("is null when nothing usable is available", () => {
-    expect(resolveSiteOrigin({})).toBeNull();
-    expect(resolveSiteOrigin({ host: null, envUrl: "not a url" })).toBeNull();
-    expect(resolveSiteOrigin({ envUrl: "ftp://files.example.org" })).toBeNull();
   });
 });

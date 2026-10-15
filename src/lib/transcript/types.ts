@@ -7,7 +7,8 @@
  * those exist, a loader only has to map rows onto these and the assembler and
  * pages stay as they are. Nothing here is persisted yet.
  *
- * ONE TRANSCRIPT PER ACADEMIC YEAR, each with its own verification code.
+ * ONE TRANSCRIPT PER ACADEMIC YEAR. It is a recognition document, assembled
+ * from the hall's data each time it is opened; there is no verification.
  * Academic years are strings of the form "AY2026/27". Transcripts start at
  * AY2026/27; there is no backfill.
  */
@@ -21,16 +22,14 @@ export interface ResidentInput {
 }
 
 /**
- * One issued transcript: the facts that belong to a single academic year's
- * document. The list of years a resident can download is the list of issues.
+ * The facts that belong to a single academic year's document. The list of
+ * years a resident can download is the list of published years.
  */
 export interface YearIssueInput {
   academicYear: string;
-  /** Printed on the document and encoded in its QR code. A real one must be
-   *  random and unguessable; fixtures use fixed, obviously fake values. */
-  verificationCode: string;
-  /** ISO date, "2027-05-10". */
-  issuedOn: string;
+  /** ISO date, "2027-05-10": the day the year was published (Singapore).
+   *  Null in an admin preview of a year that is not published yet. */
+  issuedOn: string | null;
   /** "Block 3" — the hall owns this, unlike faculty. Null when not on file. */
   block: string | null;
   /** 1 for a resident's first year in hall, 2 for their second, ... Null when

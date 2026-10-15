@@ -39,13 +39,7 @@ export type LoadMode = "live" | "frozen";
 
 export interface LoadOptions {
   mode: LoadMode;
-  /** Printed on the document. Preview uses a visible placeholder. */
-  verificationCode?: string;
-  /** Defaults to today, Singapore time. */
-  now?: Date;
 }
-
-export const PREVIEW_CODE = "NOT-ISSUED";
 
 /**
  * "This nullable timestamp is not set." On MongoDB, Prisma's `field: null` does
@@ -56,17 +50,6 @@ export const PREVIEW_CODE = "NOT-ISSUED";
 export const NOT_VOIDED = {
   OR: [{ voidedAt: null }, { voidedAt: { isSet: false } }],
 };
-export const NOT_REVOKED = {
-  OR: [{ revokedAt: null }, { revokedAt: { isSet: false } }],
-};
-
-const SGT_OFFSET_MS = 8 * 60 * 60 * 1000;
-
-/** ISO date ("2027-05-10") of `date` in Singapore. */
-export function isoDateSg(date: Date): string {
-  return new Date(date.getTime() + SGT_OFFSET_MS).toISOString().slice(0, 10);
-}
-
 /**
  * The key a person's transcript data is filed under: their canonical NUSNET id
  * where their email gives one, else the id stored on their User row, else the
@@ -155,7 +138,6 @@ export async function loadTranscriptInput(
   academicYear: string,
   options: LoadOptions,
 ): Promise<TranscriptInput> {
-  const now = options.now ?? new Date();
   const user = await findUserByAnyKey(db, userID);
   const key = personKey(user, userID);
   // findUserByAnyKey selects only the identity columns, by design.
@@ -242,7 +224,7 @@ export async function loadTranscriptInput(
         position: jcrc.position ?? "",
         term: academicYear,
         description: jcrc.description ?? "",
-        contributions: [...jcrc.contributions],
+        contributions: jcrc.contributions.map((c) => c.activity),
         testimonial: { text: jcrc.testimonial ?? "", author: "Hall Master" },
         isPlaceholder: jcrc.isPlaceholder ?? true,
       }
@@ -259,8 +241,11 @@ export async function loadTranscriptInput(
     issues: [
       {
         academicYear,
-        verificationCode: options.verificationCode ?? PREVIEW_CODE,
-        issuedOn: isoDateSg(now),
+        // The day the year was published, Singapore time; stable across views.
+        issuedOn:
+          period?.status === "published" && period.publishedAt
+            ? instantToSgDate(period.publishedAt)
+            : null,
         block: profile?.block != null ? `Block ${profile.block}` : null,
         yearOfResidence: null, // the app keeps no residence history
       },
@@ -337,21 +322,6 @@ async function loadMemberships(
     ];
   });
 }
-
-/**
- * The unique key of a VALID issue: a resident has at most one per year, even
- * under concurrent first downloads. Always a real string, never null or absent:
- * MongoDB unique indexes treat a missing value as a duplicate.
- */
-export const activeKeyFor = (academicYear: string, userID: string) =>
-  `${academicYear}|${userID}`;
-
-/** What the key becomes when an issue is revoked or superseded, freeing the valid one. */
-export const revokedKeyFor = (
-  academicYear: string,
-  userID: string,
-  id: string,
-) => `${academicYear}|${userID}|revoked|${id}`;
 
 /** What a transcript shows when the resident has no matric on record. Never masked. */
 export const NOT_ON_FILE = "Not on file";

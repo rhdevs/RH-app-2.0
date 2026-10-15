@@ -16,7 +16,6 @@ export function TranscriptFrame({
   transcript,
   years,
   basePath,
-  verifyUrl,
   notice,
   footerNav,
 }: {
@@ -25,8 +24,6 @@ export function TranscriptFrame({
   years: string[];
   /** The route the year links point at. */
   basePath: string;
-  /** The site's own verification address, printed on the notes page. */
-  verifyUrl?: string;
   notice?: ReactNode;
   /** Extra navigation under the buttons (the specimen list, in development). */
   footerNav?: ReactNode;
@@ -64,18 +61,12 @@ export function TranscriptFrame({
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <PrintButton />
-          <Link
-            href={`/verify/${transcript.issue.verificationCode}`}
-            className="text-sm font-medium text-emerald-800 underline hover:text-emerald-600"
-          >
-            See what a verifier sees →
-          </Link>
         </div>
         {footerNav}
       </div>
 
       <div className="px-2 pb-16 sm:px-4 print:p-0">
-        <TranscriptDocument transcript={transcript} verifyUrl={verifyUrl} />
+        <TranscriptDocument transcript={transcript} />
       </div>
     </>
   );
