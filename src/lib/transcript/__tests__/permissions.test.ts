@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { canEditAwards, canManageExtraContribution } from "../permissions";
+import {
+  canEditAwards,
+  canManageExtraContribution,
+  canManageTranscriptPeriods,
+} from "../permissions";
 
 describe("canEditAwards", () => {
   it("allows jcrc", () => {
@@ -55,5 +59,29 @@ describe("input immutability", () => {
     expect(() => canEditAwards(roles)).not.toThrow();
     expect(() => canManageExtraContribution(roles, true)).not.toThrow();
     expect(roles).toEqual(["jcrc", "cca_head"]);
+  });
+});
+
+describe("canManageTranscriptPeriods", () => {
+  it("allows jcrc and admin", () => {
+    expect(canManageTranscriptPeriods(["resident", "jcrc"])).toBe(true);
+    expect(canManageTranscriptPeriods(["admin"])).toBe(true);
+  });
+
+  it.each([
+    [["resident"]],
+    [["cca_head"]],
+    [["scrc"]],
+    [["resident", "cca_head"]],
+    [[]],
+  ])("denies %j", (roles) => {
+    expect(canManageTranscriptPeriods(roles)).toBe(false);
+  });
+
+  it("does not modify the roles array", () => {
+    const roles = Object.freeze(["jcrc"]);
+
+    expect(canManageTranscriptPeriods(roles)).toBe(true);
+    expect(roles).toEqual(["jcrc"]);
   });
 });
