@@ -40,6 +40,11 @@ import {
   unsavedLine,
   type BatchState,
 } from "~/lib/transcript/rosterBatch";
+import {
+  rosterLayoutFor,
+  useContainerWidth,
+  type RosterLayout,
+} from "~/lib/transcript/useContainerWidth";
 import { api } from "~/trpc/react";
 
 export interface RosterRowData {
@@ -70,6 +75,10 @@ export interface RosterRowViewProps {
 
 /** A real table header cell: not `block`, so the header row lines up with the columns. */
 const TH_CELL = "px-3 py-2 text-left text-xs font-medium text-gray-700";
+
+/** The Save column stays at the right edge while the table scrolls sideways. */
+const STICKY_END =
+  "sticky right-0 bg-white shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.18)]";
 
 const CARD_LABEL = "mb-1 block text-xs font-medium text-gray-700";
 
@@ -192,7 +201,7 @@ export function RosterRowView(p: RosterRowViewProps) {
           </p>
           <ErrorLine message={problem ?? p.error} />
         </td>
-        <td className="px-3 py-3">
+        <td className={`${STICKY_END} px-3 py-3`}>
           {!p.readOnly && (
             <div className="flex flex-col items-start gap-1">
               <Button
@@ -379,11 +388,21 @@ export function RosterCardView(p: RosterRowViewProps) {
 export interface RosterTableViewProps {
   rows: React.ReactNode;
   count: number;
-  /** The same members as cards, shown instead of the table below md. */
+  /** The same members as cards, shown instead of the table. */
   cards?: React.ReactNode;
+  /**
+   * Which one to draw, decided from the container's width. Left out, both are
+   * drawn and CSS picks by the window (cards below md).
+   */
+  layout?: RosterLayout;
 }
 
-export function RosterTableView({ rows, count, cards }: RosterTableViewProps) {
+export function RosterTableView({
+  rows,
+  count,
+  cards,
+  layout,
+}: RosterTableViewProps) {
   if (count === 0) {
     return (
       <p className="text-sm text-gray-500">
@@ -393,10 +412,16 @@ export function RosterTableView({ rows, count, cards }: RosterTableViewProps) {
   }
   return (
     <>
-      {cards && <ul className="space-y-3 md:hidden">{cards}</ul>}
+      {cards && layout !== "table" && (
+        <ul className={`space-y-3 ${layout ? "" : "md:hidden"}`}>{cards}</ul>
+      )}
       <div
         className={
-          cards ? "hidden overflow-x-auto md:block" : "overflow-x-auto"
+          layout === "cards"
+            ? "hidden"
+            : cards && !layout
+              ? "hidden overflow-x-auto md:block"
+              : "overflow-x-auto"
         }
       >
         <table className="w-full min-w-[56rem] divide-y divide-gray-200 text-left">
@@ -410,8 +435,12 @@ export function RosterTableView({ rows, count, cards }: RosterTableViewProps) {
                 "Additional contribution",
                 "",
               ].map((h, i) => (
-                <th key={h || `action-${i}`} scope="col" className={TH_CELL}>
-                  {h}
+                <th
+                  key={h || `action-${i}`}
+                  scope="col"
+                  className={`${TH_CELL} ${i === 5 ? STICKY_END : ""}`}
+                >
+                  {h || <span className="sr-only">Save</span>}
                 </th>
               ))}
             </tr>
@@ -527,6 +556,8 @@ export function RosterEditor({
   empty?: ReactNode;
 }) {
   const utils = api.useUtils();
+  const [boxRef, width] = useContainerWidth<HTMLDivElement>();
+  const layout = rosterLayoutFor(width);
   const [state, setState] = useState<BatchState>(EMPTY_BATCH);
   const [filter, setFilter] = useState("");
   const [failed, setFailed] = useState(0);
@@ -606,7 +637,7 @@ export function RosterEditor({
   };
 
   return (
-    <div>
+    <div ref={boxRef}>
       <div className="mb-3 max-w-sm">
         <label htmlFor="roster-filter" className="sr-only">
           Filter members by name
@@ -625,6 +656,7 @@ export function RosterEditor({
       ) : (
         <RosterTableView
           count={shown.length}
+          layout={layout}
           rows={shown.map((row) => (
             <RosterRowView
               key={`${academicYear}:${row.userID}`}
