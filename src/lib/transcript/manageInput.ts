@@ -19,6 +19,16 @@ import {
 const CONTROL = /[\u0000-\u001F\u007F-\u009F]/;
 const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/;
 
+/**
+ * Invisible and direction-changing characters: zero-width space, joiners and
+ * marks (U+200B-200F), bidirectional embeddings and overrides (U+202A-202E),
+ * word joiner and invisible operators (U+2060-2064), bidirectional isolates
+ * (U+2066-2069) and the byte order mark (U+FEFF). On a formal document they
+ * reorder or hide text, so no free-text field accepts them.
+ */
+export const INVISIBLE = /[​-‏‪-‮⁠-⁤⁦-⁩﻿]/;
+const NO_INVISIBLE = "INVISIBLE_CHARACTERS_NOT_ALLOWED";
+
 /** A required single-line text field. */
 export const line = (min: number, max: number) =>
   z
@@ -29,7 +39,8 @@ export const line = (min: number, max: number) =>
         .string()
         .min(min, min === 1 ? "REQUIRED" : `AT_LEAST_${min}_CHARACTERS`)
         .max(max, `AT_MOST_${max}_CHARACTERS`)
-        .refine((s) => !CONTROL.test(s), "CONTROL_CHARACTERS_NOT_ALLOWED"),
+        .refine((s) => !CONTROL.test(s), "CONTROL_CHARACTERS_NOT_ALLOWED")
+        .refine((s) => !INVISIBLE.test(s), NO_INVISIBLE),
     );
 
 /** A required multi-line text field (newlines allowed). */
@@ -45,7 +56,8 @@ export const block = (min: number, max: number) =>
         .refine(
           (s) => !CONTROL_EXCEPT_NEWLINE.test(s),
           "CONTROL_CHARACTERS_NOT_ALLOWED",
-        ),
+        )
+        .refine((s) => !INVISIBLE.test(s), NO_INVISIBLE),
     );
 
 /**

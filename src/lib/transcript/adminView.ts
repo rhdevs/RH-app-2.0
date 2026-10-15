@@ -103,6 +103,9 @@ function validationText(message: string): string | null {
   if (message === "CONTROL_CHARACTERS_NOT_ALLOWED") {
     return "Remove any control characters.";
   }
+  if (message === "INVISIBLE_CHARACTERS_NOT_ALLOWED") {
+    return "Remove any invisible or direction-changing characters.";
+  }
   if (message === "INVALID_DATE") return "Enter a real date.";
   return null;
 }
