@@ -3,10 +3,7 @@
 import { Check, Loader2 } from "lucide-react";
 import { useRef, useState } from "react";
 
-import {
-  ErrorLine,
-  FIELD_LABEL,
-} from "~/app/admin/transcripts/_components/Bits";
+import { ErrorLine } from "~/app/admin/transcripts/_components/Bits";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
@@ -50,6 +47,9 @@ export interface RosterRowViewProps {
   error: string | null;
   readOnly: boolean;
 }
+
+/** A real table header cell: not `block`, so the header row lines up with the columns. */
+const TH_CELL = "px-3 py-2 text-left text-xs font-medium text-gray-700";
 
 const SELECT =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50";
@@ -226,11 +226,7 @@ export function RosterTableView({ rows, count }: RosterTableViewProps) {
               "Additional contribution",
               "",
             ].map((h, i) => (
-              <th
-                key={h || `action-${i}`}
-                scope="col"
-                className={`${FIELD_LABEL} px-3 py-2`}
-              >
+              <th key={h || `action-${i}`} scope="col" className={TH_CELL}>
                 {h}
               </th>
             ))}

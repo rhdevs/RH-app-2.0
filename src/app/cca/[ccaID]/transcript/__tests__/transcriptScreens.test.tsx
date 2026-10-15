@@ -173,6 +173,11 @@ describe("roster table", () => {
     ]) {
       expect(html).toContain(`>${h}<`);
     }
+
+    // A header cell must not be display:block, or the row stacks instead of aligning.
+    const cells = html.match(/<th[^>]*>/g) ?? [];
+    expect(cells).toHaveLength(6);
+    for (const cell of cells) expect(cell).not.toMatch(/block/);
   });
 
   it("says so when there are no members", () => {
