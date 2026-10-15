@@ -209,7 +209,20 @@ async function reset() {
   await db.ccaActivity.deleteMany({ where: { ccaID: { in: CCA_IDS } } });
   await db.jcrcService.deleteMany({ where: { userID: mine } });
   await db.award.deleteMany({ where: { userID: mine } });
-  await db.volunteerRecord.deleteMany({ where: { userID: mine } });
+  for (const model of [
+    db.volunteerAttendance,
+    db.volunteerPerson,
+    db.volunteerSession,
+    db.volunteerActivity,
+  ]) {
+    await model.deleteMany({ where: { ccaID: { in: CCA_IDS } } });
+  }
+  // The single-record model this replaced: drop what an older seed left behind.
+  try {
+    await db.$runCommandRaw({ drop: "VolunteerRecord" });
+  } catch {
+    /* no such collection */
+  }
   await db.transcriptRosterEntry.deleteMany({ where: { userID: mine } });
   await db.ccaApplication.deleteMany({ where: { userID: mine } });
   await db.ccaHead.deleteMany({ where: { userID: mine } });
@@ -386,36 +399,133 @@ async function seed() {
     });
   }
 
-  const vol = (n, ccaID, kind, activity, hours, date, extra) => ({
-    academicYear: AY,
-    userID: uid(n),
+  // Volunteer activities of two RVC CCAs (see docs/transcript/SPEC.md):
+  //  - RVC Children (9002, head R06): weekly tuition, 10 weekly sessions of
+  //    2 hours. Its members and one outsider are people; R12 attended every
+  //    session (one with their own 1 hour), the others fewer.
+  //  - RVC Special Projects (9001, head R07): a one-off beach clean-up.
+  //  - a removed activity, which must never show on a transcript.
+  const sgDay = (iso) =>
+    new Date(Date.parse(`${iso}T00:00:00Z`) - 8 * 3600_000);
+  const addDays = (iso, n) => {
+    const d = new Date(`${iso}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  const makeVolunteer = async (ccaID, data, people, session) => {
+    const head = uid(HEADS[ccaID]);
+    const activity = await db.volunteerActivity.create({
+      data: {
+        academicYear: AY,
+        ccaID,
+        description: null,
+        createdBy: head,
+        createdAt: new Date("2026-09-01T04:00:00Z"),
+        ...data,
+      },
+    });
+    await db.volunteerPerson.createMany({
+      data: people.map((n) => ({
+        activityID: activity.id,
+        academicYear: AY,
+        ccaID,
+        userID: uid(n),
+        addedBy: head,
+        addedAt: new Date("2026-09-01T04:00:00Z"),
+      })),
+    });
+    const sessions = [];
+    for (const [date, hours] of session) {
+      sessions.push(
+        await db.volunteerSession.create({
+          data: {
+            activityID: activity.id,
+            academicYear: AY,
+            ccaID,
+            date: sgDay(date),
+            hours,
+            createdBy: head,
+            createdAt: new Date("2026-09-01T04:00:00Z"),
+          },
+        }),
+      );
+    }
+    return { activity, sessions, head };
+  };
+  const tick = async (
+    { activity, sessions, head },
     ccaID,
-    kind,
-    activity,
-    hours,
-    activityDate: date ? new Date(date) : null,
-    recordedBy: uid(HEADS[ccaID]),
-    ...extra,
-  });
-  await db.volunteerRecord.createMany({
-    data: [
-      vol(12, 9002, "regular", "Weekly tuition for neighbourhood children", 42),
-      vol(
-        12,
-        9001,
-        "oneoff",
-        "Beach clean-up, East Coast Park",
-        4,
-        "2026-09-12",
-      ),
-      vol(13, 9001, "oneoff", "Blood drive support crew", 6, "2026-10-03"),
-      vol(14, 9003, "regular", "Monthly visits to a nursing home", 30),
-      vol(15, 9004, "regular", "Weekly befriending sessions", 24),
-      vol(16, 9001, "oneoff", "Recorded in error", 5, "2026-11-01", {
-        voidedAt: new Date("2026-11-02T00:00:00Z"),
-      }),
-    ],
-  });
+    n,
+    indexes,
+    over,
+  ) => {
+    await db.volunteerAttendance.createMany({
+      data: indexes.map((i) => ({
+        sessionID: sessions[i].id,
+        activityID: activity.id,
+        academicYear: AY,
+        ccaID,
+        userID: uid(n),
+        hoursOverride: over && over[i] !== undefined ? over[i] : null,
+        markedBy: head,
+        markedAt: new Date("2026-10-10T04:00:00Z"),
+      })),
+    });
+  };
+
+  const childrenMembers = [...memberships.values()]
+    .filter((m) => m.ccaID === 9002)
+    .map((m) => m.n);
+  const outsider = RESIDENTS.find(
+    (n) => !childrenMembers.includes(n) && n !== 12,
+  );
+  const tuitionPeople = [...new Set([...childrenMembers, 12, outsider])];
+  const weekly = Array.from({ length: 10 }, (_, i) => [
+    addDays("2026-09-07", i * 7),
+    2,
+  ]);
+  const tuition = await makeVolunteer(
+    9002,
+    {
+      title: "Weekly tuition for neighbourhood children",
+      kind: "regular",
+      description: "Tuition for primary school children near the hall.",
+      defaultHours: 2,
+    },
+    tuitionPeople,
+    weekly,
+  );
+  const all10 = Array.from({ length: 10 }, (_, i) => i);
+  await tick(tuition, 9002, 12, all10, { 2: 1 }); // R12: 9 x 2 + 1 = 19 hours
+  await tick(tuition, 9002, 6, [0, 1, 2, 3, 4, 5, 6, 7]); // the head: 16 hours
+  for (const n of tuitionPeople.filter((x) => ![12, 6].includes(x))) {
+    await tick(tuition, 9002, n, [0, 1, 2, 3, 4]); // everyone else: 10 hours
+  }
+
+  const beach = await makeVolunteer(
+    9001,
+    {
+      title: "Beach clean-up, East Coast Park",
+      kind: "oneoff",
+      description: "A morning clean-up with neighbouring halls.",
+    },
+    [12, 13, 7],
+    [["2026-09-12", 4]],
+  );
+  for (const n of [12, 13, 7]) await tick(beach, 9001, n, [0]);
+
+  const cancelled = await makeVolunteer(
+    9002,
+    {
+      title: "Cancelled food drive",
+      kind: "oneoff",
+      removedAt: new Date("2026-10-12T04:00:00Z"),
+      removedBy: uid(6),
+    },
+    [12],
+    [["2026-10-17", 3]],
+  );
+  await tick(cancelled, 9002, 12, [0]);
 
   // CCA activities. Soccer (9005): one full-year activity with a participant
   // who is NOT in the CCA (R20 shows under "Other involvement"). 9007: a
@@ -539,11 +649,13 @@ async function seed() {
           {
             activity: "Home match logistics",
             role: "Coordinator",
-            description: "Coordinated transport and refereeing for home matches.",
+            description:
+              "Coordinated transport and refereeing for home matches.",
           },
           {
             activity: "Sports CCA budget review",
-            description: "Led the review of sports CCA budgets with the JCRC Treasurer.",
+            description:
+              "Led the review of sports CCA budgets with the JCRC Treasurer.",
           },
         ],
         testimonial:
@@ -608,7 +720,12 @@ async function summary() {
         OR: [{ unfrozenAt: null }, { unfrozenAt: { isSet: false } }],
       },
     }),
-    "VolunteerRecord (voided)": `${await db.volunteerRecord.count({ where: { academicYear: AY } })} (${await db.volunteerRecord.count({ where: { academicYear: AY, voidedAt: { not: null } } })})`,
+    "VolunteerActivity (removed)": `${await db.volunteerActivity.count({ where: { academicYear: AY } })} (${await db.volunteerActivity.count({ where: { academicYear: AY, removedAt: { not: null } } })})`,
+    "VolunteerSession / Person / Attendance": [
+      await db.volunteerSession.count({ where: { academicYear: AY } }),
+      await db.volunteerPerson.count({ where: { academicYear: AY } }),
+      await db.volunteerAttendance.count({ where: { academicYear: AY } }),
+    ].join(" / "),
     "Award (voided)": `${await db.award.count({ where: { academicYear: AY } })} (${await db.award.count({ where: { academicYear: AY, voidedAt: { not: null } } })})`,
     JcrcService: await db.jcrcService.count({ where: { academicYear: AY } }),
     "CcaActivity (removed)": `${await db.ccaActivity.count({ where: { academicYear: AY } })} (${await db.ccaActivity.count({ where: { academicYear: AY, removedAt: { not: null } } })})`,

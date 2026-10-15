@@ -545,13 +545,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
         expect(result.transcript.hasAwards).toBe(true);
         expect(result.transcript.hasVolunteerHours).toBe(true);
-        // The voided volunteer record is not on it.
+        // Weekly tuition (9 sessions of 2 hours and one of 1) is 19 hours and the
+        // beach clean-up 4; the removed food drive is not on it.
         const hours = result.transcript.pages
           .flatMap((p) => (p.kind === "main" ? p.sections : []))
           .flatMap((s) =>
             s.kind === "volunteerHours" ? [s.volunteer.total] : [],
           );
-        expect(hours).toEqual([46]);
+        expect(hours).toEqual([23]);
       });
 
       it("dates the transcript with the day the year was published, in Singapore, on every view", async () => {

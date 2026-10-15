@@ -72,10 +72,21 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     const baseline: {
       roster: Rows;
       awards: Rows;
-      volunteer: Rows;
+      volunteer: {
+        activities: Rows;
+        sessions: Rows;
+        people: Rows;
+        attendance: Rows;
+      };
       jcrc: Rows;
       profiles: Rows;
-    } = { roster: [], awards: [], volunteer: [], jcrc: [], profiles: [] };
+    } = {
+      roster: [],
+      awards: [],
+      volunteer: { activities: [], sessions: [], people: [], attendance: [] },
+      jcrc: [],
+      profiles: [],
+    };
 
     const as = (who: Who | null) =>
       createCaller({
@@ -123,16 +134,21 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }),
       );
       baseline.awards = strip(await db.award.findMany({ where: seeded }));
-      baseline.volunteer = strip(
-        await db.volunteerRecord.findMany({ where: seeded }),
-      );
+      // Volunteer rows point at each other by id, so they keep their ids.
+      const vol = { where: { ccaID: { in: CCA_IDS } } };
+      baseline.volunteer = {
+        activities: await db.volunteerActivity.findMany(vol),
+        sessions: await db.volunteerSession.findMany(vol),
+        people: await db.volunteerPerson.findMany(vol),
+        attendance: await db.volunteerAttendance.findMany(vol),
+      };
       baseline.jcrc = strip(await db.jcrcService.findMany({ where: seeded }));
       baseline.profiles = strip(
         await db.ccaProfile.findMany({ where: { ccaID: { in: CCA_IDS } } }),
       );
       expect(baseline.roster.length).toBeGreaterThan(0);
       baselineFreezes = await captureFreezes(db);
-      expect(baseline.volunteer.length).toBeGreaterThan(0);
+      expect(baseline.volunteer.activities.length).toBeGreaterThan(0);
     }, 120_000);
 
     let baselineFreezes: FreezeBaseline = [];
@@ -154,9 +170,22 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
       await db.award.deleteMany({ where: seeded });
       await db.award.createMany({ data: baseline.awards as never });
-      await db.volunteerRecord.deleteMany({ where: seeded });
-      await db.volunteerRecord.createMany({
-        data: baseline.volunteer as never,
+      const volWhere = { where: { ccaID: { in: CCA_IDS } } };
+      await db.volunteerAttendance.deleteMany(volWhere);
+      await db.volunteerPerson.deleteMany(volWhere);
+      await db.volunteerSession.deleteMany(volWhere);
+      await db.volunteerActivity.deleteMany(volWhere);
+      await db.volunteerActivity.createMany({
+        data: baseline.volunteer.activities as never,
+      });
+      await db.volunteerSession.createMany({
+        data: baseline.volunteer.sessions as never,
+      });
+      await db.volunteerPerson.createMany({
+        data: baseline.volunteer.people as never,
+      });
+      await db.volunteerAttendance.createMany({
+        data: baseline.volunteer.attendance as never,
       });
       await db.jcrcService.deleteMany({ where: seeded });
       await db.jcrcService.createMany({ data: baseline.jcrc as never });
@@ -190,14 +219,23 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     const publish = () => publishAy(JCRC);
 
-    const aVolunteerRecordOf = (ccaID: number) =>
-      db.volunteerRecord.findFirstOrThrow({
+    const aVolunteerActivityOf = (ccaID: number) =>
+      db.volunteerActivity.findFirstOrThrow({
         where: {
           ccaID,
-          ...seeded,
-          OR: [{ voidedAt: null }, { voidedAt: { isSet: false } }],
+          academicYear: AY,
+          OR: [{ removedAt: null }, { removedAt: { isSet: false } }],
         },
       });
+
+    const newActivity = (ccaID: number, over: object = {}) => ({
+      ccaID,
+      academicYear: AY,
+      title: "x",
+      description: "",
+      kind: "regular" as const,
+      ...over,
+    });
 
     const rosterOf = async (who: Who, ccaID: number) =>
       (await as(who).transcriptManage.roster.list({ ccaID, academicYear: AY }))
@@ -207,7 +245,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     describe("a plain resident", () => {
       it("is forbidden from every management procedure", async () => {
         const c = as(PLAIN).transcriptManage;
-        const volunteer = await aVolunteerRecordOf(RVC_PROJECTS);
+        const volunteer = await aVolunteerActivityOf(RVC_PROJECTS);
         const award = await db.award.findFirstOrThrow({ where: seeded });
         const calls: Array<[string, () => Promise<unknown>]> = [
           ["ccaTags.list", () => c.ccaTags.list()],
@@ -268,22 +306,34 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               }),
           ],
           [
-            "volunteer.list",
-            () => c.volunteer.list({ ccaID: RVC_CHILDREN, academicYear: AY }),
-          ],
-          [
-            "volunteer.create",
+            "volunteer.activities.list",
             () =>
-              c.volunteer.create({
+              c.volunteer.activities.list({
                 ccaID: RVC_CHILDREN,
                 academicYear: AY,
-                userID: R12.id,
-                kind: "regular",
-                activity: "x",
-                hours: 1,
               }),
           ],
-          ["volunteer.void", () => c.volunteer.void({ id: volunteer.id })],
+          [
+            "volunteer.activities.create",
+            () => c.volunteer.activities.create(newActivity(RVC_CHILDREN)),
+          ],
+          [
+            "volunteer.activities.remove",
+            () =>
+              c.volunteer.activities.remove({
+                id: volunteer.id,
+                ccaID: RVC_PROJECTS,
+              }),
+          ],
+          [
+            "volunteer.attendance.save",
+            () =>
+              c.volunteer.attendance.save({
+                activityID: volunteer.id,
+                ccaID: RVC_PROJECTS,
+                changes: [],
+              }),
+          ],
         ];
 
         for (const [name, call] of calls) {
@@ -291,7 +341,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           expect(result, name).toMatch(/^FORBIDDEN:/);
         }
         expect(
-          await db.volunteerRecord.findUnique({ where: { id: volunteer.id } }),
+          await db.volunteerActivity.findUnique({
+            where: { id: volunteer.id },
+          }),
         ).not.toBeNull();
       });
 
@@ -382,27 +434,28 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
       it("a volunteering head cannot see or change another volunteering CCA's records", async () => {
         const children = as(RVC_CHILDREN_HEAD).transcriptManage;
-        const projectsRecord = await aVolunteerRecordOf(RVC_PROJECTS);
+        const projectsRecord = await aVolunteerActivityOf(RVC_PROJECTS);
 
         expect(
           await errorOf(
-            children.volunteer.list({ ccaID: RVC_PROJECTS, academicYear: AY }),
-          ),
-        ).toBe("FORBIDDEN:NOT_A_HEAD_OF_THIS_CCA");
-        expect(
-          await errorOf(
-            children.volunteer.create({
+            children.volunteer.activities.list({
               ccaID: RVC_PROJECTS,
               academicYear: AY,
-              userID: R12.id,
-              kind: "regular",
-              activity: "x",
-              hours: 1,
             }),
           ),
         ).toBe("FORBIDDEN:NOT_A_HEAD_OF_THIS_CCA");
         expect(
-          await errorOf(children.volunteer.void({ id: projectsRecord.id })),
+          await errorOf(
+            children.volunteer.activities.create(newActivity(RVC_PROJECTS)),
+          ),
+        ).toBe("FORBIDDEN:NOT_A_HEAD_OF_THIS_CCA");
+        expect(
+          await errorOf(
+            children.volunteer.activities.remove({
+              id: projectsRecord.id,
+              ccaID: RVC_PROJECTS,
+            }),
+          ),
         ).toBe("FORBIDDEN:NOT_A_HEAD_OF_THIS_CCA");
       });
 
@@ -461,14 +514,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           ).toBe("ok");
           expect(
             await errorOf(
-              m.volunteer.create({
-                ccaID: RVC_CHILDREN,
-                academicYear: AY,
-                userID: R12.id,
-                kind: "regular",
-                activity: "Tuition",
-                hours: 2,
-              }),
+              m.volunteer.activities.create(
+                newActivity(RVC_CHILDREN, { title: "Tuition" }),
+              ),
             ),
           ).toBe("ok");
           expect(await errorOf(m.ccaTags.list())).toBe("ok");
@@ -505,7 +553,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     /* ------------------------------------------------------------------ */
     describe("the academic year must be collecting", () => {
       it("rejects every write once published, and allows them again after reopen", async () => {
-        const volunteer = await aVolunteerRecordOf(RVC_PROJECTS);
+        const volunteer = await aVolunteerActivityOf(RVC_PROJECTS);
         const award = await db.award.findFirstOrThrow({ where: seeded });
         await publish();
 
@@ -521,22 +569,22 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               }),
           ],
           [
-            "volunteer.create",
+            "volunteer.activities.create",
             () =>
-              as(RVC_CHILDREN_HEAD).transcriptManage.volunteer.create({
-                ccaID: RVC_CHILDREN,
-                academicYear: AY,
-                userID: R12.id,
-                kind: "regular",
-                activity: "x",
-                hours: 1,
-              }),
+              as(
+                RVC_CHILDREN_HEAD,
+              ).transcriptManage.volunteer.activities.create(
+                newActivity(RVC_CHILDREN),
+              ),
           ],
           [
-            "volunteer.void",
+            "volunteer.activities.remove",
             () =>
-              as(RVC_PROJECTS_HEAD).transcriptManage.volunteer.void({
+              as(
+                RVC_PROJECTS_HEAD,
+              ).transcriptManage.volunteer.activities.remove({
                 id: volunteer.id,
+                ccaID: RVC_PROJECTS,
               }),
           ],
           [
@@ -585,8 +633,11 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
         // Nothing was written.
         expect(
-          (await db.volunteerRecord.findUnique({ where: { id: volunteer.id } }))
-            ?.voidedAt ?? null,
+          (
+            await db.volunteerActivity.findUnique({
+              where: { id: volunteer.id },
+            })
+          )?.removedAt ?? null,
         ).toBeNull();
         expect(
           (await db.award.findUnique({ where: { id: award.id } }))?.voidedAt ??
@@ -939,190 +990,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     /* ------------------------------------------------------------------ */
-    describe("volunteering", () => {
-      const record = (over: object = {}) => ({
-        ccaID: RVC_CHILDREN,
-        academicYear: AY,
-        userID: R20.id,
-        kind: "oneoff" as const,
-        activity: "Beach clean-up",
-        activityDate: "2026-09-12",
-        hours: 4,
-        ...over,
-      });
-
-      it("is refused for a CCA that is not a volunteering CCA, even for a manager", async () => {
-        expect(
-          await errorOf(
-            as(SOCCER_HEAD).transcriptManage.volunteer.create(
-              record({ ccaID: SOCCER }),
-            ),
-          ),
-        ).toBe("PRECONDITION_FAILED:NOT_A_VOLUNTEERING_CCA");
-        expect(
-          await errorOf(
-            as(JCRC).transcriptManage.volunteer.create(
-              record({ ccaID: SOCCER }),
-            ),
-          ),
-        ).toBe("PRECONDITION_FAILED:NOT_A_VOLUNTEERING_CCA");
-      });
-
-      it("lets a volunteering head record a one-off for a resident who is not a member", async () => {
-        expect(
-          await db.userCCA.count({
-            where: { userID: R20.id, ccaID: RVC_CHILDREN },
-          }),
-        ).toBe(0);
-
-        const { id } =
-          await as(RVC_CHILDREN_HEAD).transcriptManage.volunteer.create(
-            record(),
-          );
-
-        const stored = await db.volunteerRecord.findUniqueOrThrow({
-          where: { id },
-        });
-        expect(stored).toMatchObject({
-          academicYear: AY,
-          userID: R20.id,
-          ccaID: RVC_CHILDREN,
-          kind: "oneoff",
-          activity: "Beach clean-up",
-          hours: 4,
-          recordedBy: RVC_CHILDREN_HEAD.id,
-        });
-        expect(stored.activityDate?.toISOString().slice(0, 10)).toBe(
-          "2026-09-12",
-        );
-        expect(stored.recordedAt).toBeInstanceOf(Date);
-        const listed = await as(
-          RVC_CHILDREN_HEAD,
-        ).transcriptManage.volunteer.list({
-          ccaID: RVC_CHILDREN,
-          academicYear: AY,
-        });
-        expect(listed.find((r) => r.id === id)).toMatchObject({
-          displayName: "Seed Resident 20",
-          activityDate: "2026-09-12",
-        });
-      });
-
-      it("records a regular entry with no date", async () => {
-        const { id } = await as(
-          RVC_CHILDREN_HEAD,
-        ).transcriptManage.volunteer.create(
-          record({
-            kind: "regular",
-            activityDate: undefined,
-            activity: "Weekly tuition",
-            hours: 1.25,
-          }),
-        );
-
-        expect(
-          await db.volunteerRecord.findUniqueOrThrow({ where: { id } }),
-        ).toMatchObject({ kind: "regular", activityDate: null, hours: 1.25 });
-      });
-
-      it("checks the bounds and the resident", async () => {
-        const head = as(RVC_CHILDREN_HEAD).transcriptManage;
-
-        expect(
-          await errorOf(head.volunteer.create(record({ hours: 0.1 }))),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(head.volunteer.create(record({ hours: 201 }))),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(head.volunteer.create(record({ hours: 1.3 }))),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(
-            head.volunteer.create(record({ activityDate: undefined })),
-          ),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(
-            head.volunteer.create(record({ activityDate: "2026-07-31" })),
-          ),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(
-            head.volunteer.create(record({ activityDate: "2027-08-01" })),
-          ),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(head.volunteer.create(record({ activity: "  " }))),
-        ).toMatch(/^BAD_REQUEST:/);
-        expect(
-          await errorOf(head.volunteer.create(record({ userID: "SEED-R99" }))),
-        ).toBe("NOT_FOUND:RESIDENT_NOT_FOUND");
-        expect(
-          await errorOf(
-            head.volunteer.create(record({ activityDate: "2026-08-01" })),
-          ),
-        ).toBe("ok");
-        expect(
-          await errorOf(
-            head.volunteer.create(record({ activityDate: "2027-07-31" })),
-          ),
-        ).toBe("ok");
-      });
-
-      it("voids, never deletes: by the head of that CCA or a manager, and is idempotent", async () => {
-        const { id } =
-          await as(RVC_CHILDREN_HEAD).transcriptManage.volunteer.create(
-            record(),
-          );
-        const before = await db.volunteerRecord.count();
-
-        expect(
-          await errorOf(
-            as(RVC_PROJECTS_HEAD).transcriptManage.volunteer.void({ id }),
-          ),
-        ).toBe("FORBIDDEN:NOT_A_HEAD_OF_THIS_CCA");
-        expect(
-          await as(RVC_CHILDREN_HEAD).transcriptManage.volunteer.void({ id }),
-        ).toEqual({ id, voided: true });
-        const first = await db.volunteerRecord.findUniqueOrThrow({
-          where: { id },
-        });
-        expect(first.voidedAt).toBeInstanceOf(Date);
-        expect(first.voidedBy).toBe(RVC_CHILDREN_HEAD.id);
-        expect(await db.volunteerRecord.count()).toBe(before);
-
-        expect(await as(JCRC).transcriptManage.volunteer.void({ id })).toEqual({
-          id,
-          voided: true,
-        });
-        expect(
-          (await db.volunteerRecord.findUniqueOrThrow({ where: { id } }))
-            .voidedAt,
-        ).toEqual(first.voidedAt);
-        // A later void by someone else does not rewrite who voided it.
-        expect(
-          (await db.volunteerRecord.findUniqueOrThrow({ where: { id } }))
-            .voidedBy,
-        ).toBe(RVC_CHILDREN_HEAD.id);
-        const listed = await as(
-          RVC_CHILDREN_HEAD,
-        ).transcriptManage.volunteer.list({
-          ccaID: RVC_CHILDREN,
-          academicYear: AY,
-        });
-        expect(listed.find((r) => r.id === id)).toBeUndefined();
-        expect(
-          await errorOf(
-            as(JCRC).transcriptManage.volunteer.void({
-              id: "0123456789abcdef01234567",
-            }),
-          ),
-        ).toBe("NOT_FOUND:RECORD_NOT_FOUND");
-      });
-    });
-
-    /* ------------------------------------------------------------------ */
     describe("volunteering tags", () => {
       it("lists the four RVC CCAs as volunteering", async () => {
         const list = await as(JCRC).transcriptManage.ccaTags.list();
@@ -1209,14 +1076,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe(false);
         expect(
           await errorOf(
-            as(JCRC).transcriptManage.volunteer.create({
-              ccaID: 9010,
-              academicYear: AY,
-              userID: R12.id,
-              kind: "regular",
-              activity: "x",
-              hours: 1,
-            }),
+            as(JCRC).transcriptManage.volunteer.activities.create(
+              newActivity(9010),
+            ),
           ),
         ).toMatch(/^FORBIDDEN|^PRECONDITION_FAILED:NOT_A_VOLUNTEERING_CCA/);
       });
@@ -1736,17 +1598,19 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           "GHOST-KEY",
         );
 
-        const records = await as(
-          RVC_CHILDREN_HEAD,
-        ).transcriptManage.volunteer.list({
-          ccaID: RVC_CHILDREN,
-          academicYear: AY,
-        });
+        const records = (
+          await as(
+            RVC_CHILDREN_HEAD,
+          ).transcriptManage.volunteer.activities.list({
+            ccaID: RVC_CHILDREN,
+            academicYear: AY,
+          })
+        ).activities;
         expect(records.length).toBeGreaterThan(0);
         for (const r of records) {
-          expect(r.recordedByName).not.toMatch(/^SEED-/);
+          expect(r.createdByName).not.toMatch(/^SEED-/);
         }
-        expect(records[0]!.recordedByName).toBe("Seed Resident 06");
+        expect(records[0]!.createdByName).toBe("Seed Resident 06");
 
         await as(JCRC).transcript.periods.setSem2Start({
           academicYear: AY,
@@ -1839,7 +1703,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const head = as(RVC_CHILDREN_HEAD).transcriptManage;
         const payloads = [
           await head.roster.list({ ccaID: RVC_CHILDREN, academicYear: AY }),
-          await head.volunteer.list({ ccaID: RVC_CHILDREN, academicYear: AY }),
+          await head.volunteer.activities.list({
+            ccaID: RVC_CHILDREN,
+            academicYear: AY,
+          }),
+          await head.volunteer.activities.get({
+            id: (await aVolunteerActivityOf(RVC_CHILDREN)).id,
+            ccaID: RVC_CHILDREN,
+          }),
           await as(JCRC).transcriptManage.awards.list({
             academicYear: AY,
             includeVoided: true,

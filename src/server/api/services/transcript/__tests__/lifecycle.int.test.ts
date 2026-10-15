@@ -699,7 +699,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             {
               TranscriptPeriod: db.transcriptPeriod,
               TranscriptRosterEntry: db.transcriptRosterEntry,
-              VolunteerRecord: db.volunteerRecord,
+              VolunteerActivity: db.volunteerActivity,
+              VolunteerSession: db.volunteerSession,
+              VolunteerPerson: db.volunteerPerson,
+              VolunteerAttendance: db.volunteerAttendance,
               Award: db.award,
               JcrcService: db.jcrcService,
               TranscriptAccess: db.transcriptAccess,
@@ -730,9 +733,45 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             await db.transcriptRosterEntry.findMany({ where }),
           ) as never,
         });
-        await db.volunteerRecord.createMany({
-          data: strip(await db.volunteerRecord.findMany({ where })) as never,
-        });
+        // Volunteer rows point at each other, so each activity is copied with
+        // its sessions, people and ticks under the new ids.
+        for (const activity of await db.volunteerActivity.findMany({ where })) {
+          const { id, ...rest } = activity;
+          const copy = await db.volunteerActivity.create({
+            data: { ...rest, academicYear: OLD } as never,
+          });
+          const sessionIds = new Map<string, string>();
+          for (const session of await db.volunteerSession.findMany({
+            where: { activityID: id },
+          })) {
+            const { id: sid, ...sr } = session;
+            const made = await db.volunteerSession.create({
+              data: { ...sr, activityID: copy.id, academicYear: OLD } as never,
+            });
+            sessionIds.set(sid, made.id);
+          }
+          await db.volunteerPerson.createMany({
+            data: (
+              await db.volunteerPerson.findMany({ where: { activityID: id } })
+            ).map(({ id: _id, ...pr }) => ({
+              ...pr,
+              activityID: copy.id,
+              academicYear: OLD,
+            })) as never,
+          });
+          await db.volunteerAttendance.createMany({
+            data: (
+              await db.volunteerAttendance.findMany({
+                where: { activityID: id },
+              })
+            ).map(({ id: _id, ...ar }) => ({
+              ...ar,
+              activityID: copy.id,
+              sessionID: sessionIds.get(ar.sessionID)!,
+              academicYear: OLD,
+            })) as never,
+          });
+        }
         await db.award.createMany({
           data: strip(await db.award.findMany({ where })) as never,
         });
