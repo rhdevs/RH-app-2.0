@@ -243,14 +243,22 @@ function OtherInvolvement({ rows }: { rows: OtherInvolvementRow[] }) {
 function VolunteerHours({ volunteer }: { volunteer: VolunteerHoursModel }) {
   return (
     <table className="w-full table-fixed border-collapse">
-      <Columns />
+      <colgroup>
+        <col />
+        <col className="w-[14%]" />
+        <col className="w-[28%]" />
+        <col className="w-[12%]" />
+      </colgroup>
       <thead>
         <tr>
           <th scope="col" className={TH}>
             Activity
           </th>
           <th scope="col" className={TH}>
-            Organiser
+            Type
+          </th>
+          <th scope="col" className={TH}>
+            Organised by
           </th>
           <th scope="col" className={TH}>
             Hours
@@ -258,12 +266,10 @@ function VolunteerHours({ volunteer }: { volunteer: VolunteerHoursModel }) {
         </tr>
       </thead>
       <tbody>
-        {volunteer.rows.map((row) => (
-          <tr
-            key={`${row.kind}-${row.activity}`}
-            className="break-inside-avoid"
-          >
+        {volunteer.rows.map((row, i) => (
+          <tr key={`${i}-${row.activity}`} className="break-inside-avoid">
             <td className={TD}>{row.activity}</td>
+            <td className={TD}>{row.type}</td>
             <td className={TD}>{row.organiser}</td>
             <td className={TD}>{row.hours}</td>
           </tr>
@@ -271,8 +277,8 @@ function VolunteerHours({ volunteer }: { volunteer: VolunteerHoursModel }) {
       </tbody>
       <tfoot>
         <tr className="break-inside-avoid font-bold">
-          <td className={`${TD} border-t border-black`} colSpan={2}>
-            Total volunteer hours
+          <td className={`${TD} border-t border-black`} colSpan={3}>
+            Total
           </td>
           <td className={`${TD} border-t border-black`}>{volunteer.total}</td>
         </tr>

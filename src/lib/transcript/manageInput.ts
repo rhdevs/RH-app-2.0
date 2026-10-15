@@ -9,6 +9,14 @@ import {
 } from "./activities";
 import { DURATIONS } from "./duration";
 import {
+  MAX_VOLUNTEER_PEOPLE,
+  VOLUNTEER_DESCRIPTION_MAX,
+  VOLUNTEER_HOURS_MAX,
+  VOLUNTEER_HOURS_MIN,
+  VOLUNTEER_KINDS,
+  VOLUNTEER_TITLE_MAX,
+} from "./volunteer";
+import {
   isDateInAcademicYear,
   isRealIsoDate,
   isValidAcademicYear,
@@ -98,13 +106,6 @@ export const isoDateInput = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, "INVALID_DATE")
   .refine(isRealIsoDate, "INVALID_DATE");
 
-/** Hours: 0.25 to 200 in steps of 0.25 (a quarter hour is exact in binary). */
-export const hoursInput = z
-  .number()
-  .min(0.25, "HOURS_TOO_SMALL")
-  .max(200, "HOURS_TOO_LARGE")
-  .refine((h) => Number.isInteger(h * 4), "HOURS_MUST_BE_QUARTERS");
-
 export const searchQueryInput = line(3, 60);
 
 /* ---- procedure inputs ---------------------------------------------------- */
@@ -121,38 +122,6 @@ export const rosterUpsertInput = rosterScope.extend({
   roleDuration: clearable(durationInput),
   extraContribution: clearable(block(1, 500)),
 });
-
-export const volunteerCreateInput = rosterScope
-  .extend({
-    userID: userIDInput,
-    kind: z.enum(["regular", "oneoff"]),
-    activity: line(1, 120),
-    activityDate: isoDateInput.optional(),
-    hours: hoursInput,
-  })
-  .superRefine((v, ctx) => {
-    if (v.kind === "oneoff") {
-      if (!v.activityDate) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["activityDate"],
-          message: "DATE_REQUIRED_FOR_ONEOFF",
-        });
-      } else if (!isDateInAcademicYear(v.activityDate, v.academicYear)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["activityDate"],
-          message: "DATE_OUTSIDE_ACADEMIC_YEAR",
-        });
-      }
-    } else if (v.activityDate) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["activityDate"],
-        message: "DATE_ONLY_FOR_ONEOFF",
-      });
-    }
-  });
 
 export const awardCreateInput = z.object({
   academicYear: academicYearInput,
@@ -225,4 +194,112 @@ export const participantsSetInput = activityRefInput.extend({
   participants: z
     .array(participantRow)
     .max(MAX_PARTICIPANTS, `AT_MOST_${MAX_PARTICIPANTS}_PARTICIPANTS`),
+});
+
+/* ---- volunteer activities ------------------------------------------------ */
+
+const volunteerHours = z
+  .number()
+  .min(VOLUNTEER_HOURS_MIN, "HOURS_TOO_SMALL")
+  .max(VOLUNTEER_HOURS_MAX, "HOURS_TOO_LARGE")
+  .refine((h) => Number.isInteger(h * 4), "HOURS_MUST_BE_QUARTERS");
+
+const volunteerFields = {
+  title: line(1, VOLUNTEER_TITLE_MAX),
+  description: block(0, VOLUNTEER_DESCRIPTION_MAX),
+  defaultHours: volunteerHours.nullable().optional(),
+};
+
+export const volunteerActivityCreateInput = rosterScope
+  .extend({
+    ...volunteerFields,
+    kind: z.enum(VOLUNTEER_KINDS),
+    /** One-off only: its single session. */
+    date: isoDateInput.optional(),
+    hours: volunteerHours.optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.kind === "oneoff") {
+      if (!v.date) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["date"],
+          message: "DATE_REQUIRED_FOR_ONEOFF",
+        });
+      } else if (!isDateInAcademicYear(v.date, v.academicYear)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["date"],
+          message: "DATE_OUTSIDE_ACADEMIC_YEAR",
+        });
+      }
+      if (v.hours === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["hours"],
+          message: "HOURS_REQUIRED_FOR_ONEOFF",
+        });
+      }
+    } else if (v.date !== undefined || v.hours !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["date"],
+        message: "DATE_ONLY_FOR_ONEOFF",
+      });
+    }
+  });
+
+/** The year is the activity's own. Date and hours apply to a one-off's session. */
+export const volunteerActivityUpdateInput = idInput.extend({
+  ccaID: ccaIDInput,
+  ...volunteerFields,
+  date: isoDateInput.optional(),
+  hours: volunteerHours.optional(),
+});
+
+export const volunteerActivityRefInput = idInput.extend({ ccaID: ccaIDInput });
+
+export const volunteerSessionAddInput = z.object({
+  activityID: idInput.shape.id,
+  ccaID: ccaIDInput,
+  date: isoDateInput.optional(),
+  hours: volunteerHours.optional(),
+});
+
+export const volunteerSessionUpdateInput = z.object({
+  sessionID: idInput.shape.id,
+  ccaID: ccaIDInput,
+  date: isoDateInput.optional(),
+  hours: volunteerHours.optional(),
+});
+
+export const volunteerSessionRefInput = z.object({
+  sessionID: idInput.shape.id,
+  ccaID: ccaIDInput,
+});
+
+export const volunteerPeopleSetInput = z.object({
+  activityID: idInput.shape.id,
+  ccaID: ccaIDInput,
+  userIDs: z
+    .array(userIDInput)
+    .max(MAX_VOLUNTEER_PEOPLE, `AT_MOST_${MAX_VOLUNTEER_PEOPLE}_PEOPLE`),
+});
+
+/** Cells changed in one save; one tick or un-tick each. */
+export const MAX_ATTENDANCE_CHANGES = 20_000;
+
+export const volunteerAttendanceSaveInput = z.object({
+  activityID: idInput.shape.id,
+  ccaID: ccaIDInput,
+  changes: z
+    .array(
+      z.object({
+        sessionID: idInput.shape.id,
+        userID: userIDInput,
+        attended: z.boolean(),
+        hoursOverride: volunteerHours.nullable().optional(),
+      }),
+    )
+    .max(MAX_ATTENDANCE_CHANGES, "TOO_MANY_CHANGES"),
 });

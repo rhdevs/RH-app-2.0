@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { termAcademicYear } from "~/lib/transcript/lifecycle";
-import { instantToSgDate, storedCalendarDate } from "~/lib/transcript/sgDate";
+import { instantToSgDate } from "~/lib/transcript/sgDate";
 import { canonicalUserID } from "~/lib/identity";
 import {
   clampRoleDuration,
@@ -9,13 +9,13 @@ import {
   type ResolvedEntry,
 } from "~/lib/transcript/duration";
 import { readPeriod } from "~/lib/transcript/activities";
+import { personTotals, readKind } from "~/lib/transcript/volunteer";
 import type {
   ActivityInput,
   AwardInput,
   CcaMembershipInput,
   JcrcServiceInput,
-  OneOffVolunteerInput,
-  RegularVolunteerInput,
+  VolunteerActivityInput,
   TranscriptInput,
 } from "~/lib/transcript/types";
 import {
@@ -137,15 +137,6 @@ async function liveMemberships(
   }));
 }
 
-/** A one-off's own date is a stored calendar date; the fallback instant is read in Singapore. */
-const activityDay = (
-  activityDate: Date | null | undefined,
-  recordedAt: Date | null | undefined,
-): string =>
-  activityDate
-    ? storedCalendarDate(activityDate)
-    : instantToSgDate(recordedAt ?? new Date(0));
-
 export async function loadTranscriptInput(
   db: PrismaClient,
   userID: string,
@@ -177,11 +168,8 @@ export async function loadTranscriptInput(
   );
   const activities = await loadActivities(db, key, academicYear, memberCcaIDs);
 
-  const [volunteer, awards, jcrc] = await Promise.all([
-    db.volunteerRecord.findMany({
-      where: { academicYear, userID: key, ...NOT_VOIDED },
-      orderBy: { activityDate: "asc" },
-    }),
+  const [volunteering, awards, jcrc] = await Promise.all([
+    loadVolunteering(db, key, academicYear),
     db.award.findMany({
       where: { academicYear, userID: key, ...NOT_VOIDED },
     }),
@@ -189,43 +177,6 @@ export async function loadTranscriptInput(
       where: { academicYear_userID: { academicYear, userID: key } },
     }),
   ]);
-
-  const ccaIds = [
-    ...new Set(
-      volunteer.map((v) => v.ccaID).filter((v): v is number => v !== null),
-    ),
-  ];
-  const volCcas = ccaIds.length
-    ? await db.cCA.findMany({
-        where: { ccaID: { in: ccaIds } },
-        select: { ccaID: true, ccaName: true },
-      })
-    : [];
-  const volName = new Map(volCcas.map((c) => [c.ccaID, c.ccaName]));
-
-  const regularVolunteering: RegularVolunteerInput[] = [];
-  const oneOffVolunteering: OneOffVolunteerInput[] = [];
-  for (const v of volunteer) {
-    if (typeof v.hours !== "number" || !(v.hours > 0)) continue;
-    const organiser =
-      (v.ccaID !== null ? volName.get(v.ccaID) : undefined) ?? "Raffles Hall";
-    if (v.kind === "oneoff") {
-      oneOffVolunteering.push({
-        academicYear,
-        eventName: v.activity ?? "Volunteering",
-        organiser,
-        date: activityDay(v.activityDate, v.recordedAt),
-        hours: v.hours,
-      });
-    } else {
-      regularVolunteering.push({
-        academicYear,
-        ccaName: organiser,
-        activity: v.activity ?? "Volunteering",
-        hours: v.hours,
-      });
-    }
-  }
 
   const awardInputs: AwardInput[] = awards.map((a) => ({
     title: a.title ?? "Award",
@@ -270,12 +221,77 @@ export async function loadTranscriptInput(
       },
     ],
     memberships,
-    regularVolunteering,
-    oneOffVolunteering,
+    volunteering,
     awards: awardInputs,
     jcrc: jcrcInput,
     activities,
   };
+}
+
+/**
+ * The volunteer activities this person is credited with, and their hours in each:
+ * the sum, over the activity's active sessions they are ticked in, of the cell's
+ * override or the session's hours. Removed activities, sessions and people never
+ * count. Nothing here checks that the CCA is still tagged as volunteering, so
+ * an untagged CCA's activities keep rendering.
+ */
+export async function loadVolunteering(
+  db: PrismaClient,
+  key: string,
+  academicYear: string,
+): Promise<VolunteerActivityInput[]> {
+  const mine = await db.volunteerPerson.findMany({
+    where: { academicYear, userID: key, ...NOT_REMOVED },
+    select: { activityID: true },
+  });
+  if (mine.length === 0) return [];
+  const ids = mine.map((p) => p.activityID);
+
+  const [activities, sessions, ticks] = await Promise.all([
+    db.volunteerActivity.findMany({
+      where: { id: { in: ids }, ...NOT_REMOVED },
+    }),
+    db.volunteerSession.findMany({
+      where: { activityID: { in: ids }, ...NOT_REMOVED },
+      select: { id: true, activityID: true, hours: true },
+    }),
+    db.volunteerAttendance.findMany({
+      where: { academicYear, userID: key, activityID: { in: ids } },
+      select: { sessionID: true, activityID: true, hoursOverride: true },
+    }),
+  ]);
+  const ccas = await db.cCA.findMany({
+    where: { ccaID: { in: [...new Set(activities.map((a) => a.ccaID))] } },
+    select: { ccaID: true, ccaName: true },
+  });
+  const ccaName = new Map(ccas.map((c) => [c.ccaID, c.ccaName]));
+
+  return activities.flatMap((a): VolunteerActivityInput[] => {
+    const name = ccaName.get(a.ccaID);
+    if (!name) return []; // the CCA no longer exists
+    const totals = personTotals({
+      sessions: sessions.filter((s) => s.activityID === a.id),
+      people: [key],
+      attendance: ticks
+        .filter((t) => t.activityID === a.id)
+        .map((t) => ({
+          sessionID: t.sessionID,
+          userID: key,
+          hoursOverride: t.hoursOverride,
+        })),
+    });
+    const hours = totals.get(key) ?? 0;
+    if (!(hours > 0)) return [];
+    return [
+      {
+        academicYear,
+        title: a.title,
+        kind: readKind(a.kind),
+        ccaName: name,
+        hours,
+      },
+    ];
+  });
 }
 
 /**

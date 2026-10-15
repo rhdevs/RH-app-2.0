@@ -75,23 +75,17 @@ export interface ActivityInput {
   isMember: boolean;
 }
 
-/** Hours attested through a CCA the resident is in. */
-export interface RegularVolunteerInput {
+/**
+ * One volunteer activity the resident was credited with, and their TOTAL hours
+ * in it for the year (overrides applied, removed sessions left out). Session
+ * counts are never part of the transcript.
+ */
+export interface VolunteerActivityInput {
   academicYear: string;
+  title: string;
+  kind: "regular" | "oneoff";
+  /** The volunteering CCA that ran it. */
   ccaName: string;
-  /** What the volunteering was, e.g. "Weekly tuition for neighbourhood children". */
-  activity: string;
-  hours: number;
-}
-
-/** Hours for a single event; open to any resident. */
-export interface OneOffVolunteerInput {
-  academicYear: string;
-  eventName: string;
-  /** Who ran it, e.g. "RH Welfare" or "Hall committee". */
-  organiser: string;
-  /** ISO date, "2026-09-12". */
-  date: string;
   hours: number;
 }
 
@@ -134,8 +128,7 @@ export interface TranscriptInput {
   resident: ResidentInput;
   issues: YearIssueInput[];
   memberships: CcaMembershipInput[];
-  regularVolunteering: RegularVolunteerInput[];
-  oneOffVolunteering: OneOffVolunteerInput[];
+  volunteering: VolunteerActivityInput[];
   awards: AwardInput[];
   jcrc: JcrcServiceInput | null;
   /** Activities the resident took part in; absent means none. */
@@ -186,20 +179,18 @@ export interface ActivityNote {
 }
 
 export interface VolunteerRow {
-  /** "Beach clean-up (one-off)" / "Weekly tuition (regular)". */
+  /** The activity's title. */
   activity: string;
-  kind: "regular" | "one-off";
+  type: "Regular" | "One-off";
+  /** The volunteering CCA that ran it. */
   organiser: string;
-  /** ISO date for one-off rows, null for regular ones. */
-  date: string | null;
+  /** The person's total hours in it. */
   hours: number;
 }
 
 export interface VolunteerHoursModel {
-  /** Regular rows first, then one-off rows. */
+  /** Regular first, then one-off; each by title. */
   rows: VolunteerRow[];
-  regularSubtotal: number;
-  oneOffSubtotal: number;
   total: number;
 }
 

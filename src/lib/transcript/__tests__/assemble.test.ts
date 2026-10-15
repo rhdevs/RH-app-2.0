@@ -20,6 +20,7 @@ import {
   type TranscriptPage,
   type TranscriptSection,
   type TranscriptViewModel,
+  type VolunteerActivityInput,
 } from "../types";
 
 const AY = FIXTURE_ACADEMIC_YEAR;
@@ -80,8 +81,7 @@ function blankInput(): TranscriptInput {
       },
     ],
     memberships: [],
-    regularVolunteering: [],
-    oneOffVolunteering: [],
+    volunteering: [],
     awards: [],
     jcrc: null,
   };
@@ -379,6 +379,17 @@ describe("assembleTranscript: explanatory notes", () => {
 });
 
 describe("assembleTranscript: volunteer hours", () => {
+  const volunteering = (
+    over: Partial<VolunteerActivityInput> = {},
+  ): VolunteerActivityInput => ({
+    academicYear: AY,
+    title: "X",
+    kind: "regular",
+    ccaName: "RVC A",
+    hours: 5,
+    ...over,
+  });
+
   it("omits the section when the resident has none", () => {
     const vm = assembleFixture("no-volunteering");
 
@@ -386,81 +397,86 @@ describe("assembleTranscript: volunteer hours", () => {
     expect(section(vm, "volunteerHours")).toBeUndefined();
   });
 
-  it("computes group subtotals and a grand total", () => {
+  it("totals the hours of every activity", () => {
     const vm = assembleFixture("volunteering");
 
     const volunteer = section(vm, "volunteerHours")?.volunteer;
     expect(vm.hasVolunteerHours).toBe(true);
-    expect(volunteer?.regularSubtotal).toBe(44.5);
-    expect(volunteer?.oneOffSubtotal).toBe(10.5);
     expect(volunteer?.total).toBe(55);
   });
 
-  it("labels each row regular or one-off and names the organiser", () => {
+  it("makes one row per activity: title, type, organiser and total hours", () => {
     const vm = assembleFixture("volunteering");
 
     const rows = section(vm, "volunteerHours")?.volunteer.rows ?? [];
-    expect(rows.map((r) => [r.activity, r.organiser])).toEqual([
-      ["Monthly performances at a nursing home (regular)", "Hall Choir"],
+    expect(rows.map((r) => [r.activity, r.type, r.organiser, r.hours])).toEqual(
       [
-        "Weekly tuition for neighbourhood children (regular)",
-        "Welfare Committee",
+        ["Monthly performances at a nursing home", "Regular", "Hall Choir", 12],
+        [
+          "Weekly tuition for neighbourhood children",
+          "Regular",
+          "Welfare Committee",
+          32.5,
+        ],
+        ["Freshmen Orientation helper", "One-off", "Hall committee", 6],
+        ["Hall Open House", "One-off", "Hall committee", 4.5],
       ],
-      ["Freshmen Orientation helper (one-off)", "Hall committee"],
-      ["Hall Open House (one-off)", "Hall committee"],
-    ]);
-  });
-
-  it("lists regular rows by CCA, then one-off rows by date", () => {
-    const vm = assembleFixture("volunteering");
-
-    const rows = section(vm, "volunteerHours")?.volunteer.rows ?? [];
-    expect(rows.map((r) => r.kind)).toEqual([
-      "regular",
-      "regular",
-      "one-off",
-      "one-off",
-    ]);
-    expect(rows.filter((r) => r.kind === "one-off").map((r) => r.date)).toEqual(
-      ["2026-08-12", "2027-01-23"],
     );
   });
 
-  it("shows a zero subtotal for the group that is empty", () => {
+  it("lists regular activities first, then one-off ones, each by title", () => {
     const input = blankInput();
-    input.regularVolunteering = [
-      { academicYear: AY, ccaName: "A", activity: "X", hours: 5 },
+    input.volunteering = [
+      volunteering({ title: "Zebra", kind: "oneoff" }),
+      volunteering({ title: "Beta" }),
+      volunteering({ title: "Alpha", kind: "oneoff" }),
+      volunteering({ title: "Gamma" }),
     ];
 
-    const vm = assembleTranscript(input, AY);
+    const rows =
+      section(assembleTranscript(input, AY), "volunteerHours")?.volunteer
+        .rows ?? [];
+    expect(rows.map((r) => `${r.type}:${r.activity}`)).toEqual([
+      "Regular:Beta",
+      "Regular:Gamma",
+      "One-off:Alpha",
+      "One-off:Zebra",
+    ]);
+  });
 
-    const volunteer = section(vm, "volunteerHours")?.volunteer;
-    expect(volunteer?.oneOffSubtotal).toBe(0);
-    expect(volunteer?.total).toBe(5);
+  it("leaves out an activity with no hours", () => {
+    const input = blankInput();
+    input.volunteering = [volunteering({ hours: 0 })];
+
+    expect(
+      section(assembleTranscript(input, AY), "volunteerHours"),
+    ).toBeUndefined();
   });
 
   it("rounds away floating-point noise in totals", () => {
     const input = blankInput();
-    input.oneOffVolunteering = [
-      {
-        academicYear: AY,
-        eventName: "A",
-        organiser: "O",
-        date: "2026-09-01",
-        hours: 0.1,
-      },
-      {
-        academicYear: AY,
-        eventName: "B",
-        organiser: "O",
-        date: "2026-09-02",
-        hours: 0.2,
-      },
+    input.volunteering = [
+      volunteering({ title: "A", hours: 0.1 }),
+      volunteering({ title: "B", hours: 0.2 }),
     ];
 
     const vm = assembleTranscript(input, AY);
 
     expect(section(vm, "volunteerHours")?.volunteer.total).toBe(0.3);
+  });
+
+  it("never carries a session count or a date", () => {
+    const vm = assembleFixture("volunteering");
+
+    const rows = section(vm, "volunteerHours")?.volunteer.rows ?? [];
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual([
+        "activity",
+        "hours",
+        "organiser",
+        "type",
+      ]);
+    }
   });
 });
 
@@ -583,8 +599,14 @@ describe("assembleTranscript: academic year", () => {
       membership({ ccaName: "Later", academicYear: "AY2027/28" }),
       membership({ ccaName: "Now" }),
     ];
-    input.regularVolunteering = [
-      { academicYear: "AY2027/28", ccaName: "Later", activity: "X", hours: 9 },
+    input.volunteering = [
+      {
+        academicYear: "AY2027/28",
+        ccaName: "Later",
+        title: "X",
+        kind: "regular",
+        hours: 9,
+      },
     ];
     input.awards = [
       { title: "Later award", academicYear: "AY2027/28", citation: null },

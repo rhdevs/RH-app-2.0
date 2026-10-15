@@ -8,15 +8,15 @@ import {
   type JcrcPageModel,
   type JcrcServiceInput,
   type NoteRow,
-  type OneOffVolunteerInput,
   type OtherInvolvementRow,
-  type RegularVolunteerInput,
   type TranscriptInput,
   type TranscriptPage,
   type TranscriptSection,
   type TranscriptViewModel,
+  type VolunteerActivityInput,
   type VolunteerHoursModel,
 } from "./types";
+import { compareVolunteerActivities } from "./volunteer";
 import {
   compareActivities,
   participantText,
@@ -61,11 +61,8 @@ export function assembleTranscript(
       input.memberships.filter((m) => m.academicYear === academicYear),
     ),
   );
-  const regular = input.regularVolunteering.filter(
-    (v) => v.academicYear === academicYear,
-  );
-  const oneOff = input.oneOffVolunteering.filter(
-    (v) => v.academicYear === academicYear,
+  const volunteering = input.volunteering.filter(
+    (v) => v.academicYear === academicYear && v.hours > 0,
   );
   const awards = input.awards.filter((a) => a.academicYear === academicYear);
   const jcrc = input.jcrc?.term === academicYear ? input.jcrc : null;
@@ -81,7 +78,7 @@ export function assembleTranscript(
     byCca,
   );
   const otherRows = other.map(toOtherRow);
-  const volunteer = buildVolunteerHours(regular, oneOff);
+  const volunteer = buildVolunteerHours(volunteering);
   const awardRows = buildAwards(awards);
 
   const sections: TranscriptSection[] = [];
@@ -357,46 +354,21 @@ function sumHours(values: readonly number[]): number {
 
 /** Null when the resident has no volunteering at all: the section is omitted. */
 function buildVolunteerHours(
-  regular: readonly RegularVolunteerInput[],
-  oneOff: readonly OneOffVolunteerInput[],
+  activities: readonly VolunteerActivityInput[],
 ): VolunteerHoursModel | null {
-  if (regular.length === 0 && oneOff.length === 0) return null;
-
-  const regularRows = [...regular]
+  if (activities.length === 0) return null;
+  const rows = [...activities]
     .sort(
       (a, b) =>
-        compareText(a.ccaName, b.ccaName) ||
-        compareText(a.activity, b.activity),
+        compareVolunteerActivities(a, b) || compareText(a.ccaName, b.ccaName),
     )
     .map((v) => ({
-      activity: `${v.activity} (regular)`,
-      kind: "regular" as const,
+      activity: v.title,
+      type: v.kind === "oneoff" ? ("One-off" as const) : ("Regular" as const),
       organiser: v.ccaName,
-      date: null,
-      hours: v.hours,
+      hours: sumHours([v.hours]),
     }));
-  const oneOffRows = [...oneOff]
-    .sort(
-      (a, b) =>
-        compareText(a.date, b.date) || compareText(a.eventName, b.eventName),
-    )
-    .map((v) => ({
-      activity: `${v.eventName} (one-off)`,
-      kind: "one-off" as const,
-      organiser: v.organiser,
-      date: v.date,
-      hours: v.hours,
-    }));
-
-  const regularSubtotal = sumHours(regularRows.map((r) => r.hours));
-  const oneOffSubtotal = sumHours(oneOffRows.map((r) => r.hours));
-
-  return {
-    rows: [...regularRows, ...oneOffRows],
-    regularSubtotal,
-    oneOffSubtotal,
-    total: sumHours([regularSubtotal, oneOffSubtotal]),
-  };
+  return { rows, total: sumHours(rows.map((r) => r.hours)) };
 }
 
 function buildAwards(

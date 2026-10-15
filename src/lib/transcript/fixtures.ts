@@ -5,6 +5,7 @@ import {
   type JcrcServiceInput,
   type ResidentInput,
   type TranscriptInput,
+  type VolunteerActivityInput,
   type YearIssueInput,
 } from "./types";
 
@@ -91,6 +92,16 @@ function activity(
   };
 }
 
+function volunteer(
+  ccaName: string,
+  title: string,
+  kind: "regular" | "oneoff",
+  hours: number,
+  academicYear: string = AY,
+): VolunteerActivityInput {
+  return { academicYear, title, kind, ccaName, hours };
+}
+
 function input(
   resident: ResidentInput,
   issues: YearIssueInput[],
@@ -100,8 +111,7 @@ function input(
     resident,
     issues,
     memberships: [],
-    regularVolunteering: [],
-    oneOffVolunteering: [],
+    volunteering: [],
     awards: [],
     jcrc: null,
     ...parts,
@@ -241,35 +251,21 @@ export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
         cca("Welfare Committee", "Committees"),
         cca("Hall Choir", "Performing Arts"),
       ],
-      regularVolunteering: [
-        {
-          academicYear: AY,
-          ccaName: "Welfare Committee",
-          activity: "Weekly tuition for neighbourhood children",
-          hours: 32.5,
-        },
-        {
-          academicYear: AY,
-          ccaName: "Hall Choir",
-          activity: "Monthly performances at a nursing home",
-          hours: 12,
-        },
-      ],
-      oneOffVolunteering: [
-        {
-          academicYear: AY,
-          eventName: "Freshmen Orientation helper",
-          organiser: "Hall committee",
-          date: "2026-08-12",
-          hours: 6,
-        },
-        {
-          academicYear: AY,
-          eventName: "Hall Open House",
-          organiser: "Hall committee",
-          date: "2027-01-23",
-          hours: 4.5,
-        },
+      volunteering: [
+        volunteer(
+          "Welfare Committee",
+          "Weekly tuition for neighbourhood children",
+          "regular",
+          32.5,
+        ),
+        volunteer(
+          "Hall Choir",
+          "Monthly performances at a nursing home",
+          "regular",
+          12,
+        ),
+        volunteer("Hall committee", "Freshmen Orientation helper", "oneoff", 6),
+        volunteer("Hall committee", "Hall Open House", "oneoff", 4.5),
       ],
     }),
   },
@@ -298,48 +294,28 @@ export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
     label: "Member of 14 CCAs (multi-page)",
     input: input(person("Ethan Koh Zhi Wei", 8), [issue(8)], {
       memberships: MANY_CCAS,
-      regularVolunteering: [
-        {
-          academicYear: AY,
-          ccaName: "Orientation Welfare",
-          activity: "Freshman buddy programme",
-          hours: 40,
-        },
-        {
-          academicYear: AY,
-          ccaName: "Hall Choir",
-          activity: "Monthly performances at a nursing home",
-          hours: 15,
-        },
-        {
-          academicYear: AY,
-          ccaName: "Phoenix Press",
-          activity: "Weekly reading sessions at a children's library",
-          hours: 10,
-        },
-      ],
-      oneOffVolunteering: [
-        {
-          academicYear: AY,
-          eventName: "Freshmen Orientation helper",
-          organiser: "Hall committee",
-          date: "2026-08-12",
-          hours: 6,
-        },
-        {
-          academicYear: AY,
-          eventName: "Blood Donation Drive",
-          organiser: "Orientation Welfare",
-          date: "2026-10-03",
-          hours: 3,
-        },
-        {
-          academicYear: AY,
-          eventName: "Hall Open House",
-          organiser: "Hall committee",
-          date: "2027-01-23",
-          hours: 4.5,
-        },
+      volunteering: [
+        volunteer(
+          "Orientation Welfare",
+          "Freshman buddy programme",
+          "regular",
+          40,
+        ),
+        volunteer(
+          "Hall Choir",
+          "Monthly performances at a nursing home",
+          "regular",
+          15,
+        ),
+        volunteer(
+          "Phoenix Press",
+          "Weekly reading sessions at a children's library",
+          "regular",
+          10,
+        ),
+        volunteer("Hall committee", "Freshmen Orientation helper", "oneoff", 6),
+        volunteer("Orientation Welfare", "Blood Donation Drive", "oneoff", 3),
+        volunteer("Hall committee", "Hall Open House", "oneoff", 4.5),
       ],
       awards: [
         { title: "Service Excellence Award", academicYear: AY, citation: null },
@@ -403,29 +379,28 @@ export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
             description: null,
           }),
         ],
-        regularVolunteering: [
-          {
-            academicYear: NEXT_ACADEMIC_YEAR,
-            ccaName: "RH Welfare",
-            activity: "Weekly tuition for neighbourhood children",
-            hours: 42,
-          },
-        ],
-        oneOffVolunteering: [
-          {
-            academicYear: NEXT_ACADEMIC_YEAR,
-            eventName: "Beach clean-up, East Coast Park",
-            organiser: "RH Welfare",
-            date: "2027-09-12",
-            hours: 4,
-          },
-          {
-            academicYear: NEXT_ACADEMIC_YEAR,
-            eventName: "Blood drive support crew",
-            organiser: "Hall committee",
-            date: "2027-10-03",
-            hours: 6,
-          },
+        volunteering: [
+          volunteer(
+            "RH Welfare",
+            "Weekly tuition for neighbourhood children",
+            "regular",
+            42,
+            NEXT_ACADEMIC_YEAR,
+          ),
+          volunteer(
+            "RH Welfare",
+            "Beach clean-up, East Coast Park",
+            "oneoff",
+            4,
+            NEXT_ACADEMIC_YEAR,
+          ),
+          volunteer(
+            "Hall committee",
+            "Blood drive support crew",
+            "oneoff",
+            6,
+            NEXT_ACADEMIC_YEAR,
+          ),
         ],
         awards: [
           {

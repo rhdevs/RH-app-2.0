@@ -20,7 +20,14 @@ import {
   rosterUpsertInput,
   searchQueryInput,
   userIDInput,
-  volunteerCreateInput,
+  volunteerActivityCreateInput,
+  volunteerActivityRefInput,
+  volunteerActivityUpdateInput,
+  volunteerAttendanceSaveInput,
+  volunteerPeopleSetInput,
+  volunteerSessionAddInput,
+  volunteerSessionRefInput,
+  volunteerSessionUpdateInput,
 } from "~/lib/transcript/manageInput";
 import {
   activitiesList,
@@ -58,9 +65,18 @@ import {
   rosterUpsert,
 } from "~/server/api/services/transcript/manageRoster";
 import {
-  volunteerCreate,
-  volunteerList,
-  volunteerVoid,
+  volunteerActivitiesList,
+  volunteerActivityCreate,
+  volunteerActivityGet,
+  volunteerActivityRemove,
+  volunteerActivityRestore,
+  volunteerActivityUpdate,
+  volunteerAttendanceSave,
+  volunteerPeopleSet,
+  volunteerSessionAdd,
+  volunteerSessionRemove,
+  volunteerSessionRestore,
+  volunteerSessionUpdate,
 } from "~/server/api/services/transcript/manageVolunteer";
 import { searchResidents } from "~/server/api/services/transcript/residents";
 import {
@@ -344,28 +360,156 @@ export const transcriptManageRouter = createTRPCRouter({
       }),
   }),
 
+  /**
+   * Volunteer hours, by ACTIVITY: an activity has sessions, people and a tick
+   * (attendance) for each person in each session. Reads need the head of THIS
+   * CCA or a manager; every write runs the one edit guard for the activity's own
+   * year and needs the CCA to be tagged as volunteering (see manageVolunteer).
+   */
   volunteer: createTRPCRouter({
-    list: identifiedProcedure
-      .input(rosterScope)
-      .query(async ({ ctx, input }) => {
-        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
-        await requireCca(ctx.db, input.ccaID);
-        return volunteerList(ctx.db, input.ccaID, input.academicYear);
-      }),
+    activities: createTRPCRouter({
+      list: identifiedProcedure
+        .input(activityListInput)
+        .query(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerActivitiesList(
+            ctx.db,
+            input.ccaID,
+            input.academicYear,
+            input.includeRemoved ?? false,
+          );
+        }),
 
-    create: identifiedProcedure
-      .input(volunteerCreateInput)
-      .mutation(async ({ ctx, input }) => {
-        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
-        await requireCca(ctx.db, input.ccaID);
-        return volunteerCreate(ctx.db, ctx.session.user.userID, input);
-      }),
+      /** One activity with its sessions, people and ticks, for the grid. */
+      get: identifiedProcedure
+        .input(volunteerActivityRefInput)
+        .query(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerActivityGet(ctx.db, input.id, input.ccaID);
+        }),
 
-    /** The head of the record's CCA, or a manager. */
-    void: identifiedProcedure
-      .input(idInput)
-      .mutation(({ ctx, input }) =>
-        volunteerVoid(ctx.db, ctx.session.user.userID, input.id),
-      ),
+      create: identifiedProcedure
+        .input(volunteerActivityCreateInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerActivityCreate(
+            ctx.db,
+            ctx.session.user.userID,
+            input,
+          );
+        }),
+
+      update: identifiedProcedure
+        .input(volunteerActivityUpdateInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerActivityUpdate(
+            ctx.db,
+            ctx.session.user.userID,
+            input,
+          );
+        }),
+
+      remove: identifiedProcedure
+        .input(volunteerActivityRefInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerActivityRemove(
+            ctx.db,
+            ctx.session.user.userID,
+            input.id,
+            input.ccaID,
+          );
+        }),
+
+      restore: identifiedProcedure
+        .input(volunteerActivityRefInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerActivityRestore(
+            ctx.db,
+            ctx.session.user.userID,
+            input.id,
+            input.ccaID,
+          );
+        }),
+    }),
+
+    /** Sessions of a regular activity (a one-off has exactly one). */
+    sessions: createTRPCRouter({
+      add: identifiedProcedure
+        .input(volunteerSessionAddInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerSessionAdd(ctx.db, ctx.session.user.userID, input);
+        }),
+
+      update: identifiedProcedure
+        .input(volunteerSessionUpdateInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerSessionUpdate(ctx.db, ctx.session.user.userID, input);
+        }),
+
+      remove: identifiedProcedure
+        .input(volunteerSessionRefInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerSessionRemove(
+            ctx.db,
+            ctx.session.user.userID,
+            input.sessionID,
+            input.ccaID,
+          );
+        }),
+
+      restore: identifiedProcedure
+        .input(volunteerSessionRefInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerSessionRestore(
+            ctx.db,
+            ctx.session.user.userID,
+            input.sessionID,
+            input.ccaID,
+          );
+        }),
+    }),
+
+    people: createTRPCRouter({
+      /** Replace the activity's people with exactly this list. */
+      set: identifiedProcedure
+        .input(volunteerPeopleSetInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerPeopleSet(ctx.db, ctx.session.user.userID, input);
+        }),
+    }),
+
+    attendance: createTRPCRouter({
+      /** A batch of ticks and un-ticks, applied in one transaction. */
+      save: identifiedProcedure
+        .input(volunteerAttendanceSaveInput)
+        .mutation(async ({ ctx, input }) => {
+          await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+          await requireCca(ctx.db, input.ccaID);
+          return volunteerAttendanceSave(
+            ctx.db,
+            ctx.session.user.userID,
+            input,
+          );
+        }),
+    }),
   }),
 });
