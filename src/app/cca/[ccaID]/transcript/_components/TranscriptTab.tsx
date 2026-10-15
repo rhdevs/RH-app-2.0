@@ -172,6 +172,10 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
   const data = roster.data;
   const readOnly = data.editRefusal !== null;
   const rows: RosterRowData[] = data.rows;
+  const members = rows.map((r) => ({
+    userID: r.userID,
+    displayName: r.displayName,
+  }));
   const stateNote = rosterNotice({
     academicYear: year,
     mode: data.mode,
@@ -224,10 +228,7 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
       <ActivitiesSection
         ccaID={ccaID}
         academicYear={year}
-        members={rows.map((r) => ({
-          userID: r.userID,
-          displayName: r.displayName,
-        }))}
+        members={members}
         readOnly={readOnly}
         readOnlyNote={readOnly ? stateNote : null}
       />
@@ -250,7 +251,9 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
         <VolunteerSection
           ccaID={ccaID}
           academicYear={year}
+          members={members}
           readOnly={readOnly}
+          readOnlyNote={readOnly ? stateNote : null}
         />
       )}
     </div>

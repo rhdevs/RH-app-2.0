@@ -430,6 +430,8 @@ export interface SaveAllBarProps {
   failureLine: string | null;
   onSaveAll: () => void;
   onDiscard: () => void;
+  /** The save button's words; "Save all" for the roster. */
+  saveLabel?: string;
 }
 
 /**
@@ -478,7 +480,7 @@ export function SaveAllBar(p: SaveAllBarProps) {
               Saving
             </>
           ) : (
-            "Save all"
+            (p.saveLabel ?? "Save all")
           )}
         </Button>
       </div>

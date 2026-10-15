@@ -9,9 +9,6 @@ import { clampRoleDuration, isDuration, roleFits } from "./duration";
 
 export const ROLE_MAX = 60;
 export const EXTRA_MAX = 500;
-export const ACTIVITY_MAX = 120;
-export const HOURS_MIN = 0.25;
-export const HOURS_MAX = 200;
 
 export const PORTFOLIO_MAX = 80;
 export const POSITION_MAX = 80;
@@ -135,59 +132,6 @@ export function upsertFields(draft: RowDraft) {
     extraContribution: extra === "" ? null : extra,
   };
 }
-
-/* ---- volunteer hours ----------------------------------------------------- */
-
-/** The hours a form field holds, or null when it is not a valid quarter hour. */
-export function parseHours(text: string): number | null {
-  const value = Number(text.trim());
-  if (text.trim() === "" || !Number.isFinite(value)) return null;
-  if (value < HOURS_MIN || value > HOURS_MAX) return null;
-  return Number.isInteger(value * 4) ? value : null;
-}
-
-export function hoursProblem(text: string): string | null {
-  if (text.trim() === "") return null;
-  const value = Number(text.trim());
-  if (!Number.isFinite(value)) return "Enter a number of hours.";
-  if (value < HOURS_MIN) return `Hours must be at least ${HOURS_MIN}.`;
-  if (value > HOURS_MAX) return `Hours must be at most ${HOURS_MAX}.`;
-  if (!Number.isInteger(value * 4)) return "Hours go up in steps of 0.25.";
-  return null;
-}
-
-export interface HoursTotal {
-  userID: string;
-  name: string;
-  hours: number;
-}
-
-/** Total hours per resident, most hours first. */
-export function hoursByResident(
-  records: ReadonlyArray<{
-    userID: string;
-    displayName: string | null;
-    hours: number;
-  }>,
-): HoursTotal[] {
-  const totals = new Map<string, HoursTotal>();
-  for (const r of records) {
-    const existing = totals.get(r.userID);
-    if (existing) existing.hours += r.hours;
-    else
-      totals.set(r.userID, {
-        userID: r.userID,
-        name: r.displayName ?? r.userID,
-        hours: r.hours,
-      });
-  }
-  return [...totals.values()].sort(
-    (a, b) => b.hours - a.hours || a.name.localeCompare(b.name, "en"),
-  );
-}
-
-export const formatHours = (hours: number) =>
-  `${hours} ${hours === 1 ? "hour" : "hours"}`;
 
 /** The first academic year transcripts exist for. */
 export const FIRST_TRANSCRIPT_YEAR = 2026;
