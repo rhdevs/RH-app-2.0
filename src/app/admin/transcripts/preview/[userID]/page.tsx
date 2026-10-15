@@ -61,7 +61,7 @@ export default async function TranscriptPreviewPage({
 
   return (
     <div className="rh-preview-root space-y-4">
-      <style>{PRINT_CSS}</style>
+      <style dangerouslySetInnerHTML={{ __html: PRINT_CSS }} />
       {/* On screen only: the document is what prints. */}
       <div
         role="status"
