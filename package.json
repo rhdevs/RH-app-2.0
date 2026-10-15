@@ -13,6 +13,7 @@
     "postinstall": "prisma generate",
     "lint": "next lint",
     "test": "vitest run",
+    "test:db": "node --env-file=.env node_modules/vitest/vitest.mjs run int.test",
     "start": "next start"
   },
   "prisma": {
