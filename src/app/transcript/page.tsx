@@ -49,6 +49,11 @@ export default async function TranscriptPage({
         redirect("/login");
       }
       // FORBIDDEN (no canonical identity): nothing can be issued for them.
+      // Anything else (a database outage, say) must not read as "not
+      // published yet", so it propagates to the error page.
+      if (!(error instanceof TRPCError && error.code === "FORBIDDEN")) {
+        throw error;
+      }
     }
   }
 
@@ -64,10 +69,16 @@ export default async function TranscriptPage({
     return <NotAvailable academicYear={state.currentAcademicYear} />;
   }
 
-  const result = await api.transcript.mine.get({
-    academicYear: state.academicYear,
-  });
-  if (result.status !== "ready") {
+  // The year can be reopened between listing it and fetching it.
+  const result = await api.transcript.mine
+    .get({ academicYear: state.academicYear })
+    .catch((error: unknown) => {
+      if (error instanceof TRPCError && error.code === "PRECONDITION_FAILED") {
+        return null;
+      }
+      throw error;
+    });
+  if (!result || result.status !== "ready") {
     return <NotAvailable academicYear={state.academicYear} />;
   }
 

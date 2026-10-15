@@ -155,7 +155,7 @@ export const transcriptManageRouter = createTRPCRouter({
       .input(z.object({ query: searchQueryInput }))
       .query(async ({ ctx, input }) => {
         const userID = ctx.session.user.userID;
-        await requireManagerOrVolunteeringHead(ctx.db, userID);
+        const access = await requireManagerOrVolunteeringHead(ctx.db, userID);
         const limited = await rateLimit(
           `transcript-search:${userID}`,
           SEARCH_LIMIT,
@@ -167,7 +167,9 @@ export const transcriptManageRouter = createTRPCRouter({
             message: `RATE_LIMITED:${limited.retryAfter}`,
           });
         }
-        return searchResidents(ctx.db, input.query);
+        return searchResidents(ctx.db, input.query, {
+          nameOnly: !access.isManager,
+        });
       }),
   }),
 

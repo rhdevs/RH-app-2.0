@@ -1352,6 +1352,15 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         for (const h of hits) expect(h.maskedMatric).toMatch(/^A\*{5}00X$/);
       });
 
+      it("lets a head of a volunteering CCA search by name only, not by matric or email", async () => {
+        const head = as(RVC_CHILDREN_HEAD).transcriptManage.residents;
+
+        const byName = await head.search({ query: "Resident 12" });
+        expect(byName.map((h) => h.userID)).toEqual([R12.id]);
+        expect(await head.search({ query: "A9912000" })).toEqual([]);
+        expect(await head.search({ query: "seed-r12" })).toEqual([]);
+      });
+
       it("is limited to 60 requests per user per 10 minutes", async () => {
         const who = as(RVC_PROJECTS_HEAD).transcriptManage.residents;
         await db.rateLimit.deleteMany({
@@ -1407,12 +1416,18 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("is open to the head of a volunteering CCA, but only for finding residents", async () => {
-        const hits = await as(RVC_CHILDREN_HEAD).transcriptManage.residents.search({
+        const hits = await as(
+          RVC_CHILDREN_HEAD,
+        ).transcriptManage.residents.search({
           query: "Seed",
         });
 
         expect(hits.length).toBeGreaterThan(0);
-        expect(Object.keys(hits[0]!).sort()).toEqual(["displayName", "maskedMatric", "userID"]);
+        expect(Object.keys(hits[0]!).sort()).toEqual([
+          "displayName",
+          "maskedMatric",
+          "userID",
+        ]);
       });
 
       it("is refused to residents, heads and hall office", async () => {
@@ -1474,6 +1489,23 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             c.setSem2Start({ academicYear: AY, sem2Start: "2027-08-01" }),
           ),
         ).toBe("BAD_REQUEST:SEM2_START_OUTSIDE_YEAR");
+      });
+
+      it("refuses an impossible semester 2 date instead of clearing the saved one", async () => {
+        const c = as(JCRC).transcript.periods;
+        await c.setSem2Start({ academicYear: AY, sem2Start: "2027-01-12" });
+
+        expect(
+          await errorOf(
+            c.setSem2Start({ academicYear: AY, sem2Start: "2027-02-30" }),
+          ),
+        ).toMatch(/^BAD_REQUEST:/);
+        const stored = await db.transcriptPeriod.findUniqueOrThrow({
+          where: { academicYear: AY },
+        });
+        expect(stored.sem2Start?.toISOString()).toBe(
+          "2027-01-11T16:00:00.000Z",
+        );
       });
 
       it("returns the published count and the unmatched count for the publish summary", async () => {

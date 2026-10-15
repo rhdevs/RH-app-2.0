@@ -4,6 +4,7 @@ import { z } from "zod";
 import { clientIp, rateLimit } from "~/lib/rateLimit";
 import {
   currentAcademicYear,
+  isRealIsoDate,
   isValidAcademicYear,
 } from "~/lib/transcript/academicYear";
 import { assembleTranscript } from "~/lib/transcript/assemble";
@@ -37,7 +38,10 @@ const academicYear = z
   .refine(isValidAcademicYear, "INVALID_ACADEMIC_YEAR");
 
 /** "2027-01-11" -> midnight UTC, the instant the validators compare against. */
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine(isRealIsoDate, "INVALID_DATE");
 
 /**
  * The year-control surface: admin + jcrc.

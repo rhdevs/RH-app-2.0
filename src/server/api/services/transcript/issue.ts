@@ -145,6 +145,17 @@ export async function issueForResident(
       throw error;
     }
 
+    // The year may have been reopened between the published check above and
+    // this insert; a late row would otherwise stay live and stale. Withdraw it.
+    const after = await getPeriod(db, academicYear);
+    if (after?.status !== STATUS_PUBLISHED) {
+      await db.transcriptIssue.delete({ where: { id: created.id } });
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "NOT_PUBLISHED",
+      });
+    }
+
     // Two concurrent first requests both created an issue. The earliest id wins;
     // the loser deletes its OWN row (its code was never returned to anyone) and
     // answers with the winner's.

@@ -260,44 +260,54 @@ export async function publish(
     return best;
   };
 
-  const existing = await db.transcriptRosterEntry.findMany({
-    where: { academicYear },
-  });
-  const existingBy = new Map(
-    existing.map((r) => [`${r.userID}|${r.ccaID}`, r]),
-  );
-
-  const toCreate: Prisma.TranscriptRosterEntryCreateManyInput[] = [];
-  const toUpdate: Array<{
-    id: string;
-    data: Prisma.TranscriptRosterEntryUpdateInput;
-  }> = [];
-
-  for (const m of members) {
-    const stored = existingBy.get(`${m.userID}|${m.ccaID}`) ?? null;
-    const r = resolveEntry(
-      stored,
-      { decidedAt: decidedFor(m), isHead: m.isHead, grantedAt: m.grantedAt },
-      sem2Start,
+  /**
+   * What publishing writes, from the stored entries and semester 2 date AS THEY
+   * ARE NOW. It runs again inside the transaction, after the status claim, so
+   * an edit that committed after the first reads is not overwritten with values
+   * derived from stale ones.
+   */
+  const buildPlan = (
+    existing: Awaited<ReturnType<typeof db.transcriptRosterEntry.findMany>>,
+    sem2: Date | null,
+  ) => {
+    const existingBy = new Map(
+      existing.map((r) => [`${r.userID}|${r.ccaID}`, r]),
     );
-    const data = {
-      duration: r.duration,
-      roleLabel: r.roleLabel,
-      roleDuration: r.roleDuration,
-      extraContribution: r.extraContribution,
-      frozen: true,
-      updatedBy: actorUserID,
-      updatedAt: now,
-    };
-    if (stored) toUpdate.push({ id: stored.id, data });
-    else
-      toCreate.push({
-        academicYear,
-        userID: m.userID,
-        ccaID: m.ccaID,
-        ...data,
-      });
-  }
+    const toCreate: Prisma.TranscriptRosterEntryCreateManyInput[] = [];
+    const toUpdate: Array<{
+      id: string;
+      data: Prisma.TranscriptRosterEntryUpdateInput;
+    }> = [];
+
+    for (const m of members) {
+      const stored = existingBy.get(`${m.userID}|${m.ccaID}`) ?? null;
+      const r = resolveEntry(
+        stored,
+        { decidedAt: decidedFor(m), isHead: m.isHead, grantedAt: m.grantedAt },
+        sem2,
+      );
+      const data = {
+        duration: r.duration,
+        roleLabel: r.roleLabel,
+        roleDuration: r.roleDuration,
+        extraContribution: r.extraContribution,
+        frozen: true,
+        updatedBy: actorUserID,
+        updatedAt: now,
+      };
+      if (stored) toUpdate.push({ id: stored.id, data });
+      else
+        toCreate.push({
+          academicYear,
+          userID: m.userID,
+          ccaID: m.ccaID,
+          ...data,
+        });
+    }
+    return { toCreate, toUpdate };
+  };
+
+  let frozenCount = { created: 0, updated: 0 };
 
   await transitioning(() =>
     db.$transaction(
@@ -311,6 +321,16 @@ export async function publish(
           },
         });
         if (claimed.count !== 1) fail("ALREADY_PUBLISHED");
+
+        const [existing, current] = await Promise.all([
+          tx.transcriptRosterEntry.findMany({ where: { academicYear } }),
+          tx.transcriptPeriod.findUnique({ where: { academicYear } }),
+        ]);
+        const { toCreate, toUpdate } = buildPlan(
+          existing,
+          current?.sem2Start ?? sem2Start,
+        );
+        frozenCount = { created: toCreate.length, updated: toUpdate.length };
 
         // The published roster is exactly today's: clear every old freeze first.
         await tx.transcriptRosterEntry.updateMany({
@@ -333,9 +353,9 @@ export async function publish(
 
   return {
     academicYear,
-    frozen: toCreate.length + toUpdate.length,
-    created: toCreate.length,
-    updated: toUpdate.length,
+    frozen: frozenCount.created + frozenCount.updated,
+    created: frozenCount.created,
+    updated: frozenCount.updated,
     skippedUnresolved,
   };
 }

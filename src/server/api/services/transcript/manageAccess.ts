@@ -56,7 +56,7 @@ export async function requireManagerOrVolunteeringHead(
   userID: string,
 ) {
   const roles = await getUserRoles(db, userID);
-  if (accessFor("manager", roles)) return;
+  if (accessFor("manager", roles)) return { isManager: true as const };
   const headed = await db.ccaHead.findMany({
     where: { userID },
     select: { ccaID: true },
@@ -71,6 +71,7 @@ export async function requireManagerOrVolunteeringHead(
           },
         });
   if (volunteering === 0) throw forbidden("NOT_A_VOLUNTEERING_HEAD");
+  return { isManager: false as const };
 }
 
 /** The CCA must exist. */

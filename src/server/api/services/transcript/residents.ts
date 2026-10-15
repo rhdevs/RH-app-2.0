@@ -127,11 +127,16 @@ export async function keysOf(
 
 /**
  * Up to 10 residents whose name, email or matric contains `query`. The caller
- * has already been checked as a manager and the query bounded to 3+ characters.
+ * has already been checked and the query bounded to 3+ characters.
+ *
+ * `nameOnly` (a head of a volunteering CCA, who is not a manager) matches the
+ * display name alone. Matching on email or matric would let repeated queries
+ * confirm a masked matric one character at a time.
  */
 export async function searchResidents(
   db: PrismaClient,
   query: string,
+  options: { nameOnly?: boolean } = {},
 ): Promise<ResidentHit[]> {
   const esc = escapeRegex(query);
   const [byName, byMatric] = await Promise.all([
@@ -139,19 +144,23 @@ export async function searchResidents(
       where: {
         OR: [
           { displayName: { contains: esc, mode: "insensitive" } },
-          { email: { contains: esc, mode: "insensitive" } },
+          ...(options.nameOnly
+            ? []
+            : [{ email: { contains: esc, mode: "insensitive" as const } }]),
         ],
       },
       select: USER_SELECT,
       orderBy: { id: "asc" },
       take: SEARCH_LIMIT,
     }),
-    db.userMatric.findMany({
-      where: { matric: { contains: esc, mode: "insensitive" } },
-      select: { userID: true },
-      orderBy: { id: "asc" },
-      take: SEARCH_LIMIT,
-    }),
+    options.nameOnly
+      ? Promise.resolve([] as { userID: string }[])
+      : db.userMatric.findMany({
+          where: { matric: { contains: esc, mode: "insensitive" } },
+          select: { userID: true },
+          orderBy: { id: "asc" },
+          take: SEARCH_LIMIT,
+        }),
   ]);
 
   const found = new Map<string, UserRow>(byName.map((u) => [u.id, u]));
