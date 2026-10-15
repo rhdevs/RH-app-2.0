@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { useState } from "react";
 
 import {
@@ -9,6 +10,8 @@ import {
   SectionCard,
 } from "~/app/admin/transcripts/_components/Bits";
 import ResidentPicker, {
+  DEFAULT_PLACEHOLDER,
+  HEAD_PLACEHOLDER,
   type PickedResident,
 } from "~/app/admin/transcripts/_components/ResidentPicker";
 import {
@@ -297,6 +300,10 @@ export default function VolunteerSection({
   readOnly: boolean;
 }) {
   const utils = api.useUtils();
+  // Cosmetic only: managers can search by email or matric, heads by name. The
+  // server decides what a search matches.
+  const roles: readonly string[] = useSession().data?.user.roles ?? [];
+  const isManager = roles.includes("admin") || roles.includes("jcrc");
   const [resident, setResident] = useState<PickedResident | null>(null);
   const [kind, setKind] = useState<VolunteerKind>("regular");
   const [activity, setActivity] = useState("");
@@ -338,6 +345,7 @@ export default function VolunteerSection({
         <ResidentPicker
           idPrefix="volunteer"
           hideSelectedMatric
+          placeholder={isManager ? DEFAULT_PLACEHOLDER : HEAD_PLACEHOLDER}
           selected={resident}
           onSelect={setResident}
           onClear={() => setResident(null)}

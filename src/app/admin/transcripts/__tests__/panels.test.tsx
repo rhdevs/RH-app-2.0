@@ -622,3 +622,86 @@ describe("who did it, shown as a name", () => {
     expect(html).not.toContain("Voided by");
   });
 });
+
+describe("resident picker as an ARIA combobox", () => {
+  const HITS: PickedResident[] = [
+    {
+      userID: "SEED-R12",
+      displayName: "Seed Resident 12",
+      maskedMatric: "A*****00X",
+    },
+    {
+      userID: "SEED-R13",
+      displayName: "Seed Resident 13",
+      maskedMatric: "A*****00X",
+    },
+  ];
+  const listed = (combo = { open: true, active: -1 }) =>
+    renderPicker({ status: "results", hits: HITS, query: "seed", combo });
+
+  it("marks the input as a combobox that controls the listbox", () => {
+    const html = listed();
+
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('aria-controls="t-listbox"');
+    expect(html).toContain('aria-autocomplete="list"');
+    expect(html).toContain('id="t-listbox"');
+    expect(html).toContain('role="listbox"');
+  });
+
+  it("marks each result as an option, selected only for the active one", () => {
+    const html = listed({ open: true, active: 1 });
+
+    expect(html.match(/role="option"/g)).toHaveLength(2);
+    expect(html).toContain('id="t-option-0"');
+    expect(html).toContain('id="t-option-1"');
+    expect(html).toMatch(/id="t-option-0"[^>]*aria-selected="false"/);
+    expect(html).toMatch(/id="t-option-1"[^>]*aria-selected="true"/);
+    expect(html).toContain('aria-activedescendant="t-option-1"');
+  });
+
+  it("has no active descendant when nothing is active", () => {
+    expect(listed()).not.toContain("aria-activedescendant");
+  });
+
+  it("is collapsed with no listbox when closed, or with no results", () => {
+    const closed = listed({ open: false, active: -1 });
+    expect(closed).toContain('aria-expanded="false"');
+    expect(closed).not.toContain('role="listbox"');
+    expect(closed).not.toContain("aria-activedescendant");
+
+    const none = renderPicker({ status: "empty", query: "zzz" });
+    expect(none).toContain('aria-expanded="false"');
+    expect(none).not.toContain('role="listbox"');
+  });
+
+  it("announces the number of results in the existing live line", () => {
+    expect(listed()).toContain(
+      "2 results. Use the up and down arrow keys, then Enter.",
+    );
+    const one = renderPicker({
+      status: "results",
+      hits: HITS.slice(0, 1),
+      combo: { open: true, active: -1 },
+    });
+    expect(one).toContain("1 result. Use the up and down arrow keys");
+  });
+
+  it("uses the placeholder for the caller: a manager searches name, email or matric, a head name", () => {
+    expect(renderPicker()).toContain('placeholder="Name, email or matric"');
+    expect(renderPicker({ placeholder: "Name" })).toContain(
+      'placeholder="Name"',
+    );
+    expect(renderPicker({ placeholder: "Name" })).not.toContain(
+      "email or matric",
+    );
+  });
+
+  it("shows only the masked matric on a result", () => {
+    const html = listed();
+
+    expect(html).toContain("A*****00X");
+    expect(html).not.toMatch(/A99\d{2}000X/);
+  });
+});

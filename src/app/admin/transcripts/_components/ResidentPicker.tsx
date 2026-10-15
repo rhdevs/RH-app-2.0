@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { errorText } from "~/lib/transcript/adminView";
+import {
+  COMBO_CLOSED,
+  comboReduce,
+  listboxId,
+  optionId,
+  type ComboKey,
+  type ComboState,
+} from "~/lib/transcript/combobox";
 import { api } from "~/trpc/react";
 import { ErrorLine, FIELD_LABEL } from "./Bits";
 
@@ -16,6 +24,10 @@ export interface PickedResident {
 }
 
 export const MIN_SEARCH_CHARACTERS = 3;
+export const DEFAULT_PLACEHOLDER = "Name, email or matric";
+export const HEAD_PLACEHOLDER = "Name";
+/** Open, nothing active: the state a list shows in when first drawn. */
+const OPEN: ComboState = { open: true, active: -1 };
 const DEBOUNCE_MS = 300;
 
 export type PickerStatus = "short" | "loading" | "error" | "empty" | "results";
@@ -39,6 +51,9 @@ export function ResidentPickerView({
   onClear,
   disabled,
   hideSelectedMatric,
+  placeholder = DEFAULT_PLACEHOLDER,
+  combo = OPEN,
+  onKeyDown,
 }: {
   idPrefix: string;
   label: string;
@@ -52,6 +67,11 @@ export function ResidentPickerView({
   onClear: () => void;
   disabled?: boolean;
   hideSelectedMatric?: boolean;
+  /** "Name, email or matric" for a manager, "Name" for a head. */
+  placeholder?: string;
+  /** Whether the list is open and which option is active. */
+  combo?: ComboState;
+  onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
 }) {
   if (selected) {
     return (
@@ -79,6 +99,7 @@ export function ResidentPickerView({
   }
 
   const inputId = `${idPrefix}-search`;
+  const showList = status === "results" && combo.open && hits.length > 0;
   return (
     <div>
       <label htmlFor={inputId} className={FIELD_LABEL}>
@@ -91,33 +112,55 @@ export function ResidentPickerView({
         value={query}
         disabled={disabled}
         onChange={(e) => onQueryChange(e.target.value)}
-        placeholder="Name, email or matric"
+        onKeyDown={onKeyDown}
+        placeholder={placeholder}
         maxLength={60}
         className="max-w-sm"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={showList}
+        aria-controls={listboxId(idPrefix)}
+        aria-activedescendant={
+          showList && combo.active >= 0
+            ? optionId(idPrefix, combo.active)
+            : undefined
+        }
       />
       <div aria-live="polite" className="mt-1 text-xs text-gray-500">
         {status === "short" &&
           `Type at least ${MIN_SEARCH_CHARACTERS} characters to search.`}
         {status === "loading" && "Searching."}
         {status === "empty" && "No residents match."}
+        {showList &&
+          `${hits.length} ${hits.length === 1 ? "result" : "results"}. Use the up and down arrow keys, then Enter.`}
       </div>
       <ErrorLine message={status === "error" ? error : null} />
-      {status === "results" && (
-        <ul className="mt-2 max-w-sm divide-y divide-gray-100 rounded-md border border-gray-200">
-          {hits.map((hit) => (
-            <li key={hit.userID}>
-              <button
-                type="button"
-                onClick={() => onSelect(hit)}
-                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50 focus-visible:bg-gray-50 focus-visible:outline-none"
-              >
-                <span className="font-medium text-gray-900">
-                  {hit.displayName ?? hit.userID}
-                </span>
-                <span className="text-xs text-gray-500">
-                  {hit.maskedMatric ?? ""}
-                </span>
-              </button>
+      {showList && (
+        <ul
+          id={listboxId(idPrefix)}
+          role="listbox"
+          aria-label={label}
+          className="mt-2 max-w-sm divide-y divide-gray-100 rounded-md border border-gray-200"
+        >
+          {hits.map((hit, index) => (
+            <li
+              key={hit.userID}
+              id={optionId(idPrefix, index)}
+              role="option"
+              aria-selected={index === combo.active}
+              // The input keeps focus, so a click must not blur it first.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onSelect(hit)}
+              className={`flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50 ${
+                index === combo.active ? "bg-emerald-50" : ""
+              }`}
+            >
+              <span className="font-medium text-gray-900">
+                {hit.displayName ?? hit.userID}
+              </span>
+              <span className="text-xs text-gray-500">
+                {hit.maskedMatric ?? ""}
+              </span>
             </li>
           ))}
         </ul>
@@ -125,6 +168,15 @@ export function ResidentPickerView({
     </div>
   );
 }
+
+const KEYS: Record<string, ComboKey | undefined> = {
+  ArrowDown: "ArrowDown",
+  ArrowUp: "ArrowUp",
+  Home: "Home",
+  End: "End",
+  Enter: "Enter",
+  Escape: "Escape",
+};
 
 export default function ResidentPicker({
   idPrefix,
@@ -134,6 +186,7 @@ export default function ResidentPicker({
   onClear,
   disabled,
   hideSelectedMatric,
+  placeholder,
 }: {
   idPrefix: string;
   label?: string;
@@ -142,8 +195,10 @@ export default function ResidentPicker({
   onClear: () => void;
   disabled?: boolean;
   hideSelectedMatric?: boolean;
+  placeholder?: string;
 }) {
   const [query, setQuery] = useState("");
+  const [combo, setCombo] = useState<ComboState>(COMBO_CLOSED);
   const [debounced, setDebounced] = useState("");
 
   useEffect(() => {
@@ -172,9 +227,28 @@ export default function ResidentPicker({
       idPrefix={idPrefix}
       label={label}
       query={query}
-      onQueryChange={setQuery}
+      onQueryChange={(q) => {
+        setQuery(q);
+        setCombo(comboReduce(combo, "Type", 0).state);
+      }}
       status={status}
       hits={search.data ?? []}
+      placeholder={placeholder}
+      combo={combo}
+      onKeyDown={(event) => {
+        const key = KEYS[event.key];
+        if (!key) return;
+        const hitsNow = status === "results" ? (search.data ?? []) : [];
+        const result = comboReduce(combo, key, hitsNow.length);
+        if (result.prevent) event.preventDefault();
+        setCombo(result.state);
+        const picked = result.pick === null ? undefined : hitsNow[result.pick];
+        if (picked) {
+          onSelect(picked);
+          setQuery("");
+          setDebounced("");
+        }
+      }}
       error={search.error ? errorText(search.error.message) : null}
       selected={selected}
       onSelect={(r) => {
