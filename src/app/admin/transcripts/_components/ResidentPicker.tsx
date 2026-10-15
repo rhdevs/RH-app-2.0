@@ -21,8 +21,8 @@ export type PickerStatus = "short" | "loading" | "error" | "empty" | "results";
 
 /**
  * Pick a resident by name, email or matric. Residents are found through
- * transcriptManage.residents.search (manager-only, at most 10 hits). The matric
- * is shown in full here, on the search results a manager is authorised to see,
+ * transcriptManage.residents.search (managers and heads of volunteering CCAs,
+ * at most 10 hits). The matric is shown in full here, on the search results,
  * and nowhere else on these screens.
  */
 export function ResidentPickerView({
@@ -37,6 +37,7 @@ export function ResidentPickerView({
   onSelect,
   onClear,
   disabled,
+  hideSelectedMatric,
 }: {
   idPrefix: string;
   label: string;
@@ -49,6 +50,7 @@ export function ResidentPickerView({
   onSelect: (r: PickedResident) => void;
   onClear: () => void;
   disabled?: boolean;
+  hideSelectedMatric?: boolean;
 }) {
   if (selected) {
     return (
@@ -58,7 +60,7 @@ export function ResidentPickerView({
           <span className="font-medium">
             {selected.displayName ?? selected.userID}
           </span>
-          {selected.matric && (
+          {selected.matric && !hideSelectedMatric && (
             <span className="text-gray-500">{selected.matric}</span>
           )}
           <Button
@@ -130,6 +132,7 @@ export default function ResidentPicker({
   onSelect,
   onClear,
   disabled,
+  hideSelectedMatric,
 }: {
   idPrefix: string;
   label?: string;
@@ -137,6 +140,7 @@ export default function ResidentPicker({
   onSelect: (r: PickedResident) => void;
   onClear: () => void;
   disabled?: boolean;
+  hideSelectedMatric?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -179,6 +183,7 @@ export default function ResidentPicker({
       }}
       onClear={onClear}
       disabled={disabled}
+      hideSelectedMatric={hideSelectedMatric}
     />
   );
 }

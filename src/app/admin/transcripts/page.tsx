@@ -1,4 +1,5 @@
 import { type Metadata } from "next";
+import Link from "next/link";
 
 import { currentAcademicYear } from "~/lib/transcript/academicYear";
 import { api, HydrateClient } from "~/trpc/server";
@@ -43,6 +44,14 @@ export default async function TranscriptsAdminPage() {
           <p className="mt-1 text-sm text-gray-500">
             Run each academic year&rsquo;s transcripts: when they open, which
             CCAs record volunteering, and the Colours Awards.
+          </p>
+          <p className="mt-2 text-sm">
+            <Link
+              href="/admin/transcripts/jcrc"
+              className="font-medium text-emerald-800 underline underline-offset-2"
+            >
+              Your JCRC page
+            </Link>
           </p>
         </header>
         <PeriodPanel />

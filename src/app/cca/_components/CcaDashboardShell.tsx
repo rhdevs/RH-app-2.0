@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   CalendarClock,
   CalendarDays,
+  FileText,
 } from "lucide-react";
 
 import { api } from "~/trpc/react";
@@ -30,6 +31,7 @@ const SECTIONS = [
   { slug: "members", label: "View member list", icon: Users },
   { slug: "details", label: "CCA details", icon: Pencil },
   { slug: "events", label: "Events", icon: CalendarDays },
+  { slug: "transcript", label: "Transcript", icon: FileText },
 ] as const;
 
 /**
