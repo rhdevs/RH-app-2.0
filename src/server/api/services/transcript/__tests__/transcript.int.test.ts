@@ -664,6 +664,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           where: { academicYear: AY, userID: "SEED-R20" },
           data: { frozen: false },
         });
+        // ... and the seed lists them under "Other involvement" for one activity.
+        await db.ccaActivityParticipant.deleteMany({
+          where: { academicYear: AY, userID: "SEED-R20" },
+        });
 
         const result = await as({
           id: "SEED-R20",
