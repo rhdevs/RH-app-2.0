@@ -319,6 +319,59 @@ describe("schema: new transcript models", () => {
     }
   });
 
+  it("stores per-resident unlocks, withholds, manual memberships and events, keyed by year", () => {
+    const raw = readFileSync("prisma/schema.prisma", "utf8");
+    for (const decl of [
+      '@@index([academicYear, userID], map: "unlock_year_user")',
+      '@@index([academicYear, userID], map: "withhold_year_user")',
+      '@@unique([academicYear, userID, ccaID], map: "manual_year_user_cca")',
+      '@@index([academicYear, userID], map: "revent_year_user")',
+    ]) {
+      expect(raw, decl).toContain(decl);
+    }
+    const names = (model: string) => current.get(model)!.map((f) => f.name);
+    expect(names("ResidentUnlock")).toEqual(
+      expect.arrayContaining([
+        "academicYear",
+        "userID",
+        "reason",
+        "unlockedBy",
+        "unlockedAt",
+        "relockedBy",
+        "relockedAt",
+      ]),
+    );
+    expect(names("ResidentWithhold")).toEqual(
+      expect.arrayContaining([
+        "reason",
+        "withheldBy",
+        "withheldAt",
+        "releasedBy",
+        "releasedAt",
+        "releaseNote",
+      ]),
+    );
+    expect(names("ManualMembership")).toEqual(
+      expect.arrayContaining([
+        "ccaID",
+        "duration",
+        "roleLabel",
+        "roleDuration",
+        "extraContribution",
+        "removedAt",
+        "removedBy",
+      ]),
+    );
+    expect(names("ResidentEvent")).toEqual(
+      expect.arrayContaining(["action", "reason", "summary", "actor", "at"]),
+    );
+  });
+
+  it("lets a JCRC record be removed (soft) with who and when", () => {
+    const names = current.get("JcrcService")!.map((f) => f.name);
+    expect(names).toEqual(expect.arrayContaining(["removedAt", "removedBy"]));
+  });
+
   it("no longer has the single-record VolunteerRecord model", () => {
     expect(current.has("VolunteerRecord")).toBe(false);
   });
@@ -413,6 +466,10 @@ describe("schema: guarded collections are untouched", () => {
         "VolunteerAttendance",
         "AwardType",
         "AwardImportBatch",
+        "ResidentUnlock",
+        "ResidentWithhold",
+        "ManualMembership",
+        "ResidentEvent",
       ].sort(),
     );
   });

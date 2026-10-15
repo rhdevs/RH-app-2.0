@@ -1590,6 +1590,9 @@ model JcrcService {
   updatedAt     DateTime?
   /// Who last saved it: the member themselves, or the manager who did it for them.
   updatedBy     String?
+  /// Removed (never deleted) by a manager from the resident's panel.
+  removedAt     DateTime?
+  removedBy     String?
 
   @@unique([academicYear, userID], map: "jcrc_service_member")
 }
@@ -1669,4 +1672,75 @@ model TranscriptAccess {
   lastOpenedAt  DateTime?
 
   @@unique([academicYear, userID], map: "access_year_user")
+}
+
+/// A manager's unlock of ONE resident's records in a PUBLISHED year, so they can
+/// be corrected. ACTIVE while `relockedAt` is empty; at most one active per
+/// resident and year (kept by the service).
+model ResidentUnlock {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String
+  userID       String
+  reason       String
+  unlockedBy   String?
+  unlockedAt   DateTime? @default(now())
+  relockedBy   String?
+  relockedAt   DateTime?
+
+  @@index([academicYear, userID], map: "unlock_year_user")
+}
+
+/// A hold on ONE resident's transcript for a year: they see "on hold" instead of
+/// it. ACTIVE while `releasedAt` is empty; at most one active per resident and year.
+model ResidentWithhold {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String
+  userID       String
+  reason       String
+  withheldBy   String?
+  withheldAt   DateTime? @default(now())
+  releasedBy   String?
+  releasedAt   DateTime?
+  releaseNote  String?
+
+  @@index([academicYear, userID], map: "withhold_year_user")
+}
+
+/// A CCA membership a manager adds for a resident the membership data misses. It
+/// counts as membership of that CCA for that resident and year; if a roster entry
+/// exists for the same CCA, the roster entry wins. Removed, never deleted.
+model ManualMembership {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear    String
+  userID          String
+  ccaID           Int
+  duration        String?
+  roleLabel       String?
+  roleDuration    String?
+  extraContribution String?
+  createdBy       String?
+  createdAt       DateTime? @default(now())
+  updatedBy       String?
+  updatedAt       DateTime?
+  removedAt       DateTime?
+  removedBy       String?
+
+  @@unique([academicYear, userID, ccaID], map: "manual_year_user_cca")
+}
+
+/// The history of one resident's year: unlock, relock, withhold, release, manual
+/// entries, and each correction made under an unlock.
+/// action: unlock | relock | withhold | release | manual_add | manual_edit |
+///         manual_remove | manual_restore | correction
+model ResidentEvent {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String
+  userID       String
+  action       String
+  reason       String?
+  summary      String?
+  actor        String?
+  at           DateTime? @default(now())
+
+  @@index([academicYear, userID], map: "revent_year_user")
 }
