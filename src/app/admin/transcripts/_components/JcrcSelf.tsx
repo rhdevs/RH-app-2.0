@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Plus, X } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -15,7 +15,9 @@ import {
 } from "~/lib/transcript/adminView";
 import {
   CONTRIBUTIONS_MAX_ITEMS,
-  CONTRIBUTION_MAX,
+  CONTRIBUTION_ACTIVITY_MAX,
+  CONTRIBUTION_DESCRIPTION_MAX,
+  CONTRIBUTION_ROLE_MAX,
   DESCRIPTION_MAX,
   NOT_JCRC_NOTE,
   PORTFOLIO_MAX,
@@ -23,8 +25,16 @@ import {
   PUBLISHED_NOTE,
   SIGNATURE_PLACEHOLDER_NOTE,
   TESTIMONIAL_MAX,
+  blankContribution,
+  canMoveContribution,
+  contributionsPayload,
+  contributionsProblem,
   counterText,
+  liveContributions,
+  moveContribution,
   reconcileAfterSave,
+  sameContributions,
+  type ContributionDraft,
 } from "~/lib/transcript/headView";
 import { api } from "~/trpc/react";
 import { ErrorLine, FIELD_LABEL, SectionCard, YearSelect } from "./Bits";
@@ -34,7 +44,7 @@ export interface JcrcDraft {
   portfolio: string;
   position: string;
   description: string;
-  contributions: string[];
+  contributions: ContributionDraft[];
   testimonial: string;
 }
 
@@ -65,8 +75,15 @@ export interface JcrcSelfViewProps {
 /** Your own JCRC page: portfolio, role, contributions and testimonial. */
 export function JcrcSelfView(p: JcrcSelfViewProps) {
   const { draft } = p;
+  const live = liveContributions(draft.contributions);
   const canAddContribution =
-    !p.readOnly && draft.contributions.length < CONTRIBUTIONS_MAX_ITEMS;
+    !p.readOnly && live.length < CONTRIBUTIONS_MAX_ITEMS;
+  const patchRow = (index: number, patch: Partial<ContributionDraft>) =>
+    p.onDraft({
+      contributions: draft.contributions.map((r, j) =>
+        j === index ? { ...r, ...patch } : r,
+      ),
+    });
 
   return (
     <SectionCard
@@ -143,44 +160,143 @@ export function JcrcSelfView(p: JcrcSelfViewProps) {
           {draft.contributions.length === 0 && (
             <p className="text-sm text-gray-500">No contributions added.</p>
           )}
-          <ul className="space-y-2">
-            {draft.contributions.map((c, i) => (
-              <li key={i} className="flex items-center gap-2">
-                <label htmlFor={`jcrc-contribution-${i}`} className="sr-only">
-                  {`Contribution ${i + 1}`}
-                </label>
-                <Input
-                  id={`jcrc-contribution-${i}`}
-                  value={c}
-                  maxLength={CONTRIBUTION_MAX}
-                  disabled={p.readOnly}
-                  onChange={(e) =>
-                    p.onDraft({
-                      contributions: draft.contributions.map((x, j) =>
-                        j === i ? e.target.value : x,
-                      ),
-                    })
-                  }
-                />
-                {!p.readOnly && (
+          <ul className="space-y-3">
+            {draft.contributions.map((c, i) =>
+              c.removed ? (
+                <li
+                  key={i}
+                  className="flex items-center justify-between gap-3 rounded-md border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-600"
+                >
+                  <span>
+                    Removed.{" "}
+                    {c.activity.trim() !== ""
+                      ? c.activity.trim()
+                      : `Contribution ${i + 1}`}
+                  </span>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    aria-label={`Remove contribution ${i + 1}`}
-                    onClick={() =>
-                      p.onDraft({
-                        contributions: draft.contributions.filter(
-                          (_, j) => j !== i,
-                        ),
-                      })
-                    }
+                    disabled={p.readOnly}
+                    onClick={() => patchRow(i, { removed: false })}
                   >
-                    <X className="h-4 w-4" />
+                    Undo
                   </Button>
-                )}
-              </li>
-            ))}
+                </li>
+              ) : (
+                <li
+                  key={i}
+                  className="space-y-3 rounded-md border border-gray-200 p-3"
+                >
+                  <div>
+                    <label
+                      htmlFor={`jcrc-activity-${i}`}
+                      className={FIELD_LABEL}
+                    >
+                      Activity
+                    </label>
+                    <Input
+                      id={`jcrc-activity-${i}`}
+                      value={c.activity}
+                      maxLength={CONTRIBUTION_ACTIVITY_MAX}
+                      disabled={p.readOnly}
+                      onChange={(e) =>
+                        patchRow(i, { activity: e.target.value })
+                      }
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {counterText(c.activity, CONTRIBUTION_ACTIVITY_MAX)}
+                    </p>
+                  </div>
+                  <div>
+                    <label htmlFor={`jcrc-role-${i}`} className={FIELD_LABEL}>
+                      Role (optional)
+                    </label>
+                    <Input
+                      id={`jcrc-role-${i}`}
+                      value={c.role}
+                      maxLength={CONTRIBUTION_ROLE_MAX}
+                      disabled={p.readOnly}
+                      onChange={(e) => patchRow(i, { role: e.target.value })}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {counterText(c.role, CONTRIBUTION_ROLE_MAX)}
+                    </p>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={`jcrc-contribution-description-${i}`}
+                      className={FIELD_LABEL}
+                    >
+                      Description (optional)
+                    </label>
+                    <Textarea
+                      id={`jcrc-contribution-description-${i}`}
+                      rows={2}
+                      value={c.description}
+                      maxLength={CONTRIBUTION_DESCRIPTION_MAX}
+                      disabled={p.readOnly}
+                      onChange={(e) =>
+                        patchRow(i, { description: e.target.value })
+                      }
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {counterText(c.description, CONTRIBUTION_DESCRIPTION_MAX)}
+                    </p>
+                  </div>
+                  {!p.readOnly && (
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          !canMoveContribution(draft.contributions, i, -1)
+                        }
+                        onClick={() =>
+                          p.onDraft({
+                            contributions: moveContribution(
+                              draft.contributions,
+                              i,
+                              -1,
+                            ),
+                          })
+                        }
+                      >
+                        Move up
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          !canMoveContribution(draft.contributions, i, 1)
+                        }
+                        onClick={() =>
+                          p.onDraft({
+                            contributions: moveContribution(
+                              draft.contributions,
+                              i,
+                              1,
+                            ),
+                          })
+                        }
+                      >
+                        Move down
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => patchRow(i, { removed: true })}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+                </li>
+              ),
+            )}
           </ul>
           <div className="mt-2 flex items-center gap-3">
             {!p.readOnly && (
@@ -190,7 +306,12 @@ export function JcrcSelfView(p: JcrcSelfViewProps) {
                 size="sm"
                 disabled={!canAddContribution}
                 onClick={() =>
-                  p.onDraft({ contributions: [...draft.contributions, ""] })
+                  p.onDraft({
+                    contributions: [
+                      ...draft.contributions,
+                      blankContribution(),
+                    ],
+                  })
                 }
               >
                 <Plus className="mr-1 h-4 w-4" />
@@ -198,10 +319,15 @@ export function JcrcSelfView(p: JcrcSelfViewProps) {
               </Button>
             )}
             <span className="text-xs text-gray-500">
-              {`${draft.contributions.length} of ${CONTRIBUTIONS_MAX_ITEMS}, up to ${CONTRIBUTION_MAX} characters each`}
+              {`${live.length} of ${CONTRIBUTIONS_MAX_ITEMS}`}
             </span>
           </div>
-          <ErrorLine message={p.fieldErrors.contributions} />
+          <ErrorLine
+            message={
+              contributionsProblem(draft.contributions) ??
+              p.fieldErrors.contributions
+            }
+          />
         </fieldset>
 
         <div className="max-w-2xl">
@@ -258,8 +384,12 @@ const same = (a: JcrcDraft, b: JcrcDraft) =>
   a.position.trim() === b.position.trim() &&
   a.description.trim() === b.description.trim() &&
   a.testimonial.trim() === b.testimonial.trim() &&
-  a.contributions.length === b.contributions.length &&
-  a.contributions.every((c, i) => c.trim() === b.contributions[i]?.trim());
+  sameContributions(a.contributions, b.contributions);
+
+/** Rows from the API, as editor rows. */
+const toDrafts = (
+  rows: ReadonlyArray<{ activity: string; role: string; description: string }>,
+): ContributionDraft[] => rows.map((r) => ({ ...r, removed: false }));
 
 export default function JcrcSelf({ userID }: { userID: string }) {
   const utils = api.useUtils();
@@ -280,7 +410,7 @@ export default function JcrcSelf({ userID }: { userID: string }) {
         portfolio: mine.data.portfolio,
         position: mine.data.position,
         description: mine.data.description,
-        contributions: mine.data.contributions,
+        contributions: toDrafts(mine.data.contributions),
         testimonial: mine.data.testimonial,
       }
     : EMPTY_JCRC;
@@ -313,7 +443,7 @@ export default function JcrcSelf({ userID }: { userID: string }) {
             portfolio: stored.portfolio,
             position: stored.position,
             description: stored.description,
-            contributions: stored.contributions,
+            contributions: toDrafts(stored.contributions),
             testimonial: stored.testimonial,
           }
         : submitted.current;
@@ -384,9 +514,7 @@ export default function JcrcSelf({ userID }: { userID: string }) {
         save.mutate({
           academicYear: selected,
           ...draft,
-          contributions: draft.contributions
-            .map((c) => c.trim())
-            .filter((c) => c !== ""),
+          contributions: contributionsPayload(draft.contributions),
         });
       }}
       saving={save.isPending}

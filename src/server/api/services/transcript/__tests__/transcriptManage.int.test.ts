@@ -129,7 +129,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     }, 120_000);
 
     const reset = async () => {
-      await db.transcriptIssue.deleteMany({ where: seeded });
+      await db.transcriptAccess.deleteMany({ where: seeded });
       await db.transcriptRosterEntry.deleteMany({
         where: { academicYear: AY },
       });
@@ -1188,12 +1188,19 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ------------------------------------------------------------------ */
     describe("JCRC records", () => {
+      const ROW = { activity: "Ran it", role: "", description: "" };
       const fields = {
         academicYear: AY,
         portfolio: "Welfare",
         position: "Treasurer",
         description: "Looks after the budget.",
-        contributions: ["Balanced the books."],
+        contributions: [
+          {
+            activity: "Balanced the books.",
+            role: "Treasurer",
+            description: "",
+          },
+        ],
         testimonial: "Reliable.",
       };
 
@@ -1258,12 +1265,15 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
         expect(
           await errorOf(
-            m.saveMine({ ...fields, contributions: Array(11).fill("c") }),
+            m.saveMine({ ...fields, contributions: Array(11).fill(ROW) }),
           ),
         ).toMatch(/^BAD_REQUEST:/);
         expect(
           await errorOf(
-            m.saveMine({ ...fields, contributions: ["c".repeat(201)] }),
+            m.saveMine({
+              ...fields,
+              contributions: [{ ...ROW, activity: "c".repeat(81) }],
+            }),
           ),
         ).toMatch(/^BAD_REQUEST:/);
         expect(
@@ -1283,11 +1293,44 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           await errorOf(
             m.saveMine({
               ...fields,
-              contributions: Array(10).fill("c"),
+              contributions: Array(10).fill(ROW),
               testimonial: "t".repeat(1500),
             }),
           ),
         ).toBe("ok");
+      });
+
+      it("stores contribution rows in order, with a blank role or description kept blank", async () => {
+        const rows = [
+          { activity: "Second thing", role: "", description: "" },
+          { activity: "First thing", role: "Lead", description: "Did it." },
+        ];
+
+        await as(JCRC).transcriptManage.jcrc.saveMine({
+          ...fields,
+          contributions: rows,
+        });
+
+        const mine = await as(JCRC).transcriptManage.jcrc.mine({
+          academicYear: AY,
+        });
+        expect(mine?.contributions).toEqual(rows);
+        const stored = await db.jcrcService.findFirstOrThrow({
+          where: { userID: JCRC.id, academicYear: AY },
+        });
+        expect(stored.contributions[0]).toEqual({
+          activity: "Second thing",
+          role: null,
+          description: null,
+        });
+        const preview = await as(JCRC).transcript.preview({
+          userID: JCRC.id,
+          academicYear: AY,
+        });
+        const page = preview.transcript.pages.find((x) => x.kind === "jcrc");
+        expect(page?.kind === "jcrc" ? page.jcrc.contributions : []).toEqual(
+          rows,
+        );
       });
 
       it("lets a manager save anyone's, for an existing resident only", async () => {
@@ -1518,7 +1561,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const reopened = await as(JCRC).transcript.periods.reopen({
           academicYear: AY,
         });
-        expect(reopened.superseded).toBe(0);
+        expect(reopened).toEqual({ academicYear: AY });
       });
 
       it("sends no full matric in any list a head or manager can read", async () => {

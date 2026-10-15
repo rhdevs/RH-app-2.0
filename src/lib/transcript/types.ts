@@ -87,6 +87,13 @@ export interface AwardInput {
  * Master and President signatures are NOT data (the document always prints
  * empty placeholder boxes).
  */
+/** One row of the JCRC contributions table. Role and description may be blank. */
+export interface ContributionInput {
+  activity: string;
+  role: string;
+  description: string;
+}
+
 export interface JcrcServiceInput {
   /** "Sports" */
   portfolio: string;
@@ -96,7 +103,7 @@ export interface JcrcServiceInput {
   term: string;
   /** What the role covers. */
   description: string;
-  contributions: string[];
+  contributions: ContributionInput[];
   testimonial: { text: string; author: "Hall Master" };
   /** True while the content is stand-in text (shown on screen only). */
   isPlaceholder: boolean;
@@ -169,7 +176,7 @@ export interface JcrcPageModel {
   about: string;
   /** What the role covers. */
   responsibilities: string;
-  contributions: string[];
+  contributions: ContributionInput[];
   testimonial: { text: string; author: "Hall Master" };
   isPlaceholder: boolean;
 }

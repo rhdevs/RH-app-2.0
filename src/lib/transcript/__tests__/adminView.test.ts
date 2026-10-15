@@ -8,7 +8,6 @@ import {
   isWritable,
   normaliseStatus,
   publishSummary,
-  reopenSummary,
   statusLabel,
   yearOptions,
 } from "../adminView";
@@ -56,15 +55,6 @@ describe("summaries", () => {
       "62 members frozen, 2 rows could not be matched",
     );
   });
-
-  it("states how many transcripts were superseded", () => {
-    expect(reopenSummary({ superseded: 1 })).toBe(
-      "1 transcript marked as superseded",
-    );
-    expect(reopenSummary({ superseded: 0 })).toBe(
-      "0 transcripts marked as superseded",
-    );
-  });
 });
 
 describe("wording", () => {
@@ -73,7 +63,7 @@ describe("wording", () => {
       "This freezes the member list for AY2026/27 and lets residents download their transcripts. Edits stop until you reopen.",
     );
     expect(REOPEN_CONFIRMATION).toBe(
-      "This reopens editing. Transcripts already downloaded will be marked as superseded and residents will need to download again.",
+      "This reopens editing. Residents cannot open their transcripts until the year is published again, and then they see the corrected data.",
     );
   });
 
@@ -83,7 +73,6 @@ describe("wording", () => {
       REOPEN_CONFIRMATION,
       WRITES_LOCKED_NOTE,
       publishSummary({ frozen: 3, skippedUnresolved: 1 }),
-      reopenSummary({ superseded: 2 }),
       errorText("SEM2_START_REQUIRED"),
     ]) {
       expect(text).not.toContain("!");

@@ -4,14 +4,12 @@ import {
   MISSING_DESCRIPTION_TEXT,
   assembleTranscript,
   formatIssuedOn,
-  normaliseVerificationCode,
   yearFromParam,
   yearToParam,
 } from "../assemble";
 import {
   FIXTURE_ACADEMIC_YEAR,
   TRANSCRIPT_FIXTURES,
-  getFixtureByCode,
   getFixtureBySlug,
   getFixtureYears,
   resolveFixtureYear,
@@ -76,7 +74,6 @@ function blankInput(): TranscriptInput {
     issues: [
       {
         academicYear: AY,
-        verificationCode: "RH-CCT-DEMO-9999",
         issuedOn: "2027-05-10",
         block: "Block 1",
         yearOfResidence: 1,
@@ -98,13 +95,12 @@ describe("fixtures", () => {
     );
   });
 
-  it("gives every issued transcript its own unique verification code", () => {
-    const codes = TRANSCRIPT_FIXTURES.flatMap((f) =>
-      f.input.issues.map((i) => i.verificationCode),
-    );
-
-    expect(new Set(codes).size).toBe(codes.length);
-    expect(codes.length).toBeGreaterThan(12);
+  it("carries no verification code on any issued year", () => {
+    for (const f of TRANSCRIPT_FIXTURES) {
+      for (const issue of f.input.issues) {
+        expect(Object.keys(issue)).not.toContain("verificationCode");
+      }
+    }
   });
 
   it("assembles every issued year of every fixture without throwing", () => {
@@ -113,26 +109,6 @@ describe("fixtures", () => {
         expect(() => assembleTranscript(f.input, year)).not.toThrow();
       }
     }
-  });
-
-  it("finds a fixture and its year by code, ignoring case and spaces", () => {
-    const found = getFixtureByCode("  rh-cct-demo-0001 ");
-
-    expect(found?.fixture.slug).toBe("plain-member");
-    expect(found?.academicYear).toBe(AY);
-  });
-
-  it("maps a later year's code to that year, not the latest by default", () => {
-    const found = getFixtureByCode("RH-CCT-DEMO-0011-2728");
-
-    expect(found?.fixture.slug).toBe("jcrc-sports-secretary");
-    expect(found?.academicYear).toBe("AY2027/28");
-  });
-
-  it("returns null for unknown or malformed codes", () => {
-    expect(getFixtureByCode("RH-CCT-DEMO-4040")).toBeNull();
-    expect(getFixtureByCode("<script>")).toBeNull();
-    expect(getFixtureByCode("")).toBeNull();
   });
 
   it("returns null for an unknown slug", () => {
@@ -576,7 +552,6 @@ describe("assembleTranscript: academic year", () => {
       {
         ...input.issues[0]!,
         academicYear: "AY2027/28",
-        verificationCode: "RH-CCT-DEMO-9998",
       },
     ];
     input.memberships = [
@@ -599,12 +574,11 @@ describe("assembleTranscript: academic year", () => {
     expect(vm.hasAwards).toBe(false);
   });
 
-  it("carries the issue for that year: its code, block and year of residence", () => {
+  it("carries the issue for that year: its block and year of residence", () => {
     const vm = assembleFixture("jcrc-sports-secretary", "AY2027/28");
 
     expect(vm.issue).toMatchObject({
       academicYear: "AY2027/28",
-      verificationCode: "RH-CCT-DEMO-0011-2728",
       yearOfResidence: 2,
       block: "Block 3",
     });
@@ -665,10 +639,6 @@ describe("assembleTranscript: purity", () => {
 });
 
 describe("formatting helpers", () => {
-  it("normalises a verification code to upper case without padding", () => {
-    expect(normaliseVerificationCode("  rh-cct-0001 ")).toBe("RH-CCT-0001");
-  });
-
   it("formats an ISO issue date as dd/mm/yyyy", () => {
     expect(formatIssuedOn("2027-05-10")).toBe("10/05/2027");
   });

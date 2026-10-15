@@ -96,10 +96,26 @@ const SPORTS_SECRETARY: JcrcServiceInput = {
   description:
     "Responsible for the inter-hall sports programme and for supporting the hall's sports CCAs, including their captains, fixtures and resources.",
   contributions: [
-    "Ran the inter-hall sports calendar across 11 sports and 40 matches.",
-    "Introduced a shared fixtures calendar adopted by all sports CCAs.",
-    "Coordinated transport and refereeing for the hall's home matches.",
-    "Led the review of sports CCA budgets with the JCRC Treasurer.",
+    {
+      activity: "Inter-hall sports calendar",
+      role: "Organiser",
+      description: "Ran the calendar across 11 sports and 40 matches.",
+    },
+    {
+      activity: "Shared fixtures calendar",
+      role: "Lead",
+      description: "Introduced a calendar adopted by all sports CCAs.",
+    },
+    {
+      activity: "Home match logistics",
+      role: "Coordinator",
+      description: "Coordinated transport and refereeing for the hall's home matches.",
+    },
+    {
+      activity: "Sports CCA budget review",
+      role: "",
+      description: "Led the review of sports CCA budgets with the JCRC Treasurer.",
+    },
   ],
   testimonial: {
     text: "This member approached the sports portfolio with care and consistency. They built a calendar that residents could rely on, and kept every CCA captain informed throughout the year. I am glad to recommend them.",
@@ -416,8 +432,16 @@ export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
         description:
           "Supports the JCRC Welfare Secretary in running residents' welfare programmes.",
         contributions: [
-          "Helped plan and run the exam-period welfare drives.",
-          "Served as the point of contact for residents' feedback to the JCRC.",
+          {
+            activity: "Exam-period welfare drives",
+            role: "Helper",
+            description: "Helped plan and run the drives.",
+          },
+          {
+            activity: "Residents' feedback",
+            role: "",
+            description: "Served as the point of contact for feedback to the JCRC.",
+          },
         ],
       },
     }),

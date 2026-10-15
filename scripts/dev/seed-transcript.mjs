@@ -22,6 +22,8 @@ import { PrismaClient } from "@prisma/client";
 const REQUIRED_DB = "rhapp_transcript_dev";
 const AY = "AY2026/27";
 const SEM2_START = new Date("2027-01-11T00:00:00Z");
+// "Download by 31 Dec 2027": a Singapore calendar date, stored as midnight there.
+const DOWNLOAD_BY = new Date("2027-12-30T16:00:00Z");
 const PREFIX = "SEED-";
 
 /**
@@ -199,7 +201,7 @@ for (const [n, ccaID] of [
 // --- reset (only what this script owns) ------------------------------------
 async function reset() {
   const mine = { startsWith: PREFIX };
-  await db.transcriptIssue.deleteMany({ where: { userID: mine } });
+  await db.transcriptAccess.deleteMany({ where: { userID: mine } });
   await db.jcrcService.deleteMany({ where: { userID: mine } });
   await db.award.deleteMany({ where: { userID: mine } });
   await db.volunteerRecord.deleteMany({ where: { userID: mine } });
@@ -293,9 +295,15 @@ async function seed() {
 
   await db.transcriptPeriod.upsert({
     where: { academicYear: AY },
-    create: { academicYear: AY, sem2Start: SEM2_START, status: "collecting" },
+    create: {
+      academicYear: AY,
+      sem2Start: SEM2_START,
+      downloadBy: DOWNLOAD_BY,
+      status: "collecting",
+    },
     update: {
       sem2Start: SEM2_START,
+      downloadBy: DOWNLOAD_BY,
       status: "collecting",
       publishedAt: null,
       publishedBy: null,
@@ -406,10 +414,25 @@ async function seed() {
         description:
           "Responsible for the inter-hall sports programme and the hall's sports CCAs.",
         contributions: [
-          "Ran the inter-hall sports calendar across 11 sports and 40 matches.",
-          "Introduced a shared fixtures calendar adopted by all sports CCAs.",
-          "Coordinated transport and refereeing for home matches.",
-          "Led the review of sports CCA budgets with the JCRC Treasurer.",
+          {
+            activity: "Inter-hall sports calendar",
+            role: "Organiser",
+            description: "Ran the calendar across 11 sports and 40 matches.",
+          },
+          {
+            activity: "Shared fixtures calendar",
+            role: "Lead",
+            description: "Introduced a calendar adopted by all sports CCAs.",
+          },
+          {
+            activity: "Home match logistics",
+            role: "Coordinator",
+            description: "Coordinated transport and refereeing for home matches.",
+          },
+          {
+            activity: "Sports CCA budget review",
+            description: "Led the review of sports CCA budgets with the JCRC Treasurer.",
+          },
         ],
         testimonial:
           "This member built a calendar that residents could rely on. I am glad to recommend them.",
@@ -424,8 +447,15 @@ async function seed() {
         description:
           "Supports the JCRC Welfare Secretary in running residents' welfare programmes.",
         contributions: [
-          "Helped run the exam-period welfare drives.",
-          "Was the JCRC contact point for residents' feedback.",
+          {
+            activity: "Exam-period welfare drives",
+            role: "Helper",
+            description: "Helped run the drives.",
+          },
+          {
+            activity: "Residents' feedback",
+            description: "Was the JCRC contact point for feedback.",
+          },
         ],
         testimonial: "A dependable member of the committee.",
         isPlaceholder: true,

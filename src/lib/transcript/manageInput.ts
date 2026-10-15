@@ -157,11 +157,20 @@ export const awardCreateInput = z.object({
     .pipe(z.union([z.null(), line(1, 300)])),
 });
 
+/** One row of a JCRC member's "Contributions during the year" table. */
+const contributionRow = z.object({
+  activity: line(1, 80),
+  role: line(0, 60),
+  description: block(0, 300),
+});
+
 const jcrcFields = {
   portfolio: line(0, 80),
   position: line(0, 80),
   description: block(0, 800),
-  contributions: z.array(line(1, 200)).max(10, "AT_MOST_10_CONTRIBUTIONS"),
+  contributions: z
+    .array(contributionRow)
+    .max(10, "AT_MOST_10_CONTRIBUTIONS"),
   testimonial: block(0, 1500),
 };
 

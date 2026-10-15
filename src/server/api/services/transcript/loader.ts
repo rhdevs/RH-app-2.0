@@ -224,7 +224,11 @@ export async function loadTranscriptInput(
         position: jcrc.position ?? "",
         term: academicYear,
         description: jcrc.description ?? "",
-        contributions: jcrc.contributions.map((c) => c.activity),
+        contributions: jcrc.contributions.map((c) => ({
+          activity: c.activity,
+          role: c.role ?? "",
+          description: c.description ?? "",
+        })),
         testimonial: { text: jcrc.testimonial ?? "", author: "Hall Master" },
         isPlaceholder: jcrc.isPlaceholder ?? true,
       }

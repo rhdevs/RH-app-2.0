@@ -237,7 +237,7 @@ function toJcrcPage(jcrc: JcrcServiceInput): JcrcPageModel {
     term: jcrc.term,
     about: JCRC_ABOUT_TEXT,
     responsibilities: jcrc.description,
-    contributions: [...jcrc.contributions],
+    contributions: jcrc.contributions.map((c) => ({ ...c })),
     testimonial: { ...jcrc.testimonial },
     isPlaceholder: jcrc.isPlaceholder,
   };

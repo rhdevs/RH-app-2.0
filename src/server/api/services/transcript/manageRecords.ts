@@ -154,7 +154,12 @@ export async function jcrcSave(
     portfolio: fields.portfolio,
     position: fields.position,
     description: fields.description,
-    contributions: fields.contributions,
+    // A blank role or description is stored as absent, not as an empty string.
+    contributions: fields.contributions.map((c) => ({
+      activity: c.activity,
+      role: c.role === "" ? null : c.role,
+      description: c.description === "" ? null : c.description,
+    })),
     testimonial: fields.testimonial,
     updatedAt: now,
     updatedBy: actorUserID,
@@ -194,7 +199,11 @@ export async function jcrcGet(
         portfolio: row.portfolio ?? "",
         position: row.position ?? "",
         description: row.description ?? "",
-        contributions: row.contributions,
+        contributions: row.contributions.map((c) => ({
+          activity: c.activity,
+          role: c.role ?? "",
+          description: c.description ?? "",
+        })),
         testimonial: row.testimonial ?? "",
         isPlaceholder: row.isPlaceholder ?? true,
         updatedAt: row.updatedAt,

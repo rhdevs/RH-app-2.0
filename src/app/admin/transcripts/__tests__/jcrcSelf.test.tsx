@@ -6,6 +6,7 @@ import {
   JcrcSelfView,
   type JcrcSelfViewProps,
 } from "../_components/JcrcSelf";
+import type { ContributionDraft } from "~/lib/transcript/headView";
 
 const auth = vi.fn();
 vi.mock("~/server/auth", () => ({ auth: () => auth() }));
@@ -87,25 +88,84 @@ describe("JCRC self page", () => {
     );
   });
 
-  it("lists contributions with a remove control, up to ten", () => {
-    const some = render({
-      draft: { ...EMPTY_JCRC, contributions: ["Ran orientation", "Ran quiz"] },
-    });
-    expect(some).toContain("Ran orientation");
-    expect(some).toContain("Remove contribution 2");
-    expect(some).toContain("2 of 10, up to 200 characters each");
-    expect(some).toContain('maxLength="200"');
+  const row = (over: Partial<ContributionDraft> = {}): ContributionDraft => ({
+    activity: "Ran orientation",
+    role: "Lead",
+    description: "Ran the week.",
+    removed: false,
+    ...over,
+  });
 
+  it("shows one card per contribution with its three fields and counters", () => {
+    const html = render({
+      draft: {
+        ...EMPTY_JCRC,
+        contributions: [row(), row({ activity: "Ran quiz", role: "" })],
+      },
+    });
+
+    expect(html).toContain("Ran orientation");
+    expect(html).toContain('id="jcrc-activity-0"');
+    expect(html).toContain('id="jcrc-role-1"');
+    expect(html).toContain('id="jcrc-contribution-description-1"');
+    expect(html).toContain('maxLength="80"');
+    expect(html).toContain('maxLength="60"');
+    expect(html).toContain('maxLength="300"');
+    expect(html).toContain("65 characters left"); // activity "Ran orientation" is 15
+    expect(html).toContain("2 of 10");
+  });
+
+  it("offers Move up, Move down and Remove, disabling a move that has nowhere to go", () => {
+    const html = render({
+      draft: { ...EMPTY_JCRC, contributions: [row(), row({ activity: "B" })] },
+    });
+    const button = (label: string) =>
+      html.match(new RegExp(`<button\\b[^>]*>[^<]*${label}`, "g")) ?? [];
+
+    expect(button("Move up")).toHaveLength(2);
+    expect(button("Move down")).toHaveLength(2);
+    expect(button("Remove")).toHaveLength(2);
+    expect(button("Move up")[0]).toMatch(/\sdisabled=""/);
+    expect(button("Move up")[1]).not.toMatch(/\sdisabled=""/);
+    expect(button("Move down")[1]).toMatch(/\sdisabled=""/);
+  });
+
+  it("shows a removed row as Removed with Undo, until Save", () => {
+    const html = render({
+      draft: {
+        ...EMPTY_JCRC,
+        contributions: [row({ removed: true }), row({ activity: "Kept" })],
+      },
+    });
+
+    expect(html).toContain("Removed. Ran orientation");
+    expect(html).toContain(">Undo<");
+    expect(html).toContain("1 of 10");
+  });
+
+  it("stops adding at ten and says how many there are", () => {
     const full = render({
       draft: {
         ...EMPTY_JCRC,
-        contributions: Array.from({ length: 10 }, (_, i) => `c${i}`),
+        contributions: Array.from({ length: 10 }, (_, i) =>
+          row({ activity: `c${i}` }),
+        ),
       },
     });
     const add = (full.match(
       /<button\b[^>]*>(?:(?!<\/button>).)*Add contribution/g,
     ) ?? [])[0];
+
     expect(add).toMatch(/\sdisabled=""/);
+    expect(full).toContain("10 of 10");
+  });
+
+  it("asks for an activity on every row before saving", () => {
+    const html = render({
+      draft: { ...EMPTY_JCRC, contributions: [row({ activity: "  " })] },
+    });
+
+    expect(html).toContain("Each contribution needs an activity.");
   });
 
   it("says when no contributions have been added", () => {
@@ -136,7 +196,17 @@ describe("JCRC self page", () => {
   it("is read-only once published: note shown, no Save, fields disabled", () => {
     const html = render({
       readOnly: true,
-      draft: { ...EMPTY_JCRC, contributions: ["Ran orientation"] },
+      draft: {
+        ...EMPTY_JCRC,
+        contributions: [
+          {
+            activity: "Ran orientation",
+            role: "",
+            description: "",
+            removed: false,
+          },
+        ],
+      },
     });
 
     expect(html).toContain(
@@ -145,8 +215,8 @@ describe("JCRC self page", () => {
     expect(html).not.toContain(">Save<");
     expect(html).not.toContain("Add contribution");
     expect(html).not.toContain("Remove contribution");
-    expect(disabledTags(html, "input")).toHaveLength(3);
-    expect(disabledTags(html, "textarea")).toHaveLength(2);
+    expect(disabledTags(html, "input")).toHaveLength(4);
+    expect(disabledTags(html, "textarea")).toHaveLength(3);
   });
 
   it("uses plain wording", () => {

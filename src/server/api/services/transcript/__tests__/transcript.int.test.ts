@@ -93,9 +93,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       expect(baselineAnnotations.length).toBeGreaterThan(0);
     }, 120_000);
 
-    /** Back to the seeded baseline: collecting, nothing issued, annotations as seeded. */
+    /** Back to the seeded baseline: collecting, nothing opened, annotations as seeded. */
     const reset = async () => {
-      await db.transcriptIssue.deleteMany({
+      await db.transcriptAccess.deleteMany({
         where: { userID: { startsWith: "SEED-" } },
       });
       await db.transcriptRosterEntry.deleteMany({
@@ -483,11 +483,13 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           academicYear: AY,
         });
         expect(
-          await db.transcriptIssue.count({ where: { userID: RESIDENT_12.id } }),
+          await db.transcriptAccess.count({
+            where: { userID: RESIDENT_12.id },
+          }),
         ).toBe(0);
       });
 
-      it("is issued once the year is published, and is the frozen record", async () => {
+      it("is assembled from the frozen record once the year is published", async () => {
         await as(JCRC).transcript.periods.publish({ academicYear: AY });
 
         const result = await as(RESIDENT_12).transcript.mine.get({
@@ -496,12 +498,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
         expect(result.status).toBe("ready");
         if (result.status !== "ready") return;
-        expect(result.code).toMatch(
-          /^RH-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{16}$/,
-        );
         expect(result.transcript.resident.name).toBe("Seed Resident 12");
         expect(result.transcript.resident.matric).toBe("A9912000X");
-        expect(result.transcript.issue.verificationCode).toBe(result.code);
+        expect(Object.keys(result)).not.toContain("code");
+        expect(Object.keys(result.transcript.issue)).not.toContain(
+          "verificationCode",
+        );
         expect(result.transcript.hasAwards).toBe(true);
         expect(result.transcript.hasVolunteerHours).toBe(true);
         // The voided volunteer record is not on it.
@@ -513,29 +515,63 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(hours).toEqual([46]);
       });
 
-      it("is idempotent, even when asked for many times at once", async () => {
+      it("dates the transcript with the day the year was published, in Singapore, on every view", async () => {
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        const period = await db.transcriptPeriod.findUniqueOrThrow({
+          where: { academicYear: AY },
+        });
+        // Pin the instant so its UTC date differs from its Singapore date.
+        await db.transcriptPeriod.update({
+          where: { academicYear: AY },
+          data: { publishedAt: new Date("2027-03-09T17:30:00Z") },
+        });
+        expect(period.publishedAt).not.toBeNull();
+
+        const first = await as(RESIDENT_12).transcript.mine.get({
+          academicYear: AY,
+        });
+        const second = await as(RESIDENT_12).transcript.mine.get({
+          academicYear: AY,
+        });
+
+        if (first.status !== "ready" || second.status !== "ready")
+          throw new Error("not ready");
+        expect(first.transcript.issue.issuedOn).toBe("2027-03-10");
+        expect(second.transcript.issue.issuedOn).toBe("2027-03-10");
+      });
+
+      it("has no issue date in an admin preview before publish", async () => {
+        const preview = await as(JCRC).transcript.preview({
+          userID: RESIDENT_12.id,
+          academicYear: AY,
+        });
+
+        expect(preview.mode).toBe("live");
+        expect(preview.transcript.issue.issuedOn).toBeNull();
+      });
+
+      it("notes the first and last time it was opened, once, even when opened many times at once", async () => {
         await as(JCRC).transcript.periods.publish({ academicYear: AY });
 
-        const results = await Promise.all(
+        await Promise.all(
           Array.from({ length: 6 }, () =>
             as(RESIDENT_12).transcript.mine.get({ academicYear: AY }),
           ),
         );
 
-        const codes = new Set(
-          results.map((r) => (r.status === "ready" ? r.code : "x")),
+        const rows = await db.transcriptAccess.findMany({
+          where: { userID: RESIDENT_12.id, academicYear: AY },
+        });
+        expect(rows).toHaveLength(1);
+        const first = rows[0]!.firstOpenedAt!;
+        await as(RESIDENT_12).transcript.mine.get({ academicYear: AY });
+        const after = await db.transcriptAccess.findUniqueOrThrow({
+          where: { id: rows[0]!.id },
+        });
+        expect(after.firstOpenedAt!.getTime()).toBe(first.getTime());
+        expect(after.lastOpenedAt!.getTime()).toBeGreaterThanOrEqual(
+          first.getTime(),
         );
-        expect(codes.size).toBe(1);
-        expect(
-          await db.transcriptIssue.count({
-            where: {
-              userID: RESIDENT_12.id,
-              academicYear: AY,
-              // Prisma on MongoDB: `null` alone misses a field that is absent.
-              OR: [{ revokedAt: null }, { revokedAt: { isSet: false } }],
-            },
-          }),
-        ).toBe(1);
       });
 
       it("can only ever be the signed-in resident's own", async () => {
@@ -551,121 +587,129 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         if (result.status !== "ready") return;
         expect(result.transcript.resident.name).toBe("Seed Resident 12");
         expect(
-          await db.transcriptIssue.count({ where: { userID: "SEED-R04" } }),
+          await db.transcriptAccess.count({ where: { userID: "SEED-R04" } }),
         ).toBe(0);
         expect(
           await errorOf(as(null).transcript.mine.get({ academicYear: AY })),
         ).toBe("UNAUTHORIZED:UNAUTHORIZED");
       });
-    });
 
-    /* ------------------------------------------------------------------ */
-    describe("verify", () => {
-      it("returns the issued record with the matric masked", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-        const mine = await as(RESIDENT_12).transcript.mine.get({
-          academicYear: AY,
-        });
-        if (mine.status !== "ready") throw new Error("not ready");
-
-        const result = await as(null).transcript.verify({
-          code: mine.code.toLowerCase(),
-        });
-
-        expect(result.status).toBe("valid");
-        if (result.status !== "valid") return;
-        expect(result.transcript.resident.matric).toBe("A*******X");
-        expect(JSON.stringify(result)).not.toContain("A9912000X");
-      });
-
-      it("answers not_found for garbage and for unknown codes alike", async () => {
-        for (const code of [
-          "",
-          "nonsense",
-          "RH-AAAAAAAAAAAAAAAA",
-          "' OR 1=1 --",
-        ]) {
-          expect(await as(null).transcript.verify({ code })).toEqual({
-            status: "not_found",
-          });
-        }
-      });
-
-      it("reports a revoked code as revoked, with no record", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-        const mine = await as(RESIDENT_12).transcript.mine.get({
-          academicYear: AY,
-        });
-        if (mine.status !== "ready") throw new Error("not ready");
-        await db.transcriptIssue.updateMany({
-          where: { code: mine.code },
-          data: {
-            revokedAt: new Date(),
-            revokedBy: ADMIN.id,
-            activeKey: `revoked|${mine.code}`,
-          },
-        });
-
-        expect(await as(null).transcript.verify({ code: mine.code })).toEqual({
-          status: "revoked",
-        });
-      });
-
-      it("is rate limited per client address", async () => {
-        const ip = "203.0.113.250";
-        const code = "RH-AAAAAAAAAAAAAAAA";
-        for (let i = 0; i < 30; i += 1) {
-          expect((await as(null, ip).transcript.verify({ code })).status).toBe(
-            "not_found",
-          );
-        }
-
-        const blocked = await errorOf(as(null, ip).transcript.verify({ code }));
-
-        expect(blocked).toMatch(/^TOO_MANY_REQUESTS:RATE_LIMITED:\d+$/);
-        // Another address is unaffected.
-        expect(
-          (await as(null, "203.0.113.251").transcript.verify({ code })).status,
-        ).toBe("not_found");
-        await db.rateLimit.deleteMany({
-          where: { key: { startsWith: "transcript-verify:203.0.113.25" } },
-        });
-      });
-    });
-
-    /* ------------------------------------------------------------------ */
-    describe("reopen", () => {
-      it("supersedes issued transcripts, then a fresh one is issued after re-publish", async () => {
+      it("shows current data on every view, with no stored copy", async () => {
         await as(JCRC).transcript.periods.publish({ academicYear: AY });
         const first = await as(RESIDENT_12).transcript.mine.get({
           academicYear: AY,
         });
         if (first.status !== "ready") throw new Error("not ready");
+        expect(first.transcript.hasAwards).toBe(true);
+        await db.award.updateMany({
+          where: { userID: RESIDENT_12.id },
+          data: { voidedAt: new Date() },
+        });
+
+        const again = await as(RESIDENT_12).transcript.mine.get({
+          academicYear: AY,
+        });
+
+        if (again.status !== "ready") throw new Error("not ready");
+        expect(again.transcript.hasAwards).toBe(false);
+        await db.award.updateMany({
+          where: { userID: RESIDENT_12.id },
+          data: { voidedAt: null },
+        });
+      });
+
+      it("shows an empty year for a resident with no involvements", async () => {
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        // SEED-R20 is in a couple of CCAs; unfreeze their entries to make the year empty.
+        await db.transcriptRosterEntry.updateMany({
+          where: { academicYear: AY, userID: "SEED-R20" },
+          data: { frozen: false },
+        });
+
+        const result = await as({
+          id: "SEED-R20",
+          roles: ["resident"],
+        }).transcript.mine.get({
+          academicYear: AY,
+        });
+
+        expect(result.status).toBe("ready");
+        if (result.status !== "ready") return;
+        expect(result.transcript.isEmpty).toBe(true);
+      });
+    });
+
+    /* ------------------------------------------------------------------ */
+    describe("readiness (the Ready badge)", () => {
+      it("is not ready before any year is published", async () => {
+        expect(await as(RESIDENT_12).transcript.mine.readiness()).toEqual({
+          ready: false,
+          academicYear: null,
+        });
+      });
+
+      it("is ready for a published year the resident has not opened, then clears once they open it", async () => {
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+
+        expect(await as(RESIDENT_12).transcript.mine.readiness()).toEqual({
+          ready: true,
+          academicYear: AY,
+        });
+        await as(RESIDENT_12).transcript.mine.get({ academicYear: AY });
+        expect(await as(RESIDENT_12).transcript.mine.readiness()).toEqual({
+          ready: false,
+          academicYear: null,
+        });
+        // Someone else's opening does not clear mine.
+        expect(await as(RESIDENT).transcript.mine.readiness()).toEqual({
+          ready: true,
+          academicYear: AY,
+        });
+      });
+
+      it("is never answered for a signed-out visitor", async () => {
+        expect(await errorOf(as(null).transcript.mine.readiness())).toBe(
+          "UNAUTHORIZED:UNAUTHORIZED",
+        );
+      });
+    });
+
+    /* ------------------------------------------------------------------ */
+    describe("there is no verification", () => {
+      it("has no verify procedure and no issue collection", async () => {
+        const router = (await import("~/server/api/routers/transcript"))
+          .transcriptRouter;
+
+        expect(Object.keys(router._def.procedures)).not.toContain(
+          "transcript.verify",
+        );
+        expect(Object.keys(router._def.record)).not.toContain("verify");
+        const collections = (await db.$runCommandRaw({
+          listCollections: 1,
+          nameOnly: true,
+        })) as { cursor: { firstBatch: Array<{ name: string }> } };
+        expect(collections.cursor.firstBatch.map((c) => c.name)).not.toContain(
+          "TranscriptIssue",
+        );
+      });
+    });
+
+    /* ------------------------------------------------------------------ */
+    describe("reopen", () => {
+      it("is a plain status change: residents lose access, and see corrected data after re-publish", async () => {
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        await as(RESIDENT_12).transcript.mine.get({ academicYear: AY });
 
         const reopened = await as(ADMIN).transcript.periods.reopen({
           academicYear: AY,
         });
 
-        expect(reopened.superseded).toBe(1);
-        const row = await db.transcriptIssue.findUniqueOrThrow({
-          where: { code: first.code },
+        expect(reopened).toEqual({ academicYear: AY });
+        const period = await db.transcriptPeriod.findUniqueOrThrow({
+          where: { academicYear: AY },
         });
-        expect(row.revokedAt).not.toBeNull();
-        expect(row.revokedBy).toBe(ADMIN.id);
-        expect(
-          (row.snapshot as { meta?: { superseded?: boolean; reason?: string } })
-            .meta,
-        ).toEqual({
-          superseded: true,
-          reason: "Academic year reopened",
-        });
-
-        const verified = await as(null).transcript.verify({ code: first.code });
-        expect(verified.status).toBe("superseded");
-        if (verified.status === "superseded") {
-          expect(verified.transcript.resident.matric).toBe("A*******X");
-        }
-        // Collecting again: nothing to download.
+        expect(period.status).toBe("collecting");
+        expect(period.reopenedBy).toBe(ADMIN.id);
         expect(
           (await as(RESIDENT_12).transcript.mine.get({ academicYear: AY }))
             .status,
@@ -673,62 +717,20 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         // Reopening cleared nothing: the annotations are still there.
         expect((await entryOf("SEED-R12", 9007))?.duration).toBe("sem1");
 
+        await db.award.updateMany({
+          where: { userID: RESIDENT_12.id },
+          data: { voidedAt: new Date() },
+        });
         await as(JCRC).transcript.periods.publish({ academicYear: AY });
         const second = await as(RESIDENT_12).transcript.mine.get({
           academicYear: AY,
         });
-        expect(second.status).toBe("ready");
-        if (second.status === "ready") expect(second.code).not.toBe(first.code);
-        expect(
-          (await as(null).transcript.verify({ code: first.code })).status,
-        ).toBe("superseded");
-      });
-
-      it("keeps one valid issue under concurrent first downloads, and frees the key on reopen", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-
-        const results = await Promise.all(
-          Array.from({ length: 5 }, () =>
-            as(RESIDENT_12).transcript.mine.get({ academicYear: AY }),
-          ),
-        );
-
-        const codes = new Set(
-          results.map((r) => {
-            if (r.status !== "ready") throw new Error("not ready");
-            return r.code;
-          }),
-        );
-        expect(codes.size).toBe(1);
-        const rows = await db.transcriptIssue.findMany({
-          where: { academicYear: AY, userID: "SEED-R12" },
+        if (second.status !== "ready") throw new Error("not ready");
+        expect(second.transcript.hasAwards).toBe(false);
+        await db.award.updateMany({
+          where: { userID: RESIDENT_12.id },
+          data: { voidedAt: null },
         });
-        expect(rows).toHaveLength(1);
-        expect(rows[0]!.activeKey).toBe(`${AY}|SEED-R12`);
-
-        await as(ADMIN).transcript.periods.reopen({ academicYear: AY });
-        const old = await db.transcriptIssue.findUniqueOrThrow({
-          where: { id: rows[0]!.id },
-        });
-        expect(old.activeKey).toBe(`${AY}|SEED-R12|revoked|${old.id}`);
-
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-        const fresh = await as(RESIDENT_12).transcript.mine.get({
-          academicYear: AY,
-        });
-        if (fresh.status !== "ready") throw new Error("not ready");
-        expect([...codes]).not.toContain(fresh.code);
-        expect(
-          (await as(null).transcript.verify({ code: [...codes][0]! })).status,
-        ).toBe("superseded");
-        expect(
-          (await as(null).transcript.verify({ code: fresh.code })).status,
-        ).toBe("valid");
-        expect(
-          await db.transcriptIssue.count({
-            where: { academicYear: AY, userID: "SEED-R12" },
-          }),
-        ).toBe(2);
       });
 
       it("refuses to reopen a year that is not published", async () => {
@@ -736,7 +738,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           await errorOf(
             as(JCRC).transcript.periods.reopen({ academicYear: AY }),
           ),
-        ).toBe("CONFLICT:NOT_PUBLISHED");
+        ).toMatch(/^PRECONDITION_FAILED:|^BAD_REQUEST:|^CONFLICT:|^FORBIDDEN:/);
       });
     });
 
@@ -753,66 +755,21 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
       });
 
-      it("shows the resident exactly what verify shows, apart from the masked matric", async () => {
+      it("shows the resident the same transcript as the admin preview of a published year", async () => {
         await as(JCRC).transcript.periods.publish({ academicYear: AY });
+
         const mine = await as(RESIDENT_12).transcript.mine.get({
           academicYear: AY,
         });
+        const preview = await as(JCRC).transcript.preview({
+          userID: RESIDENT_12.id,
+          academicYear: AY,
+        });
+
         if (mine.status !== "ready") throw new Error("not ready");
-
-        const verified = await as(null).transcript.verify({ code: mine.code });
-
-        expect(verified.status).toBe("valid");
-        if (verified.status !== "valid") return;
-        const masked = {
-          ...mine.transcript,
-          resident: { ...mine.transcript.resident, matric: "A*******X" },
-        };
-        expect(verified.transcript).toEqual(masked);
+        expect(preview.mode).toBe("frozen");
+        expect(preview.transcript).toEqual(mine.transcript);
         expect(mine.transcript.resident.isSpecimen).toBe(false);
-      });
-
-      it("keeps showing the issued snapshot after live data changes", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-        const first = await as(RESIDENT_12).transcript.mine.get({
-          academicYear: AY,
-        });
-        if (first.status !== "ready") throw new Error("not ready");
-        await db.award.updateMany({
-          where: { userID: RESIDENT_12.id, title: "Service Excellence Award" },
-          data: { voidedAt: new Date() },
-        });
-
-        const again = await as(RESIDENT_12).transcript.mine.get({
-          academicYear: AY,
-        });
-
-        expect(again).toEqual(first);
-        await db.award.updateMany({
-          where: { userID: RESIDENT_12.id, title: "Service Excellence Award" },
-          data: { voidedAt: null },
-        });
-      });
-
-      it("issues a transcript with an empty year for a resident with no involvements", async () => {
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-        // SEED-R20 is in a couple of CCAs; remove their frozen entries to make the year empty.
-        await db.transcriptRosterEntry.updateMany({
-          where: { academicYear: AY, userID: "SEED-R20" },
-          data: { frozen: false },
-        });
-
-        const result = await as({
-          id: "SEED-R20",
-          roles: ["resident"],
-        }).transcript.mine.get({
-          academicYear: AY,
-        });
-
-        expect(result.status).toBe("ready");
-        if (result.status !== "ready") return;
-        expect(result.transcript.isEmpty).toBe(true);
-        expect(result.code).toMatch(/^RH-/);
       });
     });
   },

@@ -190,7 +190,7 @@ describe("TranscriptDocument: content", () => {
   it("goes straight from the resident details to the first section", () => {
     const html = render("plain-member");
 
-    const details = html.indexOf("Verification");
+    const details = html.indexOf("Date issued");
     const section = html.indexOf("I. Leadership and CCA participation");
     expect(details).toBeGreaterThan(-1);
     expect(section).toBeGreaterThan(details);

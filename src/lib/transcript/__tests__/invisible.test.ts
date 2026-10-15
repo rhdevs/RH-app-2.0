@@ -120,7 +120,9 @@ describe("invisible and direction-changing characters", () => {
       portfolio: "Sports",
       position: "Secretary",
       description: "Runs sport",
-      contributions: ["Ran orientation"],
+      contributions: [
+        { activity: "Ran orientation", role: "Lead", description: "Ran it." },
+      ],
       testimonial: "Good year",
     };
     expect(jcrcSaveMineInput.safeParse(jcrc).success).toBe(true);
@@ -136,7 +138,25 @@ describe("invisible and direction-changing characters", () => {
       ).toBe(false);
     }
     expect(
-      jcrcSaveMineInput.safeParse({ ...jcrc, contributions: [bad] }).success,
+      jcrcSaveMineInput.safeParse({
+        ...jcrc,
+        contributions: [{ activity: "Fine", role: "", description: "" }],
+      }).success,
+    ).toBe(true);
+    for (const field of ["activity", "role", "description"] as const) {
+      expect(
+        jcrcSaveMineInput.safeParse({
+          ...jcrc,
+          contributions: [
+            { activity: "Fine", role: "", description: "", [field]: bad },
+          ],
+        }).success,
+        field,
+      ).toBe(false);
+    }
+    expect(
+      jcrcSaveMineInput.safeParse({ ...jcrc, contributions: [bad as never] })
+        .success,
     ).toBe(false);
   });
 

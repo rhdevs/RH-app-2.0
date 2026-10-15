@@ -124,7 +124,7 @@ describe("text rules", () => {
         portfolio: "Sports",
         position: "Secretary",
         description: "d",
-        contributions: ["one"],
+        contributions: [{ activity: "one", role: "", description: "" }],
         testimonial: "t",
         ...over,
       });
@@ -133,12 +133,48 @@ describe("text rules", () => {
     expect(make({ portfolio: "p".repeat(81) }).success).toBe(false);
     expect(make({ position: "p".repeat(81) }).success).toBe(false);
     expect(make({ description: "d".repeat(801) }).success).toBe(false);
-    expect(make({ contributions: Array(11).fill("c") }).success).toBe(false);
-    expect(make({ contributions: Array(10).fill("c") }).success).toBe(true);
-    expect(make({ contributions: ["c".repeat(201)] }).success).toBe(false);
-    expect(make({ contributions: ["   "] }).success).toBe(false);
-    expect(make({ contributions: [" trimmed "] })).toMatchObject({
-      data: { contributions: ["trimmed"] },
+    const row = (over: object = {}) => ({
+      activity: "Orientation",
+      role: "Lead",
+      description: "Ran the programme.",
+      ...over,
+    });
+    expect(make({ contributions: Array(11).fill(row()) }).success).toBe(false);
+    expect(make({ contributions: Array(10).fill(row()) }).success).toBe(true);
+    // activity: required, 1 to 80
+    expect(
+      make({ contributions: [row({ activity: "a".repeat(81) })] }).success,
+    ).toBe(false);
+    expect(
+      make({ contributions: [row({ activity: "a".repeat(80) })] }).success,
+    ).toBe(true);
+    expect(make({ contributions: [row({ activity: "   " })] }).success).toBe(
+      false,
+    );
+    // role: optional, up to 60
+    expect(
+      make({ contributions: [row({ role: "r".repeat(61) })] }).success,
+    ).toBe(false);
+    expect(
+      make({ contributions: [row({ role: "r".repeat(60) })] }).success,
+    ).toBe(true);
+    expect(make({ contributions: [row({ role: "" })] }).success).toBe(true);
+    // description: optional, up to 300
+    expect(
+      make({ contributions: [row({ description: "d".repeat(301) })] }).success,
+    ).toBe(false);
+    expect(
+      make({ contributions: [row({ description: "d".repeat(300) })] }).success,
+    ).toBe(true);
+    expect(make({ contributions: [row({ description: "" })] }).success).toBe(
+      true,
+    );
+    // a bare string is no longer a contribution
+    expect(make({ contributions: ["one"] }).success).toBe(false);
+    expect(
+      make({ contributions: [row({ activity: " trimmed " })] }),
+    ).toMatchObject({
+      data: { contributions: [{ activity: "trimmed" }] },
     });
     expect(make({ portfolio: "  " })).toMatchObject({
       data: { portfolio: "" },

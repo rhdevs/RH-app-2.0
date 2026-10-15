@@ -16,7 +16,9 @@ export const HOURS_MAX = 200;
 export const PORTFOLIO_MAX = 80;
 export const POSITION_MAX = 80;
 export const DESCRIPTION_MAX = 800;
-export const CONTRIBUTION_MAX = 200;
+export const CONTRIBUTION_ACTIVITY_MAX = 80;
+export const CONTRIBUTION_ROLE_MAX = 60;
+export const CONTRIBUTION_DESCRIPTION_MAX = 300;
 export const CONTRIBUTIONS_MAX_ITEMS = 10;
 export const TESTIMONIAL_MAX = 1500;
 
@@ -224,4 +226,92 @@ export function reconcileAfterSave<T>(
  */
 export function clearIfUnchanged(current: string, submitted: string): string {
   return current === submitted ? "" : current;
+}
+
+/* ---- JCRC contribution rows ------------------------------------------------ */
+
+/** One row of "Contributions during the year", as the editor holds it. */
+export interface ContributionDraft {
+  activity: string;
+  role: string;
+  description: string;
+  /** Removed in the editor, still shown with Undo until the page is saved. */
+  removed: boolean;
+}
+
+export const blankContribution = (): ContributionDraft => ({
+  activity: "",
+  role: "",
+  description: "",
+  removed: false,
+});
+
+/** The rows that will be saved: not removed, in order. */
+export const liveContributions = (rows: readonly ContributionDraft[]) =>
+  rows.filter((r) => !r.removed);
+
+/** Move a row up (-1) or down (+1) past the next row that is not removed. */
+export function moveContribution(
+  rows: readonly ContributionDraft[],
+  index: number,
+  delta: -1 | 1,
+): ContributionDraft[] {
+  const next = [...rows];
+  let target = index + delta;
+  while (target >= 0 && target < next.length && next[target]!.removed) {
+    target += delta;
+  }
+  if (target < 0 || target >= next.length || !next[index]) return next;
+  const moved = next[index]!;
+  next[index] = next[target]!;
+  next[target] = moved;
+  return next;
+}
+
+/** Can the live row at `index` (among all rows) move that way? */
+export function canMoveContribution(
+  rows: readonly ContributionDraft[],
+  index: number,
+  delta: -1 | 1,
+): boolean {
+  for (let i = index + delta; i >= 0 && i < rows.length; i += delta) {
+    if (!rows[i]!.removed) return true;
+  }
+  return false;
+}
+
+/** Is the list of live rows the same, row for row, ignoring surrounding spaces? */
+export function sameContributions(
+  a: readonly ContributionDraft[],
+  b: readonly ContributionDraft[],
+): boolean {
+  const x = liveContributions(a);
+  const y = liveContributions(b);
+  return (
+    x.length === y.length &&
+    x.every(
+      (r, i) =>
+        r.activity.trim() === y[i]!.activity.trim() &&
+        r.role.trim() === y[i]!.role.trim() &&
+        r.description.trim() === y[i]!.description.trim(),
+    )
+  );
+}
+
+/** A reason the rows cannot be saved yet, or null. */
+export function contributionsProblem(
+  rows: readonly ContributionDraft[],
+): string | null {
+  return liveContributions(rows).some((r) => r.activity.trim() === "")
+    ? "Each contribution needs an activity."
+    : null;
+}
+
+/** The rows as the API takes them: trimmed, in order, removed rows left out. */
+export function contributionsPayload(rows: readonly ContributionDraft[]) {
+  return liveContributions(rows).map((r) => ({
+    activity: r.activity.trim(),
+    role: r.role.trim(),
+    description: r.description.trim(),
+  }));
 }
