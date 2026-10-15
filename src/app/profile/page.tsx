@@ -16,9 +16,7 @@ import {
   EyeOff,
   AlertTriangle,
   Users,
-  FileText,
 } from "lucide-react";
-import Link from "next/link";
 import { format } from "date-fns";
 import Toast from "../_components/Toast";
 import Header from "../_components/header";
@@ -289,13 +287,6 @@ const ProfilePage: React.FC = () => {
                   ) : (
                     <CcaBadges ccas={ccaData?.ccas ?? []} />
                   )}
-                  <Link
-                    href="/transcript"
-                    className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-emerald-800 hover:text-emerald-600"
-                  >
-                    <FileText className="h-4 w-4" />
-                    Transcript
-                  </Link>
                 </div>
               </div>
 

@@ -62,6 +62,9 @@ export function TranscriptFrame({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <PrintButton />
         </div>
+        <p className="mt-2 text-xs text-gray-500 print:hidden">
+          On a phone, use Share, then Print, then save as PDF.
+        </p>
         {footerNav}
       </div>
 

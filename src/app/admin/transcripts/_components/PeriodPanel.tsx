@@ -59,6 +59,13 @@ export interface PeriodPanelViewProps {
   actionError: string | null;
   /** The last result, in words, shown in place after an action succeeds. */
   resultLine: string | null;
+  /** The download-by date (a Singapore calendar date), "" when none. */
+  downloadByValue: string;
+  onDownloadByChange: (value: string) => void;
+  downloadByDirty: boolean;
+  onSaveDownloadBy: () => void;
+  savingDownloadBy: boolean;
+  downloadByError: string | null;
 }
 
 /**
@@ -140,6 +147,48 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
           accepted on or after it defaults to semester 2.
         </p>
         <ErrorLine message={p.saveError} />
+
+        <form
+          className="mt-5 flex flex-wrap items-end gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            p.onSaveDownloadBy();
+          }}
+        >
+          <div>
+            <label htmlFor="transcripts-download-by" className={FIELD_LABEL}>
+              Download by
+            </label>
+            <Input
+              id="transcripts-download-by"
+              type="date"
+              value={p.downloadByValue}
+              disabled={p.savingDownloadBy}
+              onChange={(e) => p.onDownloadByChange(e.target.value)}
+              className="w-44"
+            />
+          </div>
+          <Button
+            type="submit"
+            variant="outline"
+            disabled={p.savingDownloadBy || !p.downloadByDirty}
+          >
+            {p.savingDownloadBy ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Saving
+              </>
+            ) : (
+              "Save"
+            )}
+          </Button>
+        </form>
+        <p className="mt-2 max-w-2xl text-xs text-gray-500">
+          Residents see a banner asking them to download before this date, until
+          the end of the day in Singapore. Nothing is switched off after it. It
+          can be changed while the year is published.
+        </p>
+        <ErrorLine message={p.downloadByError} />
 
         <div className="mt-6 border-t border-gray-100 pt-5">
           {published ? (
@@ -238,6 +287,7 @@ export default function PeriodPanel() {
   });
   const [selected, setSelected] = useState<string | null>(null);
   const [sem2, setSem2] = useState("");
+  const [downloadBy, setDownloadBy] = useState("");
   const [confirming, setConfirming] = useState<Confirming>(null);
   const [resultLine, setResultLine] = useState<string | null>(null);
 
@@ -249,16 +299,28 @@ export default function PeriodPanel() {
     ? instantToSgDate(new Date(period.sem2Start))
     : "";
 
+  const savedDownloadBy = period?.downloadBy
+    ? instantToSgDate(new Date(period.downloadBy))
+    : "";
+
   // Show what is saved whenever the year, or the saved value, changes.
   useEffect(() => {
     setSem2(saved);
   }, [year, saved]);
+  useEffect(() => {
+    setDownloadBy(savedDownloadBy);
+  }, [year, savedDownloadBy]);
 
   const refresh = () => utils.transcript.periods.list.invalidate();
 
   const setSem2Start = api.transcript.periods.setSem2Start.useMutation({
     onSuccess: async () => {
       setResultLine(null);
+      await refresh();
+    },
+  });
+  const saveDownloadBy = api.transcript.periods.setDownloadBy.useMutation({
+    onSuccess: async () => {
       await refresh();
     },
   });
@@ -341,6 +403,22 @@ export default function PeriodPanel() {
       reopening={reopen.isPending}
       actionError={actionError ? errorText(actionError.message) : null}
       resultLine={resultLine}
+      downloadByValue={downloadBy}
+      onDownloadByChange={(v) => {
+        setDownloadBy(v);
+        saveDownloadBy.reset();
+      }}
+      downloadByDirty={downloadBy !== savedDownloadBy}
+      onSaveDownloadBy={() =>
+        saveDownloadBy.mutate({
+          academicYear: year,
+          downloadBy: downloadBy === "" ? null : downloadBy,
+        })
+      }
+      savingDownloadBy={saveDownloadBy.isPending}
+      downloadByError={
+        saveDownloadBy.error ? errorText(saveDownloadBy.error.message) : null
+      }
     />
   );
 }

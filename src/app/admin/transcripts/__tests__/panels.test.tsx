@@ -49,6 +49,12 @@ const period = (
   reopening: false,
   actionError: null,
   resultLine: null,
+  downloadByValue: "",
+  onDownloadByChange: noop,
+  downloadByDirty: false,
+  onSaveDownloadBy: noop,
+  savingDownloadBy: false,
+  downloadByError: null,
   ...over,
 });
 const renderPeriod = (over?: Partial<PeriodPanelViewProps>) =>
@@ -94,7 +100,9 @@ describe("academic year panel", () => {
     expect(renderPeriod({ sem2Dirty: false })).toMatch(
       /<button[^>]*\sdisabled=""[^>]*>Save</,
     );
-    expect(renderPeriod({ sem2Dirty: true })).not.toMatch(
+    expect(
+      renderPeriod({ sem2Dirty: true, downloadByDirty: true }),
+    ).not.toMatch(
       /<button[^>]*\sdisabled=""[^>]*>Save</,
     );
   });
@@ -497,5 +505,33 @@ describe("no screen shows a bare matric except the search results", () => {
 
     expect(log).not.toHaveBeenCalled();
     log.mockRestore();
+  });
+});
+
+describe("download-by date", () => {
+  it("shows the saved date and stays editable while the year is published", () => {
+    const html = renderPeriod({
+      status: "published",
+      downloadByValue: "2027-12-31",
+      downloadByDirty: true,
+    });
+
+    expect(html).toContain('id="transcripts-download-by"');
+    expect(html).toContain('value="2027-12-31"');
+    const field = /<input[^>]*id="transcripts-download-by"[^>]*>/.exec(
+      html,
+    )![0];
+    expect(field).not.toMatch(/\sdisabled=""/);
+    expect(html).toContain("Download by");
+  });
+
+  it("keeps Save disabled until the date changes, and shows an API error inline", () => {
+    const clean = renderPeriod({ downloadByDirty: false });
+    const saveButtons = clean.match(/<button[^>]*type="submit"[^>]*>/g) ?? [];
+    expect(saveButtons.some((b) => /\sdisabled=""/.test(b))).toBe(true);
+
+    const html = renderPeriod({ downloadByError: "Enter a real date." });
+    expect(html).toContain("Enter a real date.");
+    expect(html).toContain('role="alert"');
   });
 });

@@ -1678,6 +1678,64 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
       });
 
+      it("stores the download-by date as midnight Singapore, accepts it while published, and refuses a bad one", async () => {
+        const c = as(JCRC).transcript.periods;
+
+        await c.setDownloadBy({ academicYear: AY, downloadBy: "2027-12-31" });
+        const stored = await db.transcriptPeriod.findUniqueOrThrow({
+          where: { academicYear: AY },
+        });
+        expect(stored.downloadBy?.toISOString()).toBe(
+          "2027-12-30T16:00:00.000Z",
+        );
+
+        await c.setSem2Start({ academicYear: AY, sem2Start: "2027-01-12" });
+        await c.publish({ academicYear: AY });
+        // still editable once published
+        expect(
+          await errorOf(
+            c.setDownloadBy({ academicYear: AY, downloadBy: "2028-01-15" }),
+          ),
+        ).toBe("ok");
+        const mine = await as({
+          id: "SEED-R12",
+          roles: ["resident"],
+        }).transcript.mine.get({
+          academicYear: AY,
+        });
+        expect(mine.status === "ready" ? mine.downloadBy : "x").toBe(
+          "2028-01-15",
+        );
+
+        expect(
+          await errorOf(
+            c.setDownloadBy({ academicYear: AY, downloadBy: "2027-02-30" }),
+          ),
+        ).toMatch(/^BAD_REQUEST:/);
+        await c.setDownloadBy({ academicYear: AY, downloadBy: null });
+        const cleared = await as({
+          id: "SEED-R12",
+          roles: ["resident"],
+        }).transcript.mine.get({
+          academicYear: AY,
+        });
+        expect(
+          cleared.status === "ready" ? cleared.downloadBy : "x",
+        ).toBeNull();
+        expect(
+          await errorOf(
+            as({
+              id: "SEED-R12",
+              roles: ["resident"],
+            }).transcript.periods.setDownloadBy({
+              academicYear: AY,
+              downloadBy: "2028-01-15",
+            }),
+          ),
+        ).toMatch(/^FORBIDDEN:/);
+        await c.reopen({ academicYear: AY });
+      });
+
       it("returns the published count and the unmatched count for the publish summary", async () => {
         const result = await as(JCRC).transcript.periods.publish({
           academicYear: AY,

@@ -1,4 +1,5 @@
 import { parseAcademicYear } from "./academicYear";
+import { formatSgDate, sgDateToInstant } from "./sgDate";
 import { yearFromParam } from "./assemble";
 
 /**
@@ -55,3 +56,20 @@ export const NOT_AVAILABLE_NOTES = {
     `Your transcript for ${academicYear} isn’t available yet.`,
   detail: "It opens once the hall publishes transcripts.",
 } as const;
+
+/**
+ * The banner asking residents to download in time, or null. Shown only for a
+ * published year with a download-by date that is today (Singapore) or later.
+ * Both dates are Singapore calendar dates, "2027-12-31", so they compare as
+ * text.
+ */
+export function downloadByBanner(input: {
+  academicYear: string;
+  downloadBy: string | null;
+  todaySg: string;
+}): string | null {
+  if (!input.downloadBy || input.todaySg > input.downloadBy) return null;
+  const day = sgDateToInstant(input.downloadBy);
+  if (!day) return null;
+  return `Download your ${input.academicYear} transcript before ${formatSgDate(day)}.`;
+}

@@ -405,7 +405,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             .flatMap((p) => (p.kind === "main" ? p.sections : []))
             .flatMap((s) => (s.kind === "involvements" ? s.rows : []))
             .find((r) => r.ccaName === "Phoenix Press");
-          expect(row?.year).toBe("2026/27 (Semester 1)");
+          expect(row?.year).toBe("2026/27 Sem 1");
           const names = joined.transcript.pages
             .flatMap((p) => (p.kind === "main" ? p.sections : []))
             .flatMap((s) =>

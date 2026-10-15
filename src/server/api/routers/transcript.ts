@@ -7,7 +7,7 @@ import {
   isValidAcademicYear,
 } from "~/lib/transcript/academicYear";
 import { assembleTranscript } from "~/lib/transcript/assemble";
-import { sgDateToInstant } from "~/lib/transcript/sgDate";
+import { instantToSgDate, sgDateToInstant } from "~/lib/transcript/sgDate";
 import { canManageTranscriptPeriods } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
 import {
@@ -22,6 +22,7 @@ import {
   listPublishedYears,
   publish,
   reopen,
+  upsertDownloadBy,
   upsertSem2Start,
 } from "~/server/api/services/transcript/periods";
 import {
@@ -80,6 +81,16 @@ export const transcriptRouter = createTRPCRouter({
           ctx.db,
           input.academicYear,
           input.sem2Start ? sgDateToInstant(input.sem2Start) : null,
+        ),
+      ),
+
+    setDownloadBy: managerProcedure
+      .input(z.object({ academicYear, downloadBy: isoDate.nullable() }))
+      .mutation(({ ctx, input }) =>
+        upsertDownloadBy(
+          ctx.db,
+          input.academicYear,
+          input.downloadBy ? sgDateToInstant(input.downloadBy) : null,
         ),
       ),
 
@@ -144,7 +155,15 @@ export const transcriptRouter = createTRPCRouter({
         });
         const transcript = assembleTranscript(data, year);
         await recordAccess(ctx.db, year, userID);
-        return { status: "ready" as const, academicYear: year, transcript };
+        return {
+          status: "ready" as const,
+          academicYear: year,
+          transcript,
+          // A Singapore calendar date, "2027-12-31", or null.
+          downloadBy: period.downloadBy
+            ? instantToSgDate(period.downloadBy)
+            : null,
+        };
       }),
 
     /**

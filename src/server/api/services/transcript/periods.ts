@@ -142,6 +142,24 @@ export async function upsertSem2Start(
   });
 }
 
+/**
+ * The day residents are asked to download by (a Singapore calendar date stored
+ * as midnight there). Informational: it only drives a banner. It can be set or
+ * changed at any time, including while the year is published.
+ */
+export async function upsertDownloadBy(
+  db: PrismaClient,
+  academicYear: string,
+  downloadBy: Date | null,
+) {
+  requireValidYear(academicYear);
+  return db.transcriptPeriod.upsert({
+    where: { academicYear },
+    create: { academicYear, downloadBy, status: STATUS_COLLECTING },
+    update: { downloadBy },
+  });
+}
+
 interface LiveMember {
   userID: string;
   ccaID: number;

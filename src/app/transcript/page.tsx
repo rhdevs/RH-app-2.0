@@ -2,7 +2,9 @@ import { type Metadata } from "next";
 import { redirect } from "next/navigation";
 import { TRPCError } from "@trpc/server";
 import { currentAcademicYear } from "~/lib/transcript/academicYear";
+import { instantToSgDate } from "~/lib/transcript/sgDate";
 import {
+  downloadByBanner,
   parseAyParam,
   selectTranscriptState,
 } from "~/lib/transcript/pageState";
@@ -81,11 +83,27 @@ export default async function TranscriptPage({
     return <NotAvailable academicYear={state.academicYear} />;
   }
 
+  const banner = downloadByBanner({
+    academicYear: state.academicYear,
+    downloadBy: result.downloadBy,
+    todaySg: instantToSgDate(new Date()),
+  });
+
   return (
     <TranscriptFrame
       transcript={result.transcript}
       years={state.published}
       basePath="/transcript"
+      notice={
+        banner ? (
+          <p
+            role="status"
+            className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
+          >
+            {banner}
+          </p>
+        ) : undefined
+      }
     />
   );
 }
