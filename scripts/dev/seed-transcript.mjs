@@ -243,6 +243,8 @@ async function seed() {
       userID: uid(n),
       displayName: `Seed Resident ${pad(n)}`,
       block: (n % 5) + 1,
+      // The app's profile gate also wants a Telegram handle. Fake and local.
+      telegramHandle: `seed_r${pad(n)}`,
     })),
   });
   await db.userMatric.createMany({
