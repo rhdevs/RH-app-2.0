@@ -1,30 +1,47 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACTION_LABEL,
+  BACK_TO_COLLECTING_CONFIRMATION,
+  CLOSE_CONFIRMATION,
   PUBLISH_CONFIRMATION,
   REOPEN_CONFIRMATION,
+  UNFREEZE_WARNING,
+  UNFROZEN_BANNER,
   WRITES_LOCKED_NOTE,
+  closeSummary,
   errorText,
   fieldError,
   isWritable,
   normaliseStatus,
-  publishSummary,
   statusLabel,
   yearOptions,
 } from "../adminView";
 
 describe("status", () => {
-  it("labels the two states and reads anything else as collecting", () => {
+  it("labels the three states and reads anything else as collecting", () => {
     expect(statusLabel("published")).toBe("Published");
+    expect(statusLabel("closed")).toBe("Closed");
     expect(statusLabel("collecting")).toBe("Collecting");
     expect(statusLabel(null)).toBe("Collecting");
     expect(statusLabel("bogus")).toBe("Collecting");
     expect(normaliseStatus(undefined)).toBe("collecting");
+    expect(normaliseStatus("closed")).toBe("closed");
   });
 
-  it("allows writes only while collecting", () => {
+  it("locks the manager screens only once the year is published", () => {
     expect(isWritable("collecting")).toBe(true);
     expect(isWritable(null)).toBe(true);
+    expect(isWritable("closed")).toBe(true);
     expect(isWritable("published")).toBe(false);
+  });
+
+  it("names each year action", () => {
+    expect(ACTION_LABEL).toEqual({
+      close: "Close year",
+      publish: "Publish",
+      reopen: "Reopen for review",
+      backToCollecting: "Back to collecting",
+    });
   });
 });
 
@@ -44,35 +61,57 @@ describe("yearOptions", () => {
 });
 
 describe("summaries", () => {
-  it("states both counts, pluralised", () => {
-    expect(publishSummary({ frozen: 64, skippedUnresolved: 0 })).toBe(
-      "64 members frozen, 0 rows could not be matched",
-    );
-    expect(publishSummary({ frozen: 1, skippedUnresolved: 1 })).toBe(
-      "1 member frozen, 1 row could not be matched",
-    );
-    expect(publishSummary({ frozen: 62, skippedUnresolved: 2 })).toBe(
-      "62 members frozen, 2 rows could not be matched",
+  it("states how many CCAs a close froze, pluralised", () => {
+    expect(
+      closeSummary("AY2026/27", { frozenNow: 12, alreadyFrozen: 77 }),
+    ).toBe("AY2026/27 closed. 12 CCAs frozen now, 77 already frozen.");
+    expect(closeSummary("AY2026/27", { frozenNow: 1, alreadyFrozen: 0 })).toBe(
+      "AY2026/27 closed. 1 CCA frozen now, 0 already frozen.",
     );
   });
 });
 
 describe("wording", () => {
   it("uses the required confirmation text", () => {
+    expect(CLOSE_CONFIRMATION("AY2026/27", 12)).toBe(
+      "This freezes the member list of 12 CCAs that are not frozen yet, and opens AY2026/27 for review. Residents will see a draft.",
+    );
+    expect(CLOSE_CONFIRMATION("AY2026/27", 1)).toContain(
+      "1 CCA that is not frozen yet",
+    );
     expect(PUBLISH_CONFIRMATION("AY2026/27")).toBe(
-      "This freezes the member list for AY2026/27 and lets residents download their transcripts. Edits stop until you reopen.",
+      "This lets residents download their AY2026/27 transcripts. Edits stop until you reopen the year for review.",
     );
     expect(REOPEN_CONFIRMATION).toBe(
-      "This reopens editing. Residents cannot open their transcripts until the year is published again, and then they see the corrected data.",
+      "This takes the published transcripts back to review. Residents see a draft again and you can fix data. Frozen member lists stay frozen.",
+    );
+    expect(BACK_TO_COLLECTING_CONFIRMATION).toBe(
+      "This puts the year back to collecting. Frozen member lists stay frozen.",
+    );
+    expect(UNFREEZE_WARNING("AY2026/27")).toBe(
+      "The CCA's current member list will be used for AY2026/27 until it is frozen again.",
+    );
+  });
+
+  it("words the 1 June banner for one CCA and for several", () => {
+    expect(UNFROZEN_BANNER(3, "AY2026/27")).toBe(
+      "3 CCAs are not frozen for AY2026/27 yet. Close the year before memberships change.",
+    );
+    expect(UNFROZEN_BANNER(1, "AY2026/27")).toBe(
+      "1 CCA is not frozen for AY2026/27 yet. Close the year before memberships change.",
     );
   });
 
   it("has no exclamation marks and never says 'successfully'", () => {
     for (const text of [
+      CLOSE_CONFIRMATION("AY2026/27", 3),
       PUBLISH_CONFIRMATION("AY2026/27"),
       REOPEN_CONFIRMATION,
+      BACK_TO_COLLECTING_CONFIRMATION,
+      UNFREEZE_WARNING("AY2026/27"),
+      UNFROZEN_BANNER(2, "AY2026/27"),
       WRITES_LOCKED_NOTE,
-      publishSummary({ frozen: 3, skippedUnresolved: 1 }),
+      closeSummary("AY2026/27", { frozenNow: 3, alreadyFrozen: 1 }),
       errorText("SEM2_START_REQUIRED"),
     ]) {
       expect(text).not.toContain("!");
@@ -84,10 +123,28 @@ describe("wording", () => {
 describe("errorText", () => {
   it("turns known codes into plain sentences", () => {
     expect(errorText("SEM2_START_REQUIRED")).toBe(
-      "Set the semester 2 start date before publishing.",
+      "Set the semester 2 start date before closing the year.",
     );
     expect(errorText("PERIOD_PUBLISHED")).toBe(WRITES_LOCKED_NOTE);
     expect(errorText("RATE_LIMITED:30")).not.toMatch(/RATE_LIMITED/);
+  });
+
+  it("explains the lifecycle refusals in plain words", () => {
+    expect(errorText("NOT_COLLECTING")).toBe(
+      "This academic year is not collecting.",
+    );
+    expect(errorText("NOT_CLOSED")).toBe("This academic year is not closed.");
+    expect(errorText("YEAR_NOT_STARTED")).toMatch(/has not started yet/);
+    expect(errorText("NOT_FROZEN")).toBe("That member list is not frozen.");
+    expect(errorText("CCA_YEAR_FROZEN")).toBe(
+      "This member list is frozen. Ask the JCRC for changes.",
+    );
+    expect(errorText("YEAR_CLOSED")).toBe(
+      "This year is closed. Ask the JCRC for changes.",
+    );
+    expect(errorText("TRANSCRIPT_FREEZE_FAILED")).toMatch(
+      /head change was not made/,
+    );
   });
 
   it("never shows a bare code or a long dump", () => {

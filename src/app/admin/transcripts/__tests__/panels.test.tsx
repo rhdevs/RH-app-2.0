@@ -9,6 +9,7 @@ import {
 } from "../_components/AwardsPanel";
 import {
   PeriodPanelView,
+  confirmationFor,
   type PeriodPanelViewProps,
 } from "../_components/PeriodPanel";
 import { PreviewPickerView, previewHref } from "../_components/PreviewPicker";
@@ -46,10 +47,9 @@ const period = (
   saveError: null,
   confirming: null,
   onConfirming: noop,
-  onPublish: noop,
-  onReopen: noop,
-  publishing: false,
-  reopening: false,
+  onConfirm: noop,
+  acting: false,
+  unfrozenCount: 12,
   actionError: null,
   resultLine: null,
   downloadByValue: "",
@@ -64,26 +64,53 @@ const renderPeriod = (over?: Partial<PeriodPanelViewProps>) =>
   renderToStaticMarkup(<PeriodPanelView {...period(over)} />);
 
 describe("academic year panel", () => {
-  it("offers Publish, and not Reopen, while the year is collecting", () => {
+  const buttons = (html: string) =>
+    [...html.matchAll(/<button[^>]*type="button"[^>]*>([^<]*)</g)].map(
+      (m) => m[1],
+    );
+
+  it("offers only Close year while the year is collecting", () => {
     const html = renderPeriod();
 
     expect(html).toContain("Academic year");
     expect(html).toContain("Collecting");
-    expect(html).toContain("Publish AY2026/27");
-    expect(html).not.toContain("Reopen AY2026/27");
+    expect(buttons(html)).toContain("Close year");
+    for (const other of [
+      "Publish",
+      "Reopen for review",
+      "Back to collecting",
+    ]) {
+      expect(buttons(html)).not.toContain(other);
+    }
     expect(html).toContain('value="2027-01-11"');
   });
 
-  it("offers Reopen, and not Publish, once published, and locks the date", () => {
+  it("offers Publish and Back to collecting while the year is closed", () => {
+    const html = renderPeriod({ status: "closed" });
+
+    expect(html).toContain("Closed");
+    expect(buttons(html)).toContain("Publish");
+    expect(buttons(html)).toContain("Back to collecting");
+    expect(buttons(html)).not.toContain("Close year");
+    expect(buttons(html)).not.toContain("Reopen for review");
+    // the date can still be corrected during review
+    expect(html).not.toMatch(
+      /<input[^>]*id="transcripts-sem2"[^>]*\sdisabled=""/,
+    );
+  });
+
+  it("offers only Reopen for review once published, and locks the date", () => {
     const html = renderPeriod({
       status: "published",
-      publishedLine: "Published on 15 Oct 2026 by SEED-R02.",
+      publishedLine: "Published on 15 Oct 2026 by Seed Resident 02.",
     });
 
     expect(html).toContain("Published");
-    expect(html).toContain("Reopen AY2026/27");
-    expect(html).not.toContain("Publish AY2026/27");
-    expect(html).toContain("Published on 15 Oct 2026 by SEED-R02.");
+    expect(buttons(html)).toContain("Reopen for review");
+    for (const other of ["Close year", "Publish", "Back to collecting"]) {
+      expect(buttons(html)).not.toContain(other);
+    }
+    expect(html).toContain("Published on 15 Oct 2026 by Seed Resident 02.");
     expect(html).toMatch(/<input[^>]*id="transcripts-sem2"[^>]*\sdisabled=""/);
   });
 
@@ -91,8 +118,24 @@ describe("academic year panel", () => {
     const html = renderPeriod({ status: null, sem2Value: "" });
 
     expect(html).toContain("Collecting");
-    expect(html).toContain("Publish AY2026/27");
+    expect(buttons(html)).toContain("Close year");
     expect(html).toMatch(/<input[^>]*id="transcripts-sem2"[^>]*value=""/);
+  });
+
+  it("words each confirmation, with the count of CCAs a close will freeze", () => {
+    expect(confirmationFor("close", "AY2026/27", 12)).toEqual({
+      title: "Close AY2026/27?",
+      text: "This freezes the member list of 12 CCAs that are not frozen yet, and opens AY2026/27 for review. Residents will see a draft.",
+    });
+    expect(confirmationFor("publish", "AY2026/27", null).title).toBe(
+      "Publish AY2026/27?",
+    );
+    expect(confirmationFor("reopen", "AY2026/27", null).title).toBe(
+      "Reopen AY2026/27 for review?",
+    );
+    expect(confirmationFor("backToCollecting", "AY2026/27", null).text).toBe(
+      "This puts the year back to collecting. Frozen member lists stay frozen.",
+    );
   });
 
   it("states the Singapore-midnight rule beside the date", () => {
@@ -110,14 +153,15 @@ describe("academic year panel", () => {
 
   it("shows the result of an action in words, and an error as an alert", () => {
     const html = renderPeriod({
-      resultLine:
-        "AY2026/27 published. 64 members frozen, 0 rows could not be matched.",
-      actionError: "Set the semester 2 start date before publishing.",
+      resultLine: "AY2026/27 closed. 12 CCAs frozen now, 77 already frozen.",
+      actionError: "Set the semester 2 start date before closing the year.",
     });
 
-    expect(html).toContain("64 members frozen, 0 rows could not be matched.");
+    expect(html).toContain("12 CCAs frozen now, 77 already frozen.");
     expect(html).toContain('role="alert"');
-    expect(html).toContain("Set the semester 2 start date before publishing.");
+    expect(html).toContain(
+      "Set the semester 2 start date before closing the year.",
+    );
   });
 
   it("shows a save error inline", () => {

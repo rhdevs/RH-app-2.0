@@ -326,3 +326,41 @@ describe("TranscriptDocument: print", () => {
     expect(html).toContain("Evil&quot;&lt;/style&gt;&lt;script&gt;");
   });
 });
+
+describe("TranscriptDocument: draft", () => {
+  const draft = (slug: string, year = AY): string => {
+    const fixture = getFixtureBySlug(slug)!;
+    return renderToStaticMarkup(
+      <TranscriptDocument
+        transcript={assembleTranscript(fixture.input, year, { draft: true })}
+      />,
+    );
+  };
+
+  it("puts the draft note at the top of page 1 and a DRAFT watermark on every page", () => {
+    const html = draft("jcrc-sports-secretary", JCRC_AY);
+
+    expect(html).toContain(
+      "Draft - check your information. If something is wrong, tell your CCA head or the JCRC.",
+    );
+    expect(html.match(/rh-draft/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(html).toContain("DRAFT");
+    // the note is printed once, on page 1
+    expect(html.match(/Draft - check your information/g)).toHaveLength(1);
+  });
+
+  it("is not marked as a draft when the year is published", () => {
+    const html = render("plain-member");
+
+    expect(html).not.toContain("Draft - check your information");
+    expect(html).not.toMatch(/class="rh-paper[^"]*rh-draft/);
+  });
+
+  it("keeps the crest, footer and notes page", () => {
+    const html = draft("plain-member");
+
+    expect(html).toContain("Explanatory notes");
+    expect(html).toContain("Page 1 of 2");
+    expect(html).toContain("Raffles Hall crest");
+  });
+});

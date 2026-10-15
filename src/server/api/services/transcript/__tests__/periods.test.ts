@@ -3,16 +3,19 @@ import { TRPCError } from "@trpc/server";
 import { describe, expect, it, vi } from "vitest";
 import {
   assertCollecting,
+  backToCollecting,
+  closeYear,
   publish,
-  publishBlocker,
   reopen,
-  reopenBlocker,
   upsertSem2Start,
 } from "../periods";
 
 const SEM2 = new Date("2027-01-11T00:00:00Z");
 const collecting = { status: "collecting", sem2Start: SEM2 };
 const published = { status: "published", sem2Start: SEM2 };
+const closed = { status: "closed", sem2Start: SEM2 };
+/** A moment inside AY2026/27, so the year has begun. */
+const NOW = new Date("2027-03-01T00:00:00Z");
 
 /** A database that knows only the period row, and fails the test if more is touched. */
 function dbWith(period: object | null) {
@@ -41,31 +44,6 @@ async function codeOf(promise: Promise<unknown>) {
   }
   return "ok";
 }
-
-describe("publishBlocker", () => {
-  it.each([
-    [null, "PERIOD_NOT_FOUND"],
-    [{ status: "collecting", sem2Start: null }, "SEM2_START_REQUIRED"],
-    [{ status: null, sem2Start: null }, "SEM2_START_REQUIRED"],
-    [published, "ALREADY_PUBLISHED"],
-    [{ status: "published", sem2Start: null }, "ALREADY_PUBLISHED"],
-    [collecting, null],
-    [{ status: null, sem2Start: SEM2 }, null],
-  ])("for %j says %j", (period, expected) => {
-    expect(publishBlocker(period)).toBe(expected);
-  });
-});
-
-describe("reopenBlocker", () => {
-  it.each([
-    [null, "PERIOD_NOT_FOUND"],
-    [collecting, "NOT_PUBLISHED"],
-    [{ status: null, sem2Start: null }, "NOT_PUBLISHED"],
-    [published, null],
-  ])("for %j says %j", (period, expected) => {
-    expect(reopenBlocker(period)).toBe(expected);
-  });
-});
 
 describe("assertCollecting", () => {
   it("lets a collecting year through", async () => {
@@ -131,39 +109,76 @@ describe("upsertSem2Start", () => {
   });
 });
 
-describe("publish / reopen guards (checked before any write)", () => {
-  it("publish needs a period to exist", async () => {
-    expect(
-      await codeOf(publish(dbWith(null).db, "AY2026/27", "SEED-R02")),
-    ).toBe("NOT_FOUND:PERIOD_NOT_FOUND");
-  });
+describe("year transitions are checked before any write", () => {
+  const who = "SEED-R02";
 
-  it("publish refuses without a semester-2 start date", async () => {
-    const period = { status: "collecting", sem2Start: null };
-
+  it("close needs a period with a semester 2 date", async () => {
     expect(
-      await codeOf(publish(dbWith(period).db, "AY2026/27", "SEED-R02")),
+      await codeOf(closeYear(dbWith(null).db, "AY2026/27", who, NOW)),
+    ).toBe("PRECONDITION_FAILED:SEM2_START_REQUIRED");
+    const noDate = { status: "collecting", sem2Start: null };
+    expect(
+      await codeOf(closeYear(dbWith(noDate).db, "AY2026/27", who, NOW)),
     ).toBe("PRECONDITION_FAILED:SEM2_START_REQUIRED");
   });
 
-  it("publish refuses a year that is already published", async () => {
+  it("close refuses a year that has not begun", async () => {
     expect(
-      await codeOf(publish(dbWith(published).db, "AY2026/27", "SEED-R02")),
-    ).toBe("CONFLICT:ALREADY_PUBLISHED");
+      await codeOf(closeYear(dbWith(collecting).db, "AY2027/28", who, NOW)),
+    ).toBe("PRECONDITION_FAILED:YEAR_NOT_STARTED");
   });
 
-  it("publish refuses a malformed academic year", async () => {
+  it("close refuses a year that is already closed or published", async () => {
     expect(
-      await codeOf(publish(dbWith(collecting).db, "bogus", "SEED-R02")),
-    ).toBe("BAD_REQUEST:INVALID_ACADEMIC_YEAR");
+      await codeOf(closeYear(dbWith(closed).db, "AY2026/27", who, NOW)),
+    ).toBe("CONFLICT:NOT_COLLECTING");
+    expect(
+      await codeOf(closeYear(dbWith(published).db, "AY2026/27", who, NOW)),
+    ).toBe("CONFLICT:NOT_COLLECTING");
   });
 
-  it("reopen refuses a year that is not published, or that does not exist", async () => {
+  it("publish works only from closed", async () => {
     expect(
-      await codeOf(reopen(dbWith(collecting).db, "AY2026/27", "SEED-R02")),
+      await codeOf(publish(dbWith(collecting).db, "AY2026/27", who, NOW)),
+    ).toBe("CONFLICT:NOT_CLOSED");
+    expect(
+      await codeOf(publish(dbWith(published).db, "AY2026/27", who, NOW)),
+    ).toBe("CONFLICT:NOT_CLOSED");
+    expect(await codeOf(publish(dbWith(null).db, "AY2026/27", who, NOW))).toBe(
+      "CONFLICT:NOT_CLOSED",
+    );
+  });
+
+  it("reopen for review works only from published", async () => {
+    expect(
+      await codeOf(reopen(dbWith(collecting).db, "AY2026/27", who, NOW)),
     ).toBe("CONFLICT:NOT_PUBLISHED");
-    expect(await codeOf(reopen(dbWith(null).db, "AY2026/27", "SEED-R02"))).toBe(
-      "NOT_FOUND:PERIOD_NOT_FOUND",
+    expect(await codeOf(reopen(dbWith(closed).db, "AY2026/27", who, NOW))).toBe(
+      "CONFLICT:NOT_PUBLISHED",
+    );
+    expect(await codeOf(reopen(dbWith(null).db, "AY2026/27", who, NOW))).toBe(
+      "CONFLICT:NOT_PUBLISHED",
+    );
+  });
+
+  it("back to collecting works only from closed", async () => {
+    expect(
+      await codeOf(backToCollecting(dbWith(collecting).db, "AY2026/27", NOW)),
+    ).toBe("CONFLICT:NOT_CLOSED");
+    expect(
+      await codeOf(backToCollecting(dbWith(published).db, "AY2026/27", NOW)),
+    ).toBe("CONFLICT:NOT_CLOSED");
+  });
+
+  it("every transition refuses a malformed academic year", async () => {
+    expect(
+      await codeOf(closeYear(dbWith(collecting).db, "bogus", who, NOW)),
+    ).toBe("BAD_REQUEST:INVALID_ACADEMIC_YEAR");
+    expect(await codeOf(publish(dbWith(closed).db, "bogus", who, NOW))).toBe(
+      "BAD_REQUEST:INVALID_ACADEMIC_YEAR",
+    );
+    expect(await codeOf(reopen(dbWith(published).db, "2026", who, NOW))).toBe(
+      "BAD_REQUEST:INVALID_ACADEMIC_YEAR",
     );
   });
 });

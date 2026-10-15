@@ -8,6 +8,7 @@ import {
   type RosterRowViewProps,
 } from "../_components/RosterEditor";
 import { TranscriptNotes } from "../_components/TranscriptTab";
+import { rosterNotice } from "~/lib/transcript/headView";
 import {
   VolunteerSectionView,
   type VolunteerSectionViewProps,
@@ -175,7 +176,10 @@ describe("roster table", () => {
     }
 
     // A header cell must not be display:block, or the row stacks instead of aligning.
-    const cells = html.split("<th ").slice(1).map((c) => c.split(">")[0]!);
+    const cells = html
+      .split("<th ")
+      .slice(1)
+      .map((c) => c.split(">")[0]!);
     expect(cells).toHaveLength(6);
     for (const cell of cells) expect(cell.split(" ")).not.toContain("block");
   });
@@ -193,9 +197,8 @@ describe("notes above the roster", () => {
   const notes = (over: Partial<Parameters<typeof TranscriptNotes>[0]> = {}) =>
     renderToStaticMarkup(
       <TranscriptNotes
-        academicYear="AY2026/27"
-        published={false}
-        sem2Unset={false}
+        stateNote={null}
+        showDefaultsNote={false}
         descriptionEmpty={false}
         detailsHref="/cca/9005/details"
         {...over}
@@ -208,21 +211,19 @@ describe("notes above the roster", () => {
     expect(notes()).not.toContain("no description");
   });
 
-  it("states that a published year is closed", () => {
-    expect(notes({ published: true })).toContain(
+  it("states what the notice says, as given", () => {
+    expect(
+      notes({
+        stateNote: rosterNotice({ ...NOTICE, refusal: "PERIOD_PUBLISHED" }),
+      }),
+    ).toContain(
       "Transcripts for AY2026/27 are published. Editing is closed. Ask the JCRC to reopen it.",
     );
   });
 
   it("explains default durations while semester 2 start is unset", () => {
-    expect(notes({ sem2Unset: true })).toContain(
+    expect(notes({ showDefaultsNote: true })).toContain(
       "Default durations assume the full year until the JCRC sets the semester 2 start date.",
-    );
-  });
-
-  it("does not show the defaults note on a published year", () => {
-    expect(notes({ published: true, sem2Unset: true })).not.toContain(
-      "Default durations",
     );
   });
 
@@ -238,14 +239,22 @@ describe("notes above the roster", () => {
 
   it("has no exclamation marks and no 'successfully'", () => {
     const all = notes({
-      published: true,
-      sem2Unset: true,
+      stateNote: rosterNotice({ ...NOTICE, refusal: "PERIOD_PUBLISHED" }),
+      showDefaultsNote: true,
       descriptionEmpty: true,
     });
     expect(all).not.toContain("!");
     expect(all).not.toMatch(/successfully/i);
   });
 });
+
+const NOTICE = {
+  academicYear: "AY2026/27",
+  mode: "live" as const,
+  refusal: null,
+  freezeReason: null,
+  frozenOn: null,
+};
 
 /* ---- volunteer section -------------------------------------------------- */
 
