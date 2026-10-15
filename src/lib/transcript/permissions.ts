@@ -29,3 +29,12 @@ export function canManageExtraContribution(
   if (roles.includes(ADMIN_ROLE)) return true;
   return roles.includes(CCA_HEAD_ROLE) && isHeadOfThatCca;
 }
+
+/**
+ * May set the semester-2 start date and publish or reopen an academic year:
+ * `jcrc` or `admin` only. Not `cca_head` (heads edit their own CCA's roster
+ * while a year is collecting, they do not control the year) and not `scrc`.
+ */
+export function canManageTranscriptPeriods(roles: readonly string[]): boolean {
+  return roles.includes(JCRC_ROLE) || roles.includes(ADMIN_ROLE);
+}
