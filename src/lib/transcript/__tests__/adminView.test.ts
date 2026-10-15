@@ -4,6 +4,7 @@ import {
   REOPEN_CONFIRMATION,
   WRITES_LOCKED_NOTE,
   errorText,
+  fieldError,
   isWritable,
   normaliseStatus,
   publishSummary,
@@ -108,5 +109,31 @@ describe("errorText", () => {
 
   it("keeps a short readable message", () => {
     expect(errorText("Title is required")).toBe("Title is required");
+  });
+});
+
+describe("validation messages", () => {
+  it("turns the server's validation codes into sentences", () => {
+    expect(errorText("AT_MOST_120_CHARACTERS")).toBe(
+      "Use at most 120 characters.",
+    );
+    expect(errorText("AT_LEAST_3_CHARACTERS")).toBe(
+      "Use at least 3 characters.",
+    );
+    expect(errorText("REQUIRED")).toBe("This field is required.");
+    expect(errorText("CONTROL_CHARACTERS_NOT_ALLOWED")).toBe(
+      "Remove any control characters.",
+    );
+  });
+
+  it("reads one field's first message from an API validation error", () => {
+    const zodError = {
+      fieldErrors: { title: ["AT_MOST_120_CHARACTERS"], citation: undefined },
+    };
+
+    expect(fieldError(zodError, "title")).toBe("Use at most 120 characters.");
+    expect(fieldError(zodError, "citation")).toBeNull();
+    expect(fieldError(null, "title")).toBeNull();
+    expect(fieldError(undefined, "title")).toBeNull();
   });
 });

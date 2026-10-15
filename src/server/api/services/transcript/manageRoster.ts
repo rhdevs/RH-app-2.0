@@ -13,6 +13,7 @@ import {
   resolveRoster,
   type RosterResolved,
 } from "~/server/api/services/ccaRoster";
+import { instantToSgDate } from "~/lib/transcript/sgDate";
 import { lookupResidents } from "./residents";
 import { personKey } from "./loader";
 import { assertWritable } from "./manageAccess";
@@ -106,7 +107,7 @@ export async function rosterList(
   const sem2Start = period?.sem2Start ?? null;
   const base = {
     status: published ? ("published" as const) : ("collecting" as const),
-    sem2Start: sem2Start ? sem2Start.toISOString().slice(0, 10) : null,
+    sem2Start: sem2Start ? instantToSgDate(sem2Start) : null,
   };
 
   if (published) {

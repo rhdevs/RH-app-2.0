@@ -7,6 +7,7 @@ import {
   isValidAcademicYear,
 } from "~/lib/transcript/academicYear";
 import { assembleTranscript } from "~/lib/transcript/assemble";
+import { sgDateToInstant } from "~/lib/transcript/sgDate";
 import { canManageTranscriptPeriods } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
 import {
@@ -78,7 +79,7 @@ export const transcriptRouter = createTRPCRouter({
         upsertSem2Start(
           ctx.db,
           input.academicYear,
-          input.sem2Start ? new Date(`${input.sem2Start}T00:00:00Z`) : null,
+          input.sem2Start ? sgDateToInstant(input.sem2Start) : null,
         ),
       ),
 

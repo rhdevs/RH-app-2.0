@@ -78,9 +78,40 @@ const ERROR_TEXT: Record<string, string> = {
   RATE_LIMITED: "Too many attempts. Try again later.",
 };
 
+/** The server's validation codes (see manageInput.ts), as sentences. */
+function validationText(message: string): string | null {
+  const most = /^AT_MOST_(\d+)_CHARACTERS$/.exec(message);
+  if (most) return `Use at most ${most[1]} characters.`;
+  const least = /^AT_LEAST_(\d+)_CHARACTERS$/.exec(message);
+  if (least) return `Use at least ${least[1]} characters.`;
+  if (message === "REQUIRED") return "This field is required.";
+  if (message === "CONTROL_CHARACTERS_NOT_ALLOWED") {
+    return "Remove any control characters.";
+  }
+  if (message === "INVALID_DATE") return "Enter a real date.";
+  return null;
+}
+
+/**
+ * The first validation message for one field of a failed request, from the
+ * `zodError` the API attaches to its errors, or null.
+ */
+export function fieldError(
+  zodError:
+    | { fieldErrors?: Record<string, string[] | undefined> }
+    | null
+    | undefined,
+  field: string,
+): string | null {
+  const first = zodError?.fieldErrors?.[field]?.[0];
+  return first ? errorText(first) : null;
+}
+
 /** A readable message for an API error; unknown codes get a generic line, never a stack. */
 export function errorText(message: string | null | undefined): string {
   if (!message) return "Something went wrong. Try again.";
+  const validation = validationText(message);
+  if (validation) return validation;
   const code = message.split(":")[0]!;
   const known = ERROR_TEXT[message] ?? ERROR_TEXT[code];
   if (known) return known;
