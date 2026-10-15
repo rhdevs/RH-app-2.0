@@ -1385,7 +1385,7 @@ model TranscriptPeriod {
   /// Last day residents are asked to download by (a Singapore calendar date,
   /// stored as midnight Singapore time). Shown as a banner; nothing is enforced.
   downloadBy   DateTime?
-  /// collecting | published
+  /// collecting | closed | published
   status       String?   @default("collecting")
   publishedAt  DateTime?
   publishedBy  String?
@@ -1493,6 +1493,27 @@ model JcrcService {
   updatedBy     String?
 
   @@unique([academicYear, userID], map: "jcrc_service_member")
+}
+
+/// A CCA's member list for one academic year, FROZEN. CCAs are cleared and
+/// re-recruited after each handover, so a list is frozen at its own handover (or
+/// when a head is removed, when the head locks it, or when the year is closed).
+/// ACTIVE while `unfrozenAt` is empty. A later freeze of the same year reuses
+/// this document: the unfreeze fields are cleared and the reason and time reset.
+/// `reason`: handover | head_removed | lock | close_year.
+model CcaYearFreeze {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear   String
+  ccaID          Int
+  reason         String
+  frozenAt       DateTime
+  frozenBy       String
+  memberCount    Int?
+  unfrozenAt     DateTime?
+  unfrozenBy     String?
+  unfreezeReason String?
+
+  @@unique([academicYear, ccaID], map: "freeze_year_cca")
 }
 
 /// When a resident first and last opened their published transcript. Drives the

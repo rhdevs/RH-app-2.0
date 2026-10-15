@@ -105,6 +105,38 @@ describe("schema: new transcript models", () => {
     }
   });
 
+  it("freezes a CCA once per year, with an unfreeze that keeps the document", () => {
+    const raw = readFileSync("prisma/schema.prisma", "utf8");
+    expect(raw).toContain(
+      '@@unique([academicYear, ccaID], map: "freeze_year_cca")',
+    );
+    const fields = current.get("CcaYearFreeze")!.map((f) => f.name);
+    for (const f of [
+      "academicYear",
+      "ccaID",
+      "reason",
+      "frozenAt",
+      "frozenBy",
+    ]) {
+      const decl = current
+        .get("CcaYearFreeze")!
+        .find((x) => x.name === f)!.decl;
+      expect(decl.endsWith("?"), f).toBe(false);
+    }
+    for (const f of [
+      "unfrozenAt",
+      "unfrozenBy",
+      "unfreezeReason",
+      "memberCount",
+    ]) {
+      expect(fields).toContain(f);
+    }
+    const unfrozen = current
+      .get("CcaYearFreeze")!
+      .find((f) => f.name === "unfrozenAt");
+    expect(unfrozen!.decl).toBe("DateTime?");
+  });
+
   it("has no issue or verification model any more", () => {
     expect(current.has("TranscriptIssue")).toBe(false);
     expect(readFileSync("prisma/schema.prisma", "utf8")).not.toContain(
