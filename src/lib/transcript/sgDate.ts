@@ -22,3 +22,36 @@ export function sgDateToInstant(isoDate: string): Date | null {
 export function instantToSgDate(instant: Date): string {
   return new Date(instant.getTime() + SGT_OFFSET_MS).toISOString().slice(0, 10);
 }
+
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/**
+ * An instant as the Singapore calendar date it falls on, "15 Oct 2026". Never
+ * the viewer's time zone: 2027-01-10T16:00Z is 11 January here, wherever the
+ * browser is.
+ */
+export function formatSgDate(instant: Date | string): string {
+  const [y, m, d] = instantToSgDate(new Date(instant)).split("-");
+  return `${Number(d)} ${MONTHS[Number(m) - 1]} ${y}`;
+}
+
+/**
+ * A calendar date stored as UTC midnight (a one-off activity's date) -> its
+ * ISO date. These are NOT shifted: they were stored as the date itself.
+ */
+export function storedCalendarDate(stored: Date): string {
+  return stored.toISOString().slice(0, 10);
+}

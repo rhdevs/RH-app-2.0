@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { instantToSgDate, storedCalendarDate } from "~/lib/transcript/sgDate";
 import { canonicalUserID } from "~/lib/identity";
 import {
   isDuration,
@@ -139,8 +140,14 @@ async function liveMemberships(
   }));
 }
 
-const iso = (d: Date | null | undefined): string =>
-  (d ?? new Date(0)).toISOString().slice(0, 10);
+/** A one-off's own date is a stored calendar date; the fallback instant is read in Singapore. */
+const activityDay = (
+  activityDate: Date | null | undefined,
+  recordedAt: Date | null | undefined,
+): string =>
+  activityDate
+    ? storedCalendarDate(activityDate)
+    : instantToSgDate(recordedAt ?? new Date(0));
 
 export async function loadTranscriptInput(
   db: PrismaClient,
@@ -210,7 +217,7 @@ export async function loadTranscriptInput(
         academicYear,
         eventName: v.activity ?? "Volunteering",
         organiser,
-        date: iso(v.activityDate ?? v.recordedAt),
+        date: activityDay(v.activityDate, v.recordedAt),
         hours: v.hours,
       });
     } else {

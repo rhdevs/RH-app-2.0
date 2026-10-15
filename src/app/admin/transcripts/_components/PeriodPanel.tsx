@@ -24,7 +24,7 @@ import {
   statusLabel,
   yearOptions,
 } from "~/lib/transcript/adminView";
-import { instantToSgDate } from "~/lib/transcript/sgDate";
+import { formatSgDate, instantToSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
 import {
   ErrorLine,
@@ -230,13 +230,7 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
 }
 
 const when = (d: Date | string | null | undefined) =>
-  d
-    ? new Date(d).toLocaleDateString("en-SG", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      })
-    : null;
+  d ? formatSgDate(d) : null;
 
 export default function PeriodPanel() {
   const utils = api.useUtils();
