@@ -41,7 +41,7 @@ import {
   requireCcaAccess,
   requireJcrcSelf,
   requireManager,
-  requireManagerOrVolunteeringHead,
+  requireManagerOrHead,
 } from "~/server/api/services/transcript/manageAccess";
 import {
   awardCreate,
@@ -170,12 +170,12 @@ export const transcriptManageRouter = createTRPCRouter({
   }),
 
   residents: createTRPCRouter({
-    /** A manager, or the head of a volunteering CCA (to log hours for anyone). */
+    /** A manager, or the head of any CCA (hours for anyone, activity participants). */
     search: identifiedProcedure
       .input(z.object({ query: searchQueryInput }))
       .query(async ({ ctx, input }) => {
         const userID = ctx.session.user.userID;
-        const access = await requireManagerOrVolunteeringHead(ctx.db, userID);
+        const access = await requireManagerOrHead(ctx.db, userID);
         const limited = await rateLimit(
           `transcript-search:${userID}`,
           SEARCH_LIMIT,

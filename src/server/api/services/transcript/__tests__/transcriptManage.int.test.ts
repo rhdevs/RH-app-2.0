@@ -415,8 +415,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await errorOf(head.awards.list({ academicYear: AY }))).toBe(
           "FORBIDDEN:INSUFFICIENT_ROLE",
         );
+        // Any CCA head may search residents (by name only) to add people to
+        // an activity; the other manager-only procedures stay closed.
         expect(await errorOf(head.residents.search({ query: "Seed" }))).toBe(
-          "FORBIDDEN:NOT_A_VOLUNTEERING_HEAD",
+          "ok",
         );
         expect(
           await errorOf(
@@ -1629,12 +1631,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ]);
       });
 
-      it("is refused to residents, heads and hall office", async () => {
-        for (const who of [
-          PLAIN,
-          SOCCER_HEAD,
-          { id: PLAIN.id, roles: ["scrc"] },
-        ]) {
+      it("is refused to residents and hall office", async () => {
+        for (const who of [PLAIN, { id: PLAIN.id, roles: ["scrc"] }]) {
           expect(
             await errorOf(
               as(who).transcriptManage.residents.search({ query: "Seed" }),

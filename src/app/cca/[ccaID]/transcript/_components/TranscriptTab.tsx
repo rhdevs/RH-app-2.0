@@ -35,6 +35,7 @@ import {
 } from "~/lib/transcript/lifecycle";
 import { formatSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
+import ActivitiesSection from "./ActivitiesSection";
 import { RosterRow, RosterTableView, type RosterRowData } from "./RosterEditor";
 import VolunteerSection from "./VolunteerSection";
 
@@ -179,6 +180,17 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
 
   return (
     <div className="space-y-6">
+      <ActivitiesSection
+        ccaID={ccaID}
+        academicYear={year}
+        members={rows.map((r) => ({
+          userID: r.userID,
+          displayName: r.displayName,
+        }))}
+        readOnly={readOnly}
+        readOnlyNote={readOnly ? stateNote : null}
+      />
+
       <SectionCard
         title="Member roster"
         description={`${ROSTER_HELPER} Changes here shape the CCA line on each member's transcript.`}

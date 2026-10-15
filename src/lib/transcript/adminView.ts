@@ -121,8 +121,13 @@ const ERROR_TEXT: Record<string, string> = {
   NOT_A_MEMBER: "That person is no longer a member of this CCA.",
   NOT_A_HEAD_OF_THIS_CCA: "You do not head this CCA.",
   NOT_A_VOLUNTEERING_CCA: "This CCA does not record volunteer hours.",
-  NOT_A_VOLUNTEERING_HEAD:
-    "Only heads of volunteering CCAs can search residents.",
+  NOT_A_CCA_HEAD: "Only CCA heads can search residents.",
+  ACTIVITY_NOT_FOUND: "That activity no longer exists.",
+  ACTIVITY_REMOVED: "That activity has been removed. Restore it to edit it.",
+  AT_MOST_20_ACTIVITIES:
+    "This CCA already has 20 activities for the year. Remove one first.",
+  AT_MOST_200_PARTICIPANTS: "An activity can have at most 200 people.",
+  DUPLICATE_PARTICIPANT: "The same person is listed twice.",
   JCRC_MEMBER_REQUIRED: "Only JCRC members have a JCRC page.",
   RECORD_NOT_FOUND: "That record no longer exists.",
   DATE_REQUIRED_FOR_ONEOFF: "A one-off activity needs a date.",

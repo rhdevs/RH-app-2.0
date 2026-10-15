@@ -48,29 +48,15 @@ export async function requireCcaAccess(
 }
 
 /**
- * A manager, or the head of at least one VOLUNTEERING CCA (a live CcaHead row
- * joined to CcaProfile.isVolunteering). For finding a resident to log hours for.
+ * A manager, or the head of at least one CCA (a live CcaHead row). For finding a
+ * resident to log hours for, or to add to an activity as someone outside the
+ * CCA. A head who is not a manager searches by name only.
  */
-export async function requireManagerOrVolunteeringHead(
-  db: PrismaClient,
-  userID: string,
-) {
+export async function requireManagerOrHead(db: PrismaClient, userID: string) {
   const roles = await getUserRoles(db, userID);
   if (accessFor("manager", roles)) return { isManager: true as const };
-  const headed = await db.ccaHead.findMany({
-    where: { userID },
-    select: { ccaID: true },
-  });
-  const volunteering =
-    headed.length === 0
-      ? 0
-      : await db.ccaProfile.count({
-          where: {
-            ccaID: { in: headed.map((h) => h.ccaID) },
-            isVolunteering: true,
-          },
-        });
-  if (volunteering === 0) throw forbidden("NOT_A_VOLUNTEERING_HEAD");
+  const headed = await db.ccaHead.count({ where: { userID } });
+  if (headed === 0) throw forbidden("NOT_A_CCA_HEAD");
   return { isManager: false as const };
 }
 
