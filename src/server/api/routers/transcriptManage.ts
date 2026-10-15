@@ -2,6 +2,10 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { rateLimit } from "~/lib/rateLimit";
+import {
+  awardImportCommitInput,
+  awardImportPreviewInput,
+} from "~/lib/transcript/awardImport";
 import { currentAcademicYear } from "~/lib/transcript/academicYear";
 
 import {
@@ -51,6 +55,10 @@ import {
   editRefusalFor,
 } from "~/server/api/services/transcript/editRights";
 import { freezeCca, termYearOf } from "~/server/api/services/transcript/freeze";
+import {
+  awardImportCommit,
+  awardImportPreview,
+} from "~/server/api/services/transcript/awardImport";
 import {
   awardBatchUndo,
   awardBatchesList,
@@ -222,6 +230,19 @@ export const transcriptManageRouter = createTRPCRouter({
       .input(awardsBulkInput)
       .mutation(({ ctx, input }) =>
         awardsBulkRestore(ctx.db, ctx.session.user.userID, input.ids),
+      ),
+  }),
+
+  /** The awards CSV import: preview, then commit (which re-checks everything). */
+  awardImport: createTRPCRouter({
+    preview: managerProcedure
+      .input(awardImportPreviewInput)
+      .mutation(({ ctx, input }) => awardImportPreview(ctx.db, input)),
+
+    commit: managerProcedure
+      .input(awardImportCommitInput)
+      .mutation(({ ctx, input }) =>
+        awardImportCommit(ctx.db, ctx.session.user.userID, input),
       ),
   }),
 

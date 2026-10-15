@@ -133,6 +133,9 @@ const ERROR_TEXT: Record<string, string> = {
   DUPLICATE_CHANGE: "The same tick was sent twice. Reload and try again.",
   HOURS_REQUIRED_FOR_ONEOFF: "A one-off activity needs its hours.",
   TOO_MANY_CHANGES: "Too many changes at once. Save in smaller steps.",
+  TOO_MANY_ROWS: "This file has more than 2,000 rows. Split it and upload in parts.",
+  UNDECIDED_AWARD_NAMES: "Decide every new award name before importing.",
+  AWARD_TYPE_GONE: "An award chosen for a new name is no longer in the catalogue.",
   AWARD_NAME_TAKEN:
     "An award with that name already exists. Archived ones count too.",
   AWARD_TYPE_NOT_FOUND: "That award is no longer in the catalogue.",

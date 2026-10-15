@@ -480,7 +480,7 @@ async function resolveCcaHeadTarget(
  * buckets and the confirmation UI that doc 03 owns. Until then this resolver
  * returns UNRESOLVED for them, which is a refusal, not a silent guess.
  */
-function resolveIdentifier(
+export function resolveIdentifier(
   raw: string,
 ): { userID: string; via: "email" | "nusnet" } | null {
   const s = raw.trim();
@@ -528,7 +528,7 @@ function resolveIdentifier(
  * against, and widening it there would let a stray cell queue a grant redeemable
  * at a stranger's first login. That path keeps the bare shape test.
  */
-async function bulkResolver(
+export async function bulkResolver(
   db: PrismaClient,
   rows: readonly { identifier: string }[],
 ): Promise<
