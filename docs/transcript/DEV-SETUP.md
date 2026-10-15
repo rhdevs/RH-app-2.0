@@ -53,7 +53,7 @@ npm run dev:db:seed
 
 ## What the seed creates
 
-Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications before and after the 2027-01-11 semester-2 start, roster entries (sem1-only, sem2-only, a head whose role starts in sem2), volunteer records, awards, JCRC service for two members, and CCA activities (Soccer: a full-year league that `SEED-R20`, who is not in Soccer, also took part in; Hall Choir: a semester 2 activity; RVC Children: one live activity and one removed).
+Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications before and after the 2027-01-11 semester-2 start, roster entries (sem1-only, sem2-only, a head whose role starts in sem2), volunteer activities, awards, JCRC service for two members, and CCA activities (Soccer: a full-year league that `SEED-R20`, who is not in Soccer, also took part in; Hall Choir: a semester 2 activity; RVC Children: one live activity and one removed).
 
 ## A caveat
 
@@ -183,5 +183,27 @@ The seed gives AY2026/27 four activities: Soccer (9005, head `seed-r04`) "Inter-
 | Phone roster | any head | Roster at 375 px wide | Cards instead of a table, a name filter, and no horizontal scroll. |
 
 Dev only: `/transcript/preview/member-with-activities` and `/transcript/preview/other-involvement-only` show specimens 13 and 14.
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: volunteer activities
+
+The seed gives AY2026/27 two RVC activities. RVC Children (9002, head `seed-r06`): "Weekly tuition for neighbourhood children", 10 weekly sessions of 2 hours from 7 September, the CCA's members plus one outsider as people, `seed-r12` ticked in every session (one with their own 1 hour, so 19 hours). RVC Special Projects (9001, head `seed-r07`): a one-off "Beach clean-up, East Coast Park" of 4 hours. A removed "Cancelled food drive" must never appear on a transcript. After pulling this change, `prisma db push` adds the four volunteer collections; the old `VolunteerRecord` collection is simply no longer used (the seed drops it locally).
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| The section | `seed-r06` | `/cca/9002/transcript` | "Volunteer hours" with "1 of 30", Add volunteer activity, and the tuition activity with its people and total hours. `seed-r04` (Soccer) has no such section. |
+| Create | `seed-r06` | Add volunteer activity, type a title, tick members, add someone outside the CCA, Add | The list shows "2 of 30". On a phone the editor fills the screen. |
+| Add a session | `seed-r06` | Attendance on the new activity, Add session | The first session is today; the next is a week after the latest, with the same hours. |
+| Grid ticks | `seed-r06` | Click cells; Tick all, Clear all on a column; Tick all sessions on a row | Cells fill, totals update live, the bar says "N unsaved changes". Save stores them; Discard asks nothing and throws them away. |
+| Copy previous | `seed-r06` | On a later column, Copy previous | That column's ticks match the session before it (not its overrides). |
+| Override | `seed-r06` | "h" on a ticked cell, type 1.5, Enter | The cell shows 1.5 and the person's total follows; clearing the box goes back to the session's hours. |
+| Paging | `seed-r06` | The tuition grid | At most 8 session columns, with Earlier sessions / Later sessions. |
+| Phone view | `seed-r06` | The attendance panel at 375 px wide | One session at a time with arrows and a date selector, Tick all, Clear all, Copy previous session, an hours box for each ticked person. |
+| Edit a session | `seed-r06` | Edit session on a column | Change the date or hours, or Remove session; a removed session stops counting. |
+| One-off | `seed-r07` | The beach clean-up | Same editor with a date and hours, no Add session; the grid has one column. |
+| Remove and restore | `seed-r06` | Remove, confirm; Show removed; Restore | It leaves the transcripts and the count; Restore brings it back. At 30 activities Add and Restore are refused. |
+| On a transcript | `seed-r01` | Preview as resident `seed-r12`, AY2026/27 | "Volunteer hours": Activity, Type, Organised by, Hours; tuition 19 (Regular, RVC Children), beach clean-up 4 (One-off, RVC Special Projects), Total 23. No session counts. |
+| Unsaved changes | `seed-r06` | Tick cells, then open another activity or reload | The browser or an in-app prompt asks before leaving. |
 
 Run `npm run dev:db:seed` afterwards to restore the seeded state.
