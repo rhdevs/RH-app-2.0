@@ -278,27 +278,27 @@ async function loadMemberships(
   now: Date,
   sem2Start: Date | null,
 ): Promise<CcaMembershipInput[]> {
-  let entries: Array<{ ccaID: number } & ResolvedEntry>;
-
   const frozenRows = await db.transcriptRosterEntry.findMany({
     where: { academicYear, userID: key, frozen: true },
   });
   const frozenIDs = new Set(frozenRows.map((r) => r.ccaID));
-  entries = frozenRows.map((r) => {
-    const duration = isDuration(r.duration) ? r.duration : "full";
-    return {
-      ccaID: r.ccaID,
-      duration,
-      roleLabel: r.roleLabel,
-      roleDuration: r.roleLabel?.trim()
-        ? clampRoleDuration(
-            duration,
-            isDuration(r.roleDuration) ? r.roleDuration : null,
-          )
-        : null,
-      extraContribution: r.extraContribution,
-    };
-  });
+  const entries: Array<{ ccaID: number } & ResolvedEntry> = frozenRows.map(
+    (r) => {
+      const duration = isDuration(r.duration) ? r.duration : "full";
+      return {
+        ccaID: r.ccaID,
+        duration,
+        roleLabel: r.roleLabel,
+        roleDuration: r.roleLabel?.trim()
+          ? clampRoleDuration(
+              duration,
+              isDuration(r.roleDuration) ? r.roleDuration : null,
+            )
+          : null,
+        extraContribution: r.extraContribution,
+      };
+    },
+  );
 
   // CCAs not frozen for this year: current membership, if this is the CCA's
   // term year.

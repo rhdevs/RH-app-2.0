@@ -38,7 +38,6 @@ import {
 import {
   createTRPCRouter,
   identifiedProcedure,
-  publicProcedure,
   roleManagerProcedure,
 } from "~/server/api/trpc";
 
