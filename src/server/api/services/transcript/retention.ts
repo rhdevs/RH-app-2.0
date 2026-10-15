@@ -11,6 +11,9 @@ import { isValidAcademicYear } from "~/lib/transcript/academicYear";
  * published transcripts until then); this is the tested tool for it. There is
  * no script and no screen on purpose.
  *
+ * The award CATALOGUE (`AwardType`) has no year, so it is deliberately NOT here
+ * and a purge never touches it.
+ *
  * `TRANSCRIPT_COLLECTIONS` is the ONE registry of the collections that carry an
  * `academicYear`. A test reads prisma/schema.prisma and fails if a model with an
  * \`academicYear\` field is missing here, so a collection added later cannot be
@@ -25,6 +28,7 @@ export const TRANSCRIPT_COLLECTIONS = [
   "VolunteerPerson",
   "VolunteerAttendance",
   "Award",
+  "AwardImportBatch",
   "JcrcService",
   "TranscriptAccess",
   "CcaYearFreeze",
@@ -46,6 +50,7 @@ function delegateOf(db: PrismaClient, name: TranscriptCollection) {
     VolunteerPerson: db.volunteerPerson,
     VolunteerAttendance: db.volunteerAttendance,
     Award: db.award,
+    AwardImportBatch: db.awardImportBatch,
     JcrcService: db.jcrcService,
     TranscriptAccess: db.transcriptAccess,
     CcaYearFreeze: db.ccaYearFreeze,

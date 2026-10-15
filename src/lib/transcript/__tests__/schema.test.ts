@@ -273,6 +273,52 @@ describe("schema: new transcript models", () => {
     }
   });
 
+  it("stores the award catalogue (unique by normalised name) and import batches", () => {
+    const raw = readFileSync("prisma/schema.prisma", "utf8");
+    for (const decl of [
+      '@@unique([normalizedName], map: "award_type_name")',
+      '@@index([academicYear, awardTypeID], map: "award_year_type")',
+      '@@index([academicYear], map: "award_batch_year")',
+    ]) {
+      expect(raw, decl).toContain(decl);
+    }
+    const names = (model: string) => current.get(model)!.map((f) => f.name);
+    expect(names("Award")).toEqual(
+      expect.arrayContaining([
+        "awardTypeID",
+        "importBatchID",
+        "updatedBy",
+        "updatedAt",
+      ]),
+    );
+    expect(names("AwardType")).toEqual(
+      expect.arrayContaining([
+        "name",
+        "normalizedName",
+        "defaultCitation",
+        "archivedAt",
+        "archivedBy",
+      ]),
+    );
+    expect(names("AwardType")).not.toContain("academicYear");
+    expect(names("AwardImportBatch")).toEqual(
+      expect.arrayContaining([
+        "academicYear",
+        "fileName",
+        "rowCount",
+        "importedCount",
+        "skippedCount",
+        "undoneAt",
+        "undoneBy",
+      ]),
+    );
+    for (const f of ["awardTypeID", "importBatchID"]) {
+      expect(current.get("Award")!.find((x) => x.name === f)!.decl).toContain(
+        "@db.ObjectId",
+      );
+    }
+  });
+
   it("no longer has the single-record VolunteerRecord model", () => {
     expect(current.has("VolunteerRecord")).toBe(false);
   });
@@ -365,6 +411,8 @@ describe("schema: guarded collections are untouched", () => {
         "VolunteerSession",
         "VolunteerPerson",
         "VolunteerAttendance",
+        "AwardType",
+        "AwardImportBatch",
       ].sort(),
     );
   });

@@ -1506,22 +1506,64 @@ model VolunteerAttendance {
   @@index([academicYear, userID], map: "vattend_year_user")
 }
 
-/// An award from the end-of-year Colours Awards, entered by JCRC/admin. Voided,
-/// never deleted.
+/// An award from the end-of-year Colours Awards, entered by JCRC/admin. Voided
+/// (shown as "removed"), never deleted. `title` is the award's name copied at
+/// assignment, so renaming a catalogue entry never changes a past award.
 model Award {
-  id           String    @id @default(auto()) @map("_id") @db.ObjectId
-  academicYear String
-  userID       String
-  title        String?
-  citation     String?
-  ceremony     String?   @default("Colours Awards")
-  recordedBy   String?
-  recordedAt   DateTime? @default(now())
-  voidedAt     DateTime?
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear  String
+  userID        String
+  title         String?
+  citation      String?
+  ceremony      String?   @default("Colours Awards")
+  recordedBy    String?
+  recordedAt    DateTime? @default(now())
+  voidedAt      DateTime?
   /// Who voided it (canonical userID). Null while not voided.
-  voidedBy     String?
+  voidedBy      String?
+  /// The catalogue entry it was assigned from, if any.
+  awardTypeID   String?   @db.ObjectId
+  /// The CSV upload that created it, if any.
+  importBatchID String?   @db.ObjectId
+  updatedBy     String?
+  updatedAt     DateTime?
 
   @@index([academicYear, userID], map: "award_year_user")
+  @@index([academicYear, awardTypeID], map: "award_year_type")
+}
+
+/// The catalogue of awards (not keyed by year, so never purged with one).
+/// Archived entries are hidden from assignment; their awards keep rendering.
+model AwardType {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  name           String
+  /// Lower-case, trimmed, inner spaces collapsed: what makes a name unique.
+  normalizedName String
+  defaultCitation String?
+  archivedAt     DateTime?
+  archivedBy     String?
+  createdBy      String?
+  createdAt      DateTime? @default(now())
+  updatedBy      String?
+  updatedAt      DateTime?
+
+  @@unique([normalizedName], map: "award_type_name")
+}
+
+/// One CSV upload of awards for a year, so it can be undone as a whole.
+model AwardImportBatch {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear  String
+  fileName      String?
+  rowCount      Int
+  importedCount Int
+  skippedCount  Int
+  createdBy     String?
+  createdAt     DateTime? @default(now())
+  undoneAt      DateTime?
+  undoneBy      String?
+
+  @@index([academicYear], map: "award_batch_year")
 }
 
 /// One row of a JCRC member's "Contributions during the year" table.
