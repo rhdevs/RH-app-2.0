@@ -8,6 +8,7 @@ import {
 } from "~/lib/transcript/academicYear";
 import { assembleTranscript } from "~/lib/transcript/assemble";
 import { instantToSgDate, sgDateToInstant } from "~/lib/transcript/sgDate";
+import { normaliseYearStatus } from "~/lib/transcript/lifecycle";
 import { canManageTranscriptPeriods } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
 import { actorLabels } from "~/server/api/services/transcript/residents";
@@ -15,12 +16,20 @@ import {
   readiness,
   recordAccess,
 } from "~/server/api/services/transcript/access";
+import {
+  listFreezes,
+  unfreezeCca,
+} from "~/server/api/services/transcript/freeze";
 import { loadTranscriptInput } from "~/server/api/services/transcript/loader";
 import {
+  STATUS_CLOSED,
   STATUS_PUBLISHED,
+  backToCollecting,
+  closeYear,
+  countUnfrozen,
   getPeriod,
   listPeriods,
-  listPublishedYears,
+  listViewableYears,
   publish,
   reopen,
   upsertDownloadBy,
@@ -63,9 +72,8 @@ const managerProcedure = roleManagerProcedure.use(async ({ ctx, next }) => {
 
 export const transcriptRouter = createTRPCRouter({
   /**
-   * Academic-year control. Publishing freezes the roster; reopening is a plain
-   * status change. Edits are locked while published
-   * (services/transcript/periods.ts `assertCollecting`).
+   * Academic-year control: close (freezes every CCA not frozen yet), publish,
+   * reopen for review, and back to collecting. See services/transcript/periods.ts.
    */
   periods: createTRPCRouter({
     list: managerProcedure.query(async ({ ctx }) => {
@@ -105,52 +113,94 @@ export const transcriptRouter = createTRPCRouter({
         ),
       ),
 
+    /** How many CCAs a Close year would freeze, for its confirmation. */
+    unfrozenCount: managerProcedure
+      .input(z.object({ academicYear }))
+      .query(({ ctx, input }) => countUnfrozen(ctx.db, input.academicYear)),
+
+    close: managerProcedure
+      .input(z.object({ academicYear }))
+      .mutation(({ ctx, input }) =>
+        closeYear(ctx.db, input.academicYear, ctx.session.user.userID),
+      ),
+
     publish: managerProcedure
       .input(z.object({ academicYear }))
       .mutation(({ ctx, input }) =>
         publish(ctx.db, input.academicYear, ctx.session.user.userID),
       ),
 
+    /** Published -> closed (back to review). */
     reopen: managerProcedure
       .input(z.object({ academicYear }))
       .mutation(({ ctx, input }) =>
         reopen(ctx.db, input.academicYear, ctx.session.user.userID),
       ),
+
+    backToCollecting: managerProcedure
+      .input(z.object({ academicYear }))
+      .mutation(({ ctx, input }) =>
+        backToCollecting(ctx.db, input.academicYear),
+      ),
+  }),
+
+  /** Each CCA's member list for a year: frozen or not, and undoing a freeze. */
+  freezes: createTRPCRouter({
+    list: managerProcedure
+      .input(z.object({ academicYear }))
+      .query(({ ctx, input }) => listFreezes(ctx.db, input.academicYear)),
+
+    unfreeze: managerProcedure
+      .input(
+        z.object({
+          academicYear,
+          ccaID: z.number().int().positive().max(1_000_000),
+          reason: z.string().trim().min(3, "REQUIRED").max(500),
+        }),
+      )
+      .mutation(({ ctx, input }) =>
+        unfreezeCca(ctx.db, {
+          ...input,
+          actorUserID: ctx.session.user.userID,
+        }),
+      ),
   }),
 
   /**
-   * A manager's look at one resident's transcript. Nothing is recorded. It
-   * shows what the resident will get: the frozen roster once the year is
-   * published, the live roster before. The ONLY procedure that takes a userID
+   * A manager's look at one resident's transcript. Nothing is recorded. It is
+   * assembled exactly as the resident's own is: each CCA's frozen list if it has
+   * one, else its current list when this is its working year. The ONLY procedure that takes a userID
    * from the client, which is why it is manager-only.
    */
   preview: managerProcedure
     .input(z.object({ userID: z.string().min(1).max(100), academicYear }))
     .query(async ({ ctx, input }) => {
       const period = await getPeriod(ctx.db, input.academicYear);
-      const mode = period?.status === STATUS_PUBLISHED ? "frozen" : "live";
       const data = await loadTranscriptInput(
         ctx.db,
         input.userID,
         input.academicYear,
-        { mode },
+        {},
       );
       return {
-        mode,
-        transcript: assembleTranscript(data, input.academicYear),
+        status: normaliseYearStatus(period?.status),
+        transcript: assembleTranscript(data, input.academicYear, {
+          draft: period?.status === STATUS_CLOSED,
+        }),
       };
     }),
 
   mine: createTRPCRouter({
-    /** Which academic years are open to download. Names only. */
-    years: identifiedProcedure.query(({ ctx }) => listPublishedYears(ctx.db)),
+    /** The years a resident can open: published ones, and closed ones as drafts. */
+    years: identifiedProcedure.query(({ ctx }) => listViewableYears(ctx.db)),
 
     /**
      * The signed-in resident's own transcript, assembled from the data on every
      * view. The identity comes ONLY from the session (`identifiedProcedure`
      * guarantees a canonical userID); there is no way to ask for anyone else's.
-     * While the year is not published there is nothing to open. A ready view is
-     * noted in TranscriptAccess, which drives the "Ready" badge.
+     * A collecting year has nothing to open; a closed one opens as a DRAFT; a
+     * published one is the real thing, and opening it is noted in
+     * TranscriptAccess, which drives the "Ready" badge.
      */
     get: identifiedProcedure
       .input(z.object({ academicYear: academicYear.optional() }).optional())
@@ -158,16 +208,27 @@ export const transcriptRouter = createTRPCRouter({
         const year = input?.academicYear ?? currentAcademicYear(new Date());
         const userID = ctx.session.user.userID;
         const period = await getPeriod(ctx.db, year);
-        if (period?.status !== STATUS_PUBLISHED) {
+        const status = normaliseYearStatus(period?.status);
+        if (status === "collecting" || !period) {
           return { status: "not_open" as const, academicYear: year };
         }
-        const data = await loadTranscriptInput(ctx.db, userID, year, {
-          mode: "frozen",
-        });
+        const data = await loadTranscriptInput(ctx.db, userID, year, {});
+        // While the year is closed this is a DRAFT: nothing is recorded as
+        // opened (no Ready badge is cleared) and there is no download-by banner.
+        if (status === "closed") {
+          return {
+            status: "ready" as const,
+            draft: true as const,
+            academicYear: year,
+            transcript: assembleTranscript(data, year, { draft: true }),
+            downloadBy: null,
+          };
+        }
         const transcript = assembleTranscript(data, year);
         await recordAccess(ctx.db, year, userID);
         return {
           status: "ready" as const,
+          draft: false as const,
           academicYear: year,
           transcript,
           // A Singapore calendar date, "2027-12-31", or null.

@@ -15,11 +15,7 @@ export const FIRST_ACADEMIC_YEAR = "AY2026/27";
 
 export type YearStatus = "collecting" | "closed" | "published";
 
-export type FreezeReason =
-  | "handover"
-  | "head_removed"
-  | "lock"
-  | "close_year";
+export type FreezeReason = "handover" | "head_removed" | "lock" | "close_year";
 
 export const FREEZE_REASONS: readonly FreezeReason[] = [
   "handover",

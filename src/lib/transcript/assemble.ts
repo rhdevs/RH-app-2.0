@@ -40,6 +40,7 @@ const JCRC_NOTE_TEXT =
 export function assembleTranscript(
   input: TranscriptInput,
   academicYear: string,
+  options: { draft?: boolean } = {},
 ): TranscriptViewModel {
   const issue = input.issues.find((i) => i.academicYear === academicYear);
   if (!issue) {
@@ -83,6 +84,7 @@ export function assembleTranscript(
     hasVolunteerHours: volunteer !== null,
     hasAwards: awardRows.length > 0,
     hasJcrc: jcrc !== null,
+    isDraft: options.draft === true,
     hasPartYear: memberships.some(
       (m) =>
         semLabel(m.duration) !== null ||

@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { rateLimit } from "~/lib/rateLimit";
+import { currentAcademicYear } from "~/lib/transcript/academicYear";
 
 import {
   academicYearInput,
@@ -16,6 +17,11 @@ import {
   userIDInput,
   volunteerCreateInput,
 } from "~/lib/transcript/manageInput";
+import {
+  assertCanEditCcaYear,
+  editRefusalFor,
+} from "~/server/api/services/transcript/editRights";
+import { freezeCca, termYearOf } from "~/server/api/services/transcript/freeze";
 import {
   requireCca,
   requireCcaAccess,
@@ -179,14 +185,51 @@ export const transcriptManageRouter = createTRPCRouter({
       .query(async ({ ctx, input }) => {
         await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
         await requireCca(ctx.db, input.ccaID);
-        const [list, profile] = await Promise.all([
+        const [list, refusal, profile] = await Promise.all([
           rosterList(ctx.db, input.ccaID, input.academicYear),
+          editRefusalFor(
+            ctx.db,
+            ctx.session.user.userID,
+            input.ccaID,
+            input.academicYear,
+          ),
           ctx.db.ccaProfile.findUnique({
             where: { ccaID: input.ccaID },
             select: { isVolunteering: true },
           }),
         ]);
-        return { ...list, isVolunteering: profile?.isVolunteering === true };
+        return {
+          ...list,
+          isVolunteering: profile?.isVolunteering === true,
+          // Why this person cannot edit the year (null when they can).
+          editRefusal: refusal,
+        };
+      }),
+
+    /** The year this CCA is working on, for the handover warning and the tab. */
+    term: identifiedProcedure
+      .input(z.object({ ccaID: ccaIDInput }))
+      .query(async ({ ctx, input }) => {
+        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        const now = new Date();
+        return {
+          termAcademicYear: await termYearOf(ctx.db, input.ccaID, now),
+          currentAcademicYear: currentAcademicYear(now),
+        };
+      }),
+
+    /** Head (or manager) locks the member list early. Edits stay open until close. */
+    lock: identifiedProcedure
+      .input(z.object({ ccaID: ccaIDInput }))
+      .mutation(async ({ ctx, input }) => {
+        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        return freezeCca(ctx.db, {
+          ccaID: input.ccaID,
+          reason: "lock",
+          actorUserID: ctx.session.user.userID,
+        });
       }),
 
     upsert: identifiedProcedure
@@ -194,6 +237,12 @@ export const transcriptManageRouter = createTRPCRouter({
       .mutation(async ({ ctx, input }) => {
         await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
         await requireCca(ctx.db, input.ccaID);
+        await assertCanEditCcaYear(
+          ctx.db,
+          { userID: ctx.session.user.userID },
+          input.ccaID,
+          input.academicYear,
+        );
         return rosterUpsert(ctx.db, ctx.session.user.userID, input);
       }),
   }),

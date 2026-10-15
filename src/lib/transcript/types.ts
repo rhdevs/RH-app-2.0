@@ -213,6 +213,8 @@ export interface TranscriptViewModel {
   hasJcrc: boolean;
   /** True when any CCA row is for one semester only (the notes explain Sem 1 / Sem 2). */
   hasPartYear: boolean;
+  /** True while the year is closed for review: shown as a DRAFT, not a record. */
+  isDraft: boolean;
   /** Always main first and notes last; the JCRC page sits between them. */
   pages: TranscriptPage[];
 }

@@ -8,6 +8,7 @@ import {
   requireCcaAccess,
   requireManager,
 } from "./manageAccess";
+import { assertCanEditCcaYear } from "./editRights";
 import { actorLabels, lookupResidents, requireResident } from "./residents";
 
 /**
@@ -70,7 +71,12 @@ export async function volunteerCreate(
   input: z.infer<typeof volunteerCreateInput>,
   now: Date = new Date(),
 ) {
-  await assertWritable(db, input.academicYear);
+  await assertCanEditCcaYear(
+    db,
+    { userID: actorUserID },
+    input.ccaID,
+    input.academicYear,
+  );
   await requireVolunteeringCca(db, input.ccaID);
   const resident = await requireResident(db, input.userID);
 
@@ -108,10 +114,16 @@ export async function volunteerVoid(
   if (record.ccaID === null) {
     // No CCA to head: only a manager may touch it.
     await requireManager(db, actorUserID);
+    await assertWritable(db, record.academicYear);
   } else {
     await requireCcaAccess(db, actorUserID, record.ccaID);
+    await assertCanEditCcaYear(
+      db,
+      { userID: actorUserID },
+      record.ccaID,
+      record.academicYear,
+    );
   }
-  await assertWritable(db, record.academicYear);
   if (record.voidedAt) return { id, voided: true as const };
   await db.volunteerRecord.update({
     where: { id },

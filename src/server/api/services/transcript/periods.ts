@@ -1,58 +1,50 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
-import { canonicalUserID } from "~/lib/identity";
 import { parseAcademicYear } from "~/lib/transcript/academicYear";
-import { resolveEntry } from "~/lib/transcript/duration";
-import { resolveRoster } from "~/server/api/services/ccaRoster";
+import {
+  NEXT_STATUS,
+  normaliseYearStatus,
+  transitionBlocker,
+  type TransitionBlocker,
+  type YearAction,
+} from "~/lib/transcript/lifecycle";
+import { freezeCca } from "./freeze";
+import { NOT_UNFROZEN } from "./loader";
 
 /**
- * The academic-year state machine: collecting -> published -> (reopen) ->
- * collecting. Only jcrc/admin drive it (the router checks that); everything
- * here takes the Prisma client as a parameter.
+ * The academic-year state machine, driven only by jcrc/admin (the router checks
+ * that); everything here takes the Prisma client (and, where time matters, `now`)
+ * as a parameter.
  *
- *  - While COLLECTING, heads/JCRC edit and residents cannot download.
- *  - PUBLISH requires sem2Start, freezes the roster in ONE transaction, and
- *    locks edits (`assertCollecting`, for the edit screens to call).
- *  - REOPEN goes back to collecting and supersedes every live issued
- *    transcript of that year, so a resident re-downloads the corrected one.
+ *   collecting --close--> closed --publish--> published
+ *        ^------back------+  ^------reopen------+
+ *
+ *  - COLLECTING: heads and the JCRC edit. Residents see nothing.
+ *  - CLOSE YEAR freezes every CCA that is not frozen yet, then moves to closed.
+ *    It needs the semester 2 start date and a year that has begun.
+ *  - CLOSED is the review: residents see a DRAFT, and the JCRC fixes data.
+ *  - PUBLISH (from closed only) lets residents download. It freezes nothing.
+ *  - REOPEN goes back to closed; BACK TO COLLECTING goes from closed to
+ *    collecting. Frozen member lists stay frozen either way.
  *
  * Nothing here ever writes CCA / UserCCA / User.
  */
 
 export const STATUS_COLLECTING = "collecting";
+export const STATUS_CLOSED = "closed";
 export const STATUS_PUBLISHED = "published";
 
-export type PeriodState = {
-  status: string | null;
-  sem2Start: Date | null;
-} | null;
-
-const isPublished = (p: PeriodState): boolean => p?.status === STATUS_PUBLISHED;
-
-/** Why `publish` must refuse right now, or null if it may proceed. PURE. */
-export function publishBlocker(
-  period: PeriodState,
-): "PERIOD_NOT_FOUND" | "ALREADY_PUBLISHED" | "SEM2_START_REQUIRED" | null {
-  if (!period) return "PERIOD_NOT_FOUND";
-  if (isPublished(period)) return "ALREADY_PUBLISHED";
-  if (!period.sem2Start) return "SEM2_START_REQUIRED";
-  return null;
-}
-
-/** Why `reopen` must refuse right now, or null if it may proceed. PURE. */
-export function reopenBlocker(
-  period: PeriodState,
-): "PERIOD_NOT_FOUND" | "NOT_PUBLISHED" | null {
-  if (!period) return "PERIOD_NOT_FOUND";
-  return isPublished(period) ? null : "NOT_PUBLISHED";
-}
-
-const BLOCKER_CODE = {
+const BLOCKER_CODE: Record<
+  TransitionBlocker | "PERIOD_NOT_FOUND",
+  "NOT_FOUND" | "CONFLICT" | "PRECONDITION_FAILED"
+> = {
   PERIOD_NOT_FOUND: "NOT_FOUND",
-  ALREADY_PUBLISHED: "CONFLICT",
+  NOT_COLLECTING: "CONFLICT",
+  NOT_CLOSED: "CONFLICT",
   NOT_PUBLISHED: "CONFLICT",
   SEM2_START_REQUIRED: "PRECONDITION_FAILED",
-} as const;
+  YEAR_NOT_STARTED: "PRECONDITION_FAILED",
+};
 
 function fail(reason: keyof typeof BLOCKER_CODE): never {
   throw new TRPCError({ code: BLOCKER_CODE[reason], message: reason });
@@ -101,6 +93,22 @@ export async function listPublishedYears(db: PrismaClient): Promise<string[]> {
   return rows.map((r) => r.academicYear).sort();
 }
 
+/** The years a resident can OPEN: published ones, and closed ones as drafts. */
+export async function listViewableYears(
+  db: PrismaClient,
+): Promise<Array<{ academicYear: string; draft: boolean }>> {
+  const rows = await db.transcriptPeriod.findMany({
+    where: { status: { in: [STATUS_PUBLISHED, STATUS_CLOSED] } },
+    select: { academicYear: true, status: true },
+  });
+  return rows
+    .map((r) => ({
+      academicYear: r.academicYear,
+      draft: r.status === STATUS_CLOSED,
+    }))
+    .sort((a, b) => a.academicYear.localeCompare(b.academicYear));
+}
+
 export function listPeriods(db: PrismaClient) {
   return db.transcriptPeriod.findMany({ orderBy: { academicYear: "desc" } });
 }
@@ -108,7 +116,9 @@ export function listPeriods(db: PrismaClient) {
 /**
  * THE GUARD THE EDIT SCREENS CALL before changing anything year-scoped (roster
  * annotations, volunteer hours, awards, JCRC service). A year with no period
- * row has never been published, so it is still collecting.
+ * row has never been published, so it is still collecting. Only a PUBLISHED
+ * year refuses here; who may edit a closed year, or a frozen CCA, is decided by
+ * `assertCanEditCcaYear` (editRights.ts).
  */
 export async function assertCollecting(
   db: PrismaClient,
@@ -116,7 +126,7 @@ export async function assertCollecting(
 ): Promise<void> {
   requireValidYear(academicYear);
   const period = await getPeriod(db, academicYear);
-  if (isPublished(period)) {
+  if (normaliseYearStatus(period?.status) === "published") {
     throw new TRPCError({ code: "FORBIDDEN", message: "PERIOD_PUBLISHED" });
   }
 }
@@ -160,255 +170,133 @@ export async function upsertDownloadBy(
   });
 }
 
-interface LiveMember {
-  userID: string;
-  ccaID: number;
-  isHead: boolean;
-  grantedAt: Date | null;
-  keys: string[];
+/** The check every transition makes first; throws the blocker as an error. */
+async function requireTransition(
+  db: PrismaClient,
+  action: YearAction,
+  academicYear: string,
+  now: Date,
+) {
+  requireValidYear(academicYear);
+  const period = await getPeriod(db, academicYear);
+  const blocker = transitionBlocker(action, period, academicYear, now);
+  if (blocker) fail(blocker);
+  return period;
+}
+
+/** Compare-and-set the status: only the caller that finds `from` wins. */
+async function claimStatus(
+  db: PrismaClient,
+  academicYear: string,
+  action: YearAction,
+  from: string,
+  extra: Record<string, unknown> = {},
+) {
+  const claimed = await db.transcriptPeriod.updateMany({
+    where:
+      from === STATUS_COLLECTING
+        ? {
+            academicYear,
+            OR: [{ status: STATUS_COLLECTING }, { status: { isSet: false } }],
+          }
+        : { academicYear, status: from },
+    data: { status: NEXT_STATUS[action], ...extra },
+  });
+  if (claimed.count !== 1) {
+    // Someone else moved the year between our check and our claim.
+    throw new TRPCError({ code: "CONFLICT", message: "PERIOD_CHANGING" });
+  }
+}
+
+export interface CloseResult {
+  academicYear: string;
+  /** CCAs frozen by this close (the ones that were not frozen already). */
+  frozenNow: number;
+  /** CCAs that already had an active freeze for this year. */
+  alreadyFrozen: number;
+}
+
+/** How many CCAs a close would freeze, for the confirmation dialog. */
+export async function countUnfrozen(
+  db: PrismaClient,
+  academicYear: string,
+): Promise<number> {
+  const [ccas, frozen] = await Promise.all([
+    db.cCA.count(),
+    db.ccaYearFreeze.count({ where: { academicYear, ...NOT_UNFROZEN } }),
+  ]);
+  return Math.max(0, ccas - frozen);
 }
 
 /**
- * Everyone in every CCA right now, resolved through the same roster resolver
- * the head screens use (UserCCA under either key format, the embedded
- * User.userCCA array, and CcaHead). Rows that cannot be resolved to ONE person
- * are NOT guessed at: they are counted and returned, never frozen.
+ * CLOSE YEAR: freeze every CCA that has no active freeze for this year (reason
+ * "close_year"), then move the year to closed. Each CCA freezes in its own
+ * transaction, so a failure part-way leaves the year collecting with some CCAs
+ * frozen; running it again finishes the rest.
  */
-async function collectLiveMembers(db: PrismaClient) {
-  const ccas = await db.cCA.findMany({ select: { ccaID: true } });
-  const members = new Map<string, LiveMember>();
-  let skippedUnresolved = 0;
+export async function closeYear(
+  db: PrismaClient,
+  academicYear: string,
+  actorUserID: string,
+  now: Date = new Date(),
+): Promise<CloseResult> {
+  await requireTransition(db, "close", academicYear, now);
 
-  const queue = ccas.map((c) => c.ccaID);
+  const [ccas, frozen] = await Promise.all([
+    db.cCA.findMany({ select: { ccaID: true } }),
+    db.ccaYearFreeze.findMany({
+      where: { academicYear, ...NOT_UNFROZEN },
+      select: { ccaID: true },
+    }),
+  ]);
+  const done = new Set(frozen.map((f) => f.ccaID));
+  const todo = ccas.map((c) => c.ccaID).filter((id) => !done.has(id));
+
+  const queue = [...todo];
+  let frozenNow = 0;
   const worker = async () => {
-    for (
-      let ccaID = queue.shift();
-      ccaID !== undefined;
-      ccaID = queue.shift()
-    ) {
-      const roster = await resolveRoster(db, ccaID);
-      for (const e of [...roster.heads, ...roster.members]) {
-        if (e.kind !== "resolved") {
-          skippedUnresolved += 1;
-          continue;
-        }
-        const userID =
-          (e.email ? canonicalUserID(e.email) : null) ??
-          e.storedUserID ??
-          e.membershipKeys[0] ??
-          null;
-        if (!userID) {
-          skippedUnresolved += 1;
-          continue;
-        }
-        const id = `${userID}|${ccaID}`;
-        const seen = members.get(id);
-        members.set(id, {
-          userID,
-          ccaID,
-          isHead: (seen?.isHead ?? false) || e.isHead,
-          grantedAt: seen?.grantedAt ?? e.grantedAt,
-          keys: [
-            ...new Set([...(seen?.keys ?? []), userID, ...e.membershipKeys]),
-          ],
-        });
-      }
+    for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+      const result = await freezeCca(db, {
+        ccaID: id,
+        reason: "close_year",
+        actorUserID,
+        now,
+        academicYear,
+      });
+      if (result.kind === "frozen") frozenNow += 1;
     }
   };
   await Promise.all(Array.from({ length: 4 }, worker));
-  return { members: [...members.values()], skippedUnresolved };
+
+  await transitioning(() =>
+    claimStatus(db, academicYear, "close", STATUS_COLLECTING),
+  );
+  return {
+    academicYear,
+    frozenNow,
+    alreadyFrozen: ccas.length - todo.length,
+  };
 }
 
 export interface PublishResult {
   academicYear: string;
-  frozen: number;
-  created: number;
-  updated: number;
-  skippedUnresolved: number;
 }
 
-/** Rows per write, so one call never carries thousands of documents. */
-const WRITE_CHUNK = 1000;
-
-function chunked<T>(items: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
-}
-
-/**
- * Updates that write the same values, as one `{ ids, data }` per distinct
- * payload and at most WRITE_CHUNK ids each. Most members share a payload (a
- * full year, no role, no extra), so a hall-sized publish needs a handful of
- * round trips rather than one per member.
- */
-export function groupByPayload<D extends object>(
-  updates: ReadonlyArray<{ id: string; data: D }>,
-): Array<{ ids: string[]; data: D }> {
-  const byPayload = new Map<string, { ids: string[]; data: D }>();
-  for (const u of updates) {
-    const key = JSON.stringify(u.data);
-    const group = byPayload.get(key);
-    if (group) group.ids.push(u.id);
-    else byPayload.set(key, { ids: [u.id], data: u.data });
-  }
-  return [...byPayload.values()].flatMap((g) =>
-    chunked(g.ids, WRITE_CHUNK).map((ids) => ({ ids, data: g.data })),
-  );
-}
-
-/**
- * PUBLISH: freeze the roster and open the year to residents, in ONE
- * transaction. The status claim is the first write, as a compare-and-set, so
- * two concurrent publishes cannot both win: the loser aborts with
- * ALREADY_PUBLISHED and its writes never commit.
- *
- * For every LIVE member, in every CCA, an entry is written with frozen=true:
- *   duration     = the stored override ?? ("sem2" if their accepted
- *                  application was decided on/after sem2Start, else "full")
- *   roleLabel    = the stored override ?? ("Head" if they hold a CcaHead row)
- *   roleDuration = the stored override ?? (head: "sem2" if granted on/after
- *                  sem2Start else "full")
- * Members who have since left get NO entry, and any earlier frozen flag on
- * their entry is cleared, so the published roster is exactly today's.
- */
+/** PUBLISH: closed -> published. Freezes nothing: every list is frozen already. */
 export async function publish(
   db: PrismaClient,
   academicYear: string,
   actorUserID: string,
   now: Date = new Date(),
 ): Promise<PublishResult> {
-  requireValidYear(academicYear);
-  const period = await getPeriod(db, academicYear);
-  const blocker = publishBlocker(period);
-  if (blocker) fail(blocker);
-  const sem2Start = period!.sem2Start;
-
-  const { members, skippedUnresolved } = await collectLiveMembers(db);
-
-  // Earliest accepted application per (cca, any of the person's keys).
-  const apps = await db.ccaApplication.findMany({
-    where: { status: "accepted" },
-    select: { ccaID: true, userID: true, decidedAt: true },
-  });
-  const decided = new Map<string, Date>();
-  for (const a of apps) {
-    if (!a.decidedAt) continue;
-    const id = `${a.userID}|${a.ccaID}`;
-    const prev = decided.get(id);
-    if (!prev || a.decidedAt < prev) decided.set(id, a.decidedAt);
-  }
-  const decidedFor = (m: LiveMember): Date | null => {
-    let best: Date | null = null;
-    for (const k of m.keys) {
-      const d = decided.get(`${k}|${m.ccaID}`);
-      if (d && (!best || d < best)) best = d;
-    }
-    return best;
-  };
-
-  /**
-   * What publishing writes, from the stored entries and semester 2 date AS THEY
-   * ARE NOW. It runs again inside the transaction, after the status claim, so
-   * an edit that committed after the first reads is not overwritten with values
-   * derived from stale ones.
-   */
-  const buildPlan = (
-    existing: Awaited<ReturnType<typeof db.transcriptRosterEntry.findMany>>,
-    sem2: Date | null,
-  ) => {
-    const existingBy = new Map(
-      existing.map((r) => [`${r.userID}|${r.ccaID}`, r]),
-    );
-    const toCreate: Prisma.TranscriptRosterEntryCreateManyInput[] = [];
-    const toUpdate: Array<{
-      id: string;
-      data: Prisma.TranscriptRosterEntryUpdateInput;
-    }> = [];
-
-    for (const m of members) {
-      const stored = existingBy.get(`${m.userID}|${m.ccaID}`) ?? null;
-      const r = resolveEntry(
-        stored,
-        { decidedAt: decidedFor(m), isHead: m.isHead, grantedAt: m.grantedAt },
-        sem2,
-      );
-      const data = {
-        duration: r.duration,
-        roleLabel: r.roleLabel,
-        roleDuration: r.roleDuration,
-        extraContribution: r.extraContribution,
-        frozen: true,
-        updatedBy: actorUserID,
-        updatedAt: now,
-      };
-      if (stored) toUpdate.push({ id: stored.id, data });
-      else
-        toCreate.push({
-          academicYear,
-          userID: m.userID,
-          ccaID: m.ccaID,
-          ...data,
-        });
-    }
-    return { toCreate, toUpdate };
-  };
-
-  let frozenCount = { created: 0, updated: 0 };
-
+  await requireTransition(db, "publish", academicYear, now);
   await transitioning(() =>
-    db.$transaction(
-      async (tx) => {
-        const claimed = await tx.transcriptPeriod.updateMany({
-          where: { academicYear, NOT: { status: STATUS_PUBLISHED } },
-          data: {
-            status: STATUS_PUBLISHED,
-            publishedAt: now,
-            publishedBy: actorUserID,
-          },
-        });
-        if (claimed.count !== 1) fail("ALREADY_PUBLISHED");
-
-        const [existing, current] = await Promise.all([
-          tx.transcriptRosterEntry.findMany({ where: { academicYear } }),
-          tx.transcriptPeriod.findUnique({ where: { academicYear } }),
-        ]);
-        const { toCreate, toUpdate } = buildPlan(
-          existing,
-          current?.sem2Start ?? sem2Start,
-        );
-        frozenCount = { created: toCreate.length, updated: toUpdate.length };
-
-        // The published roster is exactly today's: clear every old freeze first.
-        await tx.transcriptRosterEntry.updateMany({
-          where: { academicYear },
-          data: { frozen: false },
-        });
-        // Few round trips: entries that take the same values are updated
-        // together, and new ones are created in chunks.
-        for (const group of groupByPayload(toUpdate)) {
-          await tx.transcriptRosterEntry.updateMany({
-            where: { id: { in: group.ids } },
-            data: group.data,
-          });
-        }
-        for (const chunk of chunked(toCreate, WRITE_CHUNK)) {
-          await tx.transcriptRosterEntry.createMany({ data: chunk });
-        }
-      },
-      { maxWait: 10_000, timeout: 120_000 },
-    ),
+    claimStatus(db, academicYear, "publish", STATUS_CLOSED, {
+      publishedAt: now,
+      publishedBy: actorUserID,
+    }),
   );
-
-  return {
-    academicYear,
-    frozen: frozenCount.created + frozenCount.updated,
-    created: frozenCount.created,
-    updated: frozenCount.updated,
-    skippedUnresolved,
-  };
+  return { academicYear };
 }
 
 export interface ReopenResult {
@@ -416,10 +304,9 @@ export interface ReopenResult {
 }
 
 /**
- * REOPEN: back to collecting. Clears nothing, and there is nothing to withdraw:
- * a transcript is assembled from the data each time it is opened, so once the
- * year is published again residents see the corrected data. Who reopened it,
- * and when, is recorded on the period.
+ * REOPEN FOR REVIEW: published -> closed. Clears nothing: a transcript is
+ * assembled from the data each time it is opened, so once the year is published
+ * again residents see the corrected data. Who reopened it, and when, is recorded.
  */
 export async function reopen(
   db: PrismaClient,
@@ -427,20 +314,25 @@ export async function reopen(
   actorUserID: string,
   now: Date = new Date(),
 ): Promise<ReopenResult> {
-  requireValidYear(academicYear);
-  const blocker = reopenBlocker(await getPeriod(db, academicYear));
-  if (blocker) fail(blocker);
+  await requireTransition(db, "reopen", academicYear, now);
+  await transitioning(() =>
+    claimStatus(db, academicYear, "reopen", STATUS_PUBLISHED, {
+      reopenedAt: now,
+      reopenedBy: actorUserID,
+    }),
+  );
+  return { academicYear };
+}
 
-  return transitioning(async () => {
-    const claimed = await db.transcriptPeriod.updateMany({
-      where: { academicYear, status: STATUS_PUBLISHED },
-      data: {
-        status: STATUS_COLLECTING,
-        reopenedAt: now,
-        reopenedBy: actorUserID,
-      },
-    });
-    if (claimed.count !== 1) fail("NOT_PUBLISHED");
-    return { academicYear };
-  });
+/** BACK TO COLLECTING: closed -> collecting. Frozen member lists stay frozen. */
+export async function backToCollecting(
+  db: PrismaClient,
+  academicYear: string,
+  now: Date = new Date(),
+): Promise<{ academicYear: string }> {
+  await requireTransition(db, "backToCollecting", academicYear, now);
+  await transitioning(() =>
+    claimStatus(db, academicYear, "backToCollecting", STATUS_CLOSED),
+  );
+  return { academicYear };
 }

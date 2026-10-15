@@ -11,15 +11,20 @@ import {
 } from "~/lib/transcript/duration";
 import type { rosterUpsertInput } from "~/lib/transcript/manageInput";
 import type { z } from "zod";
-import {
-  resolveRoster,
-  type RosterResolved,
-} from "~/server/api/services/ccaRoster";
 import { instantToSgDate } from "~/lib/transcript/sgDate";
 import { lookupResidents } from "./residents";
-import { personKey } from "./loader";
+import {
+  normaliseYearStatus,
+  termAcademicYear,
+  type FreezeReason,
+  type YearStatus,
+} from "~/lib/transcript/lifecycle";
+import { activeFreeze, termYearOf } from "./freeze";
+import { liveMembers } from "./liveRoster";
+import { NOT_UNFROZEN } from "./loader";
 import { assertWritable } from "./manageAccess";
-import { STATUS_PUBLISHED, getPeriod } from "./periods";
+import { getPeriod } from "./periods";
+import { actorLabels } from "./residents";
 
 /**
  * A head's (or manager's) view and edits of ONE CCA's transcript annotations
@@ -54,11 +59,25 @@ export interface RosterRow {
 }
 
 export interface RosterList {
-  status: "collecting" | "published";
+  status: YearStatus;
   sem2Start: string | null;
   /** Roster rows that could not be resolved to one person (never guessed at). */
   unresolved: number;
   rows: RosterRow[];
+  /**
+   * Where the list comes from: the FROZEN entries (the CCA has an active freeze
+   * for this year), the LIVE members (this is the CCA's term year and it is not
+   * frozen), or NONE (no member list was recorded for this year).
+   */
+  mode: "frozen" | "live" | "none";
+  freeze: {
+    reason: FreezeReason;
+    frozenAt: Date;
+    frozenByName: string | null;
+    memberCount: number | null;
+  } | null;
+  /** The year this CCA is working on now (its oldest unfrozen year). */
+  termAcademicYear: string;
 }
 
 const asDuration = (v: string | null | undefined): Duration | null =>
@@ -67,51 +86,39 @@ const asDuration = (v: string | null | undefined): Duration | null =>
 const blankToNull = (v: string | null | undefined) =>
   v?.trim() ? v.trim() : null;
 
-type Resolved = { entry: RosterResolved; key: string; keys: string[] };
-
-/** Every resolved person in the CCA, with the keys that name them. */
-async function liveMembers(db: PrismaClient, ccaID: number) {
-  const roster = await resolveRoster(db, ccaID);
-  const seen = new Map<string, Resolved>();
-  let unresolved = 0;
-  for (const e of [...roster.heads, ...roster.members]) {
-    if (e.kind !== "resolved") {
-      unresolved += 1;
-      continue;
-    }
-    const key = personKey(
-      { email: e.email ?? "", userID: e.storedUserID },
-      e.membershipKeys[0] ?? "",
-    );
-    if (!key) {
-      unresolved += 1;
-      continue;
-    }
-    seen.set(e.userId, {
-      entry: e,
-      key,
-      keys: [
-        ...new Set([key, e.storedUserID ?? "", ...e.membershipKeys]),
-      ].filter((k) => k.length > 0),
-    });
-  }
-  return { members: [...seen.values()], unresolved };
-}
-
 export async function rosterList(
   db: PrismaClient,
   ccaID: number,
   academicYear: string,
+  now: Date = new Date(),
 ): Promise<RosterList> {
-  const period = await getPeriod(db, academicYear);
-  const published = period?.status === STATUS_PUBLISHED;
+  const [period, freezes] = await Promise.all([
+    getPeriod(db, academicYear),
+    db.ccaYearFreeze.findMany({ where: { ccaID, ...NOT_UNFROZEN } }),
+  ]);
   const sem2Start = period?.sem2Start ?? null;
+  const term = termAcademicYear(
+    new Set(freezes.map((f) => f.academicYear)),
+    now,
+  );
+  const frozen = freezes.find((f) => f.academicYear === academicYear) ?? null;
+  const label = frozen ? await actorLabels(db, [frozen.frozenBy]) : null;
   const base = {
-    status: published ? ("published" as const) : ("collecting" as const),
+    status: normaliseYearStatus(period?.status),
     sem2Start: sem2Start ? instantToSgDate(sem2Start) : null,
+    termAcademicYear: term,
+    freeze:
+      frozen && label
+        ? {
+            reason: frozen.reason as FreezeReason,
+            frozenAt: frozen.frozenAt,
+            frozenByName: label(frozen.frozenBy),
+            memberCount: frozen.memberCount ?? null,
+          }
+        : null,
   };
 
-  if (published) {
+  if (frozen) {
     const entries = await db.transcriptRosterEntry.findMany({
       where: { academicYear, ccaID, frozen: true },
     });
@@ -143,7 +150,12 @@ export async function rosterList(
         },
       };
     });
-    return { ...base, unresolved: 0, rows: sortRows(rows) };
+    return { ...base, unresolved: 0, rows: sortRows(rows), mode: "frozen" };
+  }
+
+  // Not frozen, and not the year this CCA is working on: no list was recorded.
+  if (academicYear !== term) {
+    return { ...base, unresolved: 0, rows: [], mode: "none" };
   }
 
   const { members, unresolved } = await liveMembers(db, ccaID);
@@ -186,7 +198,7 @@ export async function rosterList(
       effective: resolved,
     };
   });
-  return { ...base, unresolved, rows: sortRows(rows) };
+  return { ...base, unresolved, rows: sortRows(rows), mode: "live" };
 }
 
 const sortRows = (rows: RosterRow[]) =>
@@ -202,6 +214,41 @@ const sortRows = (rows: RosterRow[]) =>
 type UpsertInput = z.infer<typeof rosterUpsertInput>;
 
 /**
+ * Who an edit is about. In a FROZEN list it must be someone on the frozen list;
+ * otherwise a current member of the CCA, and only for the year the CCA is
+ * working on (a year it has moved past has no list to edit).
+ */
+async function findTarget(
+  db: PrismaClient,
+  input: UpsertInput,
+  now: Date,
+): Promise<{ key: string; keys: string[]; frozen: boolean }> {
+  const notAMember = new TRPCError({
+    code: "BAD_REQUEST",
+    message: "NOT_A_MEMBER",
+  });
+  if (await activeFreeze(db, input.ccaID, input.academicYear)) {
+    const entry = await db.transcriptRosterEntry.findFirst({
+      where: {
+        academicYear: input.academicYear,
+        ccaID: input.ccaID,
+        userID: input.userID,
+        frozen: true,
+      },
+    });
+    if (!entry) throw notAMember;
+    return { key: entry.userID, keys: [entry.userID], frozen: true };
+  }
+  if ((await termYearOf(db, input.ccaID, now)) !== input.academicYear) {
+    throw notAMember;
+  }
+  const { members } = await liveMembers(db, input.ccaID);
+  const live = members.find((m) => m.keys.includes(input.userID));
+  if (!live) throw notAMember;
+  return { key: live.key, keys: live.keys, frozen: false };
+}
+
+/**
  * A role must fit inside the membership. Works out the membership period that
  * will be in force after this change (the override, else the default from when
  * the application was accepted), and the role period that will be in force, and
@@ -210,7 +257,7 @@ type UpsertInput = z.infer<typeof rosterUpsertInput>;
 async function assertRoleFitsMembership(
   db: PrismaClient,
   input: UpsertInput,
-  target: { key: string; keys: string[] },
+  target: { key: string; keys: string[]; frozen: boolean },
 ) {
   const [existing, period, apps] = await Promise.all([
     db.transcriptRosterEntry.findUnique({
@@ -246,8 +293,11 @@ async function assertRoleFitsMembership(
     input.roleDuration !== undefined
       ? input.roleDuration
       : asDuration(existing?.roleDuration);
-  const membership =
-    duration ?? defaultMembershipDuration(decidedAt, period?.sem2Start ?? null);
+  // A frozen entry already holds the resolved membership period.
+  const membership = target.frozen
+    ? (duration ?? "full")
+    : (duration ??
+      defaultMembershipDuration(decidedAt, period?.sem2Start ?? null));
 
   if (roleDuration && !roleFits(membership, roleDuration)) {
     throw new TRPCError({
@@ -270,12 +320,7 @@ export async function rosterUpsert(
 ) {
   await assertWritable(db, input.academicYear);
 
-  const { members } = await liveMembers(db, input.ccaID);
-  const target = members.find((m) => m.keys.includes(input.userID));
-  if (!target) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "NOT_A_MEMBER" });
-  }
-
+  const target = await findTarget(db, input, now);
   await assertRoleFitsMembership(db, input, target);
 
   const changes = {
