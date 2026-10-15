@@ -817,9 +817,11 @@ export default function VolunteerAttendance({
           add.mutate(
             { activityID, ccaID },
             {
-              onSuccess: async () => {
-                await utils.transcriptManage.volunteer.activities.get.invalidate();
-                await utils.transcriptManage.volunteer.activities.list.invalidate();
+              onSuccess: () => {
+                void Promise.all([
+                  utils.transcriptManage.volunteer.activities.get.invalidate(),
+                  utils.transcriptManage.volunteer.activities.list.invalidate(),
+                ]);
                 setWindowStart(null);
                 setPhoneIndex(null);
               },
