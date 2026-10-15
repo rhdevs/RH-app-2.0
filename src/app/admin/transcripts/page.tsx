@@ -32,7 +32,6 @@ export default async function TranscriptsAdminPage() {
     api.transcriptManage.ccaTags.list.prefetch(),
     api.transcriptManage.awards.list.prefetch({
       academicYear: currentAcademicYear(new Date()),
-      includeVoided: false,
     }),
   ]);
 

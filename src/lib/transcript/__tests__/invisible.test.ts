@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { errorText } from "../adminView";
 import {
-  awardCreateInput,
+  awardUpdateInput,
   block,
   jcrcSaveMineInput,
   line,
@@ -27,6 +27,14 @@ const messages = (r: {
   success: boolean;
   error?: { issues: { message: string }[] };
 }) => (r.success ? [] : r.error!.issues.map((i) => i.message));
+
+/** An award's text rules, through the update input (the same title and citation fields). */
+const awardCreateInput = {
+  parse: (v: object) =>
+    awardUpdateInput.parse({ id: "0123456789abcdef01234567", ...v }),
+  safeParse: (v: object) =>
+    awardUpdateInput.safeParse({ id: "0123456789abcdef01234567", ...v }),
+};
 
 describe("invisible and direction-changing characters", () => {
   it.each(ONE_CODE_POINT_PER_RANGE_END)(

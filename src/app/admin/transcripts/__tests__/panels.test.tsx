@@ -1,11 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
-  AwardsPanelView,
-  CITATION_MAX,
-  TITLE_MAX,
-  type AwardRowView,
-  type AwardsPanelViewProps,
+  AwardsSummaryView,
+  type AwardsSummaryViewProps,
 } from "../_components/AwardsPanel";
 import {
   PeriodPanelView,
@@ -339,139 +336,31 @@ describe("volunteering CCAs panel", () => {
   });
 });
 
-/* ---- section c: awards ----------------------------------------------- */
+/* ---- section c: awards (a summary; the screens live under /awards) ------ */
 
-const AWARDS: AwardRowView[] = [
-  {
-    id: "a1",
-    residentName: "Seed Resident 04",
-    title: "Colours Award, Soccer",
-    citation: "Led the team.",
-    recordedBy: "SEED-R02",
-    voided: false,
-  },
-  {
-    id: "a2",
-    residentName: "Seed Resident 12",
-    title: "Recorded in error",
-    citation: null,
-    recordedBy: "SEED-R02",
-    voided: true,
-  },
-];
-const awards = (
-  over: Partial<AwardsPanelViewProps> = {},
-): AwardsPanelViewProps => ({
-  years: ["AY2026/27"],
-  year: "AY2026/27",
-  onYear: noop,
-  status: "collecting",
-  picker: <div data-testid="picker">picker</div>,
-  hasResident: true,
-  title: "Service Excellence",
-  onTitle: noop,
-  citation: "",
-  onCitation: noop,
-  onAdd: noop,
-  adding: false,
-  addError: null,
-  titleError: null,
-  citationError: null,
-  awards: AWARDS,
-  loadingAwards: false,
-  listError: null,
-  showVoided: false,
-  onShowVoided: noop,
-  confirmVoidId: null,
-  onConfirmVoid: noop,
-  onVoid: noop,
-  voiding: false,
-  voidError: null,
-  ...over,
-});
-const renderAwards = (over?: Partial<AwardsPanelViewProps>) =>
-  renderToStaticMarkup(<AwardsPanelView {...awards(over)} />);
+const renderAwards = (over: Partial<AwardsSummaryViewProps> = {}) =>
+  renderToStaticMarkup(
+    <AwardsSummaryView
+      academicYear="AY2026/27"
+      count={4}
+      error={null}
+      {...over}
+    />,
+  );
 
-describe("awards panel", () => {
-  it("shows the award form and the year's awards while collecting", () => {
+describe("awards summary", () => {
+  it("counts the year's awards and links to the awards screens", () => {
     const html = renderAwards();
 
-    expect(html).toContain("Award title");
-    expect(html).toContain("Citation (optional)");
-    expect(html).toContain("Awards for AY2026/27");
-    expect(html).toContain("Colours Award, Soccer");
-    expect(html).toContain("Seed Resident 04");
-    expect(html).toContain("Recorded by SEED-R02");
-    expect(html).not.toContain("changes are locked");
+    expect(html).toContain("4 awards for AY2026/27.");
+    expect(html).toContain('href="/admin/transcripts/awards"');
+    expect(html).toContain("Manage awards");
   });
 
-  it("uses the server's length limits on both inputs", () => {
-    const html = renderAwards();
-
-    expect(TITLE_MAX).toBe(120);
-    expect(CITATION_MAX).toBe(300);
-    expect(html).toMatch(/id="award-title"[^>]*maxLength="120"/);
-    expect(html).toMatch(/id="award-citation"[^>]*maxLength="300"/);
-  });
-
-  it("only enables Add when a resident and a title are present", () => {
-    const addDisabled = (over: Partial<AwardsPanelViewProps>) =>
-      /<button[^>]*\sdisabled=""[^>]*>Add award</.test(renderAwards(over));
-
-    expect(addDisabled({})).toBe(false);
-    expect(addDisabled({ hasResident: false })).toBe(true);
-    expect(addDisabled({ title: "   " })).toBe(true);
-    // While adding, the button shows its progress word and stays disabled.
-    expect(renderAwards({ adding: true })).toMatch(
-      /<button[^>]*\sdisabled=""[^>]*>(?:(?!<\/button>).)*Adding/s,
-    );
-  });
-
-  it("locks the form with an explanation while the year is published", () => {
-    const html = renderAwards({ status: "published" });
-
-    expect(html).toContain(
-      "This academic year is published, so changes are locked.",
-    );
-    expect(html).toMatch(/id="award-title"[^>]*\sdisabled=""/);
-    expect(html).toMatch(/id="award-citation"[^>]*\sdisabled=""/);
-    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>Add award</);
-    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>Void</);
-  });
-
-  it("shows an empty year plainly", () => {
-    expect(renderAwards({ awards: [] })).toContain(
-      "No awards recorded for AY2026/27.",
-    );
-  });
-
-  it("strikes through a voided award and gives it no Void button", () => {
-    const html = renderAwards({ showVoided: true });
-
-    expect(html).toContain("line-through");
-    expect(html).toContain("Recorded in error");
-    expect(html.match(/>Void</g)).toHaveLength(1); // only the live award
-    expect(html).toContain("Voided");
-  });
-
-  it("shows field and form errors inline", () => {
-    const html = renderAwards({
-      titleError: "Use at most 120 characters.",
-      citationError: "Remove any control characters.",
-      addError: "No resident was found for that selection.",
-      listError: "Something went wrong. Try again.",
-    });
-
-    expect(html).toContain("Use at most 120 characters.");
-    expect(html).toContain("Remove any control characters.");
-    expect(html).toContain("No resident was found for that selection.");
-    expect(html).toContain("Something went wrong. Try again.");
-    expect(html).toContain('aria-invalid="true"');
-  });
-
-  it("offers the 'show voided' toggle and a loading state", () => {
-    expect(renderAwards()).toContain("Show voided");
-    expect(renderAwards({ loadingAwards: true })).toContain("Loading awards.");
+  it("uses the singular, and says so while loading or on an error", () => {
+    expect(renderAwards({ count: 1 })).toContain("1 award for AY2026/27.");
+    expect(renderAwards({ count: null })).toContain("Loading.");
+    expect(renderAwards({ error: "Nope." })).toContain('role="alert"');
   });
 });
 
@@ -621,49 +510,6 @@ describe("download-by date", () => {
     const html = renderPeriod({ downloadByError: "Enter a real date." });
     expect(html).toContain("Enter a real date.");
     expect(html).toContain('role="alert"');
-  });
-});
-
-describe("who did it, shown as a name", () => {
-  it("shows the recorder and the voider by name", () => {
-    const html = renderAwards({
-      awards: [
-        {
-          id: "a9",
-          residentName: "Seed Resident 12",
-          title: "Names check",
-          citation: null,
-          recordedBy: "Seed Resident 02",
-          voidedBy: "Seed Resident 01",
-          voided: true,
-        },
-      ],
-      showVoided: true,
-    });
-
-    expect(html).toContain("Recorded by Seed Resident 02");
-    expect(html).toContain("Voided by Seed Resident 01");
-    expect(html).not.toMatch(/SEED-R\d\d/);
-  });
-
-  it("says Voided with no name when the voider is not known", () => {
-    const html = renderAwards({
-      awards: [
-        {
-          id: "a9",
-          residentName: "Seed Resident 12",
-          title: "Names check",
-          citation: null,
-          recordedBy: null,
-          voided: true,
-        },
-      ],
-      showVoided: true,
-    });
-
-    expect(html).toContain("Recorder not known");
-    expect(html).toContain(". Voided");
-    expect(html).not.toContain("Voided by");
   });
 });
 

@@ -133,6 +133,17 @@ const ERROR_TEXT: Record<string, string> = {
   DUPLICATE_CHANGE: "The same tick was sent twice. Reload and try again.",
   HOURS_REQUIRED_FOR_ONEOFF: "A one-off activity needs its hours.",
   TOO_MANY_CHANGES: "Too many changes at once. Save in smaller steps.",
+  AWARD_NAME_TAKEN:
+    "An award with that name already exists. Archived ones count too.",
+  AWARD_TYPE_NOT_FOUND: "That award is no longer in the catalogue.",
+  AWARD_TYPE_ARCHIVED:
+    "That award is archived. Restore it in the catalogue first.",
+  AWARD_REMOVED: "That award has been removed. Restore it to edit it.",
+  AWARD_DUPLICATE: "That person already has this award for the year.",
+  BATCH_NOT_FOUND: "That upload no longer exists.",
+  BATCH_ALREADY_UNDONE: "That upload was already undone.",
+  AT_MOST_300_RECIPIENTS: "Assign to at most 300 people at a time.",
+  AT_MOST_500_AWARDS: "Select at most 500 awards at a time.",
   NOT_A_CCA_HEAD: "Only CCA heads can search residents.",
   ACTIVITY_NOT_FOUND: "That activity no longer exists.",
   ACTIVITY_REMOVED: "That activity has been removed. Restore it to edit it.",

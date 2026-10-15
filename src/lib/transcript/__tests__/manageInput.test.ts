@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isDateInAcademicYear } from "../academicYear";
 import {
-  awardCreateInput,
+  awardUpdateInput,
   idInput,
   jcrcSaveForInput,
   jcrcSaveMineInput,
@@ -16,6 +16,14 @@ import {
 import { accessFor, type AccessFamily } from "../permissions";
 
 const AY = "AY2026/27";
+
+/** An award's text rules, through the update input (the same title and citation fields). */
+const awardCreateInput = {
+  parse: (v: object) =>
+    awardUpdateInput.parse({ id: "0123456789abcdef01234567", ...v }),
+  safeParse: (v: object) =>
+    awardUpdateInput.safeParse({ id: "0123456789abcdef01234567", ...v }),
+};
 
 describe("text rules", () => {
   const base = { ccaID: 1, academicYear: AY, userID: "SEED-R12" };
@@ -39,14 +47,14 @@ describe("text rules", () => {
       awardCreateInput.safeParse({
         academicYear: AY,
         userID: "x",
-        title: "a".repeat(121),
+        title: "a".repeat(81),
       }).success,
     ).toBe(false);
     expect(
       awardCreateInput.safeParse({
         academicYear: AY,
         userID: "x",
-        title: "a".repeat(120),
+        title: "a".repeat(80),
       }).success,
     ).toBe(true);
   });
