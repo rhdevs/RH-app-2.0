@@ -214,7 +214,7 @@ The seed gives a catalogue of five awards (Colours Award, Soccer; Service Excell
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
-| The link | `seed-r01` | `/admin/transcripts` | The Awards section is a short count ("7 awards for AY2026/27") with "Manage awards". |
+| The link | `seed-r01` | `/admin/transcripts` | The Awards section is a short count ("6 awards for AY2026/27") with "Manage awards". |
 | Awards tab | `seed-r02` | `/admin/transcripts/awards` | "Assign an award", then the year's awards grouped: "Full Colours: 3 residents" and so on, collapsed. |
 | Group and search | `seed-r02` | Open a group; type `colours`; turn "Group by award" off | The people and citations show; search opens every group; off gives one flat list naming each award. |
 | Assign | `seed-r02` | Choose "Full Colours", add `seed-r13` and `seed-r20` as chips, Assign | "1 assigned. Skipped (already have it): Seed Resident 13." Typing a citation for a person overrides the default. |
