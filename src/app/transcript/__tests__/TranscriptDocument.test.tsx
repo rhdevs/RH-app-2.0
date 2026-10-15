@@ -265,7 +265,7 @@ describe("TranscriptDocument: print", () => {
   it("marks specimens and drops the hatch in print", () => {
     const html = render("plain-member");
 
-    expect(html).toContain("rh-specimen");
+    expect(html).toMatch(/<section class="rh-paper rh-specimen/);
     expect(html).toContain("SPECIMEN");
     expect(html).toMatch(
       /@media print[\s\S]*\.rh-paper \{ background-image: none; \}/,
