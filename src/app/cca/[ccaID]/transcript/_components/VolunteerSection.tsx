@@ -177,7 +177,7 @@ function VolunteerItem({
   return (
     <li className="py-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
           <p
             className={`text-sm font-medium ${item.removed ? "text-gray-500 line-through" : "text-gray-900"}`}
           >
@@ -259,7 +259,7 @@ function VolunteerItem({
         </div>
       </div>
       {open && (
-        <div className="mt-3 rounded-md border border-gray-200 p-3">
+        <div className="mt-3 rounded-md border border-gray-200 p-2 sm:p-3">
           {view.panel}
         </div>
       )}

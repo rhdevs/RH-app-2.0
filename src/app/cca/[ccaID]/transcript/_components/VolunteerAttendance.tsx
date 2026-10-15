@@ -536,7 +536,7 @@ function PhoneView(p: WithTotals) {
               key={person.userID}
               className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2"
             >
-              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-sm text-gray-900">
+              <label className="flex min-w-[8rem] flex-1 cursor-pointer items-center gap-3 text-sm text-gray-900">
                 <input
                   type="checkbox"
                   className="h-5 w-5"
@@ -546,7 +546,7 @@ function PhoneView(p: WithTotals) {
                     p.onCells(toggleCell(p.cells, session.id, person.userID))
                   }
                 />
-                <span className="truncate">{nameOf(person)}</span>
+                <span className="min-w-0 break-words">{nameOf(person)}</span>
               </label>
               {ticked && (
                 <>

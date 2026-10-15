@@ -160,7 +160,7 @@ function ActivityItem({
   const people = item.participants.length;
   return (
     <li className="flex flex-wrap items-start justify-between gap-3 py-3">
-      <div className="min-w-0 flex-1">
+      <div className="w-full min-w-0 sm:w-auto sm:flex-1">
         <p
           className={`text-sm font-medium ${item.removed ? "text-gray-500 line-through" : "text-gray-900"}`}
         >
