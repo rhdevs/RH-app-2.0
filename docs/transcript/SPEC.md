@@ -632,3 +632,20 @@ Route `/admin/transcripts`, for admin and jcrc only. Gate: the admin layout, the
 4. **Preview as a resident.** `/admin/transcripts/preview/[userID]?ay=2026-27` renders the live Template C document with the "Preview. Not issued." bar. It never creates an issue. Printing from it includes the admin chrome.
 
 Errors are inline red `role="alert"` lines (the app mounts no toaster). Resident search is the minimal manager-only `residents.search`; matric is shown in search results only.
+
+## 19. Phase 3g head and JCRC screens
+
+**CCA head tab.** `/cca/[ccaID]/transcript`, one entry ("Transcript") in the CCA dashboard navigation. There is no page-level guard, like the sibling sections: every call is `roster.list`, `roster.upsert` or `volunteer.*`, which require the head of THIS CCA or a manager, so the head of another CCA sees the shell and then "You do not head this CCA". A plain resident never reaches `/cca` (the layout sends them home).
+
+- **Member roster.** One row per current member for the chosen year: Duration (Default, Full year, Semester 1 only, Semester 2 only, with the computed default in the first option's label), Role (blank means member; a current head's placeholder shows the default), Role period (shown when a role is typed or the member is a current head), Additional contribution (500 characters, counter). Each row saves on its own, and Save is enabled only for a changed row. Blank or "Default" clears the override. Limits: role 60, contribution 500.
+- **Notes.** A published year shows "Transcripts for AYxxxx/xx are published. Editing is closed. Ask the JCRC to reopen it." and every field is read-only. While the semester 2 start date is unset: "Default durations assume the full year until the JCRC sets the semester 2 start date." An empty CCA description links to the CCA details form.
+- **Volunteer hours.** Only when the CCA is tagged `isVolunteering` (the flag now comes back on `roster.list`); other CCAs render nothing. Resident search (3+ characters, debounced), kind, activity (120), a date for a one-off (inside 1 August to 31 July), hours (0.25 to 200 in quarters). Records list with who recorded each, a confirmed Void, and total hours per resident.
+- **Matric.** Shown only in the resident search results; hidden once a resident is chosen and never rendered in the roster or the records.
+
+**Resident search** (`residents.search`) now admits a manager or the head of at least one volunteering CCA (live `CcaHead` joined to `CcaProfile.isVolunteering`); anyone else gets `NOT_A_VOLUNTEERING_HEAD`. It still returns only `{userID, displayName, matric}`.
+
+**JCRC self page.** `/admin/transcripts/jcrc`, linked from the top of `/admin/transcripts` (no second navigation entry). Fields: portfolio (80), position (80), what the role covers (800), up to 10 contributions of 200, testimonial (1500), saved with `jcrc.saveMine`. An admin without the live `jcrc` role gets `JCRC_MEMBER_REQUIRED` and the page says "Only JCRC members have a JCRC page." The page states that the Master and President signatures are placeholders, links "Preview my transcript" to the existing preview, and is read-only when the year is published.
+
+**Small fixes.** Awards and volunteer records show who recorded them by display name (`recordedByName`, `voidedByName`), falling back to the key. The preview page prints as the clean Template C transcript: the admin header and tab bar are hidden in print (the rules are raw CSS in a `<style>` tag; React escapes `>` in a style's text children, which silently broke the first attempt).
+
+**Known limits.** `roster.list` and `volunteer.list` still return each member's matric in the payload; the screens never render it. The seeded accounts have incomplete profiles, so in a real browser the app's profile gate sends them to `/profile` until the profile is completed.

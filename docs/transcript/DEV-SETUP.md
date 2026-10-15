@@ -111,3 +111,19 @@ Start with `npm run dev:db:up`, `npm run dev:db:seed`, `npm run dev`. Sign in at
 | Preview | same | Pick a resident (3+ letters), open preview | Template C with the Preview bar; JCRC page only for `seed-r02`/`seed-r03`; no issue is created |
 
 Re-run `npm run dev:db:seed` afterwards to return the year to Collecting.
+
+## Manual check: head and JCRC screens (Phase 3g)
+
+The app's profile gate sends a seeded account to `/profile` until its profile (name, Telegram, block) is completed. Complete it once per account you sign in with, then use the pages below.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Head tab, normal CCA | `seed-r04` (Soccer) | CCA dashboard, "Transcript" | Member roster table, no volunteer hours section. Set a member to "Semester 2 only", type a role and a contribution, press that row's Save: "Saved". The counter under the contribution counts down from 500. |
+| Head tab, another CCA | `seed-r04` | Open `/cca/9002/transcript` | "You do not head this CCA." |
+| Head tab, volunteering CCA | `seed-r06` (RVC Children) | "Transcript" | Roster and a Volunteer hours section. Search "Seed", choose a resident, add a one-off (date inside the year, hours in quarters). It appears in the list and the totals. Void asks first. |
+| Published year | `seed-r01`, then `seed-r04` | Publish at `/admin/transcripts`, then reload the head tab | The published note, every field read-only. Reopen to restore. |
+| JCRC self page | `seed-r02` | `/admin/transcripts`, "Your JCRC page" | Fields, the placeholder note, "Preview my transcript". Save, then preview: the JCRC page shows your text. |
+| JCRC page, admin only | `seed-r01` | `/admin/transcripts/jcrc` | "Only JCRC members have a JCRC page." |
+| Preview print | `seed-r01` | Preview a resident, print or save as PDF | Only the transcript prints: no header or tabs, crest and footer on every page. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.

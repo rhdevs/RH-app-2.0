@@ -297,7 +297,7 @@ describe("volunteer hours section", () => {
 
     const ready = renderVolunteer({ activity: "Tutoring", hours: "2" });
     expect(
-      disabledTags(ready, "button").some((t) => /type="submit"/.test(t)),
+      disabledTags(ready, "button").some((t) => t.includes('type="submit"')),
     ).toBe(false);
   });
 
@@ -317,7 +317,7 @@ describe("volunteer hours section", () => {
       hours: "2",
     });
     expect(
-      disabledTags(html, "button").some((t) => /type="submit"/.test(t)),
+      disabledTags(html, "button").some((t) => t.includes('type="submit"')),
     ).toBe(true);
   });
 
@@ -357,7 +357,7 @@ describe("volunteer hours section", () => {
     expect(html).not.toContain(">Void<");
     expect(disabledTags(html, "input").length).toBeGreaterThanOrEqual(4);
     expect(
-      disabledTags(html, "button").some((t) => /type="submit"/.test(t)),
+      disabledTags(html, "button").some((t) => t.includes('type="submit"')),
     ).toBe(true);
   });
 

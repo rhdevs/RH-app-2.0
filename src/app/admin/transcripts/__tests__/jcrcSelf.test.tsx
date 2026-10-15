@@ -118,7 +118,7 @@ describe("JCRC self page", () => {
     );
     const dirty = render({ dirty: true });
     expect(
-      disabledTags(dirty, "button").some((t) => /type="submit"/.test(t)),
+      disabledTags(dirty, "button").some((t) => t.includes('type="submit"')),
     ).toBe(false);
   });
 
