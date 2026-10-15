@@ -1678,6 +1678,65 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
       });
 
+      it("shows who did it as a name, falling back to the key only when there is no name", async () => {
+        const id = (
+          await as(JCRC).transcriptManage.awards.create({
+            academicYear: AY,
+            userID: R12.id,
+            title: "Names check",
+          })
+        ).id;
+        await as(ADMIN).transcriptManage.awards.void({ id });
+
+        const awards = await as(JCRC).transcriptManage.awards.list({
+          academicYear: AY,
+          includeVoided: true,
+        });
+        const mine = awards.find((a) => a.id === id)!;
+        expect(mine.recordedByName).toBe("Seed Resident 02");
+        expect(mine.voidedByName).toBe("Seed Resident 01");
+
+        // a recorder with no account falls back to the key
+        await db.award.update({
+          where: { id },
+          data: { recordedBy: "GHOST-KEY" },
+        });
+        const again = await as(JCRC).transcriptManage.awards.list({
+          academicYear: AY,
+          includeVoided: true,
+        });
+        expect(again.find((a) => a.id === id)!.recordedByName).toBe(
+          "GHOST-KEY",
+        );
+
+        const records = await as(
+          RVC_CHILDREN_HEAD,
+        ).transcriptManage.volunteer.list({
+          ccaID: RVC_CHILDREN,
+          academicYear: AY,
+        });
+        expect(records.length).toBeGreaterThan(0);
+        for (const r of records) {
+          expect(r.recordedByName).not.toMatch(/^SEED-/);
+        }
+        expect(records[0]!.recordedByName).toBe("Seed Resident 06");
+
+        await as(JCRC).transcript.periods.setSem2Start({
+          academicYear: AY,
+          sem2Start: "2027-01-12",
+        });
+        await as(JCRC).transcript.periods.publish({ academicYear: AY });
+        const listed = await as(ADMIN).transcript.periods.list();
+        const period = listed.periods.find((x) => x.academicYear === AY)!;
+        expect(period.publishedByName).toBe("Seed Resident 02");
+        await as(ADMIN).transcript.periods.reopen({ academicYear: AY });
+        const afterReopen = await as(ADMIN).transcript.periods.list();
+        expect(
+          afterReopen.periods.find((x) => x.academicYear === AY)!
+            .reopenedByName,
+        ).toBe("Seed Resident 01");
+      });
+
       it("stores the download-by date as midnight Singapore, accepts it while published, and refuses a bad one", async () => {
         const c = as(JCRC).transcript.periods;
 

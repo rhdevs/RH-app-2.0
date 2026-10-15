@@ -579,3 +579,46 @@ describe("download-by date", () => {
     expect(html).toContain('role="alert"');
   });
 });
+
+describe("who did it, shown as a name", () => {
+  it("shows the recorder and the voider by name", () => {
+    const html = renderAwards({
+      awards: [
+        {
+          id: "a9",
+          residentName: "Seed Resident 12",
+          title: "Names check",
+          citation: null,
+          recordedBy: "Seed Resident 02",
+          voidedBy: "Seed Resident 01",
+          voided: true,
+        },
+      ],
+      showVoided: true,
+    });
+
+    expect(html).toContain("Recorded by Seed Resident 02");
+    expect(html).toContain("Voided by Seed Resident 01");
+    expect(html).not.toMatch(/SEED-R\d\d/);
+  });
+
+  it("says Voided with no name when the voider is not known", () => {
+    const html = renderAwards({
+      awards: [
+        {
+          id: "a9",
+          residentName: "Seed Resident 12",
+          title: "Names check",
+          citation: null,
+          recordedBy: null,
+          voided: true,
+        },
+      ],
+      showVoided: true,
+    });
+
+    expect(html).toContain("Recorder not known");
+    expect(html).toContain(". Voided");
+    expect(html).not.toContain("Voided by");
+  });
+});

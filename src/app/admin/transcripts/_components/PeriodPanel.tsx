@@ -372,7 +372,7 @@ export default function PeriodPanel() {
       status={period?.status ?? null}
       publishedLine={
         published && period?.publishedAt
-          ? `Published on ${when(period.publishedAt)}${period.publishedBy ? ` by ${period.publishedBy}` : ""}.`
+          ? `Published on ${when(period.publishedAt)}${period.publishedByName ? ` by ${period.publishedByName}` : ""}.`
           : null
       }
       sem2Value={sem2}

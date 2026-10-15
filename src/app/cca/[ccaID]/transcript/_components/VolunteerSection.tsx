@@ -394,7 +394,7 @@ export default function VolunteerSection({
         activity: r.activity ?? "",
         activityDate: r.activityDate,
         hours: r.hours ?? 0,
-        recordedBy: r.recordedByName ?? r.recordedBy,
+        recordedBy: r.recordedByName,
       }))}
       loading={list.isPending}
       listError={list.error ? errorText(list.error.message) : null}

@@ -35,6 +35,7 @@ export interface AwardRowView {
   title: string | null;
   citation: string | null;
   recordedBy: string | null;
+  voidedBy?: string | null;
   voided: boolean;
 }
 
@@ -199,7 +200,11 @@ export function AwardsPanelView(p: AwardsPanelViewProps) {
                       {a.recordedBy
                         ? `Recorded by ${a.recordedBy}`
                         : "Recorder not known"}
-                      {a.voided ? ". Voided" : ""}
+                      {a.voided
+                        ? a.voidedBy
+                          ? `. Voided by ${a.voidedBy}`
+                          : ". Voided"
+                        : ""}
                     </p>
                   </div>
                   {!a.voided && (
@@ -356,7 +361,8 @@ export default function AwardsPanel() {
         residentName: a.displayName ?? a.userID,
         title: a.title,
         citation: a.citation,
-        recordedBy: a.recordedByName ?? a.recordedBy,
+        recordedBy: a.recordedByName,
+        voidedBy: a.voidedByName,
         voided: a.voidedAt != null,
       }))}
       loadingAwards={awards.isPending && awards.fetchStatus !== "idle"}

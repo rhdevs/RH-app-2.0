@@ -93,6 +93,27 @@ export async function lookupResidents(
 }
 
 /**
+ * WHO DID IT, for display: the person's display name, and the key itself only
+ * when no name exists. The one place every "recorded by", "voided by",
+ * "published by" label is resolved, so a screen never shows a bare key when a
+ * name is known. One lookup for all the keys given.
+ */
+export async function actorLabels(
+  db: PrismaClient,
+  keys: ReadonlyArray<string | null | undefined>,
+): Promise<(key: string | null | undefined) => string | null> {
+  const names = await lookupResidents(
+    db,
+    keys.filter((k): k is string => typeof k === "string" && k.length > 0),
+  );
+  return (key) => {
+    if (!key) return null;
+    const name = names.get(key)?.displayName?.trim();
+    return name ? name : key;
+  };
+}
+
+/**
  * The resident a client-supplied key names, or NOT_FOUND. Returns their
  * canonical key: it is the one records are filed under.
  */

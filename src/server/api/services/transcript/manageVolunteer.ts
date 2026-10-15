@@ -8,7 +8,7 @@ import {
   requireCcaAccess,
   requireManager,
 } from "./manageAccess";
-import { lookupResidents, requireResident } from "./residents";
+import { actorLabels, lookupResidents, requireResident } from "./residents";
 
 /**
  * Volunteer hours. Recorded by the head of a VOLUNTEERING CCA (one tagged
@@ -40,10 +40,14 @@ export async function volunteerList(
     where: { ccaID, academicYear, ...NOT_VOIDED },
     orderBy: { recordedAt: "desc" },
   });
-  const names = await lookupResidents(db, [
-    ...rows.map((r) => r.userID),
-    ...rows.map((r) => r.recordedBy ?? ""),
-  ]);
+  const names = await lookupResidents(
+    db,
+    rows.map((r) => r.userID),
+  );
+  const label = await actorLabels(
+    db,
+    rows.map((r) => r.recordedBy),
+  );
   return rows.map((r) => ({
     id: r.id,
     userID: r.userID,
@@ -55,7 +59,7 @@ export async function volunteerList(
       : null,
     hours: r.hours,
     recordedBy: r.recordedBy,
-    recordedByName: names.get(r.recordedBy ?? "")?.displayName ?? null,
+    recordedByName: label(r.recordedBy),
     recordedAt: r.recordedAt,
   }));
 }

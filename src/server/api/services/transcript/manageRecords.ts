@@ -7,7 +7,12 @@ import type {
 } from "~/lib/transcript/manageInput";
 import { NOT_VOIDED } from "./loader";
 import { assertWritable, requireCca } from "./manageAccess";
-import { keysOf, lookupResidents, requireResident } from "./residents";
+import {
+  actorLabels,
+  keysOf,
+  lookupResidents,
+  requireResident,
+} from "./residents";
 
 /**
  * The manager-side records: which CCAs are volunteering CCAs, Colours Awards,
@@ -71,16 +76,20 @@ export async function awardsList(
     },
     orderBy: { recordedAt: "desc" },
   });
-  const names = await lookupResidents(db, [
-    ...rows.map((r) => r.userID),
-    ...rows.flatMap((r) => [r.recordedBy ?? "", r.voidedBy ?? ""]),
-  ]);
+  const names = await lookupResidents(
+    db,
+    rows.map((r) => r.userID),
+  );
+  const label = await actorLabels(
+    db,
+    rows.flatMap((r) => [r.recordedBy, r.voidedBy]),
+  );
   return rows.map((r) => ({
     id: r.id,
     userID: r.userID,
     displayName: names.get(r.userID)?.displayName ?? null,
-    recordedByName: names.get(r.recordedBy ?? "")?.displayName ?? null,
-    voidedByName: names.get(r.voidedBy ?? "")?.displayName ?? null,
+    recordedByName: label(r.recordedBy),
+    voidedByName: label(r.voidedBy),
     title: r.title,
     citation: r.citation,
     ceremony: r.ceremony,

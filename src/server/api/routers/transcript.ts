@@ -10,6 +10,7 @@ import { assembleTranscript } from "~/lib/transcript/assemble";
 import { instantToSgDate, sgDateToInstant } from "~/lib/transcript/sgDate";
 import { canManageTranscriptPeriods } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
+import { actorLabels } from "~/server/api/services/transcript/residents";
 import {
   readiness,
   recordAccess,
@@ -68,9 +69,19 @@ export const transcriptRouter = createTRPCRouter({
    */
   periods: createTRPCRouter({
     list: managerProcedure.query(async ({ ctx }) => {
+      const periods = await listPeriods(ctx.db);
+      const label = await actorLabels(
+        ctx.db,
+        periods.flatMap((p) => [p.publishedBy, p.reopenedBy]),
+      );
       return {
         currentAcademicYear: currentAcademicYear(new Date()),
-        periods: await listPeriods(ctx.db),
+        // Who published or reopened a year, as a name (the key only if no name).
+        periods: periods.map((p) => ({
+          ...p,
+          publishedByName: label(p.publishedBy),
+          reopenedByName: label(p.reopenedBy),
+        })),
       };
     }),
 
