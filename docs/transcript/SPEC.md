@@ -615,8 +615,20 @@ Router `transcriptManage` (`src/server/api/routers/transcriptManage.ts`, registe
 
 **Text.** Plain text, trimmed, length-bounded, control characters rejected (a newline is allowed in the multi-line fields only: description, testimonial, extra contribution). Limits: award title 120, citation 300; role label 60, extra contribution 500; activity 120; JCRC portfolio and position 80, description 800, up to 10 contributions of 200, testimonial 1500.
 
-**Not recorded.** The schema has no `voidedBy` on awards or volunteer records and no `updatedBy` on JCRC records, so those writes record the time but not the actor. Adding the fields is a schema change and was not made.
+**Actors.** Since Phase 3f, `voidedBy` (awards, volunteer records) and `updatedBy` (JCRC records) are stored beside the time; they hold the canonical userID of the signed-in actor.
 
 **Resident search.** No reusable helper existed (the admin search lives inside `admin.listUsers` and returns far more), so a minimal manager-only one was written. It escapes regex characters and returns no email or roles.
 
 **Dev logins.** Seeded residents can now sign in locally (`docs/transcript/DEV-SETUP.md`).
+
+
+## 18. Phase 3f admin screens
+
+Route `/admin/transcripts`, for admin and jcrc only. Gate: the admin layout, then `src/app/admin/transcripts/layout.tsx`, which re-reads the roles live and redirects anyone else to `/admin` (signed out: `/login`); every procedure behind the screens checks the role again. The "Transcripts" tab is shown by the `manageCcaHeads` capability, which equals admin or jcrc (a DB test keeps it in step with `canManageTranscriptPeriods`).
+
+1. **Academic year.** Status, semester 2 start date, publish and reopen, each behind a confirmation dialog stating the consequence. The date is typed as a calendar date and stored as midnight Singapore time (`2027-01-12` is `2027-01-11T16:00Z`); the roster screen shows it back as the same date. Publish reports "N members frozen, M rows could not be matched".
+2. **Volunteering CCAs.** One switch per CCA bound to `ccaTags.setVolunteering`, with a filter.
+3. **Awards.** Add and void for a chosen year; locked once the year is published; voided awards hidden unless asked for.
+4. **Preview as a resident.** `/admin/transcripts/preview/[userID]?ay=2026-27` renders the live Template C document with the "Preview. Not issued." bar. It never creates an issue. Printing from it includes the admin chrome.
+
+Errors are inline red `role="alert"` lines (the app mounts no toaster). Resident search is the minimal manager-only `residents.search`; matric is shown in search results only.

@@ -97,3 +97,17 @@ It works only against the local `rhapp_transcript_dev` database (the seed refuse
 | `seed-r09@u.nus.edu`, `seed-r13@u.nus.edu` to `seed-r20@u.nus.edu` | plain member | A few CCAs each |
 
 A caveat: the addresses end in `@u.nus.edu`, the real NUS student domain, so they could in principle collide with a real mailbox if someone triggered a password reset against a database with a real mail key. Keep `RESEND_API_KEY` a placeholder locally.
+
+## Manual check: admin screens (Phase 3f)
+
+Start with `npm run dev:db:up`, `npm run dev:db:seed`, `npm run dev`. Sign in at `/login` with the password above.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Gate | `seed-r04` (head), then `seed-r15` (plain member) | Open `/admin/transcripts` | Sent back to `/admin` or `/`; no Transcripts tab |
+| Academic year | `seed-r01` (admin) or `seed-r02` (JCRC) | Clear the date, press Publish | Error asking for the semester 2 date. Enter 12 Jan 2027, Save, Publish, confirm: status Published and "N members frozen, 0 rows could not be matched". Reopen, confirm: status Collecting. |
+| Volunteering CCAs | same | Flip a switch, reload | Change persists; the four RVC CCAs start on |
+| Awards | same | Add an award for `SEED-R12`, then void it | Appears, then disappears; "Show voided" brings it back. Locked while Published |
+| Preview | same | Pick a resident (3+ letters), open preview | Template C with the Preview bar; JCRC page only for `seed-r02`/`seed-r03`; no issue is created |
+
+Re-run `npm run dev:db:seed` afterwards to return the year to Collecting.
