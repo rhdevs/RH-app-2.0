@@ -18,18 +18,21 @@ export function TranscriptPageShell({
   fixture,
   ay,
   basePath,
+  draft = false,
 }: {
   fixture: TranscriptFixture;
   ay: string | undefined;
   /** The route this shell is served from, for the year links. */
   basePath: string;
+  /** Dev only: show the specimen as the closed-year DRAFT. */
+  draft?: boolean;
 }) {
   const academicYear = resolveFixtureYear(fixture, ay);
   if (!academicYear) notFound();
 
   return (
     <TranscriptFrame
-      transcript={assembleTranscript(fixture.input, academicYear)}
+      transcript={assembleTranscript(fixture.input, academicYear, { draft })}
       years={getFixtureYears(fixture)}
       basePath={basePath}
       notice={

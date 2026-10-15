@@ -4,26 +4,48 @@
  * no exclamation marks).
  */
 
-export type PeriodStatus = "collecting" | "published";
+import {
+  normaliseYearStatus,
+  type YearAction,
+  type YearStatus,
+} from "./lifecycle";
+
+export type PeriodStatus = YearStatus;
 
 /** The stored status, with null or an unknown value read as collecting. */
 export function normaliseStatus(
   status: string | null | undefined,
 ): PeriodStatus {
-  return status === "published" ? "published" : "collecting";
+  return normaliseYearStatus(status);
 }
 
 export function statusLabel(status: string | null | undefined): string {
-  return normaliseStatus(status) === "published" ? "Published" : "Collecting";
+  const s = normaliseStatus(status);
+  return s === "published"
+    ? "Published"
+    : s === "closed"
+      ? "Closed"
+      : "Collecting";
 }
 
-/** Writes are allowed only while an academic year is collecting. */
+/**
+ * Whether the manager screens (awards, JCRC page) may write. Only a published
+ * year is locked; a closed year is where the JCRC fixes data.
+ */
 export function isWritable(status: string | null | undefined): boolean {
-  return normaliseStatus(status) === "collecting";
+  return normaliseStatus(status) !== "published";
 }
 
 export const WRITES_LOCKED_NOTE =
   "This academic year is published, so changes are locked. Reopen it to make changes.";
+
+/** The button for each year action. */
+export const ACTION_LABEL: Record<YearAction, string> = {
+  close: "Close year",
+  publish: "Publish",
+  reopen: "Reopen for review",
+  backToCollecting: "Back to collecting",
+};
 
 /**
  * The years to offer in the picker: every existing period plus the current
@@ -41,23 +63,45 @@ export function yearOptions(
 const plural = (n: number, one: string, many: string) =>
   `${n} ${n === 1 ? one : many}`;
 
-/** "64 members frozen, 2 rows could not be matched". Both counts are always shown. */
-export function publishSummary(result: {
-  frozen: number;
-  skippedUnresolved: number;
-}): string {
-  return `${plural(result.frozen, "member", "members")} frozen, ${plural(result.skippedUnresolved, "row", "rows")} could not be matched`;
+/** "Closed AY2026/27. 12 CCAs frozen, 77 were frozen already." */
+export function closeSummary(
+  academicYear: string,
+  result: { frozenNow: number; alreadyFrozen: number },
+): string {
+  return `${academicYear} closed. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen.`;
 }
 
+export const CLOSE_CONFIRMATION = (academicYear: string, unfrozen: number) =>
+  `This freezes the member list of ${plural(unfrozen, "CCA", "CCAs")} that ${unfrozen === 1 ? "is" : "are"} not frozen yet, and opens ${academicYear} for review. Residents will see a draft.`;
+
 export const PUBLISH_CONFIRMATION = (academicYear: string) =>
-  `This freezes the member list for ${academicYear} and lets residents download their transcripts. Edits stop until you reopen.`;
+  `This lets residents download their ${academicYear} transcripts. Edits stop until you reopen the year for review.`;
 
 export const REOPEN_CONFIRMATION =
-  "This reopens editing. Residents cannot open their transcripts until the year is published again, and then they see the corrected data.";
+  "This takes the published transcripts back to review. Residents see a draft again and you can fix data. Frozen member lists stay frozen.";
+
+export const BACK_TO_COLLECTING_CONFIRMATION =
+  "This puts the year back to collecting. Frozen member lists stay frozen.";
+
+export const UNFREEZE_WARNING = (academicYear: string) =>
+  `The CCA's current member list will be used for ${academicYear} until it is frozen again.`;
+
+/** The 1 June warning: "3 CCAs are not frozen for AY2026/27 yet. ..." */
+export const UNFROZEN_BANNER = (count: number, academicYear: string) =>
+  `${count} ${count === 1 ? "CCA is" : "CCAs are"} not frozen for ${academicYear} yet. Close the year before memberships change.`;
 
 /** The API's error codes, in plain words for an inline message. */
 const ERROR_TEXT: Record<string, string> = {
-  SEM2_START_REQUIRED: "Set the semester 2 start date before publishing.",
+  SEM2_START_REQUIRED: "Set the semester 2 start date before closing the year.",
+  YEAR_NOT_STARTED:
+    "This academic year has not started yet, so it cannot be closed.",
+  NOT_COLLECTING: "This academic year is not collecting.",
+  NOT_CLOSED: "This academic year is not closed.",
+  NOT_FROZEN: "That member list is not frozen.",
+  YEAR_CLOSED: "This year is closed. Ask the JCRC for changes.",
+  CCA_YEAR_FROZEN: "This member list is frozen. Ask the JCRC for changes.",
+  TRANSCRIPT_FREEZE_FAILED:
+    "The member list could not be frozen, so the head change was not made. Try again.",
   SEM2_START_OUTSIDE_YEAR:
     "The semester 2 start date must fall inside the academic year.",
   ALREADY_PUBLISHED: "This academic year is already published.",

@@ -360,3 +360,50 @@ export function fitRolePeriod(
     note: `Role period changed to ${DURATION_LABEL[membership]} to match membership.`,
   };
 }
+
+/* ---- the year lifecycle on the head's tab --------------------------------- */
+
+export const NO_MEMBER_LIST_NOTE = "No member list was recorded for this year.";
+
+export const lockButtonLabel = (academicYear: string) =>
+  `Lock member list for ${academicYear}`;
+
+export const LOCK_CONFIRMATION = (academicYear: string) =>
+  `This fixes who appears on ${academicYear} transcripts for this CCA. You can still edit roles, contributions and hours until the JCRC closes the year. To undo, ask the JCRC.`;
+
+/**
+ * The one line above the roster that explains its state, or null. Plain words:
+ * published, closed, frozen (with the date), locked by the head, or no list.
+ */
+export function rosterNotice(input: {
+  academicYear: string;
+  mode: "frozen" | "live" | "none";
+  /** Why this person cannot edit, or null if they can. */
+  refusal:
+    | "PERIOD_PUBLISHED"
+    | "YEAR_CLOSED"
+    | "CCA_YEAR_FROZEN"
+    | "NOT_A_HEAD_OF_THIS_CCA"
+    | null;
+  freezeReason: "handover" | "head_removed" | "lock" | "close_year" | null;
+  /** The freeze date as the person reads it, "11 Mar 2027". */
+  frozenOn: string | null;
+}): string | null {
+  if (input.refusal === "PERIOD_PUBLISHED") {
+    return PUBLISHED_NOTE(input.academicYear);
+  }
+  if (
+    input.refusal === "CCA_YEAR_FROZEN" ||
+    (input.refusal === "YEAR_CLOSED" && input.frozenOn)
+  ) {
+    return `Frozen on ${input.frozenOn ?? "an earlier date"}. Ask the JCRC for changes.`;
+  }
+  if (input.refusal === "YEAR_CLOSED") {
+    return "This year is closed for review. Ask the JCRC for changes.";
+  }
+  if (input.mode === "none") return NO_MEMBER_LIST_NOTE;
+  if (input.freezeReason === "lock") {
+    return `Member list locked on ${input.frozenOn ?? "an earlier date"}. You can still edit roles, contributions and hours until the JCRC closes the year.`;
+  }
+  return null;
+}

@@ -11,10 +11,13 @@ import { NotesBody, TranscriptSections } from "./TranscriptSections";
 export const EMPTY_YEAR_MESSAGE =
   "No recorded involvements for this academic year.";
 
-/** Grey, not coloured: the document's only colour is the crest. */
-const WATERMARK = `url("data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns='http://www.w3.org/2000/svg' width='360' height='240'><text x='50%' y='50%' text-anchor='middle' dominant-baseline='middle' transform='rotate(-24 180 120)' font-family='Arial,Helvetica,sans-serif' font-size='44' font-weight='700' letter-spacing='6' fill='rgba(0,0,0,0.06)'>SPECIMEN</text></svg>`,
-)}")`;
+/** A light diagonal word across the page. Grey, not coloured: the document's only colour is the crest. */
+const watermark = (word: string) =>
+  `url("data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='360' height='240'><text x='50%' y='50%' text-anchor='middle' dominant-baseline='middle' transform='rotate(-24 180 120)' font-family='Arial,Helvetica,sans-serif' font-size='44' font-weight='700' letter-spacing='6' fill='rgba(0,0,0,0.06)'>${word}</text></svg>`,
+  )}")`;
+const WATERMARK = watermark("SPECIMEN");
+const DRAFT_WATERMARK = watermark("DRAFT");
 
 /** Faint paper hatch, on screen only (never printed). */
 const HATCH =
@@ -46,11 +49,13 @@ const DOCUMENT_CSS = `
 }
 .rh-paper { background-image: ${HATCH}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .rh-paper.rh-specimen { background-image: ${WATERMARK}, ${HATCH}; }
+.rh-paper.rh-draft { background-image: ${DRAFT_WATERMARK}, ${HATCH}; }
 .rh-print-footer, .rh-print-spacer { display: none; }
 @media print {
   html, body, main { background: #fff !important; }
   .rh-paper { background-image: none; }
   .rh-paper.rh-specimen { background-image: ${WATERMARK}; }
+  .rh-paper.rh-draft { background-image: ${DRAFT_WATERMARK}; }
   .rh-print-footer { display: block; position: fixed; left: 0; bottom: 0; font: 10.5px Arial, Helvetica, sans-serif; color: #000; }
   .rh-print-spacer { display: table-footer-group; }
   .rh-print-spacer td { height: 8mm; padding: 0; }
@@ -112,7 +117,7 @@ function Sheet({
     <section
       className={`rh-paper ${
         resident.isSpecimen ? "rh-specimen" : ""
-      } relative mx-auto mb-3.5 flex min-h-[297mm] w-full max-w-[210mm] flex-col bg-white p-5 shadow-[0_1px_6px_rgba(0,0,0,0.2)] sm:p-[14mm] print:mb-0 print:min-h-0 print:max-w-none print:p-0 print:shadow-none ${
+      } ${transcript.isDraft ? "rh-draft" : ""} relative mx-auto mb-3.5 flex min-h-[297mm] w-full max-w-[210mm] flex-col bg-white p-5 shadow-[0_1px_6px_rgba(0,0,0,0.2)] sm:p-[14mm] print:mb-0 print:min-h-0 print:max-w-none print:p-0 print:shadow-none ${
         index > 0 ? "print:break-before-page" : ""
       }`}
     >
@@ -169,6 +174,14 @@ function pageParts(
         ),
         body: (
           <>
+            {transcript.isDraft && (
+              <p
+                role="note"
+                className="mt-2 border border-black px-2 py-1 text-center text-[11px] font-bold"
+              >
+                {DRAFT_NOTE}
+              </p>
+            )}
             <MetaRow
               items={[
                 { label: "Name", value: resident.name.toUpperCase() },
@@ -233,6 +246,10 @@ function pageParts(
       };
   }
 }
+
+/** Shown at the top of page 1 while the year is closed for review. */
+export const DRAFT_NOTE =
+  "Draft - check your information. If something is wrong, tell your CCA head or the JCRC.";
 
 const ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth"];
 

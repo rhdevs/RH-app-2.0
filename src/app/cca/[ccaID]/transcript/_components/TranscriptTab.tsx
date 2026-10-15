@@ -8,24 +8,41 @@ import {
   SectionCard,
   YearSelect,
 } from "~/app/admin/transcripts/_components/Bits";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "~/components/ui/alert-dialog";
+import { Button } from "~/components/ui/button";
 import { currentAcademicYear } from "~/lib/transcript/academicYear";
-import { errorText, normaliseStatus } from "~/lib/transcript/adminView";
+import { errorText } from "~/lib/transcript/adminView";
 import {
   DEFAULTS_NOTE,
+  LOCK_CONFIRMATION,
   NO_DESCRIPTION_NOTE,
-  PUBLISHED_NOTE,
   ROSTER_HELPER,
-  headYearOptions,
+  lockButtonLabel,
+  rosterNotice,
 } from "~/lib/transcript/headView";
+import {
+  academicYearsUpTo,
+  nextAcademicYear,
+} from "~/lib/transcript/lifecycle";
+import { formatSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
 import { RosterRow, RosterTableView, type RosterRowData } from "./RosterEditor";
 import VolunteerSection from "./VolunteerSection";
 
 export interface TranscriptNotesProps {
-  academicYear: string;
-  published: boolean;
-  /** Collecting with no semester 2 start date saved (or no period yet). */
-  sem2Unset: boolean;
+  /** Why the roster is read-only or empty, or null. */
+  stateNote: string | null;
+  /** Default durations assume the full year: no semester 2 start date saved. */
+  showDefaultsNote: boolean;
   /** Null while the profile is still loading or could not be read. */
   descriptionEmpty: boolean | null;
   detailsHref: string;
@@ -35,12 +52,12 @@ export interface TranscriptNotesProps {
 export function TranscriptNotes(p: TranscriptNotesProps) {
   return (
     <div className="space-y-2 text-sm">
-      {p.published && (
+      {p.stateNote && (
         <p className="text-amber-800" role="status">
-          {PUBLISHED_NOTE(p.academicYear)}
+          {p.stateNote}
         </p>
       )}
-      {!p.published && p.sem2Unset && (
+      {p.showDefaultsNote && (
         <p className="text-gray-600" role="status">
           {DEFAULTS_NOTE}
         </p>
@@ -60,23 +77,85 @@ export function TranscriptNotes(p: TranscriptNotesProps) {
   );
 }
 
+/** "Lock member list for AY2026/27", with the confirmation the head must accept. */
+export function LockRoster({
+  academicYear,
+  ccaID,
+  onLocked,
+}: {
+  academicYear: string;
+  ccaID: number;
+  onLocked: () => void;
+}) {
+  const lock = api.transcriptManage.roster.lock.useMutation({
+    onSuccess: () => onLocked(),
+  });
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button type="button" variant="outline" size="sm">
+          {lockButtonLabel(academicYear)}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{lockButtonLabel(academicYear)}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {LOCK_CONFIRMATION(academicYear)}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <ErrorLine
+          message={lock.error ? errorText(lock.error.message) : null}
+        />
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={lock.isPending}>
+            Cancel
+          </AlertDialogCancel>
+          <Button
+            type="button"
+            disabled={lock.isPending}
+            onClick={() => lock.mutate({ ccaID })}
+          >
+            {lock.isPending ? "Locking" : "Lock member list"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 /**
  * The Transcript tab of the CCA dashboard: a member roster editor and, for a
  * volunteering CCA only, the volunteer hours section. Every call is checked on
- * the server (head of THIS CCA, or a manager); this page only draws.
+ * the server (head of THIS CCA, or a manager); this page only draws. The year
+ * defaults to the one this CCA is working on (its oldest unfrozen year).
  */
 export default function TranscriptTab({ ccaID }: { ccaID: number }) {
-  const current = currentAcademicYear(new Date());
-  const years = headYearOptions(Number(current.slice(2, 6)));
-  const [year, setYear] = useState(current);
+  const utils = api.useUtils();
+  const term = api.transcriptManage.roster.term.useQuery(
+    { ccaID },
+    { retry: false },
+  );
+  const [picked, setPicked] = useState<string | null>(null);
+  const year = picked ?? term.data?.termAcademicYear ?? "";
+  const years = [
+    ...academicYearsUpTo(nextAcademicYear(currentAcademicYear(new Date()))),
+  ].reverse();
 
   const roster = api.transcriptManage.roster.list.useQuery(
     { ccaID, academicYear: year },
-    { retry: false },
+    { enabled: year !== "", retry: false },
   );
   const profile = api.cca.getProfile.useQuery({ ccaID }, { retry: false });
 
-  if (roster.isPending) {
+  if (term.error || roster.error) {
+    return (
+      <SectionCard title="Transcript">
+        <ErrorLine message={errorText((term.error ?? roster.error)?.message)} />
+      </SectionCard>
+    );
+  }
+  if (term.isPending || roster.isPending || !roster.data) {
     return (
       <div
         className="h-64 animate-pulse rounded-xl bg-gray-200"
@@ -84,17 +163,19 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
       />
     );
   }
-  if (roster.error) {
-    return (
-      <SectionCard title="Transcript">
-        <ErrorLine message={errorText(roster.error.message)} />
-      </SectionCard>
-    );
-  }
 
   const data = roster.data;
-  const published = normaliseStatus(data.status) === "published";
+  const readOnly = data.editRefusal !== null;
   const rows: RosterRowData[] = data.rows;
+  const stateNote = rosterNotice({
+    academicYear: year,
+    mode: data.mode,
+    refusal: data.editRefusal,
+    freezeReason: data.freeze?.reason ?? null,
+    frozenOn: data.freeze ? formatSgDate(data.freeze.frozenAt) : null,
+  });
+  const canLock =
+    data.mode === "live" && !readOnly && year === data.termAcademicYear;
 
   return (
     <div className="space-y-6">
@@ -102,22 +183,31 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
         title="Member roster"
         description={`${ROSTER_HELPER} Changes here shape the CCA line on each member's transcript.`}
       >
-        {years.length > 1 && (
-          <div className="mb-4">
-            <YearSelect
-              id="transcript-year"
-              label="Academic year"
-              value={year}
-              options={years}
-              onChange={setYear}
+        <div className="mb-4 flex flex-wrap items-end gap-4">
+          <YearSelect
+            id="transcript-year"
+            label="Academic year"
+            value={year}
+            options={years}
+            onChange={setPicked}
+          />
+          {canLock && (
+            <LockRoster
+              academicYear={year}
+              ccaID={ccaID}
+              onLocked={() => {
+                void utils.transcriptManage.roster.list.invalidate();
+                void utils.transcriptManage.roster.term.invalidate();
+              }}
             />
-          </div>
-        )}
+          )}
+        </div>
         <div className="mb-4">
           <TranscriptNotes
-            academicYear={year}
-            published={published}
-            sem2Unset={data.sem2Start === null}
+            stateNote={stateNote}
+            showDefaultsNote={
+              data.status !== "published" && data.sem2Start === null
+            }
             descriptionEmpty={
               profile.data ? profile.data.description.trim() === "" : null
             }
@@ -132,7 +222,7 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
               ccaID={ccaID}
               academicYear={year}
               row={row}
-              readOnly={published}
+              readOnly={readOnly}
             />
           ))}
         />
@@ -142,7 +232,7 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
         <VolunteerSection
           ccaID={ccaID}
           academicYear={year}
-          readOnly={published}
+          readOnly={readOnly}
         />
       )}
     </div>

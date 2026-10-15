@@ -78,9 +78,11 @@ export default async function TranscriptPreviewPage({
       {result ? (
         <>
           <p className="text-xs text-gray-500 print:hidden">
-            {result.mode === "frozen"
-              ? `Showing the frozen member list for ${academicYear}, as residents will receive it.`
-              : `Showing the current member list for ${academicYear}. It is not frozen until the year is published.`}
+            {result.status === "published"
+              ? `Showing ${academicYear} as residents receive it.`
+              : result.status === "closed"
+                ? `Showing ${academicYear} as the draft residents see while it is closed for review.`
+                : `Showing ${academicYear} as it stands now. Member lists that are not frozen use the current members.`}
           </p>
           <TranscriptDocument transcript={result.transcript} />
         </>

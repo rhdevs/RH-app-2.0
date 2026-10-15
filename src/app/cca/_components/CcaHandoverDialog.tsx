@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { X } from "lucide-react";
 
@@ -55,6 +56,11 @@ export default function CcaHandoverDialog({
   const utils = api.useUtils();
 
   const [selected, setSelected] = useState<ResolvedHead[]>([]);
+  // Which transcript year a handover freezes (the year this CCA is working on).
+  const term = api.transcriptManage.roster.term.useQuery(
+    { ccaID },
+    { enabled: open, retry: false },
+  );
 
   const handover = api.cca.handoverHeads.useMutation({
     onSuccess: async (res) => {
@@ -113,6 +119,20 @@ export default function CcaHandoverDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          {term.data && (
+            <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              Before you hand over, finish this year&apos;s transcript records for
+              your members (roles, contributions, volunteer hours). Handing over
+              freezes the member list for {term.data.termAcademicYear}, and after
+              that only the JCRC can change it.{" "}
+              <Link
+                href={`/cca/${ccaID}/transcript`}
+                className="font-medium underline"
+              >
+                Open transcript records
+              </Link>
+            </p>
+          )}
           <HeadCandidateInput
             ccaID={ccaID}
             confirmLabel="Add"
