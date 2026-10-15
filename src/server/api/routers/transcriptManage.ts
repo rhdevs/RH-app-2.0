@@ -1,0 +1,187 @@
+import { z } from "zod";
+
+import {
+  academicYearInput,
+  awardCreateInput,
+  ccaIDInput,
+  idInput,
+  jcrcSaveForInput,
+  jcrcSaveMineInput,
+  rosterScope,
+  rosterUpsertInput,
+  searchQueryInput,
+  userIDInput,
+  volunteerCreateInput,
+} from "~/lib/transcript/manageInput";
+import {
+  requireCca,
+  requireCcaAccess,
+  requireJcrcSelf,
+  requireManager,
+} from "~/server/api/services/transcript/manageAccess";
+import {
+  awardCreate,
+  awardVoid,
+  awardsList,
+  ccaTagsList,
+  jcrcGet,
+  jcrcSave,
+  jcrcSaveFor,
+  setVolunteering,
+} from "~/server/api/services/transcript/manageRecords";
+import {
+  rosterList,
+  rosterUpsert,
+} from "~/server/api/services/transcript/manageRoster";
+import {
+  volunteerCreate,
+  volunteerList,
+  volunteerVoid,
+} from "~/server/api/services/transcript/manageVolunteer";
+import { searchResidents } from "~/server/api/services/transcript/residents";
+import {
+  createTRPCRouter,
+  identifiedProcedure,
+  roleManagerProcedure,
+} from "~/server/api/trpc";
+
+/**
+ * Transcript MANAGEMENT: the edits behind the head, JCRC and admin screens.
+ * Opening, publishing and issuing live in the `transcript` router.
+ *
+ * THREE KINDS OF CALLER, each decided from a LIVE role read (I-5):
+ *  - manager (admin or jcrc): `roleManagerProcedure` reaches the surface and
+ *    `requireManager` re-checks live. Awards, JCRC records for anyone,
+ *    volunteering tags, resident search.
+ *  - a head of THIS CCA, or a manager: `identifiedProcedure` plus
+ *    `requireCcaAccess` (assertHeadsCca). The scope-free `cca_head` role string
+ *    is never used; the head of another CCA gets FORBIDDEN.
+ *  - a JCRC member, for their OWN record: `identifiedProcedure` plus
+ *    `requireJcrcSelf`. The identity is the session's; no userID is accepted.
+ *
+ * EVERY WRITE to a year's data needs that year to be collecting
+ * (`assertWritable`; PRECONDITION_FAILED once it is published). The one
+ * exception is the volunteering tag, which belongs to no year.
+ */
+const managerProcedure = roleManagerProcedure.use(async ({ ctx, next }) => {
+  await requireManager(ctx.db, ctx.session.user.userID);
+  return next();
+});
+
+export const transcriptManageRouter = createTRPCRouter({
+  ccaTags: createTRPCRouter({
+    list: managerProcedure.query(({ ctx }) => ccaTagsList(ctx.db)),
+
+    setVolunteering: managerProcedure
+      .input(z.object({ ccaID: ccaIDInput, isVolunteering: z.boolean() }))
+      .mutation(({ ctx, input }) =>
+        setVolunteering(
+          ctx.db,
+          ctx.session.user.userID,
+          input.ccaID,
+          input.isVolunteering,
+        ),
+      ),
+  }),
+
+  awards: createTRPCRouter({
+    list: managerProcedure
+      .input(
+        z.object({
+          academicYear: academicYearInput,
+          userID: userIDInput.optional(),
+          includeVoided: z.boolean().optional(),
+        }),
+      )
+      .query(({ ctx, input }) =>
+        awardsList(
+          ctx.db,
+          input.academicYear,
+          input.userID,
+          input.includeVoided ?? false,
+        ),
+      ),
+
+    create: managerProcedure
+      .input(awardCreateInput)
+      .mutation(({ ctx, input }) =>
+        awardCreate(ctx.db, ctx.session.user.userID, input),
+      ),
+
+    void: managerProcedure
+      .input(idInput)
+      .mutation(({ ctx, input }) => awardVoid(ctx.db, input.id)),
+  }),
+
+  jcrc: createTRPCRouter({
+    /** A manager saves anyone's JCRC record. */
+    saveFor: managerProcedure
+      .input(jcrcSaveForInput)
+      .mutation(({ ctx, input }) => jcrcSaveFor(ctx.db, input)),
+
+    /** A JCRC member's own record, for the year. */
+    mine: identifiedProcedure
+      .input(z.object({ academicYear: academicYearInput }))
+      .query(async ({ ctx, input }) => {
+        await requireJcrcSelf(ctx.db, ctx.session.user.userID);
+        return jcrcGet(ctx.db, ctx.session.user.userID, input.academicYear);
+      }),
+
+    /** Save your own. Blocked once the year is published. */
+    saveMine: identifiedProcedure
+      .input(jcrcSaveMineInput)
+      .mutation(async ({ ctx, input }) => {
+        await requireJcrcSelf(ctx.db, ctx.session.user.userID);
+        return jcrcSave(ctx.db, ctx.session.user.userID, input);
+      }),
+  }),
+
+  residents: createTRPCRouter({
+    search: managerProcedure
+      .input(z.object({ query: searchQueryInput }))
+      .query(({ ctx, input }) => searchResidents(ctx.db, input.query)),
+  }),
+
+  roster: createTRPCRouter({
+    list: identifiedProcedure
+      .input(rosterScope)
+      .query(async ({ ctx, input }) => {
+        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        return rosterList(ctx.db, input.ccaID, input.academicYear);
+      }),
+
+    upsert: identifiedProcedure
+      .input(rosterUpsertInput)
+      .mutation(async ({ ctx, input }) => {
+        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        return rosterUpsert(ctx.db, ctx.session.user.userID, input);
+      }),
+  }),
+
+  volunteer: createTRPCRouter({
+    list: identifiedProcedure
+      .input(rosterScope)
+      .query(async ({ ctx, input }) => {
+        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        return volunteerList(ctx.db, input.ccaID, input.academicYear);
+      }),
+
+    create: identifiedProcedure
+      .input(volunteerCreateInput)
+      .mutation(async ({ ctx, input }) => {
+        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
+        await requireCca(ctx.db, input.ccaID);
+        return volunteerCreate(ctx.db, ctx.session.user.userID, input);
+      }),
+
+    /** The head of the record's CCA, or a manager. */
+    void: identifiedProcedure
+      .input(idInput)
+      .mutation(({ ctx, input }) =>
+        volunteerVoid(ctx.db, ctx.session.user.userID, input.id),
+      ),
+  }),
+});
