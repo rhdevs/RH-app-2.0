@@ -11,6 +11,7 @@ import {
 import { auth } from "~/server/auth";
 import { api } from "~/trpc/server";
 import { NotAvailable } from "./_components/NotAvailable";
+import { OnHold } from "./_components/OnHold";
 import { TranscriptFrame } from "./_components/TranscriptFrame";
 
 export const metadata: Metadata = {
@@ -79,6 +80,10 @@ export default async function TranscriptPage({
       }
       throw error;
     });
+  // The hall office has put this resident's year on hold: nothing else shows.
+  if (result?.status === "on_hold") {
+    return <OnHold academicYear={state.academicYear} />;
+  }
   if (!result || result.status !== "ready") {
     return <NotAvailable academicYear={state.academicYear} />;
   }

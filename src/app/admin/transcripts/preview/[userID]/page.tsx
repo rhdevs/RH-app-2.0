@@ -75,6 +75,16 @@ export default async function TranscriptPreviewPage({
         </Link>
       </div>
 
+      {result?.withheld ? (
+        <p
+          role="status"
+          className="border border-amber-400 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 print:hidden"
+        >
+          Withheld from the resident. They see &quot;on hold&quot; until it is
+          released.
+        </p>
+      ) : null}
+
       {result ? (
         <>
           <p className="text-xs text-gray-500 print:hidden">
