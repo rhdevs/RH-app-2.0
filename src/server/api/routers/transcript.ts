@@ -18,6 +18,7 @@ import {
   STATUS_PUBLISHED,
   getPeriod,
   listPeriods,
+  listPublishedYears,
   publish,
   reopen,
   upsertSem2Start,
@@ -118,6 +119,9 @@ export const transcriptRouter = createTRPCRouter({
     }),
 
   mine: createTRPCRouter({
+    /** Which academic years are open to download. Names only. */
+    years: identifiedProcedure.query(({ ctx }) => listPublishedYears(ctx.db)),
+
     /**
      * The signed-in resident's own transcript. The identity comes ONLY from the
      * session (`identifiedProcedure` guarantees a canonical userID); there is

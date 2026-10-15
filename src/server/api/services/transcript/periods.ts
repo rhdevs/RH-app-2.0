@@ -90,6 +90,18 @@ export function getPeriod(db: PrismaClient, academicYear: string) {
   return db.transcriptPeriod.findUnique({ where: { academicYear } });
 }
 
+/**
+ * The academic years residents can download, oldest first. Names only: a
+ * resident learns nothing else about a period (no dates, no who published it).
+ */
+export async function listPublishedYears(db: PrismaClient): Promise<string[]> {
+  const rows = await db.transcriptPeriod.findMany({
+    where: { status: STATUS_PUBLISHED },
+    select: { academicYear: true },
+  });
+  return rows.map((r) => r.academicYear).sort();
+}
+
 export function listPeriods(db: PrismaClient) {
   return db.transcriptPeriod.findMany({ orderBy: { academicYear: "desc" } });
 }
