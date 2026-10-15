@@ -1,4 +1,7 @@
 import {
+  type ActivityInput,
+  type ActivityNote,
+  type ActivityRow,
   type AwardRow,
   type CcaMembershipInput,
   type InvolvementRow,
@@ -6,6 +9,7 @@ import {
   type JcrcServiceInput,
   type NoteRow,
   type OneOffVolunteerInput,
+  type OtherInvolvementRow,
   type RegularVolunteerInput,
   type TranscriptInput,
   type TranscriptPage,
@@ -13,7 +17,12 @@ import {
   type TranscriptViewModel,
   type VolunteerHoursModel,
 } from "./types";
-import { isDuration } from "./duration";
+import {
+  compareActivities,
+  participantText,
+  periodSuffix,
+  readPeriod,
+} from "./activities";
 
 /** Shown in the Explanatory notes when a CCA has no description yet. */
 export const MISSING_DESCRIPTION_TEXT = "Description not yet available.";
@@ -61,7 +70,17 @@ export function assembleTranscript(
   const awards = input.awards.filter((a) => a.academicYear === academicYear);
   const jcrc = input.jcrc?.term === academicYear ? input.jcrc : null;
 
-  const involvements = buildInvolvements(memberships, jcrc, academicYear);
+  const { byCca, other } = splitActivities(
+    (input.activities ?? []).filter((a) => a.academicYear === academicYear),
+    new Set(memberships.map((m) => m.ccaName)),
+  );
+  const involvements = buildInvolvements(
+    memberships,
+    jcrc,
+    academicYear,
+    byCca,
+  );
+  const otherRows = other.map(toOtherRow);
   const volunteer = buildVolunteerHours(regular, oneOff);
   const awardRows = buildAwards(awards);
 
@@ -69,12 +88,19 @@ export function assembleTranscript(
   if (involvements.length > 0) {
     sections.push({ kind: "involvements", rows: involvements });
   }
+  if (otherRows.length > 0) {
+    sections.push({ kind: "otherInvolvement", rows: otherRows });
+  }
   if (volunteer) sections.push({ kind: "volunteerHours", volunteer });
   if (awardRows.length > 0) sections.push({ kind: "awards", rows: awardRows });
 
   const pages: TranscriptPage[] = [{ kind: "main", sections }];
   if (jcrc) pages.push({ kind: "jcrc", jcrc: toJcrcPage(jcrc) });
-  pages.push({ kind: "notes", notes: buildNotes(involvements, memberships) });
+  pages.push({
+    kind: "notes",
+    notes: buildNotes(involvements, memberships, byCca),
+    otherNotes: other.flatMap(activityNote),
+  });
 
   return {
     academicYear,
@@ -85,12 +111,16 @@ export function assembleTranscript(
     hasAwards: awardRows.length > 0,
     hasJcrc: jcrc !== null,
     isDraft: options.draft === true,
-    hasPartYear: memberships.some(
-      (m) =>
-        semLabel(m.duration) !== null ||
-        (cleaned(m.leadershipRole) !== null &&
-          semLabel(m.roleDuration) !== null),
-    ),
+    hasPartYear:
+      memberships.some(
+        (m) =>
+          semLabel(m.duration) !== null ||
+          (cleaned(m.leadershipRole) !== null &&
+            semLabel(m.roleDuration) !== null),
+      ) ||
+      [...byCca.values(), other].some((list) =>
+        list.some((a) => readPeriod(a.period) !== "full"),
+      ),
     pages,
   };
 }
@@ -192,10 +222,60 @@ function shortYear(academicYear: string): string {
   return academicYear.replace(/^AY/, "");
 }
 
+/**
+ * Members' activities go under their CCA row; everything else (a person who is
+ * not in the CCA, or an activity whose CCA has no row) is "other involvement".
+ * Both lists are in transcript order.
+ */
+function splitActivities(
+  activities: readonly ActivityInput[],
+  memberCcas: ReadonlySet<string>,
+): { byCca: Map<string, ActivityInput[]>; other: ActivityInput[] } {
+  const sorted = [...activities].sort(
+    (a, b) =>
+      compareActivities(
+        { period: readPeriod(a.period), title: a.title },
+        { period: readPeriod(b.period), title: b.title },
+      ) || compareText(a.ccaName, b.ccaName),
+  );
+  const byCca = new Map<string, ActivityInput[]>();
+  const other: ActivityInput[] = [];
+  for (const a of sorted) {
+    if (a.isMember && memberCcas.has(a.ccaName)) {
+      byCca.set(a.ccaName, [...(byCca.get(a.ccaName) ?? []), a]);
+    } else {
+      other.push(a);
+    }
+  }
+  return { byCca, other };
+}
+
+const activityTitle = (a: ActivityInput) =>
+  `${a.title.trim()}${periodSuffix(readPeriod(a.period))}`;
+
+function toActivityRow(a: ActivityInput): ActivityRow {
+  const text = participantText(a.description, {
+    role: a.role,
+    description: a.personDescription,
+  });
+  return { title: activityTitle(a), ...text };
+}
+
+function toOtherRow(a: ActivityInput): OtherInvolvementRow {
+  return { ...toActivityRow(a), organiser: a.ccaName };
+}
+
+/** "Title: general description", only when a general description was written. */
+function activityNote(a: ActivityInput): ActivityNote[] {
+  const text = cleaned(a.description);
+  return text ? [{ title: activityTitle(a), text }] : [];
+}
+
 function buildInvolvements(
   memberships: readonly CcaMembershipInput[],
   jcrc: JcrcServiceInput | null,
   academicYear: string,
+  activities: ReadonlyMap<string, readonly ActivityInput[]>,
 ): InvolvementRow[] {
   const year = shortYear(academicYear);
   const rows: InvolvementRow[] = [];
@@ -209,6 +289,7 @@ function buildInvolvements(
       extraContribution: null,
       footnote: 0,
       isJcrc: true,
+      activities: [],
     });
   }
   for (const m of memberships) {
@@ -219,6 +300,7 @@ function buildInvolvements(
       extraContribution: cleaned(m.extraContribution),
       footnote: 0,
       isJcrc: false,
+      activities: (activities.get(m.ccaName) ?? []).map(toActivityRow),
     });
   }
   return rows.map((row, index) => ({ ...row, footnote: index + 1 }));
@@ -228,6 +310,7 @@ function buildInvolvements(
 function buildNotes(
   involvements: readonly InvolvementRow[],
   memberships: readonly CcaMembershipInput[],
+  activities: ReadonlyMap<string, readonly ActivityInput[]>,
 ): NoteRow[] {
   const descriptions = new Map(
     memberships.map((m) => [m.ccaName, cleaned(m.description)] as const),
@@ -239,6 +322,7 @@ function buildNotes(
         title: JCRC_NOTE_TITLE,
         text: JCRC_NOTE_TEXT,
         isMissing: false,
+        activities: [],
       };
     }
     const description = descriptions.get(row.ccaName) ?? null;
@@ -247,6 +331,7 @@ function buildNotes(
       title: row.ccaName,
       text: description ?? MISSING_DESCRIPTION_TEXT,
       isMissing: description === null,
+      activities: (activities.get(row.ccaName) ?? []).flatMap(activityNote),
     };
   });
 }

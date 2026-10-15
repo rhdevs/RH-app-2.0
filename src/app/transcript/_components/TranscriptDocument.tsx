@@ -241,7 +241,11 @@ function pageParts(
       return {
         header: <PageHeader title="Explanatory notes" />,
         body: (
-          <NotesBody notes={page.notes} hasPartYear={transcript.hasPartYear} />
+          <NotesBody
+            notes={page.notes}
+            otherNotes={page.otherNotes}
+            hasPartYear={transcript.hasPartYear}
+          />
         ),
       };
   }

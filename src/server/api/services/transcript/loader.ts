@@ -8,7 +8,9 @@ import {
   resolveEntry,
   type ResolvedEntry,
 } from "~/lib/transcript/duration";
+import { readPeriod } from "~/lib/transcript/activities";
 import type {
+  ActivityInput,
   AwardInput,
   CcaMembershipInput,
   JcrcServiceInput,
@@ -165,7 +167,7 @@ export async function loadTranscriptInput(
     db.userMatric.findUnique({ where: { userID: key } }),
   ]);
 
-  const memberships = await loadMemberships(
+  const { memberships, memberCcaIDs } = await loadMemberships(
     db,
     key,
     user,
@@ -173,6 +175,7 @@ export async function loadTranscriptInput(
     options.now ?? new Date(),
     period?.sem2Start ?? null,
   );
+  const activities = await loadActivities(db, key, academicYear, memberCcaIDs);
 
   const [volunteer, awards, jcrc] = await Promise.all([
     db.volunteerRecord.findMany({
@@ -271,7 +274,54 @@ export async function loadTranscriptInput(
     oneOffVolunteering,
     awards: awardInputs,
     jcrc: jcrcInput,
+    activities,
   };
+}
+
+/**
+ * The CCA activities this person took part in for the year. Removed activities
+ * and removed participants never load. `isMember` uses the same rule as the CCA
+ * rows (it comes from the memberships just loaded), so a member's activities
+ * nest under the CCA and everyone else's become "Other involvement".
+ */
+async function loadActivities(
+  db: PrismaClient,
+  key: string,
+  academicYear: string,
+  memberCcaIDs: ReadonlySet<number>,
+): Promise<ActivityInput[]> {
+  const mine = await db.ccaActivityParticipant.findMany({
+    where: { academicYear, userID: key, ...NOT_REMOVED },
+  });
+  if (mine.length === 0) return [];
+
+  const activities = await db.ccaActivity.findMany({
+    where: { id: { in: mine.map((p) => p.activityID) }, ...NOT_REMOVED },
+  });
+  const ccas = await db.cCA.findMany({
+    where: { ccaID: { in: [...new Set(activities.map((a) => a.ccaID))] } },
+    select: { ccaID: true, ccaName: true },
+  });
+  const ccaName = new Map(ccas.map((c) => [c.ccaID, c.ccaName]));
+  const person = new Map(mine.map((p) => [p.activityID, p]));
+
+  return activities.flatMap((a): ActivityInput[] => {
+    const name = ccaName.get(a.ccaID);
+    const p = person.get(a.id);
+    if (!name || !p) return []; // the CCA no longer exists
+    return [
+      {
+        academicYear,
+        ccaName: name,
+        title: a.title,
+        description: a.description ?? null,
+        period: readPeriod(a.period),
+        role: p.role ?? null,
+        personDescription: p.description ?? null,
+        isMember: memberCcaIDs.has(a.ccaID),
+      },
+    ];
+  });
 }
 
 async function loadMemberships(
@@ -281,7 +331,11 @@ async function loadMemberships(
   academicYear: string,
   now: Date,
   sem2Start: Date | null,
-): Promise<CcaMembershipInput[]> {
+): Promise<{
+  memberships: CcaMembershipInput[];
+  /** The CCAs the person counts as a member of for this year. */
+  memberCcaIDs: Set<number>;
+}> {
   const frozenRows = await db.transcriptRosterEntry.findMany({
     where: { academicYear, userID: key, frozen: true },
   });
@@ -336,7 +390,7 @@ async function loadMemberships(
     }
   }
 
-  if (entries.length === 0) return [];
+  if (entries.length === 0) return { memberships: [], memberCcaIDs: new Set() };
   const ids = entries.map((e) => e.ccaID);
   const [ccas, profiles] = await Promise.all([
     db.cCA.findMany({ where: { ccaID: { in: ids } } }),
@@ -348,9 +402,11 @@ async function loadMemberships(
   const ccaBy = new Map(ccas.map((c) => [c.ccaID, c]));
   const descBy = new Map(profiles.map((p) => [p.ccaID, p.description]));
 
-  return entries.flatMap((e): CcaMembershipInput[] => {
+  const memberCcaIDs = new Set<number>();
+  const memberships = entries.flatMap((e): CcaMembershipInput[] => {
     const cca = ccaBy.get(e.ccaID);
     if (!cca) return []; // a membership of a CCA that no longer exists
+    memberCcaIDs.add(e.ccaID);
     return [
       {
         ccaName: cca.ccaName,
@@ -364,6 +420,7 @@ async function loadMemberships(
       },
     ];
   });
+  return { memberships, memberCcaIDs };
 }
 
 /** What a transcript shows when the resident has no matric on record. Never masked. */

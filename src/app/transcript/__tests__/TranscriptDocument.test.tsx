@@ -364,3 +364,97 @@ describe("TranscriptDocument: draft", () => {
     expect(html).toContain("Raffles Hall crest");
   });
 });
+
+describe("TranscriptDocument: activities", () => {
+  it("nests an Activity | Role | Description table under the CCA, with the semester in the title", () => {
+    const html = render("member-with-activities");
+
+    expect(html).toContain("Annual hall concert");
+    expect(html).toContain("Choir retreat (Sem 2)");
+    expect(html).toContain("Soloist");
+    expect(html).toMatch(/<th[^>]*>Activity<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Role<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Description<\/th>/);
+  });
+
+  it("uses the person's own description, else the activity's", () => {
+    const html = render("member-with-activities");
+
+    expect(html).toContain("Sang the opening solo");
+    // No person text on this one: the general description is shown instead.
+    expect(html).toContain("A December visit to sing carols");
+  });
+
+  it("makes the additional contribution the last row of the nested table", () => {
+    const html = render("member-with-activities");
+    const choir = html.slice(html.indexOf("Hall Choir"));
+
+    expect(choir).toContain("Additional contribution");
+    expect(choir.indexOf("Choir retreat")).toBeLessThan(
+      choir.indexOf("Additional contribution"),
+    );
+    expect(choir).toContain("Arranged two pieces");
+  });
+
+  it("keeps the one-line sub-row for a CCA that has no activities", () => {
+    const html = render("additional-contribution");
+
+    expect(html).toContain("Additional contribution: Built the main set piece");
+  });
+
+  it("prints Other involvement between the CCA section and Volunteer hours", () => {
+    const html = render("member-with-activities");
+
+    expect(html).toContain("II. Other involvement");
+    expect(html).toMatch(/<th[^>]*>Organised by<\/th>/);
+    expect(html.indexOf("I. Leadership and CCA participation")).toBeLessThan(
+      html.indexOf("II. Other involvement"),
+    );
+  });
+
+  it("shows only Other involvement for a resident with no CCA row", () => {
+    const html = render("other-involvement-only");
+
+    expect(html).toContain("I. Other involvement");
+    expect(html).not.toContain("Leadership and CCA participation");
+    expect(html).not.toContain(EMPTY_YEAR_MESSAGE);
+    expect(html).toContain("Hall Night pit band (Sem 1)");
+  });
+
+  it("lists the general descriptions on the notes page", () => {
+    const pages = sheets(render("member-with-activities"));
+    const notes = pages[pages.length - 1]!;
+
+    expect(notes).toContain("Annual hall concert: The hall");
+    expect(notes).toContain("Notes on other involvement");
+    expect(notes).toContain("Exam-period care packs: Assembled");
+  });
+
+  it("keeps the crest and the Sem 1 / Sem 2 explanation with part-year activities", () => {
+    const pages = sheets(render("member-with-activities"));
+
+    for (const page of pages) expect(page.match(CREST)).toHaveLength(1);
+    expect(pages[pages.length - 1]).toContain(
+      "Sem 1 / Sem 2: involvement for that semester only.",
+    );
+  });
+
+  it("escapes hostile activity text", () => {
+    const fixture = getFixtureBySlug("member-with-activities")!;
+    const input = {
+      ...fixture.input,
+      activities: [
+        {
+          ...fixture.input.activities![0]!,
+          title: "<script>alert(1)</script>",
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <TranscriptDocument transcript={assembleTranscript(input, AY)} />,
+    );
+
+    expect(html).not.toContain("<script>alert(1)");
+    expect(html).toContain("&lt;script&gt;");
+  });
+});

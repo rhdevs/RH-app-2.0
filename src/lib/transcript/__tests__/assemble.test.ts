@@ -88,8 +88,8 @@ function blankInput(): TranscriptInput {
 }
 
 describe("fixtures", () => {
-  it("provides twelve specimens, each flagged isSpecimen", () => {
-    expect(TRANSCRIPT_FIXTURES).toHaveLength(12);
+  it("provides fourteen specimens, each flagged isSpecimen", () => {
+    expect(TRANSCRIPT_FIXTURES).toHaveLength(14);
     expect(TRANSCRIPT_FIXTURES.every((f) => f.input.resident.isSpecimen)).toBe(
       true,
     );
@@ -143,6 +143,7 @@ describe("assembleTranscript: roles", () => {
         extraContribution: null,
         footnote: 1,
         isJcrc: false,
+        activities: [],
       },
     ]);
   });
@@ -366,7 +367,13 @@ describe("assembleTranscript: explanatory notes", () => {
 
     expect(section(vm, "involvements")?.rows).toHaveLength(1);
     expect(page(vm, "notes")?.notes).toEqual([
-      { number: 1, title: "A", text: "Real text.", isMissing: false },
+      {
+        number: 1,
+        title: "A",
+        text: "Real text.",
+        isMissing: false,
+        activities: [],
+      },
     ]);
   });
 });

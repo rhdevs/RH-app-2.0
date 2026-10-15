@@ -54,6 +54,27 @@ export interface CcaMembershipInput {
   roleDuration?: "full" | "sem1" | "sem2" | null;
 }
 
+/**
+ * One CCA activity the resident took part in. `isMember` is decided by the
+ * loader with the same rule as the CCA rows (frozen entries, else the live
+ * roster of the CCA's term year): a member's activities nest under that CCA's
+ * row, anyone else's go under "Other involvement".
+ */
+export interface ActivityInput {
+  academicYear: string;
+  /** The CCA that organised it. */
+  ccaName: string;
+  title: string;
+  /** What the activity was, in general. Null when none was written. */
+  description: string | null;
+  period: "full" | "sem1" | "sem2";
+  /** This person's role in it; null or blank when they had none. */
+  role: string | null;
+  /** What this person did; null or blank falls back to `description`. */
+  personDescription: string | null;
+  isMember: boolean;
+}
+
 /** Hours attested through a CCA the resident is in. */
 export interface RegularVolunteerInput {
   academicYear: string;
@@ -117,6 +138,8 @@ export interface TranscriptInput {
   oneOffVolunteering: OneOffVolunteerInput[];
   awards: AwardInput[];
   jcrc: JcrcServiceInput | null;
+  /** Activities the resident took part in; absent means none. */
+  activities?: ActivityInput[];
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +159,30 @@ export interface InvolvementRow {
   footnote: number;
   /** True for the JCRC row, which points to the dedicated JCRC page. */
   isJcrc: boolean;
+  /** The CCA's activities this person took part in; empty when there are none. */
+  activities: ActivityRow[];
+}
+
+/** One line of the nested Activity | Role | Description table under a CCA. */
+export interface ActivityRow {
+  /** The title, with " (Sem 1)" / " (Sem 2)" for a part-year activity. */
+  title: string;
+  /** Blank when the person had no role. */
+  role: string;
+  /** The person's own description, else the activity's, else blank. */
+  description: string;
+}
+
+/** A row of "Other involvement": an activity of a CCA the person is not in. */
+export interface OtherInvolvementRow extends ActivityRow {
+  /** The CCA that organised it. */
+  organiser: string;
+}
+
+/** The general description of an activity, for the notes page. */
+export interface ActivityNote {
+  title: string;
+  text: string;
 }
 
 export interface VolunteerRow {
@@ -165,6 +212,7 @@ export interface AwardRow {
 /** A section on page 1. Empty sections are not present. */
 export type TranscriptSection =
   | { kind: "involvements"; rows: InvolvementRow[] }
+  | { kind: "otherInvolvement"; rows: OtherInvolvementRow[] }
   | { kind: "volunteerHours"; volunteer: VolunteerHoursModel }
   | { kind: "awards"; rows: AwardRow[] };
 
@@ -188,6 +236,8 @@ export interface NoteRow {
   text: string;
   /** True when `text` is the missing-description placeholder (rendered muted). */
   isMissing: boolean;
+  /** "Activity: general description" for this CCA's activities that have one. */
+  activities: ActivityNote[];
 }
 
 /**
@@ -200,7 +250,7 @@ export interface NoteRow {
 export type TranscriptPage =
   | { kind: "main"; sections: TranscriptSection[] }
   | { kind: "jcrc"; jcrc: JcrcPageModel }
-  | { kind: "notes"; notes: NoteRow[] };
+  | { kind: "notes"; notes: NoteRow[]; otherNotes: ActivityNote[] };
 
 export interface TranscriptViewModel {
   academicYear: string;

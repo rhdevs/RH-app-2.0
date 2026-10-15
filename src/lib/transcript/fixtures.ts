@@ -1,5 +1,6 @@
 import { yearFromParam } from "./assemble";
 import {
+  type ActivityInput,
   type CcaMembershipInput,
   type JcrcServiceInput,
   type ResidentInput,
@@ -10,7 +11,7 @@ import {
 /**
  * TRANSCRIPT SPECIMENS — NOTHING HERE IS REAL.
  *
- * Twelve made-up residents, each shaped to exercise one edge case of the
+ * Fourteen made-up residents, each shaped to exercise one edge case of the
  * layout. Every name, matric number and verification code is invented, and
  * every resident is flagged `isSpecimen`, which is what puts the SPECIMEN
  * watermark and banner on the pages (not the route). This is the ONLY fixture
@@ -72,6 +73,24 @@ function cca(
   };
 }
 
+function activity(
+  ccaName: string,
+  title: string,
+  extra: Partial<ActivityInput> = {},
+): ActivityInput {
+  return {
+    academicYear: AY,
+    ccaName,
+    title,
+    description: null,
+    period: "full",
+    role: null,
+    personDescription: null,
+    isMember: true,
+    ...extra,
+  };
+}
+
 function input(
   resident: ResidentInput,
   issues: YearIssueInput[],
@@ -109,12 +128,14 @@ const SPORTS_SECRETARY: JcrcServiceInput = {
     {
       activity: "Home match logistics",
       role: "Coordinator",
-      description: "Coordinated transport and refereeing for the hall's home matches.",
+      description:
+        "Coordinated transport and refereeing for the hall's home matches.",
     },
     {
       activity: "Sports CCA budget review",
       role: "",
-      description: "Led the review of sports CCA budgets with the JCRC Treasurer.",
+      description:
+        "Led the review of sports CCA budgets with the JCRC Treasurer.",
     },
   ],
   testimonial: {
@@ -440,10 +461,68 @@ export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
           {
             activity: "Residents' feedback",
             role: "",
-            description: "Served as the point of contact for feedback to the JCRC.",
+            description:
+              "Served as the point of contact for feedback to the JCRC.",
           },
         ],
       },
+    }),
+  },
+  {
+    slug: "member-with-activities",
+    label:
+      "Member with CCA activities, an additional contribution and one other involvement",
+    input: input(person("Nur Aisyah Binte Salleh", 13), [issue(13)], {
+      memberships: [
+        cca("Hall Choir", "Performing Arts", {
+          extraContribution: "Arranged two pieces for the annual hall concert.",
+        }),
+        cca("Phoenix Press", "Media Committees"),
+      ],
+      activities: [
+        activity("Hall Choir", "Annual hall concert", {
+          description:
+            "The hall's annual evening of choral music, performed for residents and guests.",
+          role: "Soloist",
+          personDescription:
+            "Sang the opening solo and rehearsed the altos each week.",
+        }),
+        activity("Hall Choir", "Carolling at a nursing home", {
+          description:
+            "A December visit to sing carols for the home's residents.",
+        }),
+        activity("Hall Choir", "Choir retreat", {
+          description: "A weekend of rehearsal and bonding for new members.",
+          period: "sem2",
+          role: "Logistics",
+        }),
+        activity("RH Welfare", "Exam-period care packs", {
+          description:
+            "Assembled and handed out snack packs to residents during exams.",
+          role: "Packer",
+          isMember: false,
+        }),
+      ],
+    }),
+  },
+  {
+    slug: "other-involvement-only",
+    label: "Only other involvement: no CCA membership recorded",
+    input: input(person("Jonathan Pereira", 14), [issue(14)], {
+      activities: [
+        activity("RH Welfare", "Exam-period care packs", {
+          description:
+            "Assembled and handed out snack packs to residents during exams.",
+          role: "Packer",
+          isMember: false,
+        }),
+        activity("Hall Orchestra", "Hall Night pit band", {
+          description: "The live band for the hall's annual variety show.",
+          period: "sem1",
+          personDescription: "Covered a vacant violin part at short notice.",
+          isMember: false,
+        }),
+      ],
     }),
   },
 ];
