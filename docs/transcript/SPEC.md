@@ -522,3 +522,41 @@ Decisions are locked in `CLAUDE.md` ("Data model decisions"). All models live in
 **Never deleted.** Volunteer records and awards are voided, and issued transcripts are revoked, so the audit trail survives.
 
 This phase adds the models, a local database and a seed only. Loaders, permission gates and screens come next.
+
+---
+
+## 15. Phase 3c server logic
+
+Code: `src/server/api/services/transcript/{periods,loader,issue}.ts` and the `transcript` tRPC router (`src/server/api/routers/transcript.ts`, registered in `root.ts`). Services take the Prisma client as a parameter. Nothing here writes CCA, UserCCA or User. No UI yet.
+
+**Procedures**
+
+| Procedure | Who | What |
+| --- | --- | --- |
+| `periods.list` | admin, jcrc | All periods, plus the current academic year |
+| `periods.setSem2Start` | admin, jcrc | Set or clear the semester-2 start date (must fall inside the year; refused once published) |
+| `periods.publish` | admin, jcrc | Freeze the roster and open the year to residents |
+| `periods.reopen` | admin, jcrc | Back to collecting; supersedes issued transcripts |
+| `preview` | admin, jcrc | One resident's transcript: frozen if published, live if not. Never creates an issue |
+| `mine.get` | any signed-in resident | Their own transcript, or `{status: "not_open"}` while collecting |
+| `verify` | public, rate limited | valid / revoked / superseded / not_found, matric masked |
+
+Builders: `roleManagerProcedure` (admin + jcrc; scrc is stopped here) plus a live `getUserRoles` re-check (I-5), `identifiedProcedure` for `mine.get`, `publicProcedure` for `verify`. `verify` uses the repo's `rateLimit` and `clientIp` (`src/lib/rateLimit.ts`): 30 requests per 10 minutes per client address.
+
+**Publish.** Needs the period to exist and `sem2Start` to be set. In one transaction it claims the status (compare-and-set, so two concurrent publishes cannot both win), clears old freeze flags, then writes a frozen entry for every LIVE member, resolved through the same roster resolver the head screens use (UserCCA under either key format, the embedded `User.userCCA` array, and CcaHead). Rows that cannot be resolved to one person are counted and skipped, never guessed at. For each member:
+
+- `duration` = the stored override, else `sem2` if their accepted application was decided on or after `sem2Start`, else `full`.
+- `roleLabel` = the stored override, else `Head` if they hold a CcaHead row.
+- `roleDuration` = the stored override, else (for a head) `sem2` if granted on or after `sem2Start`, else `full`.
+
+Members who have left get no entry. After publish the loader reads only frozen entries, so someone who leaves later still appears and someone who joins later does not.
+
+**Issue.** A resident gets a transcript only once the year is published, only their own (identity comes from the session; there is no userID input). It is idempotent, including under concurrent requests. The code is `RH-` plus 16 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ` via `crypto.randomBytes` with rejection sampling. `snapshot` stores the issued view model.
+
+**Reopen.** Sets the year back to collecting and clears nothing. Every unrevoked issue of the year gets `revokedAt` and `revokedBy` set and `snapshot.meta = { superseded: true, reason: "Academic year reopened" }`. That is how `verify` tells superseded from revoked: the schema has no dedicated field and was not changed. A resident gets a new transcript after re-publish.
+
+**Errors** are `TRPCError` messages: `PERIOD_NOT_FOUND`, `ALREADY_PUBLISHED`, `NOT_PUBLISHED`, `SEM2_START_REQUIRED`, `SEM2_START_OUTSIDE_YEAR`, `PERIOD_PUBLISHED` (from `assertCollecting`, for the later edit screens), `PERIOD_CHANGING` (lost a race), `INVALID_ACADEMIC_YEAR`, `INSUFFICIENT_ROLE`, `RATE_LIMITED:<seconds>`.
+
+**MongoDB gotcha, handled.** Prisma's `where: { field: null }` does not match a document where the field is absent, which is how `create` stores an omitted nullable field. Every "not voided / not revoked" query therefore uses `NOT_VOIDED` / `NOT_REVOKED` (null OR unset) from `loader.ts`.
+
+**Block and year of residence.** The app keeps no residence history, so `yearOfResidence` is now optional and the loader leaves it null; the document prints whichever of block and year is known.

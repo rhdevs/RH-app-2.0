@@ -58,3 +58,15 @@ Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CC
 ## A caveat
 
 The local database has no `$jsonSchema` validators (production's CCA, UserCCA and User do). The seed writes only the fields those models declare, so it matches what production would accept, but the local database will not stop you writing a bad field.
+
+## Integration tests (`npm run test:db`)
+
+`npm run test` needs no database: the integration tests in `src/server/api/services/transcript/__tests__/transcript.int.test.ts` are skipped unless `DATABASE_URL` points at `localhost` and the database is `rhapp_transcript_dev`.
+
+```bash
+npm run dev:db:up
+npx prisma db push
+npm run test:db
+```
+
+`test:db` loads `.env` (Node's `--env-file`) and runs only the `*.int.test.ts` files. The suite re-runs the seed script first to get a known baseline, and before each test restores the period, the roster annotations and the issued transcripts. It temporarily edits one seeded CcaHead date and one seeded UserCCA row and puts them back. Run it after any change to `periods.ts`, `loader.ts`, `issue.ts` or the router.
