@@ -276,6 +276,9 @@ async function resolveDesired(
   return resolved;
 }
 
+/** Up to 200 people, one write each: more than Prisma's default 5 seconds. */
+const PEOPLE_TX = { timeout: 30_000, maxWait: 10_000 } as const;
+
 /**
  * REPLACE the activity's active participants with the list given, in one
  * transaction: new people are added, people missing are soft-removed, a person
@@ -384,7 +387,7 @@ export async function participantsSet(
       removed: diff.remove.length,
       unchanged: diff.unchanged,
     };
-  });
+  }, PEOPLE_TX);
   await logCorrections(
     db,
     guard,

@@ -628,6 +628,9 @@ export async function volunteerSessionRestore(
   });
 }
 
+/** Up to 300 people or 20,000 ticks, one write each: more than the default 5 seconds. */
+const SAVE_TX = { timeout: 30_000, maxWait: 10_000 } as const;
+
 /* ---- people ---------------------------------------------------------------- */
 
 /**
@@ -727,7 +730,7 @@ export async function volunteerPeopleSet(
       data: { updatedBy: actorUserID, updatedAt: now },
     });
     return { id: activity.id, added, removed };
-  });
+  }, SAVE_TX);
   await logCorrections(
     db,
     guard,
@@ -740,8 +743,6 @@ export async function volunteerPeopleSet(
 }
 
 /* ---- attendance ----------------------------------------------------------- */
-
-const SAVE_TX = { timeout: 30_000, maxWait: 10_000 } as const;
 
 /**
  * Apply a batch of ticks and un-ticks in ONE transaction. Each change must name
