@@ -7,6 +7,7 @@ import {
   resolveFixtureYear,
   type TranscriptFixture,
 } from "~/lib/transcript/fixtures";
+import { choiceLabel } from "~/lib/transcript/pageState";
 import { TranscriptFrame } from "./TranscriptFrame";
 
 /**
@@ -33,7 +34,16 @@ export function TranscriptPageShell({
   return (
     <TranscriptFrame
       transcript={assembleTranscript(fixture.input, academicYear, { draft })}
-      years={getFixtureYears(fixture)}
+      // The specimen switch only matters with more than one year.
+      years={
+        getFixtureYears(fixture).length > 1
+          ? getFixtureYears(fixture).map((academicYear) => ({
+              academicYear,
+              kind: "published" as const,
+              label: choiceLabel(academicYear, "published"),
+            }))
+          : []
+      }
       basePath={basePath}
       notice={
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">

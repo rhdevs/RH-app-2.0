@@ -20,35 +20,101 @@ export function parseAyParam(
   return parseAcademicYear(ay) ? ay : null;
 }
 
+/** One entry in the year switcher. */
+export interface YearChoice {
+  academicYear: string;
+  /** published: the transcript; draft: the closed-year draft; unavailable: not yet. */
+  kind: "published" | "draft" | "unavailable";
+  /** "AY2026/27", "AY2026/27 (draft)" or "AY2026/27 (not yet available)". */
+  label: string;
+}
+
 export type TranscriptPageState =
   | { kind: "unauthenticated" }
   | { kind: "none_published"; currentAcademicYear: string }
-  | { kind: "show"; academicYear: string; published: string[] };
+  | {
+      kind: "show";
+      academicYear: string;
+      /** What the selected year shows. */
+      view: YearChoice["kind"];
+      choices: YearChoice[];
+      /** Whether to draw the switcher at all. */
+      showSwitcher: boolean;
+    };
+
+export const choiceLabel = (
+  academicYear: string,
+  kind: YearChoice["kind"],
+): string =>
+  kind === "draft"
+    ? `${academicYear} (draft)`
+    : kind === "unavailable"
+      ? `${academicYear} (not yet available)`
+      : academicYear;
 
 /**
- * What /transcript should do. A requested year is honoured only if it is
- * published; otherwise the latest published year is shown, never an error.
+ * What /transcript should do.
+ *
+ * The switcher offers every published year (and any closed year, as a draft),
+ * sorted, plus the current academic year when it is neither (it reads "not yet
+ * available"). It shows whenever the resident has a published year, or the
+ * current year is closed; with nothing published and the current year still
+ * collecting there is only the calm "not available" page.
+ *
+ * A requested year is honoured when it is one of the choices (so the current
+ * year is shown as it is, never swapped for another). Anything else falls back
+ * to the latest published year, else the current year's draft, never an error.
  */
 export function selectTranscriptState(input: {
   authenticated: boolean;
-  published: readonly string[];
+  /** Years the resident can open: published ones, and closed ones as drafts. */
+  viewable: ReadonlyArray<{ academicYear: string; draft: boolean }>;
   requested: string | null;
   currentAcademicYear: string;
 }): TranscriptPageState {
   if (!input.authenticated) return { kind: "unauthenticated" };
-  const published = [...input.published].sort();
-  const latest = published[published.length - 1];
-  if (latest === undefined) {
+  const choices: YearChoice[] = [...input.viewable]
+    .sort((a, b) => a.academicYear.localeCompare(b.academicYear))
+    .map((y) => {
+      const kind = y.draft ? ("draft" as const) : ("published" as const);
+      return {
+        academicYear: y.academicYear,
+        kind,
+        label: choiceLabel(y.academicYear, kind),
+      };
+    });
+  const current = choices.find(
+    (c) => c.academicYear === input.currentAcademicYear,
+  );
+  if (!current) {
+    choices.push({
+      academicYear: input.currentAcademicYear,
+      kind: "unavailable",
+      label: choiceLabel(input.currentAcademicYear, "unavailable"),
+    });
+  }
+  const published = choices.filter((c) => c.kind === "published");
+  const currentIsDraft = current?.kind === "draft";
+
+  if (published.length === 0 && !currentIsDraft) {
     return {
       kind: "none_published",
       currentAcademicYear: input.currentAcademicYear,
     };
   }
-  const academicYear =
-    input.requested !== null && published.includes(input.requested)
-      ? input.requested
-      : latest;
-  return { kind: "show", academicYear, published };
+  const requested =
+    input.requested === null
+      ? undefined
+      : choices.find((c) => c.academicYear === input.requested);
+  const chosen =
+    requested ?? published[published.length - 1] ?? current ?? choices[0]!;
+  return {
+    kind: "show",
+    academicYear: chosen.academicYear,
+    view: chosen.kind,
+    choices,
+    showSwitcher: true,
+  };
 }
 
 export const NOT_AVAILABLE_NOTES = {

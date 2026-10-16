@@ -12,6 +12,7 @@ import { auth } from "~/server/auth";
 import { api } from "~/trpc/server";
 import { NotAvailable } from "./_components/NotAvailable";
 import { OnHold } from "./_components/OnHold";
+import { YearSwitcher } from "./_components/YearSwitcher";
 import { TranscriptFrame } from "./_components/TranscriptFrame";
 
 export const metadata: Metadata = {
@@ -61,7 +62,7 @@ export default async function TranscriptPage({
 
   const state = selectTranscriptState({
     authenticated: Boolean(session?.user),
-    published: viewable.map((y) => y.academicYear),
+    viewable,
     requested: parseAyParam(searchParams.ay),
     currentAcademicYear: now,
   });
@@ -69,6 +70,20 @@ export default async function TranscriptPage({
   if (state.kind === "unauthenticated") redirect("/login");
   if (state.kind === "none_published") {
     return <NotAvailable academicYear={state.currentAcademicYear} />;
+  }
+
+  const switcher = (
+    <YearSwitcher
+      choices={state.choices}
+      active={state.academicYear}
+      basePath="/transcript"
+    />
+  );
+  // The current year before it opens: the calm page, with the switcher.
+  if (state.view === "unavailable") {
+    return (
+      <NotAvailable academicYear={state.academicYear} switcher={switcher} />
+    );
   }
 
   // The year can be reopened between listing it and fetching it.
@@ -82,10 +97,12 @@ export default async function TranscriptPage({
     });
   // The hall office has put this resident's year on hold: nothing else shows.
   if (result?.status === "on_hold") {
-    return <OnHold academicYear={state.academicYear} />;
+    return <OnHold academicYear={state.academicYear} switcher={switcher} />;
   }
   if (!result || result.status !== "ready") {
-    return <NotAvailable academicYear={state.academicYear} />;
+    return (
+      <NotAvailable academicYear={state.academicYear} switcher={switcher} />
+    );
   }
 
   // A draft (the year is closed for review) carries no download-by banner.
@@ -100,7 +117,7 @@ export default async function TranscriptPage({
   return (
     <TranscriptFrame
       transcript={result.transcript}
-      years={state.published}
+      years={state.choices}
       basePath="/transcript"
       notice={
         banner ? (

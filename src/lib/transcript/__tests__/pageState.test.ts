@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   NOT_AVAILABLE_NOTES,
+  choiceLabel,
   parseAyParam,
   selectTranscriptState,
 } from "../pageState";
@@ -31,12 +32,16 @@ describe("parseAyParam", () => {
 });
 
 describe("selectTranscriptState", () => {
+  const pub = (academicYear: string) => ({ academicYear, draft: false });
+  const draft = (academicYear: string) => ({ academicYear, draft: true });
   const base = {
     authenticated: true,
-    published: ["AY2026/27", "AY2027/28"],
+    viewable: [pub("AY2025/26")],
     requested: null,
-    currentAcademicYear: "AY2027/28",
+    currentAcademicYear: "AY2026/27",
   };
+  const labels = (state: ReturnType<typeof selectTranscriptState>) =>
+    state.kind === "show" ? state.choices.map((c) => c.label) : null;
 
   it("sends an unauthenticated visitor to sign in, whatever else is true", () => {
     expect(selectTranscriptState({ ...base, authenticated: false })).toEqual({
@@ -44,47 +49,103 @@ describe("selectTranscriptState", () => {
     });
   });
 
-  it("says not available when no year is published", () => {
-    expect(selectTranscriptState({ ...base, published: [] })).toEqual({
+  it("shows only the calm page, with no switcher, when nothing is published and the year is collecting", () => {
+    expect(selectTranscriptState({ ...base, viewable: [] })).toEqual({
       kind: "none_published",
-      currentAcademicYear: "AY2027/28",
+      currentAcademicYear: "AY2026/27",
     });
   });
 
   it("defaults to the latest published year, however the list is ordered", () => {
     const state = selectTranscriptState({
       ...base,
-      published: ["AY2027/28", "AY2026/27"],
+      viewable: [pub("AY2026/27"), pub("AY2025/26")],
     });
-
-    expect(state).toEqual({
+    expect(state).toMatchObject({
       kind: "show",
-      academicYear: "AY2027/28",
-      published: ["AY2026/27", "AY2027/28"],
+      academicYear: "AY2026/27",
+      view: "published",
+      showSwitcher: true,
+    });
+    expect(labels(state)).toEqual(["AY2025/26", "AY2026/27"]);
+  });
+
+  it("offers the collecting current year as 'not yet available', after the published ones", () => {
+    const state = selectTranscriptState(base);
+    expect(labels(state)).toEqual([
+      "AY2025/26",
+      "AY2026/27 (not yet available)",
+    ]);
+    expect(state).toMatchObject({
+      academicYear: "AY2025/26",
+      view: "published",
+      showSwitcher: true,
     });
   });
 
-  it("honours a requested year that is published", () => {
+  it("shows a published year when it is requested, and the draft entry the draft", () => {
+    const withDraft = {
+      ...base,
+      viewable: [pub("AY2025/26"), draft("AY2026/27")],
+    };
+    expect(labels(selectTranscriptState(withDraft))).toEqual([
+      "AY2025/26",
+      "AY2026/27 (draft)",
+    ]);
+    expect(
+      selectTranscriptState({ ...withDraft, requested: "AY2026/27" }),
+    ).toMatchObject({ academicYear: "AY2026/27", view: "draft" });
+    expect(
+      selectTranscriptState({ ...withDraft, requested: "AY2025/26" }),
+    ).toMatchObject({ academicYear: "AY2025/26", view: "published" });
+  });
+
+  it("opens the current year's 'not yet available' page when it is requested, never falling back", () => {
     expect(
       selectTranscriptState({ ...base, requested: "AY2026/27" }),
-    ).toMatchObject({ kind: "show", academicYear: "AY2026/27" });
+    ).toMatchObject({ academicYear: "AY2026/27", view: "unavailable" });
   });
 
-  it("falls back to the latest when the requested year is not published or invalid", () => {
-    expect(
-      selectTranscriptState({ ...base, requested: "AY2030/31" }),
-    ).toMatchObject({ academicYear: "AY2027/28" });
-    expect(selectTranscriptState({ ...base, requested: null })).toMatchObject({
-      academicYear: "AY2027/28",
+  it("falls back to the latest published year for any other year asked for", () => {
+    for (const requested of ["AY2030/31", "AY2020/21", null]) {
+      expect(selectTranscriptState({ ...base, requested })).toMatchObject({
+        academicYear: "AY2025/26",
+        view: "published",
+      });
+    }
+  });
+
+  it("shows the switcher when the current year is closed even with nothing published", () => {
+    const state = selectTranscriptState({
+      ...base,
+      viewable: [draft("AY2026/27")],
     });
+    expect(state).toMatchObject({
+      kind: "show",
+      academicYear: "AY2026/27",
+      view: "draft",
+      showSwitcher: true,
+    });
+    expect(labels(state)).toEqual(["AY2026/27 (draft)"]);
   });
 
-  it("does not mutate the published list it is given", () => {
-    const published = ["AY2027/28", "AY2026/27"];
+  it("does not mutate the list it is given", () => {
+    const viewable = [pub("AY2026/27"), pub("AY2025/26")];
+    selectTranscriptState({ ...base, viewable });
+    expect(viewable.map((y) => y.academicYear)).toEqual([
+      "AY2026/27",
+      "AY2025/26",
+    ]);
+  });
+});
 
-    selectTranscriptState({ ...base, published });
-
-    expect(published).toEqual(["AY2027/28", "AY2026/27"]);
+describe("choiceLabel", () => {
+  it("says what each year is", () => {
+    expect(choiceLabel("AY2026/27", "published")).toBe("AY2026/27");
+    expect(choiceLabel("AY2026/27", "draft")).toBe("AY2026/27 (draft)");
+    expect(choiceLabel("AY2026/27", "unavailable")).toBe(
+      "AY2026/27 (not yet available)",
+    );
   });
 });
 

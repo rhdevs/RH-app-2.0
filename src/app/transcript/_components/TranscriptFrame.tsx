@@ -1,10 +1,10 @@
-import Link from "next/link";
 import { type ReactNode } from "react";
 import Header from "../../_components/header";
-import { yearToParam } from "~/lib/transcript/assemble";
+import { type YearChoice } from "~/lib/transcript/pageState";
 import { type TranscriptViewModel } from "~/lib/transcript/types";
 import { PrintButton } from "./PrintButton";
 import { TranscriptDocument } from "./TranscriptDocument";
+import { YearSwitcher } from "./YearSwitcher";
 
 /**
  * Everything around one transcript on screen: app header, an optional notice,
@@ -20,8 +20,8 @@ export function TranscriptFrame({
   footerNav,
 }: {
   transcript: TranscriptViewModel;
-  /** Years to offer in the switch; hidden when there is only one. */
-  years: string[];
+  /** The years to offer in the switch; none, no switch. */
+  years: YearChoice[];
   /** The route the year links point at. */
   basePath: string;
   notice?: ReactNode;
@@ -37,27 +37,11 @@ export function TranscriptFrame({
       <div className="mx-auto max-w-[210mm] px-4 pb-4 pt-24 print:hidden">
         {notice}
 
-        {years.length > 1 && (
-          <nav aria-label="Academic year" className="mb-3 flex flex-wrap gap-2">
-            {years.map((year) => {
-              const active = year === transcript.academicYear;
-              return (
-                <Link
-                  key={year}
-                  href={`${basePath}?ay=${yearToParam(year)}`}
-                  aria-current={active ? "page" : undefined}
-                  className={`rounded-full border px-3 py-1 text-sm font-medium ${
-                    active
-                      ? "border-emerald-800 bg-emerald-800 text-white"
-                      : "border-gray-300 bg-white text-gray-700 hover:border-emerald-700"
-                  }`}
-                >
-                  {year}
-                </Link>
-              );
-            })}
-          </nav>
-        )}
+        <YearSwitcher
+          choices={years}
+          active={transcript.academicYear}
+          basePath={basePath}
+        />
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <PrintButton />
