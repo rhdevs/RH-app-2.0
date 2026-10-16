@@ -7,6 +7,7 @@ Phase 3 runs against a local single-node MongoDB replica set in Docker. Nothing 
 - **Localhost only.** The container binds `127.0.0.1:27017`, and `DATABASE_URL` must point at `localhost` or `127.0.0.1`.
 - **A distinct database name:** `rhapp_transcript_dev`, never `rhapp`. The seed script refuses to run against any other host or name.
 - Never run `prisma db push --accept-data-loss` or `--force-reset`, and never run any Prisma command against a non-local URL.
+- **`prisma db push` is for this LOCAL Docker database ONLY.** Never run it, `prisma migrate` or `npm run db:generate` against production: a push silently drops `User.email_unique_ci`. Production gets its indexes from `scripts/remediation/create-transcript-indexes.mjs` (see "Production indexes" below).
 - `.env` is gitignored. Never commit it.
 
 ## One-time setup
@@ -31,7 +32,7 @@ The other variables can be placeholders for local work (the build needs `NEXTAUT
 | --- | --- |
 | Start the database (first run also initiates the replica set) | `npm run dev:db:up` |
 | Stop it (data is kept in the `rhapp-transcript-mongo-data` volume) | `npm run dev:db:down` |
-| Create the collections and indexes | `npx prisma db push` |
+| Create the collections and indexes (LOCAL ONLY, never production) | `npx prisma db push` |
 | Fill it with fake data (idempotent) | `npm run dev:db:seed` |
 | Start the app | `npm run dev` |
 
@@ -171,11 +172,11 @@ The seed freezes two CCAs for AY2026/27 so the admin table shows each state: "Ra
 
 Dev only: `/transcript/preview/plain-member?draft=1` shows a specimen as the draft.
 
-Run `npm run dev:db:seed` afterwards to restore the seeded state. After pulling this change, `prisma db push` adds the `CcaYearFreeze` collection and its index.
+Run `npm run dev:db:seed` afterwards to restore the seeded state. After pulling this change, run `prisma db push` against the LOCAL database to add the `CcaYearFreeze` collection and its index.
 
 ## Manual check: CCA activities and the roster editor
 
-The seed gives AY2026/27 four activities: Soccer (9005, head `seed-r04`) "Inter-hall league" with `seed-r04` (Captain), `seed-r12` and `seed-r20` (not in Soccer); Hall Choir (9007, head `seed-r05`) "Hall Night preparation" in semester 2; RVC Children (9002, head `seed-r06`) "Exam-period care packs" and a removed "Cancelled workshop". After pulling this change, `prisma db push` adds the `CcaActivity` and `CcaActivityParticipant` collections and the `closedAt`, `closedBy`, `backToCollectingAt` and `backToCollectingBy` fields on the period.
+The seed gives AY2026/27 four activities: Soccer (9005, head `seed-r04`) "Inter-hall league" with `seed-r04` (Captain), `seed-r12` and `seed-r20` (not in Soccer); Hall Choir (9007, head `seed-r05`) "Hall Night preparation" in semester 2; RVC Children (9002, head `seed-r06`) "Exam-period care packs" and a removed "Cancelled workshop". After pulling this change, `prisma db push` (LOCAL database only) adds the `CcaActivity` and `CcaActivityParticipant` collections and the `closedAt`, `closedBy`, `backToCollectingAt` and `backToCollectingBy` fields on the period.
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
@@ -196,7 +197,7 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 
 ## Manual check: volunteer activities
 
-The seed gives AY2026/27 two RVC activities. RVC Children (9002, head `seed-r06`): "Weekly tuition for neighbourhood children", 10 weekly sessions of 2 hours from 7 September, the CCA's members plus one outsider as people, `seed-r12` ticked in every session (one with their own 1 hour, so 19 hours). RVC Special Projects (9001, head `seed-r07`): a one-off "Beach clean-up, East Coast Park" of 4 hours. A removed "Cancelled food drive" must never appear on a transcript. After pulling this change, `prisma db push` adds the four volunteer collections.
+The seed gives AY2026/27 two RVC activities. RVC Children (9002, head `seed-r06`): "Weekly tuition for neighbourhood children", 10 weekly sessions of 2 hours from 7 September, the CCA's members plus one outsider as people, `seed-r12` ticked in every session (one with their own 1 hour, so 19 hours). RVC Special Projects (9001, head `seed-r07`): a one-off "Beach clean-up, East Coast Park" of 4 hours. A removed "Cancelled food drive" must never appear on a transcript. After pulling this change, `prisma db push` (LOCAL database only) adds the four volunteer collections.
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
@@ -218,7 +219,7 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 
 ## Manual check: awards
 
-The seed gives a catalogue of five awards (Colours Award, Soccer; Service Excellence Award; Outstanding Newcomer; Full Colours; Retired Award, archived), the awards `seed-r04` and `seed-r12` already had, and one upload, "colours-2026.csv", whose three "Full Colours" awards belong to `seed-r13` to `seed-r15`. After pulling this change, `prisma db push` adds `AwardType` and `AwardImportBatch` and the new `Award` fields and index. Only admin and JCRC can open `/admin/transcripts/awards`; `seed-r04` is sent back to `/admin`.
+The seed gives a catalogue of five awards (Colours Award, Soccer; Service Excellence Award; Outstanding Newcomer; Full Colours; Retired Award, archived), the awards `seed-r04` and `seed-r12` already had, and one upload, "colours-2026.csv", whose three "Full Colours" awards belong to `seed-r13` to `seed-r15`. After pulling this change, `prisma db push` (LOCAL database only) adds `AwardType` and `AwardImportBatch` and the new `Award` fields and index. Only admin and JCRC can open `/admin/transcripts/awards`; `seed-r04` is sent back to `/admin`.
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
@@ -247,7 +248,7 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 
 ## Manual check: per-resident corrections
 
-The seed keeps the year COLLECTING and adds one manual CCA entry (`seed-r17` in Dance Crew, semester 2) with its history line. After pulling this change, `prisma db push` adds `ResidentUnlock`, `ResidentWithhold`, `ManualMembership` and `ResidentEvent` and two fields on `JcrcService`. Only admin and JCRC can open `/admin/transcripts/residents`. To get a published year to work on, use the admin buttons yourself: sign in as `seed-r01`, open `/admin/transcripts`, press Close year and then Publish (the seed already has the semester 2 date). Run `npm run dev:db:seed` afterwards to go back to the seeded state.
+The seed keeps the year COLLECTING and adds one manual CCA entry (`seed-r17` in Dance Crew, semester 2) with its history line. After pulling this change, `prisma db push` (LOCAL database only) adds `ResidentUnlock`, `ResidentWithhold`, `ManualMembership` and `ResidentEvent` and two fields on `JcrcService`. Only admin and JCRC can open `/admin/transcripts/residents`. To get a published year to work on, use the admin buttons yourself: sign in as `seed-r01`, open `/admin/transcripts`, press Close year and then Publish (the seed already has the semester 2 date). Run `npm run dev:db:seed` afterwards to go back to the seeded state.
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
@@ -288,3 +289,18 @@ Seed with `npm run dev:db:seed -- --with-published-year` (see above) so `seed-r1
 | Plain counts | `seed-r04` | `/cca/9005/transcript` | "1 activity", never "1 of 20"; Add activity is never greyed out. |
 | Unlock twice | `seed-r01` | Unlock a resident, press Unlock again quickly | One unlock, one "Unlocked" line in History. |
 | Partly imported | any | A CSV upload that stops part way (a database failure; covered by a test) | "The upload stopped part way: N imported. ..."; History says "Partly imported"; Undo removes those awards only. |
+
+## Production indexes
+
+Production never uses `prisma db push`. MongoDB creates the transcript collections on first write; only the indexes need creating, with the guarded script:
+
+```bash
+npx prisma generate
+node scripts/remediation/index-census.mjs > census-before.txt
+node scripts/remediation/create-transcript-indexes.mjs            # dry run
+node scripts/remediation/create-transcript-indexes.mjs --commit
+node scripts/remediation/index-census.mjs > census-after.txt
+diff census-before.txt census-after.txt
+```
+
+The script creates the 29 transcript indexes (same names, keys and uniqueness as `prisma/schema.prisma`, including the `activeKey` uniques), never drops or changes an index, refuses to continue on a conflicting one, and touches no other collection. A second run reports "all present". A test fails if the script and the schema ever differ. Try it locally against a scratch database first (a fresh database name on localhost), never against a remote URL from this checkout.
