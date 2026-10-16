@@ -694,6 +694,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         )!;
         expect(soccerRow.activities).toEqual([
           {
+            number: `${soccerRow.number}.1`,
             title: "Inter-hall league",
             role: "Midfielder",
             description: "The hall's team in the inter-hall football league.",
@@ -730,6 +731,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         )!;
         expect(choir.activities).toEqual([
           {
+            number: `${choir.number}.1`,
             title: "Hall Night preparation (Sem 2)",
             role: "Stage crew",
             description:
