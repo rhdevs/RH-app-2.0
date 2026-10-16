@@ -34,11 +34,12 @@ describe("useReturnFocus", () => {
     const props = grab();
 
     props.onOpenAutoFocus();
-    const event = { preventDefault: vi.fn() } as unknown as Event;
+    const preventDefault = vi.fn();
+    const event = { preventDefault } as unknown as Event;
     props.onCloseAutoFocus(event);
 
     expect(opener.focus).toHaveBeenCalledOnce();
-    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(preventDefault).toHaveBeenCalledOnce();
   });
 
   it("leaves the default alone when the opener is gone from the page", () => {
@@ -49,10 +50,11 @@ describe("useReturnFocus", () => {
     const props = grab();
 
     props.onOpenAutoFocus();
-    const event = { preventDefault: vi.fn() } as unknown as Event;
+    const preventDefault = vi.fn();
+    const event = { preventDefault } as unknown as Event;
     props.onCloseAutoFocus(event);
 
     expect(opener.focus).not.toHaveBeenCalled();
-    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 });
