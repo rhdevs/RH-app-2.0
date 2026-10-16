@@ -753,6 +753,38 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await errorOf(withhold(R12))).toBe("ok");
       });
 
+      it("ends a hold once, with one history line, when five releases arrive at once", async () => {
+        await publishYear();
+        expect(await errorOf(withhold(R12))).toBe("ok");
+        const results = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            errorOf(
+              as(ADMIN).transcriptManage.corrections.release({
+                userID: R12.id,
+                academicYear: AY,
+              }),
+            ),
+          ),
+        );
+        // A release that read the hold after it ended is told so; none fails.
+        for (const r of results) {
+          expect(["ok", "CONFLICT:NOT_WITHHELD"]).toContain(r);
+        }
+        expect(results).toContain("ok");
+        expect(
+          await db.residentWithhold.count({
+            where: {
+              academicYear: AY,
+              userID: R12.id,
+              OR: [{ releasedAt: null }, { releasedAt: { isSet: false } }],
+            },
+          }),
+        ).toBe(0);
+        expect(
+          (await events(R12)).filter((e) => e.action === "release"),
+        ).toHaveLength(1);
+      });
+
       it("asks again for a hold changes nothing, refuses a release with no hold, and a missing reason", async () => {
         await publishYear();
         expect(await errorOf(withhold(R12))).toBe("ok");
