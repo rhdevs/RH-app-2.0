@@ -311,7 +311,9 @@ export default function AwardCatalogue({
       original !== null &&
       (editing.name.trim() !== original.name.trim() ||
         editing.defaultCitation.trim() !== original.defaultCitation.trim()));
-  useEffect(() => onDirty(dirty), [dirty, onDirty]);
+  useEffect(() => {
+    onDirty(dirty);
+  }, [dirty, onDirty]);
 
   const createZod = create.error?.data?.zodError ?? null;
   const updateZod = update.error?.data?.zodError ?? null;

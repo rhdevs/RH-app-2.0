@@ -32,6 +32,7 @@ import { counterText } from "~/lib/transcript/headView";
 import { formatSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
 import { ErrorLine } from "../../_components/Bits";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export interface AwardItem {
   id: string;
@@ -98,6 +99,7 @@ const when = (d: Date | string | null) => (d ? formatSgDate(d) : "");
 
 /** The awards of one year: search, group by award, inline edit, selection. */
 export function AwardsListView(p: AwardsListViewProps) {
+  const returnFocus = useReturnFocus();
   const groups = p.groupBy ? groupByAward(p.items) : null;
   const split = selectionSplit(p.selection, p.items);
   const picked = p.selection.size;
@@ -249,7 +251,7 @@ export function AwardsListView(p: AwardsListViewProps) {
         )}
       </div>
 
-      <AlertDialogContent>
+      <AlertDialogContent {...returnFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>
             {p.confirm?.kind === "restore"
@@ -488,7 +490,9 @@ export default function AwardsList({
     original !== null &&
     (editing.title.trim() !== original.title.trim() ||
       editing.citation.trim() !== original.citation.trim());
-  useEffect(() => onDirty(dirty), [dirty, onDirty]);
+  useEffect(() => {
+    onDirty(dirty);
+  }, [dirty, onDirty]);
 
   const refresh = async () => {
     await Promise.all([

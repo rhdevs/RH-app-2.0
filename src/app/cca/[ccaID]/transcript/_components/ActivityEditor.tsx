@@ -55,6 +55,7 @@ import { errorText, fieldError } from "~/lib/transcript/adminView";
 import { counterText } from "~/lib/transcript/headView";
 import { useUnsavedChangesGuard } from "~/lib/transcript/useUnsavedChangesGuard";
 import { api } from "~/trpc/react";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 /** A saved activity, as activities.list returns it. */
 export interface EditableActivity {
@@ -397,6 +398,7 @@ export default function ActivityEditorDialog({
   readOnly: boolean;
   onClose: () => void;
 }) {
+  const returnFocus = useReturnFocus();
   const utils = api.useUtils();
   const [saved, setSaved] = useState<EditorState>(() =>
     activity ? editorOf(activity) : emptyEditor(),
@@ -469,7 +471,10 @@ export default function ActivityEditorDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && !saving && close()}>
-      <DialogContent className="h-[100dvh] max-w-none overflow-y-auto rounded-none sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg">
+      <DialogContent
+        {...returnFocus}
+        className="h-[100dvh] max-w-none overflow-y-auto rounded-none sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg"
+      >
         <DialogHeader>
           <DialogTitle>
             {activity ? "Edit activity" : "Add activity"}

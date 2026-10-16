@@ -55,6 +55,7 @@ import {
 } from "~/lib/transcript/volunteerEditor";
 import { peopleCountLine } from "~/lib/transcript/activityEditor";
 import { api } from "~/trpc/react";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 const SELECT =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50";
@@ -327,9 +328,13 @@ function EditorShell({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const returnFocus = useReturnFocus();
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="h-[100dvh] max-w-none overflow-y-auto rounded-none sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg">
+      <DialogContent
+        {...returnFocus}
+        className="h-[100dvh] max-w-none overflow-y-auto rounded-none sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-lg"
+      >
         <DialogHeader>
           <DialogTitle>
             {editing ? "Edit volunteer activity" : "Add volunteer activity"}

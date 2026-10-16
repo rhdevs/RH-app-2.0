@@ -35,6 +35,7 @@ import {
 import { api } from "~/trpc/react";
 import VolunteerAttendance from "./VolunteerAttendance";
 import VolunteerEditorDialog from "./VolunteerEditor";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export interface VolunteerListItem {
   id: string;
@@ -81,6 +82,7 @@ export interface VolunteerSectionViewProps {
 
 /** The "Volunteer hours" card: the count, Add, the list, Show removed. */
 export function VolunteerSectionView(p: VolunteerSectionViewProps) {
+  const returnFocus = useReturnFocus();
   const full = p.activeCount >= p.max;
   return (
     <AlertDialog
@@ -138,7 +140,7 @@ export function VolunteerSectionView(p: VolunteerSectionViewProps) {
         )}
       </SectionCard>
 
-      <AlertDialogContent>
+      <AlertDialogContent {...returnFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>
             {p.removing ? `Remove ${p.removing.title}?` : "Remove activity?"}

@@ -39,6 +39,7 @@ import { api } from "~/trpc/react";
 import ActivitiesSection from "./ActivitiesSection";
 import { RosterEditor, type RosterRowData } from "./RosterEditor";
 import VolunteerSection from "./VolunteerSection";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export interface TranscriptNotesProps {
   /** Why the roster is read-only or empty, or null. */
@@ -89,6 +90,7 @@ export function LockRoster({
   ccaID: number;
   onLocked: () => void;
 }) {
+  const returnFocus = useReturnFocus();
   const lock = api.transcriptManage.roster.lock.useMutation({
     onSuccess: () => onLocked(),
   });
@@ -99,7 +101,7 @@ export function LockRoster({
           {lockButtonLabel(academicYear)}
         </Button>
       </AlertDialogTrigger>
-      <AlertDialogContent>
+      <AlertDialogContent {...returnFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>{lockButtonLabel(academicYear)}?</AlertDialogTitle>
           <AlertDialogDescription>

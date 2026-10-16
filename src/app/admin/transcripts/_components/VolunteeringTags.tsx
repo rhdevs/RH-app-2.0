@@ -16,6 +16,7 @@ import { Input } from "~/components/ui/input";
 import { errorText } from "~/lib/transcript/adminView";
 import { api } from "~/trpc/react";
 import { ErrorLine, FIELD_LABEL, SectionCard } from "./Bits";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export interface TaggedCca {
   ccaID: number;
@@ -80,6 +81,7 @@ export interface VolunteeringTagsViewProps {
  * resident. Removing asks first, and says what stays.
  */
 export function VolunteeringTagsView(p: VolunteeringTagsViewProps) {
+  const returnFocus = useReturnFocus();
   const tagged = taggedCcas(p.ccas);
   const suggestions = suggestCcas(p.ccas, p.query);
   const asked = p.query.trim().length >= MIN_SUGGEST_CHARACTERS;
@@ -194,7 +196,7 @@ export function VolunteeringTagsView(p: VolunteeringTagsViewProps) {
         )}
       </SectionCard>
 
-      <AlertDialogContent>
+      <AlertDialogContent {...returnFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>
             {removing ? `Remove ${removing.ccaName}?` : "Remove this CCA?"}

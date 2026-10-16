@@ -53,6 +53,7 @@ import {
 import { useUnsavedChangesGuard } from "~/lib/transcript/useUnsavedChangesGuard";
 import { api } from "~/trpc/react";
 import { SaveAllBar } from "./RosterEditor";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export interface AttendancePerson {
   userID: string;
@@ -70,7 +71,7 @@ function shortDate(iso: string): string {
 }
 
 const MINI =
-  "rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40";
+  "min-h-6 min-w-6 rounded border border-gray-400 bg-white px-1.5 py-0.5 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40";
 
 export interface AttendanceViewProps {
   kind: VolunteerKind;
@@ -377,7 +378,7 @@ function DesktopGrid(p: WithTotals) {
                             className={`flex h-8 min-w-[2.25rem] items-center justify-center rounded border px-1 text-sm ${
                               ticked
                                 ? "border-emerald-600 bg-emerald-50 text-emerald-800"
-                                : "border-gray-300 bg-white text-gray-400"
+                                : "border-gray-500 bg-white text-gray-600"
                             } disabled:cursor-not-allowed`}
                           >
                             {ticked ? (
@@ -607,6 +608,7 @@ function SessionDialog({
   session: GridSession;
   onClose: () => void;
 }) {
+  const returnFocus = useReturnFocus();
   const utils = api.useUtils();
   const [date, setDate] = useState(session.date);
   const [hours, setHours] = useState(String(session.hours));
@@ -625,7 +627,7 @@ function SessionDialog({
   const zod = update.error?.data?.zodError ?? null;
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className="max-w-sm">
+      <DialogContent {...returnFocus} className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Edit session</DialogTitle>
           <DialogDescription>

@@ -24,6 +24,7 @@ import { showUnfrozenWarning } from "~/lib/transcript/lifecycle";
 import { formatSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
 import { ErrorLine, FIELD_LABEL } from "./Bits";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export interface FreezeRowView {
   ccaID: number;
@@ -73,6 +74,7 @@ export interface FreezeTableViewProps {
  * reason) while the year is not published.
  */
 export function FreezeTableView(p: FreezeTableViewProps) {
+  const returnFocus = useReturnFocus();
   const status = normaliseStatus(p.status);
   const shown = visibleFreezeRows(p.rows, p.onlyUnfrozen);
   const canUnfreeze = status !== "published";
@@ -177,7 +179,7 @@ export function FreezeTableView(p: FreezeTableViewProps) {
         )}
       </div>
 
-      <AlertDialogContent>
+      <AlertDialogContent {...returnFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>
             {p.unfreezing

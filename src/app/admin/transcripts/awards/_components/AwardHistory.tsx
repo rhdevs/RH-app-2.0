@@ -18,6 +18,7 @@ import { UNDO_BATCH_CONFIRMATION } from "~/lib/transcript/awards";
 import { formatSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
 import { ErrorLine } from "../../_components/Bits";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export interface BatchItem {
   id: string;
@@ -49,6 +50,7 @@ export interface AwardHistoryViewProps {
 
 /** Uploads of awards for the year, each with Undo while it still has awards. */
 export function AwardHistoryView(p: AwardHistoryViewProps) {
+  const returnFocus = useReturnFocus();
   // The dialog keeps its words while it fades out, after `undoing` is cleared.
   const last = useRef<BatchItem | null>(null);
   if (p.undoing) last.current = p.undoing;
@@ -135,7 +137,7 @@ export function AwardHistoryView(p: AwardHistoryViewProps) {
         )}
       </div>
 
-      <AlertDialogContent>
+      <AlertDialogContent {...returnFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>Undo this upload?</AlertDialogTitle>
           <AlertDialogDescription>

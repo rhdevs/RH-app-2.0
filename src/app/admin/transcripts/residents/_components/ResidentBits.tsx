@@ -16,6 +16,7 @@ import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 import { counterText } from "~/lib/transcript/headView";
 import { ErrorLine, FIELD_LABEL } from "../../_components/Bits";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 /** What every section of the resident panel is given. */
 export interface SectionProps {
@@ -75,10 +76,11 @@ export function ReasonDialogView({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const returnFocus = useReturnFocus();
   const ok = !required || reason.trim().length >= REASON_MIN;
   return (
     <AlertDialog open={open} onOpenChange={(o) => !o && !pending && onCancel()}>
-      <AlertDialogContent>
+      <AlertDialogContent {...returnFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           <AlertDialogDescription>{copy.description}</AlertDialogDescription>

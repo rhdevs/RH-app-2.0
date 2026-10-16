@@ -29,6 +29,7 @@ import { errorText } from "~/lib/transcript/adminView";
 import { formatSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
 import ActivityEditorDialog, { type EditableActivity } from "./ActivityEditor";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export interface ActivityListItem extends EditableActivity {
   removed: boolean;
@@ -65,6 +66,7 @@ export interface ActivitiesSectionViewProps {
 
 /** The "Activities" card: the count, Add activity, the list, Show removed. */
 export function ActivitiesSectionView(p: ActivitiesSectionViewProps) {
+  const returnFocus = useReturnFocus();
   const full = p.activeCount >= p.max;
   return (
     <AlertDialog
@@ -122,7 +124,7 @@ export function ActivitiesSectionView(p: ActivitiesSectionViewProps) {
         )}
       </SectionCard>
 
-      <AlertDialogContent>
+      <AlertDialogContent {...returnFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>
             {p.removing ? `Remove ${p.removing.title}?` : "Remove activity?"}

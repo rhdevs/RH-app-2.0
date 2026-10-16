@@ -38,6 +38,7 @@ import {
   YearSelect,
 } from "./Bits";
 import FreezeTable from "./FreezeTable";
+import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export type Confirming = YearAction | null;
 
@@ -116,6 +117,7 @@ export function confirmationFor(
  * refusal (for example no semester 2 date) is shown inline.
  */
 export function PeriodPanelView(p: PeriodPanelViewProps) {
+  const returnFocus = useReturnFocus();
   const status = normaliseStatus(p.status);
   const published = status === "published";
   const dialogOpen = p.confirming !== null;
@@ -268,7 +270,7 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
         {p.freezeTable}
       </SectionCard>
 
-      <AlertDialogContent>
+      <AlertDialogContent {...returnFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>{confirmation?.title ?? ""}</AlertDialogTitle>
           <AlertDialogDescription>

@@ -232,7 +232,9 @@ export default function AssignAward({
 
   const dirty =
     recipients.length > 0 || newName.trim() !== "" || newCitation.trim() !== "";
-  useEffect(() => onDirty(dirty), [dirty, onDirty]);
+  useEffect(() => {
+    onDirty(dirty);
+  }, [dirty, onDirty]);
 
   // A year with no such award chosen yet keeps the picker usable; a published
   // year disables everything.

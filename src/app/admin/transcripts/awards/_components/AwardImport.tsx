@@ -420,7 +420,7 @@ export function ImportPreviewView(p: ImportPreviewViewProps) {
             return (
               <li
                 key={r.row}
-                className={`rounded-md border border-gray-200 p-3 ${skip ? "text-gray-400" : ""}`}
+                className={`rounded-md border border-gray-200 p-3 ${skip ? "text-gray-600 line-through" : ""}`}
               >
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <span className="text-xs font-medium text-gray-600">
@@ -499,7 +499,7 @@ export function ImportPreviewView(p: ImportPreviewViewProps) {
                 return (
                   <tr
                     key={r.row}
-                    className={`align-top ${skip ? "text-gray-400" : ""}`}
+                    className={`align-top ${skip ? "text-gray-600 line-through" : ""}`}
                   >
                     <td className="px-3 py-2">{r.row}</td>
                     <td className="max-w-[14rem] break-words px-3 py-2">
@@ -731,7 +731,9 @@ export default function AwardImport({
 
   // A parsed file that has not been imported is work to lose.
   const dirty = step === "map" || step === "preview" || step === "importing";
-  useEffect(() => onDirty(dirty), [dirty, onDirty]);
+  useEffect(() => {
+    onDirty(dirty);
+  }, [dirty, onDirty]);
   const onDirtyRef = useRef(onDirty);
   onDirtyRef.current = onDirty;
   useEffect(() => () => onDirtyRef.current(false), []);
