@@ -143,7 +143,7 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 | Header entry | `seed-r12` | Open the profile menu (desktop), then the menu (phone) | "My transcript" directly under "My applications". No badge while the year is collecting. After `seed-r01` publishes the year: a "Ready" badge beside it and a dot on the profile button. Open the transcript: both go away. |
 | Download-by banner | `seed-r01`, then `seed-r12` | Academic year panel: set Download by, Save, publish. Open `/transcript` as the resident | "Download your AY2026/27 transcript before 31 Dec 2027." (the seeded date). Clear the date: no banner. |
 | Volunteering CCAs | `seed-r01` | `/admin/transcripts`, Volunteering CCAs | Only the four RVC CCAs, "4 volunteering CCAs". Type "soc", add Soccer: it joins the list. Remove it: a confirmation says hours already recorded stay. |
-| JCRC contributions | `seed-r02` | `/admin/transcripts/jcrc` | One card per contribution with counters. Move up and down, Remove (shows "Removed. Undo"), Undo, Add contribution ("N of 10"), Save. Preview: an Activity / Role / Description table. |
+| JCRC contributions | `seed-r02` | `/admin/transcripts/jcrc` | One card per contribution with counters. Move up and down, Remove (shows "Removed. Undo"), Undo, Add contribution (a plain count, "2 contributions", never "of 10"), Save. Preview: the rows in three columns with no header row. |
 | Role period | `seed-r04` | `/cca/9005/transcript`, give a member a role | With a semester 2 membership the role period offers only the default and "Semester 2 only". Narrow a full-year member who has a full-year role: the role period changes with a one-line note. |
 | Picker | `seed-r06` | Volunteer hours, search "Seed" | Placeholder "Name". Arrow keys move, Enter picks, Escape closes. As `seed-r01` the placeholder is "Name, email or matric". |
 | Names | `seed-r01` | Publish, add and void an award | "Published on ... by Seed Resident 01", "Recorded by ... Voided by ..." show names, not SEED- keys. |
@@ -179,8 +179,8 @@ The seed gives AY2026/27 four activities: Soccer (9005, head `seed-r04`) "Inter-
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
-| Activities section | `seed-r04` | `/cca/9005/transcript` | "Activities" above the roster, "1 of 20", Add activity, and "Inter-hall league" with Edit and Remove. |
-| Add an activity | `seed-r04` | Add activity, fill the title, tick members, Add activity | The dialog closes and the list shows "2 of 20". On a phone the editor fills the screen. |
+| Activities section | `seed-r04` | `/cca/9005/transcript` | "Activities" above the roster, "1 activity", Add activity, and "Inter-hall league" with Edit and Remove. |
+| Add an activity | `seed-r04` | Add activity, fill the title, tick members, Add activity | The dialog closes and the list shows "2 activities". On a phone the editor fills the screen. |
 | Filter and tick | `seed-r04` | In the editor, type part of a name, Select all, Clear all | Only matching members show; the two buttons act on those only. "N people selected" follows. |
 | Outside people | `seed-r04` | In the editor, search `Seed` under "Other people", pick one | A chip appears; the x removes it. Heads search by name only. |
 | Customise | `seed-r04` | "Customise each person" | A Role and Description per person with the two placeholders; empty means the general description. |
@@ -210,7 +210,7 @@ The seed gives AY2026/27 two RVC activities. RVC Children (9002, head `seed-r06`
 | Phone view | `seed-r06` | The attendance panel at 375 px wide | One session at a time with arrows and a date selector, Tick all, Clear all, Copy previous session, an hours box for each ticked person. |
 | Edit a session | `seed-r06` | Edit session on a column | Change the date or hours, or Remove session; a removed session stops counting. |
 | One-off | `seed-r07` | The beach clean-up | Same editor with a date and hours, no Add session; the grid has one column. |
-| Remove and restore | `seed-r06` | Remove, confirm; Show removed; Restore | It leaves the transcripts and the count; Restore brings it back. At 30 activities Add and Restore are refused. |
+| Remove and restore | `seed-r06` | Remove, confirm; Show removed; Restore | It leaves the transcripts and the count; Restore brings it back. There is no limit to refuse at. |
 | On a transcript | `seed-r01` | Preview as resident `seed-r12`, AY2026/27 | "Volunteer hours": Activity, Type, Organised by, Hours; tuition 19 (Regular, RVC Children), beach clean-up 4 (One-off, RVC Special Projects), Total 23. No session counts. |
 | Unsaved changes | `seed-r06` | Tick cells, then open another activity or reload | The browser or an in-app prompt asks before leaving. |
 
@@ -272,3 +272,19 @@ The seed keeps the year COLLECTING and adds one manual CCA entry (`seed-r17` in 
 | Phone | `seed-r01` | The resident panel at 375px wide | Fields wrap inside each card, tabs wrap, no sideways scroll. |
 
 Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: final fixes
+
+Seed with `npm run dev:db:seed -- --with-published-year` (see above) so `seed-r12` has a published `AY2025/26`. Run `npm run dev:db:seed` afterwards to restore the plain seeded state.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Year switcher | `seed-r12` | `/transcript` | Pills "AY2025/26" and "AY2026/27 (not yet available)". The second shows the calm "isn't available yet" page, with the pills still there. |
+| Draft entry | `seed-r01`, then `seed-r12` | Close year on `/admin/transcripts` (AY2026/27), then `/transcript` | The pill reads "AY2026/27 (draft)" and opens the draft view. |
+| Publish needs every CCA frozen | `seed-r01` | While AY2026/27 is closed, Unfreeze Soccer (MALE) in the CCA member lists, then Publish | Refused, and the panel lists it: "Some CCAs are not frozen for AY2026/27: Soccer (MALE). Close the year again to freeze them." |
+| Fix it | `seed-r01` | Back to collecting, Close year, Publish | Close year freezes Soccer again ("1 CCA frozen now"); Publish works. |
+| Menu item | `seed-r12` | Open the profile menu (desktop and phone) | "My transcript" on one line with the "Ready" badge at the right, readable on the dark phone menu. |
+| No header rows | `seed-r01` | Preview `seed-r12` and `seed-r02` for AY2026/27 | Activity rows under a CCA and the JCRC contributions have no heading row; "Other involvement" keeps its headings. |
+| Plain counts | `seed-r04` | `/cca/9005/transcript` | "1 activity", never "1 of 20"; Add activity is never greyed out. |
+| Unlock twice | `seed-r01` | Unlock a resident, press Unlock again quickly | One unlock, one "Unlocked" line in History. |
+| Partly imported | any | A CSV upload that stops part way (a database failure; covered by a test) | "The upload stopped part way: N imported. ..."; History says "Partly imported"; Undo removes those awards only. |
