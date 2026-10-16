@@ -9,7 +9,12 @@ import {
 import type { ContributionDraft } from "~/lib/transcript/headView";
 
 const auth = vi.fn();
+const getUserRoles = vi.fn();
 vi.mock("~/server/auth", () => ({ auth: () => auth() }));
+vi.mock("~/server/db", () => ({ db: {} }));
+vi.mock("~/server/api/services/access", () => ({
+  getUserRoles: (...args: unknown[]) => getUserRoles(...args) as unknown,
+}));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT:${to}`);
@@ -227,7 +232,10 @@ describe("JCRC self page", () => {
 });
 
 describe("JCRC self page gate", () => {
-  beforeEach(() => auth.mockReset());
+  beforeEach(() => {
+    auth.mockReset();
+    getUserRoles.mockReset();
+  });
 
   it("sends a signed-out visitor to sign in", async () => {
     auth.mockResolvedValue(null);
@@ -236,10 +244,21 @@ describe("JCRC self page gate", () => {
     await expect(Page()).rejects.toThrow("REDIRECT:/login");
   });
 
-  it("renders for a signed-in user; membership is decided by the API", async () => {
+  it("renders for a signed-in user, deciding membership from the live jcrc role", async () => {
     auth.mockResolvedValue({ user: { userID: "SEED-R01" } });
     const { default: Page } = await import("../jcrc/page");
 
-    await expect(Page()).resolves.toBeTruthy();
+    getUserRoles.mockResolvedValue(["admin"]);
+    const admin = (await Page()) as { props: { children: unknown[] } };
+    expect(JSON.stringify(admin.props.children[1])).toContain(
+      '"isMember":false',
+    );
+
+    getUserRoles.mockResolvedValue(["jcrc", "resident"]);
+    const member = (await Page()) as { props: { children: unknown[] } };
+    expect(JSON.stringify(member.props.children[1])).toContain(
+      '"isMember":true',
+    );
+    expect(getUserRoles).toHaveBeenCalledWith({}, "SEED-R01");
   });
 });
