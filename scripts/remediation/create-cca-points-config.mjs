@@ -179,7 +179,12 @@ async function main() {
 
   console.log("\n--- [3] create ---");
   const c = await runCmd({ create: COLL }, "create");
-  if (c.ok) console.log(`  created collection ${COLL}`);
+  if (c.ok)
+    console.log(
+      before.absent
+        ? `  created collection ${COLL}`
+        : `  collection ${COLL} already exists — left as is`,
+    );
   else if (IDEMPOTENT_CODES.has(c.code))
     console.log(
       `  already present: ${IDEMPOTENT_CODES.get(c.code)} (code ${c.code})`,
