@@ -122,10 +122,6 @@ describe("TranscriptDocument: pages", () => {
     }
   });
 
-  it("shows no Sem key when no item is part-year", () => {
-    expect(render("plain-member")).not.toContain("Sem 1 / Sem 2");
-  });
-
   it("works for a JCRC member with no other CCAs", () => {
     const html = render("jcrc-only");
 
@@ -221,30 +217,34 @@ describe("TranscriptDocument: content", () => {
   it("prints the semester in the Year and Role columns only when not a full year", () => {
     const html = render("jcrc-sports-secretary", JCRC_AY);
 
-    expect(html).toContain("2027/28 Sem 2");
-    expect(html).toContain("Head (Sem 2)");
+    expect(html).toContain("2027/28 Semester 2");
+    expect(html).toContain("Head (Semester 2)");
     expect(render("cca-head")).not.toContain("Semester");
   });
 
-  it("keeps the Year cell on one line, sized for '2026/27 Sem 2'", () => {
+  it("keeps the Year cell on one line, sized for '2026/27 Semester 2'", () => {
     const html = render("jcrc-sports-secretary", JCRC_AY);
 
     expect(html).toContain("whitespace-nowrap");
-    expect(html).toContain("2027/28 Sem 2</td>");
+    expect(html).toContain("2027/28 Semester 2</td>");
     expect(html).toMatch(/whitespace-nowrap[^>]*>Year/);
-    expect(html).toContain("w-[6.5rem]");
+    expect(html).toContain("w-[18%]");
+    expect(html).toMatch(/whitespace-nowrap">2027\/28 Semester 2<\/td>/);
     // The part-year words never wrap onto a second line inside the cell.
     expect(html).not.toContain("2027/28<br");
   });
 
-  it("explains Sem 1 / Sem 2 at the end of the document only when a part-year item exists", () => {
-    const withPart = render("jcrc-sports-secretary", JCRC_AY);
-    const without = render("plain-member");
-
-    expect(withPart).toContain(
-      "Sem 1 / Sem 2: involvement for that semester only.",
-    );
-    expect(without).not.toContain("Sem 1 / Sem 2");
+  it("spells out Semester 1 / Semester 2 everywhere and prints no key line", () => {
+    for (const [slug, year] of [
+      ["jcrc-sports-secretary", JCRC_AY],
+      ["member-with-activities", AY],
+      ["other-involvement-only", AY],
+    ] as Array<[string, string]>) {
+      const html = render(slug, year);
+      expect(html).toMatch(/Semester [12]/);
+      expect(html).not.toMatch(/Sem [12]/);
+      expect(html).not.toContain("involvement for that semester only");
+    }
   });
 
   it("closes the document with one neutral sentence and no verification text", () => {
@@ -283,20 +283,20 @@ describe("TranscriptDocument: content", () => {
     expect(jcrc).not.toMatch(/<dd[^>]*><\/dd>/);
   });
 
-  it("joins 'Sem' and its number with a no-break space, and keeps '(Sem N)' whole", () => {
+  it("joins 'Semester' and its number with a no-break space, and keeps '(Semester N)' whole", () => {
     const html = renderRaw("member-with-activities");
-    expect(html).toContain("Sem\u00a02");
-    expect(html).not.toMatch(/Sem [12]/);
+    expect(html).toContain("Semester 2");
+    expect(html).not.toMatch(/Semester [12]/);
     expect(html).toMatch(
-      /<span class="whitespace-nowrap">\(Sem\u00a0[12]\)<\/span>/,
+      /<span class="whitespace-nowrap">\(Semester [12]\)<\/span>/,
     );
     // The role suffix and the Year cell too.
     const many = renderRaw("jcrc-sports-secretary", JCRC_AY);
-    expect(many).toContain("2027/28 Sem 2");
+    expect(many).toContain("2027/28 Semester 2");
     expect(many).toContain(
-      'Head <span class="whitespace-nowrap">(Sem 2)</span>',
+      'Head <span class="whitespace-nowrap">(Semester 2)</span>',
     );
-    expect(many).not.toMatch(/Sem [12]/);
+    expect(many).not.toMatch(/Semester [12]/);
   });
 
   it("has no summary strip on page 1, for any kind of resident", () => {
@@ -479,7 +479,7 @@ describe("TranscriptDocument: activities", () => {
     const html = render("member-with-activities");
 
     expect(html).toContain("Annual hall concert");
-    expect(html).toContain("Choir retreat (Sem 2)");
+    expect(html).toContain("Choir retreat (Semester 2)");
     expect(html).toContain("Soloist");
   });
 
@@ -636,16 +636,14 @@ describe("TranscriptDocument: activities", () => {
     expect(html).toContain("I. Other involvement");
     expect(html).not.toContain("Leadership and CCA participation");
     expect(html).not.toContain(EMPTY_YEAR_MESSAGE);
-    expect(html).toContain("Hall Night pit band (Sem 1)");
+    expect(html).toContain("Hall Night pit band (Semester 1)");
   });
 
-  it("keeps the crest and the Sem 1 / Sem 2 explanation with part-year activities", () => {
+  it("keeps the crest and the closing block with part-year activities", () => {
     const pages = sheets(render("member-with-activities"));
 
     for (const page of pages) expect(page.match(CREST)).toHaveLength(1);
-    expect(pages[pages.length - 1]).toContain(
-      "Sem 1 / Sem 2: involvement for that semester only.",
-    );
+    expect(pages[pages.length - 1]).toContain("END OF TRANSCRIPT");
   });
 
   it("escapes hostile activity text", () => {

@@ -151,9 +151,7 @@ function Sheet({
           <tr>
             <td className="p-0 align-top">
               {body}
-              {index === total - 1 && (
-                <ClosingBlock hasPartYear={transcript.hasPartYear} />
-              )}
+              {index === total - 1 && <ClosingBlock />}
             </td>
           </tr>
         </tbody>

@@ -9,10 +9,15 @@ import {
 
 const SEM_SUFFIX = /(\(Sem [12]\))/;
 
+/** "Sem 1" as the transcript prints it: spelled out, the number held to the word by a no-break space. */
+const spellOut = (text: string) =>
+  text.replace(/Sem ([12])/g, "Semester\u00a0$1");
+
 /**
- * Text that may carry a semester suffix: "Sem" and its number are joined by a
- * no-break space and a parenthesised "(Sem 1)" is kept whole, so the suffix is
- * never split across lines. The rest of the text wraps as usual.
+ * Text that may carry a semester label: "Sem 1" / "Sem 2" print as "Semester 1"
+ * / "Semester 2" with a no-break space before the number, and a parenthesised
+ * "(Semester 1)" is kept whole, so the label is never split across lines. The
+ * rest of the text wraps as usual.
  */
 export function SemText({ text }: { text: string | null | undefined }) {
   if (!text) return <>{text}</>;
@@ -21,10 +26,10 @@ export function SemText({ text }: { text: string | null | undefined }) {
       {text.split(SEM_SUFFIX).map((part, i) =>
         SEM_SUFFIX.test(part) ? (
           <span key={i} className="whitespace-nowrap">
-            {part.replace(/Sem /g, "Sem ")}
+            {spellOut(part)}
           </span>
         ) : (
-          part.replace(/Sem ([12])/g, "Sem $1")
+          spellOut(part)
         ),
       )}
     </>
@@ -104,9 +109,9 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
       <colgroup>
         <col className="w-[6%]" />
         <col className="w-[26%]" />
-        <col className="w-[16%]" />
+        <col className="w-[18%]" />
         <col />
-        <col className="w-[6.5rem]" />
+        <col className="w-[18%]" />
       </colgroup>
       <thead>
         <tr>
@@ -317,18 +322,12 @@ function Awards({ rows }: { rows: AwardRow[] }) {
 }
 
 /**
- * The end of the document, after the last page: the Sem 1 / Sem 2 key (only
- * when a part-year item appears), About this record, and the end marker. It
- * stays together on one page.
+ * The end of the document, after the last page: About this record and the end
+ * marker. It stays together on one page.
  */
-export function ClosingBlock({ hasPartYear }: { hasPartYear: boolean }) {
+export function ClosingBlock() {
   return (
     <div className="break-inside-avoid">
-      {hasPartYear && (
-        <p className="my-1 mt-3 text-[10.5px]">
-          <SemText text="Sem 1 / Sem 2: involvement for that semester only." />
-        </p>
-      )}
       <section>
         <h2 className={`${SEC_HEADING} mt-3.5`}>About this record</h2>
         <p className="my-0.5 text-[10.5px]">
