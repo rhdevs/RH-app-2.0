@@ -1,6 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
-import { EXT_ID, canonicalUserID, isCanonicalResidentID,
+import {
+  EXT_ID,
+  canonicalUserID,
+  isCanonicalResidentID,
   isExtUserID,
 } from "~/lib/identity";
 
@@ -174,12 +177,7 @@ export type GrantableRole = (typeof GRANTABLE_ROLES)[number];
  * admin UI physically cannot write ["jcrc","scrc"] onto the SCRC Room and the
  * change would have to be made by hand in Atlas — unaudited.
  */
-export const FACILITY_ROLES = [
-  "resident",
-  "jcrc",
-  "cca_head",
-  "scrc",
-] as const;
+export const FACILITY_ROLES = ["resident", "jcrc", "cca_head", "scrc"] as const;
 export type FacilityRole = (typeof FACILITY_ROLES)[number];
 
 /** Values allowed in `RoleAuditLog.action` (prisma/schema.prisma). */
@@ -246,6 +244,23 @@ export const AUDIT_ACTIONS = [
   // 18 characters, under the 32-char cap admin.listAuditLog's
   // `action: z.string().max(32)` filter imposes.
   "ccaRecruitment.set",
+  // JCRC's CCA POINTS ENTRY CONFIG (/admin/points; routers/ccaPoints.ts). All
+  // four are written by admin or jcrc through the manageCcaPointsRanges
+  // capability, and every one is a CONFIG change: the audit rows never carry a
+  // score, a matric or any resident data (the server never sees them).
+  //
+  // ENTRY_SET is the hall-wide open/closed switch — `rolesAfter` carries the new
+  // state ("open" | "closed"), the same squeeze ccaRecruitment.set makes. The
+  // other three describe the allowed mean/SD ranges in `reason` (plus the waiver
+  // note); the two OVERRIDE actions also stamp `targetCcaID`.
+  //
+  // Upper-case names, unlike the dotted ones above, because the feature owner
+  // specified them verbatim. All are 27 characters or fewer, under the 32-char
+  // cap admin.listAuditLog's `action: z.string().max(32)` filter imposes.
+  "CCA_POINTS_ENTRY_SET",
+  "CCA_POINTS_DEFAULT_SET",
+  "CCA_POINTS_OVERRIDE_SET",
+  "CCA_POINTS_OVERRIDE_CLEARED",
   // Events feature. THE RULE, applied without exception: STATE-MACHINE
   // TRANSITIONS ARE AUDITED, FIELD SAVES ARE NOT. `event.create` and
   // `event.update` therefore write nothing — `update` fires on every save, and a
@@ -1255,6 +1270,20 @@ export type Capabilities = {
    */
   manageCcaRecruitment: boolean;
   /**
+   * May configure CCA points entry (/admin/points): the hall-wide open/closed
+   * switch, the default allowed mean/SD ranges and per-CCA waivers. Config only —
+   * nothing reachable through it carries points.
+   *
+   * Manager-tier (admin + jcrc): setting the ranges is JCRC work. `scrc` is
+   * absent, same argument as manageCcaRecruitment. A SEPARATE FIELD rather than
+   * reusing manageCcaRecruitment even though the two are the same tier today:
+   * widening one later must not silently widen the other.
+   *
+   * Heads do NOT need it — they read only their own CCA's resolved range via
+   * ccaPoints.getEntryContext, which is guarded per-ccaID by assertHeadsCca.
+   */
+  manageCcaPointsRanges: boolean;
+  /**
    * May act on a user who holds `admin` at all. D-2: admin only.
    *
    * ALSO covers a target whose authority cannot be EVALUATED, which is the same
@@ -1436,6 +1465,9 @@ export function computeCapabilities(roles: readonly string[]): Capabilities {
     // recruitment, so gating their own control behind admin would make the
     // feature useless to the people it is for.
     manageCcaRecruitment: manager,
+    // JCRC's own points-entry config. `manager`, not `admin`, for the same
+    // reason as manageCcaRecruitment: the JCRC is who it is for.
+    manageCcaPointsRanges: manager,
     manageUserProfiles: manager,
     deleteUsers: admin,
     // SCRC_ROLE's first appearance in a capability. Admin is included in all

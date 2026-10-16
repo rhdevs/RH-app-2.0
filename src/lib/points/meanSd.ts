@@ -59,3 +59,14 @@ export function fillRange(
     sdMax: override.sdMax ?? fallback.sdMax,
   };
 }
+
+/** Plain-English reason a range cannot be saved, or null when it is sound. */
+export function rangeProblem(range: Readonly<Range>): string | null {
+  if (range.meanMin > range.meanMax) {
+    return "The average's minimum can't be above its maximum.";
+  }
+  if (range.sdMin > range.sdMax) {
+    return "The spread's minimum can't be above its maximum.";
+  }
+  return null;
+}

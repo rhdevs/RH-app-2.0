@@ -7,6 +7,7 @@ import { ccaRouter } from "./routers/cca";
 import { ccaAdminRouter } from "./routers/ccaAdmin";
 import { ccaApplicationsRouter } from "./routers/ccaApplications";
 import { ccaApplicationsHeadRouter } from "./routers/ccaApplicationsHead";
+import { ccaPointsRouter } from "./routers/ccaPoints";
 import { ccaRecruitmentRouter } from "./routers/ccaRecruitment";
 import { eventRouter } from "./routers/event";
 import { userAdminRouter } from "./routers/userAdmin";
@@ -53,6 +54,13 @@ export const appRouter = createTRPCRouter({
    * See services/ccaRecruitment.ts for the open-by-default reasoning.
    */
   ccaRecruitment: ccaRecruitmentRouter,
+  /**
+   * JCRC's CCA points-entry config (open/closed switch, default and per-CCA
+   * mean/SD ranges) plus the one range read a head needs. CONFIG ONLY: no
+   * procedure here accepts or returns points — leaders enter and check them in
+   * the browser. See routers/ccaPoints.ts.
+   */
+  ccaPoints: ccaPointsRouter,
   /** Events: head authoring, JCRC review, resident timeline + signup. Behind
    * the events.enabled switch; object-scoped per event's ccaID. */
   event: eventRouter,
