@@ -37,17 +37,17 @@ function sheets(html: string): string[] {
 }
 
 describe("TranscriptDocument: crest", () => {
-  it("shows the crest on the main page and the notes page of a non-JCRC resident", () => {
+  it("shows the crest on the single page of a non-JCRC resident", () => {
     const pages = sheets(render("plain-member"));
 
-    expect(pages).toHaveLength(2);
+    expect(pages).toHaveLength(1);
     for (const page of pages) expect(page.match(CREST)).toHaveLength(1);
   });
 
   it("shows the crest on every page of a JCRC resident, including the JCRC page", () => {
     const pages = sheets(render("jcrc-sports-secretary", JCRC_AY));
 
-    expect(pages).toHaveLength(3);
+    expect(pages).toHaveLength(2);
     for (const page of pages) expect(page.match(CREST)).toHaveLength(1);
   });
 
@@ -68,7 +68,7 @@ describe("TranscriptDocument: crest", () => {
 });
 
 describe("TranscriptDocument: pages", () => {
-  it("renders the JCRC page only for a JCRC resident, between main and notes", () => {
+  it("renders the JCRC page only for a JCRC resident, after the main page", () => {
     const jcrc = render("jcrc-sports-secretary", JCRC_AY);
     const plain = render("many-ccas");
 
@@ -79,16 +79,51 @@ describe("TranscriptDocument: pages", () => {
       jcrc.indexOf("Hall leadership record"),
     );
     expect(jcrc.indexOf("Hall leadership record")).toBeLessThan(
-      jcrc.indexOf("Explanatory notes"),
+      jcrc.indexOf("END OF TRANSCRIPT"),
     );
   });
 
-  it("starts the JCRC page and the notes page on a new printed page", () => {
+  it("starts the JCRC page on a new printed page", () => {
     const pages = sheets(render("jcrc-sports-secretary", JCRC_AY));
 
     expect(pages[0]).not.toContain("print:break-before-page");
     expect(pages[1]).toContain("print:break-before-page");
-    expect(pages[2]).toContain("print:break-before-page");
+  });
+
+  it("has no Explanatory notes page and no footnote superscripts", () => {
+    for (const [slug, year] of [
+      ["plain-member"],
+      ["member-with-activities"],
+      ["many-ccas"],
+      ["jcrc-sports-secretary", JCRC_AY],
+    ] as Array<[string, string?]>) {
+      const html = render(slug, year);
+      expect(html).not.toMatch(/Explanatory notes/i);
+      expect(html).not.toContain("<sup>");
+    }
+  });
+
+  it("ends the document with one closing block, after the last page", () => {
+    for (const [slug, year, count] of [
+      ["plain-member", AY, 1],
+      ["jcrc-sports-secretary", JCRC_AY, 2],
+    ] as Array<[string, string, number]>) {
+      const pages = sheets(render(slug, year));
+      expect(pages).toHaveLength(count);
+      for (const page of pages.slice(0, -1)) {
+        expect(page).not.toContain("END OF TRANSCRIPT");
+        expect(page).not.toContain("About this record");
+      }
+      const last = pages[pages.length - 1]!;
+      expect(last.match(/END OF TRANSCRIPT/g)).toHaveLength(1);
+      expect(last).toMatch(
+        /<div class="break-inside-avoid">[\s\S]*About this record[\s\S]*END OF TRANSCRIPT/,
+      );
+    }
+  });
+
+  it("shows no Sem key when no item is part-year", () => {
+    expect(render("plain-member")).not.toContain("Sem 1 / Sem 2");
   });
 
   it("works for a JCRC member with no other CCAs", () => {
@@ -131,19 +166,56 @@ describe("TranscriptDocument: content", () => {
     expect(bare).not.toContain("III. Awards");
   });
 
-  it("prints Additional contribution and the see-JCRC sub-rows", () => {
+  it("prints Additional contribution in the Description column, and the JCRC row's own description", () => {
     const html = render("jcrc-sports-secretary", JCRC_AY);
 
-    expect(html).toContain(
-      "Additional contribution: Choreographed and directed the Hall Night finale.",
+    expect(html).toMatch(
+      /italic">Additional contribution<\/td><td[^>]*><\/td><td[^>]*>Choreographed and directed the Hall Night finale\.<\/td><td[^>]*><\/td><\/tr>/,
     );
-    expect(html).toContain("for a full account of this role");
+    expect(html).toContain(
+      "The elected student committee that leads the hall. See the JCRC page.",
+    );
+    expect(html).not.toContain("for a full account of this role");
   });
 
-  it("shows the muted placeholder for a CCA without a description", () => {
-    const html = render("missing-description");
+  it("has one table with # | CCA / activity | Role | Description | Year and numbers every CCA", () => {
+    const html = render("jcrc-sports-secretary", JCRC_AY);
+    const section = html.slice(
+      html.indexOf("I. Leadership and CCA participation"),
+      html.indexOf("II. Volunteer hours"),
+    );
+    const heads = [...section.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map(
+      (m) => m[1],
+    );
+    expect(heads).toEqual([
+      "#",
+      "CCA / activity",
+      "Role",
+      "Description",
+      "Year",
+    ]);
+    expect(section.match(/<table/g)).toHaveLength(1);
+    expect(section).toMatch(
+      /<td[^>]*>1<\/td><td[^>]*>Junior Common Room Committee/,
+    );
+    expect(section).toMatch(/<td[^>]*>2<\/td><td[^>]*>Raffles Hall Dance/);
+  });
 
-    expect(html).toContain("Hall Orchestra: Description not yet available.");
+  it("shortens a long CCA description with an ellipsis and leaves a missing one blank", () => {
+    const fixture = getFixtureBySlug("missing-description")!;
+    const long = "word ".repeat(80).trim();
+    const input = {
+      ...fixture.input,
+      memberships: fixture.input.memberships.map((m, i) =>
+        i === 1 ? { ...m, description: long } : m,
+      ),
+    };
+    const html = renderToStaticMarkup(
+      <TranscriptDocument transcript={assembleTranscript(input, AY)} />,
+    );
+    expect(html).toMatch(/word…<\/td>/);
+    expect(html).not.toContain(long);
+    expect(html).not.toContain("not yet available");
   });
 
   it("prints the semester in the Year and Role columns only when not a full year", () => {
@@ -160,12 +232,12 @@ describe("TranscriptDocument: content", () => {
     expect(html).toContain("whitespace-nowrap");
     expect(html).toContain("2027/28 Sem 2</td>");
     expect(html).toMatch(/whitespace-nowrap[^>]*>Year/);
-    expect(html).toContain("w-[7.5rem]");
+    expect(html).toContain("w-[6.5rem]");
     // The part-year words never wrap onto a second line inside the cell.
     expect(html).not.toContain("2027/28<br");
   });
 
-  it("explains Sem 1 / Sem 2 on the notes page only when a part-year item exists", () => {
+  it("explains Sem 1 / Sem 2 at the end of the document only when a part-year item exists", () => {
     const withPart = render("jcrc-sports-secretary", JCRC_AY);
     const without = render("plain-member");
 
@@ -175,7 +247,7 @@ describe("TranscriptDocument: content", () => {
     expect(without).not.toContain("Sem 1 / Sem 2");
   });
 
-  it("closes the notes page with one neutral sentence and no verification text", () => {
+  it("closes the document with one neutral sentence and no verification text", () => {
     const html = render("plain-member");
 
     expect(html).toMatch(/Generated from Raffles Hall.s records./);
@@ -305,7 +377,7 @@ describe("TranscriptDocument: print", () => {
   it("reserves the footer space on every sheet so body text never prints under it", () => {
     const pages = sheets(render("jcrc-sports-secretary", JCRC_AY));
 
-    expect(pages).toHaveLength(3);
+    expect(pages).toHaveLength(2);
     for (const page of pages) {
       expect(page.match(/<tfoot class="rh-print-spacer">/g)).toHaveLength(1);
     }
@@ -325,7 +397,7 @@ describe("TranscriptDocument: print", () => {
     const pages = sheets(render("jcrc-sports-secretary", JCRC_AY));
 
     expect(pages[0]).toMatch(/<footer[^>]*print:hidden[^>]*>/);
-    expect(pages[2]).toContain("Page 3 of 3");
+    expect(pages[1]).toContain("Page 2 of 2");
   });
 
   it("marks specimens and drops the hatch in print", () => {
@@ -380,7 +452,7 @@ describe("TranscriptDocument: draft", () => {
     expect(html).toContain(
       "Draft - check your information. If something is wrong, tell your CCA head or the JCRC.",
     );
-    expect(html.match(/rh-draft/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(html.match(/rh-draft/g)?.length).toBeGreaterThanOrEqual(2);
     expect(html).toContain("DRAFT");
     // the note is printed once, on page 1
     expect(html.match(/Draft - check your information/g)).toHaveLength(1);
@@ -393,11 +465,11 @@ describe("TranscriptDocument: draft", () => {
     expect(html).not.toMatch(/class="rh-paper[^"]*rh-draft/);
   });
 
-  it("keeps the crest, footer and notes page", () => {
+  it("keeps the crest, footer and closing block", () => {
     const html = draft("plain-member");
 
-    expect(html).toContain("Explanatory notes");
-    expect(html).toContain("Page 1 of 2");
+    expect(html).toContain("END OF TRANSCRIPT");
+    expect(html).toContain("Page 1 of 1");
     expect(html).toContain("Raffles Hall crest");
   });
 });
@@ -418,10 +490,9 @@ describe("TranscriptDocument: activities", () => {
       html.indexOf("II. Other involvement"),
     );
 
-    // One header row in that section: the CCA / Role / Year table itself.
+    // One header row in that section: the table's own, with no row per activity.
     expect(leadership.match(/<thead/g)).toHaveLength(1);
     expect(leadership).not.toMatch(/<th[^>]*>Activity<\/th>/);
-    expect(leadership).not.toMatch(/<th[^>]*>Description<\/th>/);
     // The rows sit in the main table's own grid: no nested table.
     expect(leadership.match(/<table/g)).toHaveLength(1);
     expect(leadership).toContain("Annual hall concert");
@@ -432,7 +503,7 @@ describe("TranscriptDocument: activities", () => {
     }
   });
 
-  it("aligns each activity with the main columns: title, role under Role, empty Year, description beneath", () => {
+  it("puts each activity on ONE row: number, indented title, role, description, empty Year", () => {
     const html = render("member-with-activities");
     const rows = [...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map((m) => ({
       tr: m[0],
@@ -442,37 +513,41 @@ describe("TranscriptDocument: activities", () => {
       })),
     }));
     const at = rows.findIndex(
-      (r) => r.cells[0]?.text === "Annual hall concert",
+      (r) => r.cells[1]?.text === "Annual hall concert",
     );
 
-    // Title in the CCA column (indented), role in the Role column, Year empty.
-    const title = rows[at]!;
-    expect(title.cells).toHaveLength(3);
-    expect(title.cells[0]!.attrs).toContain("pl-[18px]");
-    expect(title.cells[1]!.text).toBe("Soloist");
-    expect(title.cells[2]!.text).toBe("");
-    expect(title.tr).toContain("break-after-avoid");
+    const row = rows[at]!;
+    expect(row.cells.map((c) => c.text)).toEqual([
+      "1.1",
+      "Annual hall concert",
+      "Soloist",
+      "Sang the opening solo and rehearsed the altos each week.",
+      "",
+    ]);
+    expect(row.cells[1]!.attrs).toContain("pl-[18px]");
+    expect(row.tr).toContain("break-inside-avoid");
 
-    // The description is its own row under the title: two columns wide, one
-    // level further in, and never in the Year column.
-    const text = rows[at + 1]!;
-    expect(text.cells[0]!.attrs).toContain('colSpan="2"');
-    expect(text.cells[0]!.attrs).toContain("pl-[36px]");
-    expect(text.cells[0]!.text).toContain("Sang the opening solo");
-    expect(text.cells[1]!.text).toBe("");
-    expect(text.tr).toContain("break-before-avoid");
+    // The CCA row above never separates from its first activity.
+    expect(rows[at - 1]!.cells[1]!.text).toBe("Hall Choir");
+    expect(rows[at - 1]!.tr).toContain("break-after-avoid");
 
-    // An activity with no description has no description row.
-    const bare = rows.findIndex(
-      (r) => r.cells[0]?.text === "Carolling at a nursing home",
-    );
-    expect(rows[bare]!.cells[1]!.text).toBe("");
+    // No role: the Role cell is empty; the general description is used.
+    const bare = rows.find(
+      (r) => r.cells[1]?.text === "Carolling at a nursing home",
+    )!;
+    expect(bare.cells[0]!.text).toBe("1.2");
+    expect(bare.cells[2]!.text).toBe("");
+    expect(bare.cells[3]!.text).toContain("A December visit");
+    expect(bare.cells[4]!.text).toBe("");
   });
 
-  it("prints Additional contribution as a label row and a text row beneath", () => {
+  it("prints Additional contribution as the last unnumbered row under its CCA", () => {
     const html = render("member-with-activities");
     expect(html).toMatch(
-      /<td[^>]*pl-\[18px\][^>]*><em>Additional contribution<\/em><\/td><td[^>]*><\/td><td[^>]*><\/td><\/tr><tr[^>]*><td colSpan="2"[^>]*pl-\[36px\][^>]*>Arranged two pieces/,
+      /<td[^>]*><\/td><td[^>]*italic">Additional contribution<\/td><td[^>]*><\/td><td[^>]*>Arranged two pieces for the annual hall concert\.<\/td><td[^>]*><\/td><\/tr>/,
+    );
+    expect(html.indexOf("Choir retreat")).toBeLessThan(
+      html.indexOf("Additional contribution"),
     );
   });
 
@@ -506,10 +581,12 @@ describe("TranscriptDocument: activities", () => {
     expect(choir).toContain("Arranged two pieces");
   });
 
-  it("keeps the one-line sub-row for a CCA that has no activities", () => {
+  it("prints the additional contribution of a CCA that has no activities", () => {
     const html = render("additional-contribution");
 
-    expect(html).toContain("Additional contribution: Built the main set piece");
+    expect(html).toMatch(
+      /italic">Additional contribution<\/td><td[^>]*><\/td><td[^>]*>Built the main set piece/,
+    );
   });
 
   it("prints Other involvement between the CCA section and Volunteer hours", () => {
@@ -529,15 +606,6 @@ describe("TranscriptDocument: activities", () => {
     expect(html).not.toContain("Leadership and CCA participation");
     expect(html).not.toContain(EMPTY_YEAR_MESSAGE);
     expect(html).toContain("Hall Night pit band (Sem 1)");
-  });
-
-  it("lists the general descriptions on the notes page", () => {
-    const pages = sheets(render("member-with-activities"));
-    const notes = pages[pages.length - 1]!;
-
-    expect(notes).toContain("Annual hall concert: The hall");
-    expect(notes).toContain("Notes on other involvement");
-    expect(notes).toContain("Exam-period care packs: Assembled");
   });
 
   it("keeps the crest and the Sem 1 / Sem 2 explanation with part-year activities", () => {

@@ -332,7 +332,7 @@ export function ClosingBlock({ hasPartYear }: { hasPartYear: boolean }) {
     <div className="break-inside-avoid">
       {hasPartYear && (
         <p className="my-1 mt-3 text-[10.5px]">
-          Sem 1 / Sem 2: involvement for that semester only.
+          <SemText text="Sem 1 / Sem 2: involvement for that semester only." />
         </p>
       )}
       <section>

@@ -15,7 +15,7 @@ import {
   readPeriod,
   type ExistingParticipant,
 } from "../activities";
-import { assembleTranscript, MISSING_DESCRIPTION_TEXT } from "../assemble";
+import { assembleTranscript } from "../assemble";
 import { FIXTURE_ACADEMIC_YEAR, getFixtureBySlug } from "../fixtures";
 import {
   activityCreateInput,
@@ -78,9 +78,6 @@ function section<K extends TranscriptSection["kind"]>(
     (s): s is Extract<TranscriptSection, { kind: K }> => s.kind === kind,
   );
 }
-
-const notesPage = (vm: TranscriptViewModel) =>
-  vm.pages.find((p) => p.kind === "notes")!;
 
 describe("activity limits", () => {
   it("keeps the text limits, and only far-away hidden count caps", () => {
@@ -349,9 +346,9 @@ describe("assembleTranscript: activities", () => {
     );
     const rows = section(vm, "involvements")!.rows[0]!.activities;
     expect(rows).toEqual([
-      { title: "A", role: "Lead", description: "Mine" },
-      { title: "B", role: "", description: "General" },
-      { title: "C", role: "", description: "" },
+      { number: "1.1", title: "A", role: "Lead", description: "Mine" },
+      { number: "1.2", title: "B", role: "", description: "General" },
+      { number: "1.3", title: "C", role: "", description: "" },
     ]);
   });
 
@@ -414,11 +411,10 @@ describe("assembleTranscript: activities", () => {
     expect(section(vm, "otherInvolvement")).toBeUndefined();
   });
 
-  it("writes 'Activity: general description' lines on the notes page", () => {
+  it("puts the general description in the Description cell, in the same row", () => {
     const vm = assembleTranscript(
       inputWith([
         activity({ title: "Concert", description: "Annual concert." }),
-        activity({ title: "Quiet" }),
         activity({
           ccaName: "RH Welfare",
           title: "Care packs",
@@ -429,13 +425,14 @@ describe("assembleTranscript: activities", () => {
       ]),
       AY,
     );
-    const notes = notesPage(vm);
-    expect(notes.notes[0]!.activities).toEqual([
-      { title: "Concert", text: "Annual concert." },
-    ]);
-    expect(notes.otherNotes).toEqual([
-      { title: "Care packs (Sem 1)", text: "Snack packs." },
-    ]);
+    expect(section(vm, "involvements")!.rows[0]!.activities[0]).toMatchObject({
+      title: "Concert",
+      description: "Annual concert.",
+    });
+    expect(section(vm, "otherInvolvement")!.rows[0]).toMatchObject({
+      title: "Care packs (Sem 1)",
+      description: "Snack packs.",
+    });
   });
 
   it("explains Sem 1 / Sem 2 when an activity is part-year", () => {
@@ -464,8 +461,7 @@ describe("assembleTranscript: activities", () => {
     delete input.activities;
     const vm = assembleTranscript(input, AY);
     expect(section(vm, "involvements")!.rows[0]!.activities).toEqual([]);
-    expect(notesPage(vm).otherNotes).toEqual([]);
-    expect(notesPage(vm).notes[0]!.text).not.toBe(MISSING_DESCRIPTION_TEXT);
+    expect(section(vm, "otherInvolvement")).toBeUndefined();
   });
 });
 

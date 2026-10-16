@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   JCRC_ABOUT_TEXT,
-  MISSING_DESCRIPTION_TEXT,
+  JCRC_ROW_DESCRIPTION,
   assembleTranscript,
   formatIssuedOn,
   yearFromParam,
@@ -135,12 +135,13 @@ describe("assembleTranscript: roles", () => {
 
     expect(section(vm, "involvements")?.rows).toEqual([
       {
+        number: 1,
         ccaName: "Phoenix Press",
         role: null,
         year: "2026/27",
         extraContribution: null,
-        footnote: 1,
-        isJcrc: false,
+        description:
+          "Phoenix Press is a hall CCA in the Media Committees category.",
         activities: [],
       },
     ]);
@@ -178,10 +179,13 @@ describe("assembleTranscript: roles", () => {
     expect(rows[0]).toMatchObject({
       ccaName: "Junior Common Room Committee (JCRC), Sports",
       role: "Secretary",
-      isJcrc: true,
-      footnote: 1,
+      number: 1,
+      description: JCRC_ROW_DESCRIPTION,
     });
-    expect(rows.slice(1).every((r) => !r.isJcrc)).toBe(true);
+    expect(rows.map((r) => r.number)).toEqual(rows.map((_, i) => i + 1));
+    expect(
+      rows.slice(1).every((r) => r.description !== JCRC_ROW_DESCRIPTION),
+    ).toBe(true);
     expect(rows[1]?.ccaName).toBe("Raffles Hall Dance");
   });
 });
@@ -214,7 +218,7 @@ describe("assembleTranscript: durations", () => {
     expect(dance?.year).toBe("2027/28");
   });
 
-  it("flags part-year involvement so the notes can explain it", () => {
+  it("flags part-year involvement so the closing key can explain it", () => {
     expect(assembleFixture("jcrc-sports-secretary", JCRC_AY).hasPartYear).toBe(
       true,
     );
@@ -300,58 +304,63 @@ describe("assembleTranscript: additional contributions", () => {
   });
 });
 
-describe("assembleTranscript: explanatory notes", () => {
-  it("uses the placeholder for a CCA with a null description", () => {
+describe("assembleTranscript: CCA descriptions in the table", () => {
+  const rowsOf = (vm: TranscriptViewModel) =>
+    section(vm, "involvements")?.rows ?? [];
+
+  it("leaves the description blank for a CCA with a null description", () => {
     const vm = assembleFixture("missing-description");
 
-    const notes = page(vm, "notes")?.notes ?? [];
-    expect(notes.find((n) => n.title === "Hall Orchestra")).toMatchObject({
-      text: MISSING_DESCRIPTION_TEXT,
-      isMissing: true,
-    });
-    expect(MISSING_DESCRIPTION_TEXT).toBe("Description not yet available.");
+    expect(
+      rowsOf(vm).find((r) => r.ccaName === "Hall Orchestra")?.description,
+    ).toBe("");
+    expect(JSON.stringify(vm)).not.toContain("not yet available");
   });
 
   it("keeps the real description for a CCA that has one", () => {
     const vm = assembleFixture("missing-description");
 
-    const notes = page(vm, "notes")?.notes ?? [];
-    expect(notes.find((n) => n.title === "Welfare Committee")?.isMissing).toBe(
-      false,
-    );
+    expect(
+      rowsOf(vm).find((r) => r.ccaName === "Welfare Committee")?.description,
+    ).toBe("Welfare Committee is a hall CCA in the Committees category.");
   });
 
-  it("treats a whitespace-only description as missing", () => {
+  it("treats a whitespace-only description as blank", () => {
     const input = blankInput();
     input.memberships = [membership({ description: "   " })];
 
-    const vm = assembleTranscript(input, AY);
-
-    expect(page(vm, "notes")?.notes[0]?.isMissing).toBe(true);
+    expect(rowsOf(assembleTranscript(input, AY))[0]?.description).toBe("");
   });
 
-  it("numbers each note to match the footnote on its table row", () => {
-    const vm = assembleFixture("jcrc-sports-secretary", JCRC_AY);
+  it("shortens a long description to 180 characters at a word boundary", () => {
+    const input = blankInput();
+    input.memberships = [membership({ description: "word ".repeat(80) })];
 
-    const rows = section(vm, "involvements")?.rows ?? [];
-    const notes = page(vm, "notes")?.notes ?? [];
-    expect(notes.map((n) => n.number)).toEqual(rows.map((r) => r.footnote));
-    expect(notes.map((n) => n.title)).toEqual([
-      "JCRC (Junior Common Room Committee)",
-      "Raffles Hall Dance",
-      "Hall Orientation Committee",
-      "Raffles Hall Photography",
-      "RH Welfare",
-      "Soccer (MALE)",
+    const text = rowsOf(assembleTranscript(input, AY))[0]!.description;
+    expect(text.endsWith("…")).toBe(true);
+    expect(text.length).toBeLessThanOrEqual(181);
+  });
+
+  it("numbers the CCAs 1, 2, 3 and their activities 1.1, 1.2", () => {
+    const vm = assembleFixture("member-with-activities");
+
+    const rows = rowsOf(vm);
+    expect(rows.map((r) => r.number)).toEqual([1, 2]);
+    expect(rows[0]!.activities.map((a) => a.number)).toEqual([
+      "1.1",
+      "1.2",
+      "1.3",
     ]);
+    expect(rows[1]!.activities).toEqual([]);
   });
 
-  it("describes the JCRC in its note and never calls it missing", () => {
+  it("describes the JCRC in its own row, with the fixed sentence", () => {
     const vm = assembleFixture("jcrc-sports-secretary", JCRC_AY);
 
-    const note = page(vm, "notes")?.notes[0];
-    expect(note?.isMissing).toBe(false);
-    expect(note?.text).toMatch(/elected student committee/);
+    expect(rowsOf(vm)[0]?.description).toBe(
+      "The elected student committee that leads the hall. See the JCRC page.",
+    );
+    expect(rowsOf(vm)[0]?.activities).toEqual([]);
   });
 
   it("lists a CCA once even if it is recorded twice, keeping any description", () => {
@@ -361,18 +370,9 @@ describe("assembleTranscript: explanatory notes", () => {
       membership({ description: "Real text." }),
     ];
 
-    const vm = assembleTranscript(input, AY);
-
-    expect(section(vm, "involvements")?.rows).toHaveLength(1);
-    expect(page(vm, "notes")?.notes).toEqual([
-      {
-        number: 1,
-        title: "A",
-        text: "Real text.",
-        isMissing: false,
-        activities: [],
-      },
-    ]);
+    const rows = rowsOf(assembleTranscript(input, AY));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.description).toBe("Real text.");
   });
 });
 
@@ -512,18 +512,18 @@ describe("assembleTranscript: pages and sections", () => {
     ]);
   });
 
-  it("gives a non-JCRC resident the main page and the notes page only", () => {
+  it("gives a non-JCRC resident the main page only", () => {
     const vm = assembleFixture("plain-member");
 
     expect(vm.hasJcrc).toBe(false);
-    expect(vm.pages.map((p) => p.kind)).toEqual(["main", "notes"]);
+    expect(vm.pages.map((p) => p.kind)).toEqual(["main"]);
   });
 
-  it("puts the JCRC page between the main page and the notes page", () => {
+  it("puts the JCRC page after the main page", () => {
     const vm = assembleFixture("jcrc-sports-secretary", JCRC_AY);
 
     expect(vm.hasJcrc).toBe(true);
-    expect(vm.pages.map((p) => p.kind)).toEqual(["main", "jcrc", "notes"]);
+    expect(vm.pages.map((p) => p.kind)).toEqual(["main", "jcrc"]);
   });
 
   it("builds the JCRC page from the resident's own service record", () => {
@@ -544,19 +544,24 @@ describe("assembleTranscript: pages and sections", () => {
     const vm = assembleFixture("jcrc-only");
 
     expect(vm.isEmpty).toBe(false);
-    expect(vm.pages.map((p) => p.kind)).toEqual(["main", "jcrc", "notes"]);
+    expect(vm.pages.map((p) => p.kind)).toEqual(["main", "jcrc"]);
     expect(section(vm, "involvements")?.rows).toHaveLength(1);
-    expect(section(vm, "involvements")?.rows[0]?.isJcrc).toBe(true);
+    expect(section(vm, "involvements")?.rows[0]?.description).toBe(
+      JCRC_ROW_DESCRIPTION,
+    );
     expect(vm.hasVolunteerHours).toBe(false);
-    expect(page(vm, "notes")?.notes).toHaveLength(1);
   });
 
   it("omits the JCRC page for a year the JCRC term does not cover", () => {
     const vm = assembleFixture("jcrc-sports-secretary", AY);
 
     expect(vm.hasJcrc).toBe(false);
-    expect(vm.pages.map((p) => p.kind)).toEqual(["main", "notes"]);
-    expect(section(vm, "involvements")?.rows.some((r) => r.isJcrc)).toBe(false);
+    expect(vm.pages.map((p) => p.kind)).toEqual(["main"]);
+    expect(
+      section(vm, "involvements")?.rows.some(
+        (r) => r.description === JCRC_ROW_DESCRIPTION,
+      ),
+    ).toBe(false);
   });
 
   it("handles a resident in 14 CCAs, leaders first then alphabetical", () => {
@@ -628,12 +633,12 @@ describe("assembleTranscript: academic year", () => {
     });
   });
 
-  it("is empty when nothing was recorded for the year, but still has notes", () => {
+  it("is empty when nothing was recorded for the year", () => {
     const vm = assembleFixture("empty-year");
 
     expect(vm.isEmpty).toBe(true);
     expect(page(vm, "main")?.sections).toEqual([]);
-    expect(vm.pages.map((p) => p.kind)).toEqual(["main", "notes"]);
+    expect(vm.pages.map((p) => p.kind)).toEqual(["main"]);
     expect(vm.academicYear).toBe(AY);
   });
 
