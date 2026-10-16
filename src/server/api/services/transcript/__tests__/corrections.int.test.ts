@@ -924,10 +924,20 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const retention = await import("../retention");
         const OLD = "AY2025/26";
         await db.residentUnlock.create({
-          data: { academicYear: OLD, userID: R12.id, reason: "old" },
+          data: {
+            academicYear: OLD,
+            userID: R12.id,
+            reason: "old",
+            activeKey: `${OLD}|${R12.id}`,
+          },
         });
         await db.residentWithhold.create({
-          data: { academicYear: OLD, userID: R12.id, reason: "old" },
+          data: {
+            academicYear: OLD,
+            userID: R12.id,
+            reason: "old",
+            activeKey: `${OLD}|${R12.id}`,
+          },
         });
         await db.manualMembership.create({
           data: { academicYear: OLD, userID: R12.id, ccaID: SOCCER },

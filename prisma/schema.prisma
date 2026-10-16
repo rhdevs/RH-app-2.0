@@ -1504,6 +1504,8 @@ model VolunteerAttendance {
 
   @@unique([sessionID, userID], map: "vattend_session_user")
   @@index([academicYear, userID], map: "vattend_year_user")
+  /// Every read of one activity's ticks.
+  @@index([activityID], map: "vattend_activity")
 }
 
 /// An award from the end-of-year Colours Awards, entered by JCRC/admin. Voided
@@ -1530,6 +1532,10 @@ model Award {
 
   @@index([academicYear, userID], map: "award_year_user")
   @@index([academicYear, awardTypeID], map: "award_year_type")
+  /// An upload's awards (History counts, Undo).
+  @@index([importBatchID], map: "award_batch")
+  /// How many active awards each catalogue entry has given, across years.
+  @@index([awardTypeID], map: "award_type")
 }
 
 /// The catalogue of awards (not keyed by year, so never purged with one).
@@ -1562,6 +1568,8 @@ model AwardImportBatch {
   createdAt     DateTime? @default(now())
   undoneAt      DateTime?
   undoneBy      String?
+  /// complete | partial (a chunk failed after earlier ones were written).
+  status        String    @default("complete")
 
   @@index([academicYear], map: "award_batch_year")
 }
@@ -1616,6 +1624,8 @@ model CcaYearFreeze {
   unfreezeReason String?
 
   @@unique([academicYear, ccaID], map: "freeze_year_cca")
+  /// A CCA's freezes across years (its term year, the loader).
+  @@index([ccaID], map: "freeze_cca")
 }
 
 /// A CCA activity for one academic year: a project or event the CCA ran. It is
@@ -1686,6 +1696,9 @@ model ResidentUnlock {
   unlockedAt   DateTime? @default(now())
   relockedBy   String?
   relockedAt   DateTime?
+  /// "<academicYear>|<userID>" while active, rewritten to
+  /// "<academicYear>|<userID>|ended|<id>" on relock: at most one active per resident and year.
+  activeKey    String    @unique(map: "unlock_active_key")
 
   @@index([academicYear, userID], map: "unlock_year_user")
 }
@@ -1702,6 +1715,8 @@ model ResidentWithhold {
   releasedBy   String?
   releasedAt   DateTime?
   releaseNote  String?
+  /// As ResidentUnlock.activeKey, for the hold.
+  activeKey    String    @unique(map: "withhold_active_key")
 
   @@index([academicYear, userID], map: "withhold_year_user")
 }

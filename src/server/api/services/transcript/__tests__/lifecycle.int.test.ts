@@ -796,10 +796,20 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
         // The per-resident records have no counterpart to copy: file one of each.
         await db.residentUnlock.create({
-          data: { academicYear: OLD, userID: R12.id, reason: "test" },
+          data: {
+            academicYear: OLD,
+            userID: R12.id,
+            reason: "test",
+            activeKey: `${OLD}|${R12.id}`,
+          },
         });
         await db.residentWithhold.create({
-          data: { academicYear: OLD, userID: R12.id, reason: "test" },
+          data: {
+            academicYear: OLD,
+            userID: R12.id,
+            reason: "test",
+            activeKey: `${OLD}|${R12.id}`,
+          },
         });
         await db.manualMembership.create({
           data: { academicYear: OLD, userID: R12.id, ccaID: 1 },

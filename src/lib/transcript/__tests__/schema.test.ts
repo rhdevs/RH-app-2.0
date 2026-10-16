@@ -197,9 +197,10 @@ describe("schema: new transcript models", () => {
 
   it("has no issue or verification model any more", () => {
     expect(current.has("TranscriptIssue")).toBe(false);
-    expect(readFileSync("prisma/schema.prisma", "utf8")).not.toContain(
-      "activeKey",
-    );
+    const raw = readFileSync("prisma/schema.prisma", "utf8");
+    for (const word of ["verificationCode", "supersededBy", "revokedAt"]) {
+      expect(raw).not.toContain(word);
+    }
   });
 
   it("records first and last open once per resident and year", () => {
@@ -326,6 +327,12 @@ describe("schema: new transcript models", () => {
       '@@index([academicYear, userID], map: "withhold_year_user")',
       '@@unique([academicYear, userID, ccaID], map: "manual_year_user_cca")',
       '@@index([academicYear, userID], map: "revent_year_user")',
+      '@unique(map: "unlock_active_key")',
+      '@unique(map: "withhold_active_key")',
+      '@@index([activityID], map: "vattend_activity")',
+      '@@index([importBatchID], map: "award_batch")',
+      '@@index([awardTypeID], map: "award_type")',
+      '@@index([ccaID], map: "freeze_cca")',
     ]) {
       expect(raw, decl).toContain(decl);
     }
@@ -427,6 +434,18 @@ describe("schema: guarded collections are untouched", () => {
 
     expect(field("Award", "voidedBy")?.decl).toBe("String?");
     expect(field("JcrcService", "updatedBy")?.decl).toBe("String?");
+  });
+
+  it("keeps one active unlock or hold per resident and year, and records partial uploads", () => {
+    const field = (model: string, name: string) =>
+      current.get(model)!.find((f) => f.name === name);
+    expect(field("ResidentUnlock", "activeKey")?.decl).toContain(
+      "String @unique",
+    );
+    expect(field("ResidentWithhold", "activeKey")?.decl).toContain(
+      "String @unique",
+    );
+    expect(field("AwardImportBatch", "status")?.decl).toContain("String");
   });
 
   it("adds only the nullable isVolunteering flag to CcaProfile", () => {
