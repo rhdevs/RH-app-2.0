@@ -9,6 +9,30 @@ import {
   type VolunteerHoursModel,
 } from "~/lib/transcript/types";
 
+const SEM_SUFFIX = /(\(Sem [12]\))/;
+
+/**
+ * Text that may carry a semester suffix: "Sem" and its number are joined by a
+ * no-break space and a parenthesised "(Sem 1)" is kept whole, so the suffix is
+ * never split across lines. The rest of the text wraps as usual.
+ */
+export function SemText({ text }: { text: string | null | undefined }) {
+  if (!text) return <>{text}</>;
+  return (
+    <>
+      {text.split(SEM_SUFFIX).map((part, i) =>
+        SEM_SUFFIX.test(part) ? (
+          <span key={i} className="whitespace-nowrap">
+            {part.replace(/Sem /g, "Sem ")}
+          </span>
+        ) : (
+          part.replace(/Sem ([12])/g, "Sem $1")
+        ),
+      )}
+    </>
+  );
+}
+
 /**
  * The body of page 1 and of the notes page. Page 1 is one block per section in
  * the view model, in the order the assembler produced. Adding a section kind
@@ -120,8 +144,12 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
             <td className={TD}>
               {row.ccaName} <sup>{row.footnote}</sup>
             </td>
-            <td className={TD}>{row.role}</td>
-            <td className={`${TD} whitespace-nowrap`}>{row.year}</td>
+            <td className={TD}>
+              <SemText text={row.role} />
+            </td>
+            <td className={`${TD} whitespace-nowrap`}>
+              <SemText text={row.year} />
+            </td>
           </tr>
           {row.isJcrc && (
             <SubRow>
@@ -172,7 +200,9 @@ function ActivityRows({
           <tbody>
             {activities.map((a, i) => (
               <tr key={`${i}-${a.title}`} className="break-inside-avoid">
-                <td className={TD}>{a.title}</td>
+                <td className={TD}>
+                  <SemText text={a.title} />
+                </td>
                 <td className={TD}>{a.role}</td>
                 <td className={TD}>{a.description}</td>
               </tr>
@@ -220,9 +250,13 @@ function OtherInvolvement({ rows }: { rows: OtherInvolvementRow[] }) {
       <tbody>
         {rows.map((row, i) => (
           <tr key={`${i}-${row.title}`} className="break-inside-avoid">
-            <td className={TD}>{row.title}</td>
+            <td className={TD}>
+              <SemText text={row.title} />
+            </td>
             <td className={TD}>{row.organiser}</td>
-            <td className={TD}>{row.role}</td>
+            <td className={TD}>
+              <SemText text={row.role} />
+            </td>
             <td className={TD}>{row.description}</td>
           </tr>
         ))}
@@ -348,7 +382,7 @@ export function NotesBody({
               <sup>{note.number}</sup> {note.title}: {note.text}
               {note.activities.map((a, i) => (
                 <span key={`${i}-${a.title}`} className="block pl-[18px]">
-                  {a.title}: {a.text}
+                  <SemText text={a.title} />: {a.text}
                 </span>
               ))}
             </p>
@@ -363,7 +397,7 @@ export function NotesBody({
           </h2>
           {otherNotes.map((a, i) => (
             <p key={`${i}-${a.title}`} className="my-0.5 break-inside-avoid">
-              {a.title}: {a.text}
+              <SemText text={a.title} />: {a.text}
             </p>
           ))}
         </section>
@@ -371,7 +405,7 @@ export function NotesBody({
 
       {hasPartYear && (
         <p className="my-1 text-[10.5px]">
-          Sem 1 / Sem 2: involvement for that semester only.
+          Sem 1 / Sem 2: involvement for that semester only.
         </p>
       )}
 
