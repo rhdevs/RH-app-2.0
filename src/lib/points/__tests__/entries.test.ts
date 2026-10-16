@@ -110,6 +110,7 @@ describe("exportBlockers", () => {
       entry(1, { basePoints: null }),
       entry(2, { basePoints: 30 }),
       entry(3, { matric: null }),
+      entry(5, { matric: "X123" }),
       entry(4, { resolved: false, matric: null, basePoints: 10 }),
     ];
     expect(codes(exportBlockers(roster, DEFAULT_RANGE, false))).toEqual([
@@ -117,8 +118,33 @@ describe("exportBlockers", () => {
       "MISSING_SCORE",
       "BAD_SCORE",
       "MISSING_MATRIC",
+      "BAD_MATRIC",
       "UNRESOLVED_MEMBER",
     ]);
+  });
+
+  it.each([
+    "A123456Z",
+    "B1234567Z",
+    "A12345678",
+    "a1234567",
+    "A1234567ZZ",
+    " ",
+  ])("BAD_MATRIC for %j", (bad) => {
+    const roster = goodRoster().map((e, i) =>
+      i === 0 ? { ...e, matric: bad } : e,
+    );
+    const list = exportBlockers(roster, DEFAULT_RANGE, true);
+    expect(codes(list)).toEqual(["BAD_MATRIC"]);
+    expect(list[0]?.rowKeys).toEqual(["u:1"]);
+    expect(list[0]?.message).toMatch(/matric/i);
+  });
+
+  it("accepts a lower-case matric (it is upper-cased on export)", () => {
+    const roster = goodRoster().map((e, i) =>
+      i === 0 ? { ...e, matric: "a9900001z" } : e,
+    );
+    expect(exportBlockers(roster, DEFAULT_RANGE, true)).toEqual([]);
   });
 
   it("MEAN_OUT_OF_RANGE carries the hint text", () => {

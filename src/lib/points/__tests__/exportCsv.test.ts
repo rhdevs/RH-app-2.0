@@ -85,6 +85,27 @@ describe("buildPointsCsv", () => {
     expect(line).toContain(",A9900001Z,");
   });
 
+  it("upper-cases the matric", () => {
+    const csv = buildPointsCsv({
+      ccaID: 1,
+      ccaName: "A",
+      entries: [entry({ matric: "a9900001z" })],
+      exportedAt,
+    });
+    expect(csv.split("\r\n")[1]).toContain(",A9900001Z,");
+  });
+
+  it("refuses a malformed matric", () => {
+    expect(() =>
+      buildPointsCsv({
+        ccaID: 1,
+        ccaName: "A",
+        entries: [entry({ matric: "X123" })],
+        exportedAt,
+      }),
+    ).toThrow(/matric/);
+  });
+
   it("writes an empty name as an empty cell", () => {
     const csv = buildPointsCsv({
       ccaID: 1,

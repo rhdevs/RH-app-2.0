@@ -201,7 +201,7 @@ export const ccaPointsRouter = createTRPCRouter({
       await audit(ctx.db, {
         actorUserID,
         actorRoles: roles,
-        action: "CCA_POINTS_ENTRY_SET",
+        action: "ccaPoints.entry.set",
         rolesAfter: [input.open ? "open" : "closed"],
         reason: input.reason,
       });
@@ -220,7 +220,7 @@ export const ccaPointsRouter = createTRPCRouter({
       await audit(ctx.db, {
         actorUserID,
         actorRoles: roles,
-        action: "CCA_POINTS_DEFAULT_SET",
+        action: "ccaPoints.default.set",
         reason: fmtRange(input),
       });
       return { range: input, updatedAt: now };
@@ -271,7 +271,7 @@ export const ccaPointsRouter = createTRPCRouter({
       await audit(ctx.db, {
         actorUserID,
         actorRoles: roles,
-        action: "CCA_POINTS_OVERRIDE_SET",
+        action: "ccaPoints.override.set",
         targetCcaID: input.ccaID,
         reason:
           `${fmtRange(fillRange(values, resolveRange(defaultRow, null).range))}. Note: ${input.note}`.slice(
@@ -294,7 +294,7 @@ export const ccaPointsRouter = createTRPCRouter({
         await audit(ctx.db, {
           actorUserID,
           actorRoles: roles,
-          action: "CCA_POINTS_OVERRIDE_CLEARED",
+          action: "ccaPoints.override.clear",
           targetCcaID: input.ccaID,
         });
       }

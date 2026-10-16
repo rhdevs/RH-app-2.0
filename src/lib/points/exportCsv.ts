@@ -1,5 +1,5 @@
 import { EXPORT_FORMAT_VERSION } from "~/lib/points/constants";
-import type { PointsEntry } from "~/lib/points/entries";
+import { isValidMatric, type PointsEntry } from "~/lib/points/entries";
 
 /**
  * The leader export, in the exact format the sandbox imports
@@ -47,6 +47,11 @@ function row(
   if (entry.matric === null) {
     throw new Error("Cannot export: a member has no matric on record.");
   }
+  if (!isValidMatric(entry.matric)) {
+    throw new Error(
+      "Cannot export: a member's matric is not in the right format.",
+    );
+  }
   if (entry.basePoints === null) {
     throw new Error("Cannot export: a member has no score.");
   }
@@ -54,7 +59,7 @@ function row(
     cell(String(EXPORT_FORMAT_VERSION), false),
     cell(String(ccaID), false),
     cell(ccaName, true),
-    cell(entry.matric, false),
+    cell(entry.matric.toUpperCase(), false),
     cell(entry.name ?? "", true),
     cell(String(entry.basePoints), false),
     entry.semesterOnly ? "Y" : "N",

@@ -24,6 +24,7 @@ export type ExportBlockerCode =
   | "MISSING_SCORE"
   | "BAD_SCORE"
   | "MISSING_MATRIC"
+  | "BAD_MATRIC"
   | "UNRESOLVED_MEMBER"
   | "MEAN_OUT_OF_RANGE"
   | "SD_OUT_OF_RANGE";
@@ -33,6 +34,12 @@ export type ExportBlocker = {
   message: string;
   rowKeys?: string[];
 };
+
+/** NUS matric format, as the sandbox checks it (case-insensitive; exported upper-case). */
+export const MATRIC_PATTERN = /^A\d{7}[A-Z]$/i;
+
+export const isValidMatric = (matric: string): boolean =>
+  MATRIC_PATTERN.test(matric);
 
 export const isValidScore = (score: number): boolean =>
   Number.isInteger(score) && score >= SCORE_MIN && score <= SCORE_MAX;
@@ -69,6 +76,9 @@ function scoreBlockers(entries: readonly PointsEntry[]): ExportBlocker[] {
 
 function identityBlockers(entries: readonly PointsEntry[]): ExportBlocker[] {
   const noMatric = entries.filter((e) => e.resolved && e.matric === null);
+  const badMatric = entries.filter(
+    (e) => e.resolved && e.matric !== null && !isValidMatric(e.matric),
+  );
   const unresolved = entries.filter((e) => !e.resolved);
   const blockers: ExportBlocker[] = [];
   if (noMatric.length > 0) {
@@ -77,6 +87,14 @@ function identityBlockers(entries: readonly PointsEntry[]): ExportBlocker[] {
       code: "MISSING_MATRIC",
       message: `${n} ${plural(n, "member has", "members have")} no matric on record — ask ${plural(n, "them", "them")} to add it in their RHApp profile, or ask JCRC to fix the roster`,
       rowKeys: keysOf(noMatric),
+    });
+  }
+  if (badMatric.length > 0) {
+    const n = badMatric.length;
+    blockers.push({
+      code: "BAD_MATRIC",
+      message: `${n} ${plural(n, "member's matric is", "members' matrics are")} not in the A1234567X format — ask JCRC to fix the roster`,
+      rowKeys: keysOf(badMatric),
     });
   }
   if (unresolved.length > 0) {
