@@ -422,14 +422,58 @@ describe("TranscriptDocument: activities", () => {
     expect(leadership.match(/<thead/g)).toHaveLength(1);
     expect(leadership).not.toMatch(/<th[^>]*>Activity<\/th>/);
     expect(leadership).not.toMatch(/<th[^>]*>Description<\/th>/);
-    // The three columns and the rows are still there.
-    expect(leadership).toContain('aria-label="Activities"');
+    // The rows sit in the main table's own grid: no nested table.
+    expect(leadership.match(/<table/g)).toHaveLength(1);
     expect(leadership).toContain("Annual hall concert");
 
     const other = html.slice(html.indexOf("II. Other involvement"));
     for (const word of ["Activity", "Organised by", "Role", "Description"]) {
       expect(other).toMatch(new RegExp(`<th[^>]*>${word}</th>`));
     }
+  });
+
+  it("aligns each activity with the main columns: title, role under Role, empty Year, description beneath", () => {
+    const html = render("member-with-activities");
+    const rows = [...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map((m) => ({
+      tr: m[0],
+      cells: [...m[1]!.matchAll(/<td([^>]*)>(.*?)<\/td>/g)].map((c) => ({
+        attrs: c[1]!,
+        text: c[2]!.replace(/<[^>]+>/g, ""),
+      })),
+    }));
+    const at = rows.findIndex(
+      (r) => r.cells[0]?.text === "Annual hall concert",
+    );
+
+    // Title in the CCA column (indented), role in the Role column, Year empty.
+    const title = rows[at]!;
+    expect(title.cells).toHaveLength(3);
+    expect(title.cells[0]!.attrs).toContain("pl-[18px]");
+    expect(title.cells[1]!.text).toBe("Soloist");
+    expect(title.cells[2]!.text).toBe("");
+    expect(title.tr).toContain("break-after-avoid");
+
+    // The description is its own row under the title: two columns wide, one
+    // level further in, and never in the Year column.
+    const text = rows[at + 1]!;
+    expect(text.cells[0]!.attrs).toContain('colSpan="2"');
+    expect(text.cells[0]!.attrs).toContain("pl-[36px]");
+    expect(text.cells[0]!.text).toContain("Sang the opening solo");
+    expect(text.cells[1]!.text).toBe("");
+    expect(text.tr).toContain("break-before-avoid");
+
+    // An activity with no description has no description row.
+    const bare = rows.findIndex(
+      (r) => r.cells[0]?.text === "Carolling at a nursing home",
+    );
+    expect(rows[bare]!.cells[1]!.text).toBe("");
+  });
+
+  it("prints Additional contribution as a label row and a text row beneath", () => {
+    const html = render("member-with-activities");
+    expect(html).toMatch(
+      /<td[^>]*pl-\[18px\][^>]*><em>Additional contribution<\/em><\/td><td[^>]*><\/td><td[^>]*><\/td><\/tr><tr[^>]*><td colSpan="2"[^>]*pl-\[36px\][^>]*>Arranged two pieces/,
+    );
   });
 
   it("draws the JCRC contributions with no header row", () => {
