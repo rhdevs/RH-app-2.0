@@ -18,12 +18,16 @@ import {
   ACTION_LABEL,
   BACK_TO_COLLECTING_CONFIRMATION,
   CLOSE_CONFIRMATION,
+  FREEZE_REMAINING_LABEL,
   PUBLISH_CONFIRMATION,
   REOPEN_CONFIRMATION,
   closeSummary,
   errorText,
+  freezeRemainingConfirmation,
+  freezeRemainingSummary,
   normaliseStatus,
   notFrozenText,
+  showFreezeRemaining,
   statusLabel,
   yearOptions,
 } from "~/lib/transcript/adminView";
@@ -41,7 +45,7 @@ import {
 import FreezeTable from "./FreezeTable";
 import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
-export type Confirming = YearAction | null;
+export type Confirming = YearAction | "freezeRemaining" | null;
 
 export interface PeriodPanelViewProps {
   years: string[];
@@ -84,11 +88,17 @@ export interface PeriodPanelViewProps {
 
 /** The title and wording of each action's confirmation. */
 export function confirmationFor(
-  action: YearAction,
+  action: YearAction | "freezeRemaining",
   academicYear: string,
   unfrozenCount: number | null,
+  notFrozenNames: readonly string[] = [],
 ): { title: string; text: string } {
   switch (action) {
+    case "freezeRemaining":
+      return {
+        title: `Freeze remaining CCAs for ${academicYear}?`,
+        text: freezeRemainingConfirmation(academicYear, notFrozenNames),
+      };
     case "close":
       return {
         title: `Close ${academicYear}?`,
@@ -125,7 +135,12 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
   const published = status === "published";
   const dialogOpen = p.confirming !== null;
   const confirmation = p.confirming
-    ? confirmationFor(p.confirming, p.selected, p.unfrozenCount)
+    ? confirmationFor(
+        p.confirming,
+        p.selected,
+        p.unfrozenCount,
+        p.notFrozenNames,
+      )
     : null;
 
   return (
@@ -262,6 +277,23 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
               {ACTION_LABEL[action]}
             </Button>
           ))}
+          {showFreezeRemaining(p.status, p.notFrozenNames?.length ?? 0) && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => p.onConfirming("freezeRemaining")}
+              disabled={p.acting}
+            >
+              {p.acting && p.confirming === "freezeRemaining" ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Freezing
+                </>
+              ) : (
+                FREEZE_REMAINING_LABEL(p.notFrozenNames?.length ?? 0)
+              )}
+            </Button>
+          )}
         </div>
         {status === "closed" && (p.notFrozenNames?.length ?? 0) > 0 && (
           <p className="mt-3 text-sm text-amber-800" role="status">
@@ -303,6 +335,8 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Working
               </>
+            ) : p.confirming === "freezeRemaining" ? (
+              "Freeze remaining CCAs"
             ) : p.confirming ? (
               ACTION_LABEL[p.confirming]
             ) : (
@@ -400,6 +434,9 @@ export default function PeriodPanel() {
   const back = api.transcript.periods.backToCollecting.useMutation({
     onSuccess: () => done(`${year} is collecting again.`),
   });
+  const freezeRemaining = api.transcript.periods.freezeRemaining.useMutation({
+    onSuccess: (r) => done(freezeRemainingSummary(r)),
+  });
 
   if (list.isPending) {
     return (
@@ -418,15 +455,24 @@ export default function PeriodPanel() {
   }
 
   const actionError =
-    close.error ?? publish.error ?? reopen.error ?? back.error;
+    close.error ??
+    publish.error ??
+    reopen.error ??
+    back.error ??
+    freezeRemaining.error;
   const published = normaliseStatus(period?.status) === "published";
   const acting =
-    close.isPending || publish.isPending || reopen.isPending || back.isPending;
+    close.isPending ||
+    publish.isPending ||
+    reopen.isPending ||
+    back.isPending ||
+    freezeRemaining.isPending;
   const resetActions = () => {
     close.reset();
     publish.reset();
     reopen.reset();
     back.reset();
+    freezeRemaining.reset();
   };
 
   return (
@@ -474,6 +520,8 @@ export default function PeriodPanel() {
         else if (confirming === "reopen") reopen.mutate({ academicYear: year });
         else if (confirming === "backToCollecting")
           back.mutate({ academicYear: year });
+        else if (confirming === "freezeRemaining")
+          freezeRemaining.mutate({ academicYear: year });
       }}
       acting={acting}
       actionError={actionError ? errorText(actionError.message) : null}

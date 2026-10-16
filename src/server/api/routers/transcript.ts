@@ -31,6 +31,7 @@ import {
   backToCollecting,
   closeYear,
   countUnfrozen,
+  freezeRemaining,
   listUnfrozen,
   getPeriod,
   listPeriods,
@@ -131,6 +132,13 @@ export const transcriptRouter = createTRPCRouter({
       .input(z.object({ academicYear }))
       .mutation(({ ctx, input }) =>
         closeYear(ctx.db, input.academicYear, ctx.session.user.userID),
+      ),
+
+    /** While the year is closed: freeze the CCAs left unfrozen, staying closed. */
+    freezeRemaining: managerProcedure
+      .input(z.object({ academicYear }))
+      .mutation(({ ctx, input }) =>
+        freezeRemaining(ctx.db, input.academicYear, ctx.session.user.userID),
       ),
 
     publish: managerProcedure

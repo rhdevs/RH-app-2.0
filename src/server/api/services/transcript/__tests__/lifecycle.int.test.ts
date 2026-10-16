@@ -655,6 +655,84 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
       });
 
+      describe("freeze remaining CCAs", () => {
+        const live = [{ unfrozenAt: null }, { unfrozenAt: { isSet: false } }];
+        const activeFreezes = () =>
+          db.ccaYearFreeze.count({ where: { academicYear: AY, OR: live } });
+
+        it("freezes the unfrozen CCA while closed, stays closed, and then Publish succeeds", async () => {
+          const c = as(JCRC).transcript;
+          await c.periods.close({ academicYear: AY });
+          const before = await activeFreezes();
+          await c.freezes.unfreeze({
+            academicYear: AY,
+            ccaID: SOCCER,
+            reason: "Fixing a roster",
+          });
+          expect(await errorOf(c.periods.publish({ academicYear: AY }))).toBe(
+            "PRECONDITION_FAILED:CCAS_NOT_FROZEN:AY2026/27:Soccer (MALE)",
+          );
+
+          const result = await c.periods.freezeRemaining({ academicYear: AY });
+          expect(result).toMatchObject({ frozenNow: 1, failed: 0, skipped: 0 });
+          expect(await activeFreezes()).toBe(before);
+          expect(
+            (
+              await db.transcriptPeriod.findUniqueOrThrow({
+                where: { academicYear: AY },
+              })
+            ).status,
+          ).toBe("closed");
+          const freeze = await db.ccaYearFreeze.findFirstOrThrow({
+            where: { academicYear: AY, ccaID: SOCCER, OR: live },
+          });
+          expect(freeze.reason).toBe("close_year");
+          expect(freeze.frozenBy).toBe(JCRC.id);
+          expect(await errorOf(c.periods.publish({ academicYear: AY }))).toBe(
+            "ok",
+          );
+        });
+
+        it("freezes 0 on a second run", async () => {
+          const c = as(ADMIN).transcript;
+          await c.periods.close({ academicYear: AY });
+          await c.freezes.unfreeze({
+            academicYear: AY,
+            ccaID: SOCCER,
+            reason: "Fixing a roster",
+          });
+          await c.periods.freezeRemaining({ academicYear: AY });
+          expect(
+            await c.periods.freezeRemaining({ academicYear: AY }),
+          ).toMatchObject({ frozenNow: 0, failed: 0 });
+        });
+
+        it("is refused while collecting or published", async () => {
+          const c = as(JCRC).transcript;
+          expect(
+            await errorOf(c.periods.freezeRemaining({ academicYear: AY })),
+          ).toBe("CONFLICT:NOT_CLOSED");
+          await c.periods.close({ academicYear: AY });
+          await c.periods.publish({ academicYear: AY });
+          expect(
+            await errorOf(c.periods.freezeRemaining({ academicYear: AY })),
+          ).toBe("CONFLICT:NOT_CLOSED");
+        });
+
+        it("is refused for heads and residents", async () => {
+          await as(JCRC).transcript.periods.close({ academicYear: AY });
+          for (const who of [SOCCER_HEAD, R20]) {
+            expect(
+              await errorOf(
+                as(who).transcript.periods.freezeRemaining({
+                  academicYear: AY,
+                }),
+              ),
+            ).toMatch(/^FORBIDDEN/);
+          }
+        });
+      });
+
       it("closes one CCA at a time, counts a failure, stays collecting, and finishes on the next run", async () => {
         const periods = await import("../periods");
         // The third freeze transaction fails; the others go on.

@@ -87,7 +87,42 @@ export function closeSummary(
 
 /** The sentence for CCAs that block Publish: also shown inline on the panel. */
 export const notFrozenText = (academicYear: string, names: readonly string[]) =>
-  `Some CCAs are not frozen for ${academicYear}: ${names.join(", ")}. Close the year again to freeze them.`;
+  `Some CCAs are not frozen for ${academicYear}: ${names.join(", ")}. Use Freeze remaining CCAs, then publish.`;
+
+/** Names shown in the Freeze remaining confirmation before "and more". */
+export const FREEZE_REMAINING_NAMES_SHOWN = 5;
+
+/** Show "Freeze remaining CCAs (N)": the year is closed and N CCAs are unfrozen. */
+export const showFreezeRemaining = (
+  status: string | null | undefined,
+  unfrozenCount: number,
+): boolean => normaliseStatus(status) === "closed" && unfrozenCount > 0;
+
+export const FREEZE_REMAINING_LABEL = (count: number) =>
+  `Freeze remaining CCAs (${count})`;
+
+export function freezeRemainingConfirmation(
+  academicYear: string,
+  names: readonly string[],
+): string {
+  const shown = names.slice(0, FREEZE_REMAINING_NAMES_SHOWN).join(", ");
+  const more = names.length > FREEZE_REMAINING_NAMES_SHOWN ? ", and more" : "";
+  return `This freezes the member lists of ${names.length} ${names.length === 1 ? "CCA" : "CCAs"} for ${academicYear}: ${shown}${more}. Their current members will be used.`;
+}
+
+/** The inline line after Freeze remaining CCAs ran. */
+export function freezeRemainingSummary(result: {
+  frozenNow: number;
+  skipped?: number;
+  failed?: number;
+  failedNames?: readonly string[];
+}): string {
+  const base = `${result.frozenNow} ${result.frozenNow === 1 ? "CCA" : "CCAs"} frozen`;
+  if (result.failed) {
+    return `${base}, ${result.failed} could not be frozen: ${(result.failedNames ?? []).join(", ")}. Press Freeze remaining CCAs again to finish them.`;
+  }
+  return `${base}. You can publish now.`;
+}
 
 export const CLOSE_CONFIRMATION = (academicYear: string, unfrozen: number) =>
   `This freezes the member list of ${plural(unfrozen, "CCA", "CCAs")} that ${unfrozen === 1 ? "is" : "are"} not frozen yet, and opens ${academicYear} for review. Residents will see a draft.`;
