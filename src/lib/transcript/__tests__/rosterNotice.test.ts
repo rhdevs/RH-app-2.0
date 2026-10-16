@@ -15,6 +15,15 @@ const base = {
 };
 
 describe("the line above the head's roster", () => {
+  it("tells a head when the year is not the one the CCA is working on", () => {
+    expect(rosterNotice({ ...base, refusal: "NOT_THE_TERM_YEAR" })).toBe(
+      "This is not the year this CCA is working on. Ask the JCRC for changes.",
+    );
+    expect(
+      rosterNotice({ ...base, mode: "none", refusal: "NOT_THE_TERM_YEAR" }),
+    ).toBe(NO_MEMBER_LIST_NOTE);
+  });
+
   it("says nothing for a live, editable list", () => {
     expect(rosterNotice(base)).toBeNull();
   });

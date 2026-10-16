@@ -356,6 +356,22 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ---------------------------------------------------------------- */
     describe("who may edit, by the year's state", () => {
+      it("keeps a head to the CCA's term year; a manager may use another year", async () => {
+        const other = (who: { id: string; roles: string[] }, year: string) =>
+          as(who).activities.create({
+            ccaID: SOCCER,
+            academicYear: year,
+            ...draft("Another year"),
+          });
+        for (const year of ["AY2027/28", "AY2030/31"]) {
+          expect(await errorOf(other(SOCCER_HEAD, year)), year).toBe(
+            "FORBIDDEN:NOT_THE_TERM_YEAR",
+          );
+        }
+        expect(await errorOf(other(JCRC, "AY2027/28"))).toBe("ok");
+        expect(await errorOf(create(SOCCER_HEAD, "This year"))).toBe("ok");
+      });
+
       it("refuses the head once the CCA's list is frozen at handover, but not a manager", async () => {
         await freeze.freezeCca(db, {
           ccaID: SOCCER,

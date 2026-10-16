@@ -234,13 +234,27 @@ describe("who may edit a CCA's records for a year", () => {
     who: "manager" | "head" | "other",
     status: YearStatus,
     freezeReason: FreezeReason | null,
+    isTermYear = true,
   ) =>
     editRefusal({
       isManager: who === "manager",
       isHead: who === "head",
       status,
       freezeReason,
+      isTermYear,
     });
+
+  it("limits a head to the CCA's term year, or a year they locked; a manager is not limited", () => {
+    expect(edit("head", "collecting", null, false)).toBe("NOT_THE_TERM_YEAR");
+    expect(edit("head", "collecting", "lock", false)).toBeNull();
+    expect(edit("head", "collecting", "handover", false)).toBe(
+      "CCA_YEAR_FROZEN",
+    );
+    expect(edit("manager", "collecting", null, false)).toBeNull();
+    expect(edit("other", "collecting", null, false)).toBe(
+      "NOT_A_HEAD_OF_THIS_CCA",
+    );
+  });
 
   it("refuses everyone once the year is published", () => {
     for (const who of ["manager", "head", "other"] as const) {

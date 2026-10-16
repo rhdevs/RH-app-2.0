@@ -327,6 +327,7 @@ export function rosterNotice(input: {
     | "PERIOD_PUBLISHED"
     | "YEAR_CLOSED"
     | "CCA_YEAR_FROZEN"
+    | "NOT_THE_TERM_YEAR"
     | "NOT_A_HEAD_OF_THIS_CCA"
     | null;
   freezeReason: "handover" | "head_removed" | "lock" | "close_year" | null;
@@ -346,6 +347,9 @@ export function rosterNotice(input: {
     return "This year is closed for review. Ask the JCRC for changes.";
   }
   if (input.mode === "none") return NO_MEMBER_LIST_NOTE;
+  if (input.refusal === "NOT_THE_TERM_YEAR") {
+    return "This is not the year this CCA is working on. Ask the JCRC for changes.";
+  }
   if (input.freezeReason === "lock") {
     return `Member list locked on ${input.frozenOn ?? "an earlier date"}. You can still edit roles, contributions and hours until the JCRC closes the year.`;
   }

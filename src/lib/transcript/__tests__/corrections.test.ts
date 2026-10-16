@@ -28,6 +28,7 @@ const decide = (input: {
       isHead: input.role === "head",
       status: input.status,
       freezeReason: null,
+      isTermYear: true,
     }),
     isManager: input.role === "manager",
     status: input.status,

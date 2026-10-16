@@ -175,6 +175,7 @@ export type EditRefusal =
   | "PERIOD_PUBLISHED"
   | "YEAR_CLOSED"
   | "CCA_YEAR_FROZEN"
+  | "NOT_THE_TERM_YEAR"
   | "NOT_A_HEAD_OF_THIS_CCA";
 
 /**
@@ -182,8 +183,10 @@ export type EditRefusal =
  *  - Nobody, once the year is published (except per-resident corrections, which
  *    are a separate path).
  *  - Managers (admin or jcrc): any CCA, collecting or closed.
- *  - The head of this CCA: only while the year is collecting AND the CCA's list
- *    is not frozen, or was frozen by the head's own "lock".
+ *  - The head of this CCA: only while the year is collecting, and only for the
+ *    CCA's term year while its list is not frozen, or for a year whose list the
+ *    head froze with their own "lock". Any other year (past or future) is not
+ *    theirs to edit.
  *  - Anyone else: no.
  */
 export function editRefusal(input: {
@@ -192,15 +195,16 @@ export function editRefusal(input: {
   status: YearStatus;
   /** The reason of the CCA's ACTIVE freeze for this year, or null. */
   freezeReason: FreezeReason | null;
+  /** Is this year the CCA's term year (its oldest unfrozen year)? */
+  isTermYear: boolean;
 }): EditRefusal | null {
   if (input.status === "published") return "PERIOD_PUBLISHED";
   if (input.isManager) return null;
   if (!input.isHead) return "NOT_A_HEAD_OF_THIS_CCA";
   if (input.status === "closed") return "YEAR_CLOSED";
-  if (input.freezeReason !== null && input.freezeReason !== "lock") {
-    return "CCA_YEAR_FROZEN";
-  }
-  return null;
+  if (input.freezeReason === "lock") return null;
+  if (input.freezeReason !== null) return "CCA_YEAR_FROZEN";
+  return input.isTermYear ? null : "NOT_THE_TERM_YEAR";
 }
 
 /* ---- the June warning ------------------------------------------------------ */
