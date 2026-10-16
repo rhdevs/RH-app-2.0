@@ -55,6 +55,14 @@ npm run dev:db:seed
 
 Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications before and after the 2027-01-11 semester-2 start, roster entries (sem1-only, sem2-only, a head whose role starts in sem2), volunteer activities, awards, JCRC service for two members, and CCA activities (Soccer: a full-year league that `SEED-R20`, who is not in Soccer, also took part in; Hall Choir: a semester 2 activity; RVC Children: one live activity and one removed), and one manual CCA entry with its history line (`SEED-R17` in Dance Crew, semester 2). The year starts collecting: nothing is unlocked or withheld.
 
+### A published year to click through (opt-in)
+
+```bash
+npm run dev:db:seed -- --with-published-year
+```
+
+Does everything the plain seed does, and ALSO creates a past year, `AY2025/26`, already closed and published: semester 2 from 12 Jan 2026, every seeded CCA frozen with its members (heads as "Head"), Soccer's "Inter-hall league 2025/26" (with `SEED-R20` as Other involvement), RVC Children's "Reading buddies" (8 hours for `SEED-R12`), two awards, `SEED-R02`'s JCRC page, and a download-by date in the future. Nobody has opened it yet, so `seed-r12` sees the "Ready" badge, the published transcript with a year switcher, and "not available yet" for the collecting `AY2026/27`; as `seed-r01` you can Unlock, correct, Relock, Withhold and Release on it at `/admin/transcripts/residents`. Like the rest of the seed it refuses anything but the local `rhapp_transcript_dev` database. A plain `npm run dev:db:seed` (and every `npm run test:db` run) removes this year again. Transcripts really start at AY2026/27; this year exists only locally.
+
 ## A caveat
 
 The local database has no `$jsonSchema` validators (production's CCA, UserCCA and User do). The seed writes only the fields those models declare, so it matches what production would accept, but the local database will not stop you writing a bad field.

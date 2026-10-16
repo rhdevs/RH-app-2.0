@@ -27,6 +27,16 @@ const DOWNLOAD_BY = new Date("2027-12-30T16:00:00Z");
 const PREFIX = "SEED-";
 
 /**
+ * `--with-published-year` ALSO seeds a past year, AY2025/26, already closed and
+ * published: every seeded CCA frozen, roster entries, activities, volunteer
+ * hours, awards and one JCRC page. LOCAL ONLY, for clicking through a published
+ * transcript, the Ready badge and the year switcher, and for trying Unlock and
+ * Withhold. Transcripts really start at AY2026/27; this year exists only here.
+ */
+const WITH_PUBLISHED_YEAR = process.argv.includes("--with-published-year");
+const PAST_AY = "AY2025/26";
+
+/**
  * LOCAL DEVELOPMENT LOGIN for every seeded resident. These accounts exist only
  * in the local rhapp_transcript_dev database (this script refuses to run
  * against anything else). The password is documented in docs/transcript/DEV-SETUP.md
@@ -202,6 +212,9 @@ for (const [n, ccaID] of [
 async function reset() {
   const mine = { startsWith: PREFIX };
   await db.transcriptAccess.deleteMany({ where: { userID: mine } });
+  await db.transcriptPeriod.deleteMany({
+    where: { academicYear: PAST_AY, publishedBy: mine },
+  });
   // Per-resident corrections: unlocks, holds, manual CCA entries and history.
   await db.residentUnlock.deleteMany({ where: { userID: mine } });
   await db.residentWithhold.deleteMany({ where: { userID: mine } });
@@ -754,6 +767,170 @@ async function seed() {
   });
 }
 
+/** The optional published past year (see WITH_PUBLISHED_YEAR). */
+async function seedPublishedYear() {
+  const at = (iso) => new Date(iso);
+  const closedAt = at("2026-07-15T04:00:00Z");
+  await db.transcriptPeriod.create({
+    data: {
+      academicYear: PAST_AY,
+      // 12 Jan 2026, midnight in Singapore
+      sem2Start: at("2026-01-11T16:00:00Z"),
+      downloadBy: DOWNLOAD_BY,
+      status: "published",
+      closedAt,
+      closedBy: uid(2),
+      publishedAt: at("2026-07-20T04:00:00Z"),
+      publishedBy: uid(2),
+    },
+  });
+
+  // Every seeded CCA closed with the year: its member list as frozen entries.
+  for (const ccaID of CCA_IDS) {
+    const members = [...memberships.values()].filter((m) => m.ccaID === ccaID);
+    await db.transcriptRosterEntry.createMany({
+      data: members.map((m) => ({
+        academicYear: PAST_AY,
+        userID: uid(m.n),
+        ccaID,
+        frozen: true,
+        duration: m.n === 12 && ccaID === 9008 ? "sem2" : "full",
+        roleLabel: HEADS[ccaID] === m.n ? "Head" : null,
+        roleDuration: HEADS[ccaID] === m.n ? "full" : null,
+        extraContribution:
+          m.n === 12 && ccaID === 9012
+            ? "Ran the welfare packs for the exam period."
+            : null,
+        updatedBy: uid(2),
+      })),
+    });
+    await db.ccaYearFreeze.create({
+      data: {
+        academicYear: PAST_AY,
+        ccaID,
+        reason: "close_year",
+        frozenAt: closedAt,
+        frozenBy: uid(2),
+        memberCount: members.length,
+      },
+    });
+  }
+
+  // Activities: Soccer's league (R20 outside the CCA: Other involvement).
+  const league = await db.ccaActivity.create({
+    data: {
+      academicYear: PAST_AY,
+      ccaID: 9005,
+      title: "Inter-hall league 2025/26",
+      description: "The hall's team in the inter-hall football league.",
+      period: "full",
+      createdBy: uid(4),
+      createdAt: at("2025-10-01T04:00:00Z"),
+    },
+  });
+  await db.ccaActivityParticipant.createMany({
+    data: [
+      [4, "Captain", "Led the squad to the semi-finals."],
+      [12, "Defender", null],
+      [20, "Guest goalkeeper", "Covered three fixtures."],
+    ].map(([n, role, description]) => ({
+      activityID: league.id,
+      academicYear: PAST_AY,
+      ccaID: 9005,
+      userID: uid(n),
+      role,
+      description,
+      addedBy: uid(4),
+      addedAt: at("2025-10-01T04:00:00Z"),
+    })),
+  });
+
+  // Volunteer hours: RVC Children, four Saturday sessions of 2 hours.
+  const reading = await db.volunteerActivity.create({
+    data: {
+      academicYear: PAST_AY,
+      ccaID: 9002,
+      title: "Reading buddies",
+      kind: "regular",
+      description: "Weekly reading with neighbourhood children.",
+      defaultHours: 2,
+      createdBy: uid(6),
+      createdAt: at("2025-09-01T04:00:00Z"),
+    },
+  });
+  const sessions = [];
+  for (const day of ["2025-09-06", "2025-09-13", "2025-09-20", "2025-09-27"]) {
+    sessions.push(
+      await db.volunteerSession.create({
+        data: {
+          activityID: reading.id,
+          academicYear: PAST_AY,
+          ccaID: 9002,
+          date: new Date(Date.parse(`${day}T00:00:00Z`) - 8 * 3600_000),
+          hours: 2,
+          createdBy: uid(6),
+        },
+      }),
+    );
+  }
+  for (const n of [6, 12]) {
+    await db.volunteerPerson.create({
+      data: {
+        activityID: reading.id,
+        academicYear: PAST_AY,
+        ccaID: 9002,
+        userID: uid(n),
+        addedBy: uid(6),
+      },
+    });
+    await db.volunteerAttendance.createMany({
+      data: sessions.map((s) => ({
+        sessionID: s.id,
+        activityID: reading.id,
+        academicYear: PAST_AY,
+        ccaID: 9002,
+        userID: uid(n),
+        markedBy: uid(6),
+        markedAt: at("2025-09-28T04:00:00Z"),
+      })),
+    });
+  }
+
+  // Awards, and one JCRC page.
+  await db.award.createMany({
+    data: [
+      [12, "Outstanding Newcomer", "For an outstanding first year in hall."],
+      [4, "Colours Award, Soccer", null],
+    ].map(([n, title, citation]) => ({
+      academicYear: PAST_AY,
+      userID: uid(n),
+      title,
+      citation,
+      recordedBy: uid(2),
+      recordedAt: at("2026-06-01T04:00:00Z"),
+    })),
+  });
+  await db.jcrcService.create({
+    data: {
+      academicYear: PAST_AY,
+      userID: uid(2),
+      portfolio: "Sports",
+      position: "Assistant Secretary",
+      description:
+        "Supported the Sports Secretary with the inter-hall calendar.",
+      contributions: [
+        {
+          activity: "Inter-hall fixtures",
+          role: "Coordinator",
+          description: "Booked venues and referees for home matches.",
+        },
+      ],
+      testimonial: "A reliable member of the sports portfolio.",
+      isPlaceholder: true,
+    },
+  });
+}
+
 async function summary() {
   const counts = {
     CCA: await db.cCA.count({ where: { ccaID: { in: CCA_IDS } } }),
@@ -811,7 +988,11 @@ async function summary() {
 try {
   await reset();
   await seed();
+  if (WITH_PUBLISHED_YEAR) await seedPublishedYear();
   await summary();
+  if (WITH_PUBLISHED_YEAR) {
+    console.log(`  plus ${PAST_AY}, published, every seeded CCA frozen`);
+  }
 } finally {
   await db.$disconnect();
 }
