@@ -129,9 +129,10 @@ import {
  *  - a JCRC member, for their OWN record: `identifiedProcedure` plus
  *    `requireJcrcSelf`. The identity is the session's; no userID is accepted.
  *
- * EVERY WRITE to a year's data needs that year to be collecting
- * (`assertWritable`; PRECONDITION_FAILED once it is published). The one
- * exception is the volunteering tag, which belongs to no year.
+ * EVERY WRITE to a year's data runs one guard: `assertCanEditCcaYear` for a
+ * CCA's own records, or `assertCanEditForResidents` for a write that names
+ * residents (a published year then only for a manager correcting UNLOCKED
+ * residents). The volunteering tag belongs to no year.
  */
 /** Resident search: 60 requests per signed-in user per 10 minutes. */
 const SEARCH_LIMIT = 60;

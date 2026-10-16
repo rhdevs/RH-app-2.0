@@ -28,7 +28,6 @@ import {
 import { loadTranscriptInput } from "~/server/api/services/transcript/loader";
 import {
   STATUS_CLOSED,
-  STATUS_PUBLISHED,
   backToCollecting,
   closeYear,
   countUnfrozen,
