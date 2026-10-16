@@ -76,8 +76,6 @@ function blankInput(): TranscriptInput {
       {
         academicYear: AY,
         issuedOn: "2027-05-10",
-        block: "Block 1",
-        yearOfResidence: 1,
       },
     ],
     memberships: [],
@@ -621,13 +619,12 @@ describe("assembleTranscript: academic year", () => {
     expect(vm.hasAwards).toBe(false);
   });
 
-  it("carries the issue for that year: its block and year of residence", () => {
+  it("carries the issue for that year: its academic year and issue date", () => {
     const vm = assembleFixture("jcrc-sports-secretary", "AY2027/28");
 
-    expect(vm.issue).toMatchObject({
+    expect(vm.issue).toEqual({
       academicYear: "AY2027/28",
-      yearOfResidence: 2,
-      block: "Block 3",
+      issuedOn: "2028-05-09",
     });
   });
 

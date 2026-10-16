@@ -53,9 +53,7 @@ function inputWith(
 ): TranscriptInput {
   return {
     resident: { name: "Test", matric: "A0000000X", isSpecimen: true },
-    issues: [
-      { academicYear: AY, issuedOn: null, block: null, yearOfResidence: null },
-    ],
+    issues: [{ academicYear: AY, issuedOn: null }],
     memberships: ccas.map((ccaName) => ({
       ccaName,
       category: "C",

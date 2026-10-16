@@ -15,12 +15,20 @@ const AY = FIXTURE_ACADEMIC_YEAR;
 const JCRC_AY = "AY2027/28";
 const CREST = /<img[^>]*alt="Raffles Hall crest"[^>]*>/g;
 
-function render(slug: string, year = AY): string {
+/** The markup exactly as rendered, with no-break spaces and no-wrap wrappers. */
+function renderRaw(slug: string, year = AY): string {
   const fixture = getFixtureBySlug(slug);
   if (!fixture) throw new Error(`missing fixture ${slug}`);
   return renderToStaticMarkup(
     <TranscriptDocument transcript={assembleTranscript(fixture.input, year)} />,
   );
+}
+
+/** The same, read as words: semester suffixes unwrapped, no-break spaces as spaces. */
+function render(slug: string, year = AY): string {
+  return renderRaw(slug, year)
+    .replace(/<span class="whitespace-nowrap">(\(Sem[^<]*)<\/span>/g, "$1")
+    .replace(/ /g, " ");
 }
 
 /** The rendered HTML of each page (sheet) of a document. */
@@ -175,29 +183,48 @@ describe("TranscriptDocument: content", () => {
     expect(html).not.toContain("<svg");
   });
 
-  it("shows only the half of the residence line that is known", () => {
-    const fixture = getFixtureBySlug("plain-member")!;
-    const issue = fixture.input.issues[0]!;
-    const withIssue = (patch: object) =>
-      renderToStaticMarkup(
-        <TranscriptDocument
-          transcript={assembleTranscript(
-            { ...fixture.input, issues: [{ ...issue, ...patch }] },
-            AY,
-          )}
-        />,
+  it("has one row of exactly four details, and no Block, year of residence or Faculty", () => {
+    for (const slug of ["plain-member", "many-ccas", "jcrc-sports-secretary"]) {
+      const main = sheets(render(slug))[0]!;
+      const labels = [...main.matchAll(/<dt[^>]*>([^<]*)<\/dt>/g)].map(
+        (m) => m[1],
       );
-
-    expect(withIssue({ yearOfResidence: null })).toContain("Block 3<");
-    expect(withIssue({ yearOfResidence: null })).not.toContain("year<");
-    expect(withIssue({ block: null })).toContain("Second year<");
-    expect(withIssue({ block: null, yearOfResidence: null })).not.toContain(
-      "Block 3",
-    );
+      expect(labels).toEqual([
+        "Name",
+        "Matric no.",
+        "Academic year",
+        "Date issued",
+      ]);
+      expect(main).toContain("sm:grid-cols-[2fr_1fr_1fr_1fr]");
+      expect(main).not.toMatch(/Block \d|Residency|year of residence|Faculty/i);
+      expect(main).not.toMatch(/(First|Second|Third|Fourth) year/);
+    }
   });
 
-  it("shows block and year of residence", () => {
-    expect(render("plain-member")).toContain("Block 3 · Second year");
+  it("lays the JCRC page header out in four columns, with no empty one", () => {
+    const jcrc = sheets(render("jcrc-sports-secretary", JCRC_AY))[1]!;
+    const labels = [...jcrc.matchAll(/<dt[^>]*>([^<]*)<\/dt>/g)].map(
+      (m) => m[1],
+    );
+    expect(labels).toEqual(["Name", "Matric no.", "Position", "Term"]);
+    expect(jcrc).toContain("sm:grid-cols-[1.5fr_1fr_2fr_1fr]");
+    expect(jcrc).not.toMatch(/<dd[^>]*><\/dd>/);
+  });
+
+  it("joins 'Sem' and its number with a no-break space, and keeps '(Sem N)' whole", () => {
+    const html = renderRaw("member-with-activities");
+    expect(html).toContain("Sem\u00a02");
+    expect(html).not.toMatch(/Sem [12]/);
+    expect(html).toMatch(
+      /<span class="whitespace-nowrap">\(Sem\u00a0[12]\)<\/span>/,
+    );
+    // The role suffix and the Year cell too.
+    const many = renderRaw("jcrc-sports-secretary", JCRC_AY);
+    expect(many).toContain("2027/28 Sem 2");
+    expect(many).toContain(
+      'Head <span class="whitespace-nowrap">(Sem 2)</span>',
+    );
+    expect(many).not.toMatch(/Sem [12]/);
   });
 
   it("has no summary strip on page 1, for any kind of resident", () => {
@@ -252,16 +279,26 @@ describe("TranscriptDocument: print", () => {
     );
   });
 
-  it("prints the name once, as a fixed footer, never also in a margin box", () => {
+  it("puts the name and the page count in margin boxes on one baseline, with the fixed name as the fallback", () => {
     const html = render("jcrc-sports-secretary", JCRC_AY);
+    const box = (name: string) =>
+      new RegExp(`@${name} \{[^}]*vertical-align: top;`);
 
-    expect(html).not.toContain("@bottom-left");
+    expect(html).toMatch(box("bottom-left"));
+    expect(html).toMatch(box("bottom-right"));
+    expect(html).not.toContain("margin-top: -");
+    // The name in the margin box is hex-escaped: "T" is 54, "a" is 61.
+    expect(html).toContain(String.raw`@bottom-left { content: "\54 \61 \6e `);
     expect(html.match(/class="rh-print-footer"/g)).toHaveLength(1);
     expect(html).toContain(
       '<p class="rh-print-footer">Tan Wei Ming (A0011000X)</p>',
     );
     expect(html).toMatch(
       /.rh-print-footer {[^}]*position: fixed; left: 0; bottom: 0;/,
+    );
+    // Where margin boxes work, the fixed copy is switched off: never two names.
+    expect(html).toContain(
+      "@supports (interpolate-size: allow-keywords) { .rh-print-footer { display: none; } }",
     );
   });
 
