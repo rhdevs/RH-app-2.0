@@ -443,7 +443,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("NOT_FOUND:AWARD_TYPE_NOT_FOUND");
       });
 
-      it("refuses nobody and more than 300 people", async () => {
+      it("refuses nobody, and takes more than 300 people (only a hidden cap refuses)", async () => {
         const t = await fullColours();
         expect(
           await errorOf(
@@ -460,6 +460,17 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               academicYear: AY,
               awardTypeID: t.id,
               recipients: Array.from({ length: 301 }, (_, i) => ({
+                userID: `SEED-X${i}`,
+              })),
+            }),
+          ),
+        ).toBe("NOT_FOUND:RESIDENT_NOT_FOUND"); // 301 is no reason to refuse
+        expect(
+          await errorOf(
+            as(JCRC).awards.assign({
+              academicYear: AY,
+              awardTypeID: t.id,
+              recipients: Array.from({ length: 2001 }, (_, i) => ({
                 userID: `SEED-X${i}`,
               })),
             }),
@@ -591,12 +602,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(1);
       });
 
-      it("accepts at most 500 awards at once, and refuses an unknown id", async () => {
+      it("takes more than 500 awards at once (only a hidden cap refuses), and refuses an unknown id", async () => {
         const id = (await awardsOf("SEED-R04"))[0]!.id;
         expect(
           await errorOf(
             as(JCRC).awards.bulkRemove({
-              ids: Array.from({ length: 501 }, () => id),
+              ids: Array.from({ length: 2001 }, () => id),
             }),
           ),
         ).toMatch(/^BAD_REQUEST:/);

@@ -1218,7 +1218,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
         expect(
           await errorOf(
-            m.saveMine({ ...fields, contributions: Array(11).fill(ROW) }),
+            m.saveMine({ ...fields, contributions: Array(201).fill(ROW) }),
           ),
         ).toMatch(/^BAD_REQUEST:/);
         expect(
