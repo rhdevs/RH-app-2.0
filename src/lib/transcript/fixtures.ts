@@ -52,8 +52,6 @@ function issue(
   return {
     academicYear: AY,
     issuedOn: "2027-05-10",
-    block: "Block 3",
-    yearOfResidence: 2,
     ...overrides,
   };
 }
@@ -343,7 +341,7 @@ export const TRANSCRIPT_FIXTURES: readonly TranscriptFixture[] = [
     input: input(
       person("Tan Wei Ming", 11),
       [
-        issue(11, { yearOfResidence: 1 }),
+        issue(11),
         issue(11, {
           academicYear: NEXT_ACADEMIC_YEAR,
           issuedOn: "2028-05-09",

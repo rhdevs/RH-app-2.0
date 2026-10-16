@@ -30,11 +30,6 @@ export interface YearIssueInput {
   /** ISO date, "2027-05-10": the day the year was published (Singapore).
    *  Null in an admin preview of a year that is not published yet. */
   issuedOn: string | null;
-  /** "Block 3" — the hall owns this, unlike faculty. Null when not on file. */
-  block: string | null;
-  /** 1 for a resident's first year in hall, 2 for their second, ... Null when
-   *  the app does not know (it keeps no residence history). */
-  yearOfResidence: number | null;
 }
 
 /** One CCA membership in one academic year. */

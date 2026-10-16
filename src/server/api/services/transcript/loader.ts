@@ -150,7 +150,7 @@ export async function loadTranscriptInput(
   const profile = user
     ? await db.user.findUnique({
         where: { id: user.id },
-        select: { displayName: true, block: true },
+        select: { displayName: true },
       })
     : null;
 
@@ -218,8 +218,6 @@ export async function loadTranscriptInput(
           period?.status === "published" && period.publishedAt
             ? instantToSgDate(period.publishedAt)
             : null,
-        block: profile?.block != null ? `Block ${profile.block}` : null,
-        yearOfResidence: null, // the app keeps no residence history
       },
     ],
     memberships,
