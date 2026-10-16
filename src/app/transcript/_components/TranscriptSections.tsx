@@ -87,17 +87,6 @@ function SectionBody({ section }: { section: TranscriptSection }) {
   }
 }
 
-/** Fixed column widths shared by the two tables on page 1. */
-function Columns() {
-  return (
-    <colgroup>
-      <col className="w-[56%]" />
-      <col className="w-[30%]" />
-      <col className="w-[14%]" />
-    </colgroup>
-  );
-}
-
 /**
  * The one table of CCAs and their activities: # | CCA / activity | Role |
  * Description | Year, with one header row (repeated on each printed page). CCAs

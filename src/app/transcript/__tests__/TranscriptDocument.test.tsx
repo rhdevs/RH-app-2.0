@@ -549,7 +549,7 @@ describe("TranscriptDocument: activities", () => {
 
   it("makes the CCA name bold and leaves the other CCA cells regular", () => {
     const html = render("member-with-activities");
-    const cca = html.match(/<tr[^>]*>(<td[^>]*>1<\/td>.*?)<\/tr>/)![1]!;
+    const cca = /<tr[^>]*>(<td[^>]*>1<\/td>.*?)<\/tr>/.exec(html)![1]!;
     const cells = [...cca.matchAll(/<td([^>]*)>/g)].map((m) => m[1]!);
 
     expect(cells[1]).toContain("font-bold");
@@ -560,9 +560,10 @@ describe("TranscriptDocument: activities", () => {
 
   it("gives Additional contribution the same offsets as an activity row", () => {
     const html = render("member-with-activities");
-    const row = html.match(
-      /<tr[^>]*>((?:<td[^>]*><\/td>)<td[^>]*italic">Additional contribution<\/td>.*?)<\/tr>/,
-    )![1]!;
+    const row =
+      /<tr[^>]*>((?:<td[^>]*><\/td>)<td[^>]*italic">Additional contribution<\/td>.*?)<\/tr>/.exec(
+        html,
+      )![1]!;
     const cells = [...row.matchAll(/<td([^>]*)>/g)].map((m) => m[1]!);
 
     expect(cells[1]).toContain("pl-5");
