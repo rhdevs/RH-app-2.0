@@ -6,7 +6,7 @@ import {
 } from "~/lib/transcript/types";
 import { JcrcPageBody } from "./JcrcPageBody";
 import { META_COLUMNS, MetaRow, PageHeader } from "./PageHeader";
-import { NotesBody, TranscriptSections } from "./TranscriptSections";
+import { ClosingBlock, TranscriptSections } from "./TranscriptSections";
 
 export const EMPTY_YEAR_MESSAGE =
   "No recorded involvements for this academic year.";
@@ -149,7 +149,12 @@ function Sheet({
         </thead>
         <tbody>
           <tr>
-            <td className="p-0 align-top">{body}</td>
+            <td className="p-0 align-top">
+              {body}
+              {index === total - 1 && (
+                <ClosingBlock hasPartYear={transcript.hasPartYear} />
+              )}
+            </td>
           </tr>
         </tbody>
         <tfoot className="rh-print-spacer">
@@ -247,17 +252,6 @@ function pageParts(
             />
             <JcrcPageBody jcrc={page.jcrc} />
           </>
-        ),
-      };
-    case "notes":
-      return {
-        header: <PageHeader title="Explanatory notes" />,
-        body: (
-          <NotesBody
-            notes={page.notes}
-            otherNotes={page.otherNotes}
-            hasPartYear={transcript.hasPartYear}
-          />
         ),
       };
   }

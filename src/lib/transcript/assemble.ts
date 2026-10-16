@@ -1,13 +1,11 @@
 import {
   type ActivityInput,
-  type ActivityNote,
   type ActivityRow,
   type AwardRow,
   type CcaMembershipInput,
   type InvolvementRow,
   type JcrcPageModel,
   type JcrcServiceInput,
-  type NoteRow,
   type OtherInvolvementRow,
   type TranscriptInput,
   type TranscriptPage,
@@ -16,6 +14,7 @@ import {
   type VolunteerActivityInput,
   type VolunteerHoursModel,
 } from "./types";
+import { ccaDescriptionText } from "./ccaDescription";
 import { compareVolunteerActivities } from "./volunteer";
 import {
   compareActivities,
@@ -24,16 +23,13 @@ import {
   readPeriod,
 } from "./activities";
 
-/** Shown in the Explanatory notes when a CCA has no description yet. */
-export const MISSING_DESCRIPTION_TEXT = "Description not yet available.";
-
 /** Static text on the JCRC page. */
 export const JCRC_ABOUT_TEXT =
   "The JCRC is the elected student committee that leads Raffles Hall and represents its residents. Its members run hall-wide programmes, oversee CCAs within their portfolios, and work with hall management.";
 
-const JCRC_NOTE_TITLE = "JCRC (Junior Common Room Committee)";
-const JCRC_NOTE_TEXT =
-  "the elected student committee that leads the hall. See the Junior Common Room Committee page for a full account of this role.";
+/** The JCRC row's description in the CCA table. */
+export const JCRC_ROW_DESCRIPTION =
+  "The elected student committee that leads the hall. See the JCRC page.";
 
 /**
  * Builds the view model for one resident and one academic year.
@@ -93,11 +89,6 @@ export function assembleTranscript(
 
   const pages: TranscriptPage[] = [{ kind: "main", sections }];
   if (jcrc) pages.push({ kind: "jcrc", jcrc: toJcrcPage(jcrc) });
-  pages.push({
-    kind: "notes",
-    notes: buildNotes(involvements, memberships, byCca),
-    otherNotes: other.flatMap(activityNote),
-  });
 
   return {
     academicYear,
@@ -262,12 +253,6 @@ function toOtherRow(a: ActivityInput): OtherInvolvementRow {
   return { ...toActivityRow(a), organiser: a.ccaName };
 }
 
-/** "Title: general description", only when a general description was written. */
-function activityNote(a: ActivityInput): ActivityNote[] {
-  const text = cleaned(a.description);
-  return text ? [{ title: activityTitle(a), text }] : [];
-}
-
 function buildInvolvements(
   memberships: readonly CcaMembershipInput[],
   jcrc: JcrcServiceInput | null,
@@ -278,57 +263,40 @@ function buildInvolvements(
   const rows: InvolvementRow[] = [];
   if (jcrc) {
     rows.push({
+      number: 0,
       ccaName: cleaned(jcrc.portfolio)
         ? `Junior Common Room Committee (JCRC), ${jcrc.portfolio.trim()}`
         : "Junior Common Room Committee (JCRC)",
       role: cleaned(jcrc.position),
       year,
       extraContribution: null,
-      footnote: 0,
-      isJcrc: true,
+      description: JCRC_ROW_DESCRIPTION,
       activities: [],
     });
   }
   for (const m of memberships) {
     rows.push({
+      number: 0,
       ccaName: m.ccaName,
       role: roleWithPeriod(cleaned(m.leadershipRole), m.roleDuration),
       year: yearWithPeriod(year, m.duration),
       extraContribution: cleaned(m.extraContribution),
-      footnote: 0,
-      isJcrc: false,
-      activities: (activities.get(m.ccaName) ?? []).map(toActivityRow),
+      description: ccaDescriptionText(m.description),
+      activities: [],
     });
   }
-  return rows.map((row, index) => ({ ...row, footnote: index + 1 }));
-}
-
-/** Footnotes follow the order of the table: the JCRC row, then each CCA. */
-function buildNotes(
-  involvements: readonly InvolvementRow[],
-  memberships: readonly CcaMembershipInput[],
-  activities: ReadonlyMap<string, readonly ActivityInput[]>,
-): NoteRow[] {
-  const descriptions = new Map(
-    memberships.map((m) => [m.ccaName, cleaned(m.description)] as const),
-  );
-  return involvements.map((row) => {
-    if (row.isJcrc) {
-      return {
-        number: row.footnote,
-        title: JCRC_NOTE_TITLE,
-        text: JCRC_NOTE_TEXT,
-        isMissing: false,
-        activities: [],
-      };
-    }
-    const description = descriptions.get(row.ccaName) ?? null;
+  return rows.map((row, index) => {
+    const number = index + 1;
+    // The JCRC row never has activities: it is not a CCA of this year.
+    const mine =
+      row === rows[0] && jcrc ? [] : (activities.get(row.ccaName) ?? []);
     return {
-      number: row.footnote,
-      title: row.ccaName,
-      text: description ?? MISSING_DESCRIPTION_TEXT,
-      isMissing: description === null,
-      activities: (activities.get(row.ccaName) ?? []).flatMap(activityNote),
+      ...row,
+      number,
+      activities: mine.map((a, i) => ({
+        ...toActivityRow(a),
+        number: `${number}.${i + 1}`,
+      })),
     };
   });
 }

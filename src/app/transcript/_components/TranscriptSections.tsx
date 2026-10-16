@@ -1,9 +1,7 @@
-import { type ReactNode } from "react";
+import { Fragment } from "react";
 import {
-  type ActivityNote,
   type AwardRow,
   type InvolvementRow,
-  type NoteRow,
   type OtherInvolvementRow,
   type TranscriptSection,
   type VolunteerHoursModel,
@@ -34,13 +32,13 @@ export function SemText({ text }: { text: string | null | undefined }) {
 }
 
 /**
- * The body of page 1 and of the notes page. Page 1 is one block per section in
+ * The body of page 1. Page 1 is one block per section in
  * the view model, in the order the assembler produced. Adding a section kind
  * means adding a member to `TranscriptSection`, one case in `SectionBody` and
  * one title below; the document and the pages do not change.
  *
- * Page breaks: a CCA row stays together with its sub-rows (each CCA is its own
- * <tbody>), and the header row of each table repeats on every printed page.
+ * Page breaks: every row stays whole, and the header row of each table repeats
+ * on every printed page.
  */
 
 const SECTION_TITLES: Record<TranscriptSection["kind"], string> = {
@@ -100,151 +98,97 @@ function Columns() {
   );
 }
 
-/** The involvement table: the Year column is sized to "2026/27 Sem 2" and never wraps. */
-function InvolvementColumns() {
-  return (
-    <colgroup>
-      <col />
-      <col className="w-[28%]" />
-      <col className="w-[7.5rem]" />
-    </colgroup>
-  );
-}
-
-function SubRow({ children }: { children: ReactNode }) {
-  return (
-    <tr>
-      <td colSpan={3} className="px-1 py-0.5 pl-[18px] italic text-neutral-800">
-        {children}
-      </td>
-    </tr>
-  );
-}
-
+/**
+ * The one table of CCAs and their activities: # | CCA / activity | Role |
+ * Description | Year, with one header row (repeated on each printed page). CCAs
+ * are numbered 1, 2, 3 and each activity 1.1, 1.2 ... on ONE row of its own,
+ * indented, with its role and description and an empty Year. A CCA's
+ * additional contribution is its last row, unnumbered, its text in the
+ * Description column. The Year column fits "2026/27 Sem 2" on one line.
+ *
+ * Page breaks: every row stays whole, and a CCA row never separates from its
+ * first activity (or its additional contribution).
+ */
 function Involvements({ rows }: { rows: InvolvementRow[] }) {
   return (
     <table className="w-full table-fixed border-collapse">
-      <InvolvementColumns />
+      <colgroup>
+        <col className="w-[6%]" />
+        <col className="w-[26%]" />
+        <col className="w-[16%]" />
+        <col />
+        <col className="w-[6.5rem]" />
+      </colgroup>
       <thead>
         <tr>
           <th scope="col" className={TH}>
-            CCA / portfolio
+            #
+          </th>
+          <th scope="col" className={TH}>
+            CCA / activity
           </th>
           <th scope="col" className={TH}>
             Role
+          </th>
+          <th scope="col" className={TH}>
+            Description
           </th>
           <th scope="col" className={`${TH} whitespace-nowrap`}>
             Year
           </th>
         </tr>
       </thead>
-      {rows.map((row) => (
-        <tbody key={row.footnote} className="break-inside-avoid">
-          <tr>
-            <td className={TD}>
-              {row.ccaName} <sup>{row.footnote}</sup>
-            </td>
-            <td className={TD}>
-              <SemText text={row.role} />
-            </td>
-            <td className={`${TD} whitespace-nowrap`}>
-              <SemText text={row.year} />
-            </td>
-          </tr>
-          {row.isJcrc && (
-            <SubRow>
-              See the Junior Common Room Committee page for a full account of
-              this role.
-            </SubRow>
-          )}
-          {row.activities.length > 0 ? (
-            <ActivityRows
-              activities={row.activities}
-              extraContribution={row.extraContribution}
-            />
-          ) : (
-            row.extraContribution && (
-              <SubRow>Additional contribution: {row.extraContribution}</SubRow>
-            )
-          )}
-        </tbody>
-      ))}
+      <tbody>
+        {rows.map((row) => {
+          const hasNested =
+            row.activities.length > 0 || row.extraContribution !== null;
+          return (
+            <Fragment key={row.number}>
+              <tr
+                className={`break-inside-avoid ${hasNested ? "break-after-avoid" : ""}`}
+              >
+                <td className={TD}>{row.number}</td>
+                <td className={TD}>{row.ccaName}</td>
+                <td className={TD}>
+                  <SemText text={row.role} />
+                </td>
+                <td className={TD}>{row.description}</td>
+                <td className={`${TD} whitespace-nowrap`}>
+                  <SemText text={row.year} />
+                </td>
+              </tr>
+              {row.activities.map((a) => (
+                <tr key={a.number} className="break-inside-avoid">
+                  <td className={`${NESTED} text-neutral-700`}>{a.number}</td>
+                  <td className={`${NESTED} pl-[18px]`}>
+                    <SemText text={a.title} />
+                  </td>
+                  <td className={NESTED}>{a.role}</td>
+                  <td className={NESTED}>{a.description}</td>
+                  <td className={NESTED} />
+                </tr>
+              ))}
+              {row.extraContribution && (
+                <tr className="break-inside-avoid">
+                  <td className={NESTED} />
+                  <td className={`${NESTED} pl-[18px] italic`}>
+                    Additional contribution
+                  </td>
+                  <td className={NESTED} />
+                  <td className={NESTED}>{row.extraContribution}</td>
+                  <td className={NESTED} />
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
     </table>
   );
 }
 
-/** Nested rows: smaller text, title indented one level under the CCA name. */
+/** Activity and contribution rows sit under their CCA in smaller type. */
 const NESTED = "px-1 py-0.5 align-top text-[10.5px]";
-const NESTED_TITLE = `${NESTED} pl-[18px]`;
-/** A description sits under its title, one level further in, across the CCA and Role columns. */
-const NESTED_TEXT = `${NESTED} pl-[36px] pt-0`;
-
-/**
- * The nested activity rows under a CCA row, in the main table's own grid and
- * with NO header row: the title in the CCA column (indented), the role in the
- * Role column and nothing in the Year column; the description on its own line
- * under the title, across the CCA and Role columns. The CCA's additional
- * contribution, when there is one, is the last entry: its label, then its text.
- * A title never separates from its description (`break-after-avoid`), and the
- * whole CCA group stays together on a page.
- */
-function ActivityRows({
-  activities,
-  extraContribution,
-}: {
-  activities: InvolvementRow["activities"];
-  extraContribution: string | null;
-}) {
-  return (
-    <>
-      {activities.map((a, i) => (
-        <NestedEntry
-          key={`${i}-${a.title}`}
-          title={<SemText text={a.title} />}
-          role={a.role}
-          text={a.description}
-        />
-      ))}
-      {extraContribution && (
-        <NestedEntry
-          title={<em>Additional contribution</em>}
-          role={null}
-          text={extraContribution}
-        />
-      )}
-    </>
-  );
-}
-
-function NestedEntry({
-  title,
-  role,
-  text,
-}: {
-  title: ReactNode;
-  role: string | null;
-  text: string | null;
-}) {
-  return (
-    <>
-      <tr className={text ? "break-after-avoid" : undefined}>
-        <td className={NESTED_TITLE}>{title}</td>
-        <td className={NESTED}>
-          <SemText text={role} />
-        </td>
-        <td className={NESTED} />
-      </tr>
-      {text && (
-        <tr className="break-before-avoid">
-          <td colSpan={2} className={NESTED_TEXT}>
-            {text}
-          </td>
-          <td className={NESTED_TEXT} />
-        </tr>
-      )}
-    </>
-  );
-}
 
 /** Activities of CCAs the resident is not a member of. */
 function OtherInvolvement({ rows }: { rows: OtherInvolvementRow[] }) {
@@ -378,64 +322,21 @@ function Awards({ rows }: { rows: AwardRow[] }) {
   );
 }
 
-/** The footnotes for the superscripts on page 1, then a neutral closing line. */
-export function NotesBody({
-  notes,
-  otherNotes = [],
-  hasPartYear = false,
-}: {
-  notes: NoteRow[];
-  /** "Activity: general description" lines for Other involvement. */
-  otherNotes?: ActivityNote[];
-  /** Explain "Sem 1 / Sem 2" when any row uses it. */
-  hasPartYear?: boolean;
-}) {
+/**
+ * The end of the document, after the last page: the Sem 1 / Sem 2 key (only
+ * when a part-year item appears), About this record, and the end marker. It
+ * stays together on one page.
+ */
+export function ClosingBlock({ hasPartYear }: { hasPartYear: boolean }) {
   return (
-    <>
-      {notes.length > 0 && (
-        <section>
-          <h2 className={`${SEC_HEADING} mt-3.5`}>
-            Notes on leadership and CCAs
-          </h2>
-          {notes.map((note) => (
-            <p
-              key={note.number}
-              className={`my-0.5 break-inside-avoid ${
-                note.isMissing ? "text-neutral-600" : ""
-              }`}
-            >
-              <sup>{note.number}</sup> {note.title}: {note.text}
-              {note.activities.map((a, i) => (
-                <span key={`${i}-${a.title}`} className="block pl-[18px]">
-                  <SemText text={a.title} />: {a.text}
-                </span>
-              ))}
-            </p>
-          ))}
-        </section>
-      )}
-
-      {otherNotes.length > 0 && (
-        <section>
-          <h2 className={`${SEC_HEADING} mt-3.5`}>
-            Notes on other involvement
-          </h2>
-          {otherNotes.map((a, i) => (
-            <p key={`${i}-${a.title}`} className="my-0.5 break-inside-avoid">
-              <SemText text={a.title} />: {a.text}
-            </p>
-          ))}
-        </section>
-      )}
-
+    <div className="break-inside-avoid">
       {hasPartYear && (
-        <p className="my-1 text-[10.5px]">
-          Sem 1 / Sem 2: involvement for that semester only.
+        <p className="my-1 mt-3 text-[10.5px]">
+          Sem 1 / Sem 2: involvement for that semester only.
         </p>
       )}
-
-      <section className="break-inside-avoid">
-        <h2 className={SEC_HEADING}>About this record</h2>
+      <section>
+        <h2 className={`${SEC_HEADING} mt-3.5`}>About this record</h2>
         <p className="my-0.5 text-[10.5px]">
           Generated from Raffles Hall&rsquo;s records.
         </p>
@@ -443,6 +344,6 @@ export function NotesBody({
           — END OF TRANSCRIPT —
         </p>
       </section>
-    </>
+    </div>
   );
 }

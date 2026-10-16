@@ -135,6 +135,8 @@ export interface TranscriptInput {
 // ---------------------------------------------------------------------------
 
 export interface InvolvementRow {
+  /** 1, 2, 3 ... in table order; the JCRC row is numbered like any CCA. */
+  number: number;
   /** For the JCRC row: "Junior Common Room Committee (JCRC), <portfolio>". */
   ccaName: string;
   /** Null for plain members: the Role column is left blank. */
@@ -143,15 +145,18 @@ export interface InvolvementRow {
   year: string;
   /** Null when there is none: no "Additional contribution" sub-row. */
   extraContribution: string | null;
-  /** Matches the number in the Explanatory notes page. */
-  footnote: number;
-  /** True for the JCRC row, which points to the dedicated JCRC page. */
-  isJcrc: boolean;
+  /** The CCA's description, shortened for the row; blank when there is none. */
+  description: string;
   /** The CCA's activities this person took part in; empty when there are none. */
-  activities: ActivityRow[];
+  activities: NumberedActivityRow[];
 }
 
-/** One line of the nested Activity | Role | Description table under a CCA. */
+/** An activity row under a CCA row, numbered "1.1", "1.2" ... */
+export interface NumberedActivityRow extends ActivityRow {
+  number: string;
+}
+
+/** One activity of the resident: its title, role and description on one row. */
 export interface ActivityRow {
   /** The title, with " (Sem 1)" / " (Sem 2)" for a part-year activity. */
   title: string;
@@ -165,12 +170,6 @@ export interface ActivityRow {
 export interface OtherInvolvementRow extends ActivityRow {
   /** The CCA that organised it. */
   organiser: string;
-}
-
-/** The general description of an activity, for the notes page. */
-export interface ActivityNote {
-  title: string;
-  text: string;
 }
 
 export interface VolunteerRow {
@@ -215,28 +214,17 @@ export interface JcrcPageModel {
   isPlaceholder: boolean;
 }
 
-export interface NoteRow {
-  number: number;
-  /** The CCA, or "JCRC (Junior Common Room Committee)". */
-  title: string;
-  text: string;
-  /** True when `text` is the missing-description placeholder (rendered muted). */
-  isMissing: boolean;
-  /** "Activity: general description" for this CCA's activities that have one. */
-  activities: ActivityNote[];
-}
-
 /**
  * The document is an ORDERED LIST OF PAGES, each starting on a new printed
- * page: the main page, the JCRC page (JCRC members only), and the notes page.
+ * page: the main page and the JCRC page (JCRC members only). A short closing
+ * block ends the last page.
  * Adding a page or a section later means adding a member here, one entry in
  * the assembler and one renderer; the pages that show a transcript do not
  * change shape.
  */
 export type TranscriptPage =
   | { kind: "main"; sections: TranscriptSection[] }
-  | { kind: "jcrc"; jcrc: JcrcPageModel }
-  | { kind: "notes"; notes: NoteRow[]; otherNotes: ActivityNote[] };
+  | { kind: "jcrc"; jcrc: JcrcPageModel };
 
 export interface TranscriptViewModel {
   academicYear: string;
@@ -247,10 +235,10 @@ export interface TranscriptViewModel {
   hasVolunteerHours: boolean;
   hasAwards: boolean;
   hasJcrc: boolean;
-  /** True when any CCA row is for one semester only (the notes explain Sem 1 / Sem 2). */
+  /** True when any item is for one semester only (the closing block explains Sem 1 / Sem 2). */
   hasPartYear: boolean;
   /** True while the year is closed for review: shown as a DRAFT, not a record. */
   isDraft: boolean;
-  /** Always main first and notes last; the JCRC page sits between them. */
+  /** The main page first; the JCRC page, when there is one, after it. */
   pages: TranscriptPage[];
 }
