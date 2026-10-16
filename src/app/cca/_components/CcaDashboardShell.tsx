@@ -30,6 +30,7 @@ const SECTIONS = [
   { slug: "members", label: "View member list", icon: Users },
   { slug: "details", label: "CCA details", icon: Pencil },
   { slug: "events", label: "Events", icon: CalendarDays },
+  { slug: "points", label: "Points", icon: ClipboardList },
 ] as const;
 
 /**
