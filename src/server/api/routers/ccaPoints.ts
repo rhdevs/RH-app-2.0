@@ -9,7 +9,7 @@ import {
 } from "~/server/api/trpc";
 import { writeAudit } from "~/server/api/routers/admin";
 import { getUserRoles } from "~/server/api/services/access";
-import { assertHeadsCca } from "~/server/api/services/ccaScope";
+import { assertIsHeadOfCca } from "~/server/api/services/ccaPointsAccess";
 import {
   computeCapabilities,
   type AuditAction,
@@ -105,15 +105,14 @@ const overrideInput = z.object({
 export const ccaPointsRouter = createTRPCRouter({
   /**
    * What a head needs to run their page: is entry open, and the range THIS CCA
-   * is judged against. Guarded per-ccaID by assertHeadsCca (admin/jcrc pass via
-   * manageCcaHeads). Returns config only — no roster, no points.
+   * is judged against. STRICTLY heads only: the caller must hold a CcaHead row
+   * for THIS ccaID. Unlike assertHeadsCca, admin and jcrc are not let through by
+   * capability. Returns config only — no roster, no points.
    */
   getEntryContext: identifiedProcedure
     .input(z.object({ ccaID: z.number().int().positive() }))
     .query(async ({ ctx, input }) => {
-      const userID = ctx.session.user.userID;
-      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
-      await assertHeadsCca(ctx.db, { userID, roles }, input.ccaID);
+      await assertIsHeadOfCca(ctx.db, ctx.session.user.userID, input.ccaID);
 
       const [defaultRow, overrideRow] = await Promise.all([
         readDefaultRow(ctx.db),

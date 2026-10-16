@@ -10,9 +10,10 @@ import Workbench from "./Workbench";
 
 /**
  * Loads the two head-gated READS this page needs and nothing else:
- * ccaPoints.getEntryContext (open/closed + allowed range) and
- * cca.memberDirectory (who is on the roster, with matrics). Scores never travel
- * in either direction — they are typed, checked and exported in this browser.
+ * ccaPoints.getEntryContext (open/closed + allowed range, heads of THIS CCA
+ * only) and, after that succeeds, cca.memberDirectory (who is on the roster,
+ * with matrics). Scores never travel in either direction — they are typed,
+ * checked and exported in this browser.
  *
  * No background refetch: a refetched roster would re-run the draft merge, and
  * the page must never swap rows out from under someone mid-typing.
@@ -61,7 +62,12 @@ function Problem({
 export default function PointsWorkbench({ ccaID }: { ccaID: number }) {
   const { data: session, status } = useSession();
   const context = api.ccaPoints.getEntryContext.useQuery({ ccaID }, QUERY_OPTS);
-  const directory = api.cca.memberDirectory.useQuery({ ccaID }, QUERY_OPTS);
+  // The roster is requested only once the head check has passed, so a viewer
+  // who is not this CCA's head never loads it from this page.
+  const directory = api.cca.memberDirectory.useQuery(
+    { ccaID },
+    { ...QUERY_OPTS, enabled: context.isSuccess },
+  );
 
   // Stable roster identity, keyed on content, so the draft merge runs once per
   // real roster change and not on every render.
@@ -103,8 +109,10 @@ export default function PointsWorkbench({ ccaID }: { ccaID: number }) {
       <Problem
         message="Couldn't load points entry."
         onRetry={() => {
-          void context.refetch();
-          void directory.refetch();
+          // Retry only what failed: the roster must never be fetched before the
+          // head check has passed.
+          if (context.error) void context.refetch();
+          else void directory.refetch();
         }}
       />
     );

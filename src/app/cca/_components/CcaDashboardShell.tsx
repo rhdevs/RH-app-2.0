@@ -14,6 +14,7 @@ import {
 
 import { api } from "~/trpc/react";
 import CcaSwitcher from "./CcaSwitcher";
+import { visibleSections } from "./visibleSections";
 
 /**
  * The dashboard chrome: CCA switcher pinned above a section nav, content to the
@@ -56,6 +57,9 @@ export default function CcaDashboardShell({
 
   const ccas = data?.ccas ?? [];
   const current = ccas.find((c) => c.ccaID === ccaID) ?? null;
+  // listMine is "the CCAs I head", so a match means a real CcaHead row. False
+  // while loading and for JCRC/admin who do not head this CCA.
+  const sections = visibleSections(SECTIONS, current !== null);
 
   const isActive = (slug: string) => {
     const base = `/cca/${ccaID}`;
@@ -73,7 +77,7 @@ export default function CcaDashboardShell({
           <CcaSwitcher ccas={ccas} currentCcaID={ccaID} />
 
           <nav className="space-y-1">
-            {SECTIONS.map((s) => {
+            {sections.map((s) => {
               const href = s.slug ? `/cca/${ccaID}/${s.slug}` : `/cca/${ccaID}`;
               const active = isActive(s.slug);
               return (
