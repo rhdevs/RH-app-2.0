@@ -58,7 +58,6 @@ const section = (over: Partial<VolunteerSectionViewProps> = {}) =>
     <VolunteerSectionView
       academicYear="AY2026/27"
       activeCount={1}
-      max={30}
       items={[item()]}
       showRemoved={false}
       onShowRemoved={noop}
@@ -81,11 +80,12 @@ const section = (over: Partial<VolunteerSectionViewProps> = {}) =>
   );
 
 describe("volunteer activity list", () => {
-  it("shows N of 30, Add, and per activity the type, people and total hours", () => {
+  it("shows a plain count, Add, and per activity the type, people and total hours", () => {
     const html = section();
 
     expect(html).toContain("Volunteer hours");
-    expect(html).toContain("1 of 30");
+    expect(html).toContain("1 volunteer activity");
+    expect(html).not.toMatch(/\d+ of \d+/);
     expect(html).toContain("Add volunteer activity");
     expect(html).toContain("Weekly tuition");
     expect(html).toContain("Regular");
@@ -105,13 +105,15 @@ describe("volunteer activity list", () => {
     expect(html).toContain("1 hour in total");
   });
 
-  it("disables Add at 30 and says why", () => {
-    const html = section({ activeCount: 30 });
-    expect(html).toContain("30 of 30");
-    expect(html).toMatch(
-      /<button[^>]*disabled=""[^>]*>Add volunteer activity<\/button>/,
-    );
-    expect(html).toContain("Remove one to add another.");
+  it("never disables Add or talks of a limit, however many there are", () => {
+    for (const activeCount of [30, 31, 120]) {
+      const html = section({ activeCount });
+      expect(html).toContain(`${activeCount} volunteer activities`);
+      expect(html).not.toMatch(
+        /<button[^>]*disabled=""[^>]*>Add volunteer activity<\/button>/,
+      );
+      expect(html).not.toMatch(/limit|Remove one to add another|\d+ of \d+/i);
+    }
   });
 
   it("shows a removed activity with Restore only", () => {

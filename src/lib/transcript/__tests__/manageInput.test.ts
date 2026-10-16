@@ -150,8 +150,10 @@ describe("text rules", () => {
       description: "Ran the programme.",
       ...over,
     });
-    expect(make({ contributions: Array(11).fill(row()) }).success).toBe(false);
-    expect(make({ contributions: Array(10).fill(row()) }).success).toBe(true);
+    // No visible row limit: 11 rows are fine; only a far-away hidden cap refuses.
+    expect(make({ contributions: Array(11).fill(row()) }).success).toBe(true);
+    expect(make({ contributions: Array(200).fill(row()) }).success).toBe(true);
+    expect(make({ contributions: Array(201).fill(row()) }).success).toBe(false);
     // activity: required, 1 to 80
     expect(
       make({ contributions: [row({ activity: "a".repeat(81) })] }).success,
@@ -392,7 +394,7 @@ describe("volunteerActivityCreateInput", () => {
     expect(add({ date: "2026-02-30" })).toBe(false);
   });
 
-  it("sets people by key, at most 300", () => {
+  it("sets people by key, with only a hidden cap far above real use", () => {
     const people = (n: number) =>
       volunteerPeopleSetInput.safeParse({
         activityID: ID,
@@ -400,7 +402,9 @@ describe("volunteerActivityCreateInput", () => {
         userIDs: Array.from({ length: n }, (_, i) => `e${i}`),
       }).success;
     expect(people(300)).toBe(true);
-    expect(people(301)).toBe(false);
+    expect(people(301)).toBe(true);
+    expect(people(2000)).toBe(true);
+    expect(people(2001)).toBe(false);
     expect(people(0)).toBe(true);
   });
 

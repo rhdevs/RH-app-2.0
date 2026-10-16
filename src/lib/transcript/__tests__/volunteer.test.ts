@@ -22,12 +22,14 @@ import {
 const AY = "AY2026/27";
 
 describe("volunteer limits and hours", () => {
-  it("fixes the limits the design names", () => {
-    expect(MAX_VOLUNTEER_ACTIVITIES).toBe(30);
-    expect(MAX_VOLUNTEER_SESSIONS).toBe(120);
-    expect(MAX_VOLUNTEER_PEOPLE).toBe(300);
+  it("keeps only far-away hidden count caps, and counts plainly", () => {
+    expect(MAX_VOLUNTEER_ACTIVITIES).toBe(1000);
+    expect(MAX_VOLUNTEER_SESSIONS).toBe(1000);
+    expect(MAX_VOLUNTEER_PEOPLE).toBe(2000);
     expect(GRID_PAGE_SIZE).toBe(8);
-    expect(volunteerCountLine(4)).toBe("4 of 30");
+    expect(volunteerCountLine(4)).toBe("4 volunteer activities");
+    expect(volunteerCountLine(1)).toBe("1 volunteer activity");
+    expect(volunteerCountLine(40)).not.toMatch(/ of /);
   });
 
   it("accepts quarter hours from 0.25 to 24 only", () => {

@@ -117,7 +117,8 @@ describe("JCRC self page", () => {
     expect(html).toContain('maxLength="60"');
     expect(html).toContain('maxLength="300"');
     expect(html).toContain("65 characters left"); // activity "Ran orientation" is 15
-    expect(html).toContain("2 of 10");
+    expect(html).toContain("2 contributions");
+    expect(html).not.toMatch(/\d+ of \d+/);
   });
 
   it("offers Move up, Move down and Remove, disabling a move that has nowhere to go", () => {
@@ -145,10 +146,10 @@ describe("JCRC self page", () => {
 
     expect(html).toContain("Removed. Ran orientation");
     expect(html).toContain(">Undo<");
-    expect(html).toContain("1 of 10");
+    expect(html).toContain("1 contribution");
   });
 
-  it("stops adding at ten and says how many there are", () => {
+  it("never stops adding at ten, and says how many there are", () => {
     const full = render({
       draft: {
         ...EMPTY_JCRC,
@@ -161,8 +162,9 @@ describe("JCRC self page", () => {
       /<button\b[^>]*>(?:(?!<\/button>).)*Add contribution/g,
     ) ?? [])[0];
 
-    expect(add).toMatch(/\sdisabled=""/);
-    expect(full).toContain("10 of 10");
+    expect(add).not.toMatch(/\sdisabled=""/);
+    expect(full).toContain("10 contributions");
+    expect(full).not.toMatch(/\d+ of \d+/);
   });
 
   it("asks for an activity on every row before saving", () => {

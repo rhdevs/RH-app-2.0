@@ -197,9 +197,8 @@ describe("unsaved-changes guard decision", () => {
 
 describe("activity error wording", () => {
   it("turns the new server codes into sentences", () => {
-    expect(errorText("AT_MOST_20_ACTIVITIES")).toMatch(/20/);
     expect(errorText("ACTIVITY_REMOVED")).toMatch(/Restore/);
-    expect(errorText("AT_MOST_200_PARTICIPANTS")).toMatch(/200/);
+    expect(errorText("TOO_MANY_AT_ONCE")).toMatch(/smaller steps/);
     expect(errorText("DUPLICATE_PARTICIPANT")).toMatch(/twice/);
     expect(errorText("ACTIVITY_NOT_FOUND")).toMatch(/no longer/);
     expect(errorText("NOT_A_CCA_HEAD")).toMatch(/CCA heads/);

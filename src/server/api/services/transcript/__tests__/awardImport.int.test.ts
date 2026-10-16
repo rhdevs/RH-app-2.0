@@ -288,7 +288,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(result.rows.find((r) => r.row === 11)!.status).toBe("ready");
       });
 
-      it("refuses 2001 rows with a plain message, and takes 2000", async () => {
+      it("takes 2001 rows, and refuses 10,001 with a plain message", async () => {
         const rows = (n: number) =>
           Array.from({ length: n }, (_, i) => ({
             identifier: `seed-r05@u.nus.edu`,
@@ -298,7 +298,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           await errorOf(
             as(JCRC).awardImport.preview({
               academicYear: AY,
-              rows: rows(2001),
+              rows: rows(10_001),
             }),
           ),
         ).toMatch(/^BAD_REQUEST:/);
@@ -306,7 +306,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           await errorOf(
             as(JCRC).awardImport.preview({
               academicYear: AY,
-              rows: rows(2000),
+              rows: rows(2001),
             }),
           ),
         ).toBe("ok");

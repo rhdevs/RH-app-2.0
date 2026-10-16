@@ -14,7 +14,6 @@ import {
   yearOptions,
 } from "~/lib/transcript/adminView";
 import {
-  CONTRIBUTIONS_MAX_ITEMS,
   CONTRIBUTION_ACTIVITY_MAX,
   CONTRIBUTION_DESCRIPTION_MAX,
   CONTRIBUTION_ROLE_MAX,
@@ -77,8 +76,7 @@ export interface JcrcSelfViewProps {
 export function JcrcSelfView(p: JcrcSelfViewProps) {
   const { draft } = p;
   const live = liveContributions(draft.contributions);
-  const canAddContribution =
-    !p.readOnly && live.length < CONTRIBUTIONS_MAX_ITEMS;
+  const canAddContribution = !p.readOnly;
   const patchRow = (index: number, patch: Partial<ContributionDraft>) =>
     p.onDraft({
       contributions: draft.contributions.map((r, j) =>
@@ -320,7 +318,7 @@ export function JcrcSelfView(p: JcrcSelfViewProps) {
               </Button>
             )}
             <span className="text-xs text-gray-500">
-              {`${live.length} of ${CONTRIBUTIONS_MAX_ITEMS}`}
+              {`${live.length} ${live.length === 1 ? "contribution" : "contributions"}`}
             </span>
           </div>
           <ErrorLine

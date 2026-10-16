@@ -163,7 +163,6 @@ export interface VolunteerActivitySummary {
 
 export interface VolunteerActivityList {
   activeCount: number;
-  max: number;
   activities: VolunteerActivitySummary[];
 }
 
@@ -214,7 +213,6 @@ export async function volunteerActivitiesList(
 
   return {
     activeCount: count,
-    max: MAX_VOLUNTEER_ACTIVITIES,
     activities: rows.map((r) => {
       const mine = group(people, r.id).map((p) => p.userID);
       const totals = personTotals({
@@ -267,8 +265,6 @@ export interface VolunteerActivityDetail {
   }>;
   totals: Record<string, number>;
   totalHours: number;
-  maxSessions: number;
-  maxPeople: number;
 }
 
 /** One activity in full: its sessions, people and ticks, for the grid. */
@@ -329,8 +325,6 @@ export async function volunteerActivityGet(
       })),
     totals: Object.fromEntries(totals),
     totalHours: grandTotal(totals),
-    maxSessions: MAX_VOLUNTEER_SESSIONS,
-    maxPeople: MAX_VOLUNTEER_PEOPLE,
   };
 }
 
@@ -360,7 +354,7 @@ export async function volunteerActivityCreate(
       (await activeCount(tx, input.ccaID, input.academicYear)) >=
       MAX_VOLUNTEER_ACTIVITIES
     ) {
-      throw fail("CONFLICT", `AT_MOST_${MAX_VOLUNTEER_ACTIVITIES}_ACTIVITIES`);
+      throw fail("CONFLICT", "TOO_MANY_AT_ONCE");
     }
     const activity = await tx.volunteerActivity.create({
       data: {
@@ -472,7 +466,7 @@ export async function volunteerActivityRestore(
       (await activeCount(tx, ccaID, activity.academicYear)) >=
       MAX_VOLUNTEER_ACTIVITIES
     ) {
-      throw fail("CONFLICT", `AT_MOST_${MAX_VOLUNTEER_ACTIVITIES}_ACTIVITIES`);
+      throw fail("CONFLICT", "TOO_MANY_AT_ONCE");
     }
     await tx.volunteerActivity.update({
       where: { id },
@@ -520,7 +514,7 @@ export async function volunteerSessionAdd(
       select: { date: true, hours: true },
     });
     if (active.length >= MAX_VOLUNTEER_SESSIONS) {
-      throw fail("CONFLICT", `AT_MOST_${MAX_VOLUNTEER_SESSIONS}_SESSIONS`);
+      throw fail("CONFLICT", "TOO_MANY_AT_ONCE");
     }
     const defaults = nextSessionDefaults({
       sessions: active.map((s) => ({
@@ -613,7 +607,7 @@ export async function volunteerSessionRestore(
       (await activeSessionCount(tx, session.activityID)) >=
       MAX_VOLUNTEER_SESSIONS
     ) {
-      throw fail("CONFLICT", `AT_MOST_${MAX_VOLUNTEER_SESSIONS}_SESSIONS`);
+      throw fail("CONFLICT", "TOO_MANY_AT_ONCE");
     }
     await tx.volunteerSession.update({
       where: { id: sessionID },

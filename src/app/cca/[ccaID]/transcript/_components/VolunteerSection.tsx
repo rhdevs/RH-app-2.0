@@ -26,7 +26,6 @@ import {
 } from "~/lib/transcript/useUnsavedChangesGuard";
 import {
   KIND_LABEL,
-  MAX_VOLUNTEER_ACTIVITIES,
   REMOVE_VOLUNTEER_ACTIVITY_CONFIRMATION,
   formatVolunteerHours,
   readKind,
@@ -52,12 +51,9 @@ export interface VolunteerListItem {
 export const VOLUNTEER_HELPER =
   "Hours are recorded by activity. Choose who took part, add a session for each time you met, and tick who attended. Each person's total appears on their transcript.";
 
-export const VOLUNTEER_FULL_NOTE = `This CCA has ${MAX_VOLUNTEER_ACTIVITIES} volunteer activities for the year. Remove one to add another.`;
-
 export interface VolunteerSectionViewProps {
   academicYear: string;
   activeCount: number;
-  max: number;
   items: VolunteerListItem[];
   showRemoved: boolean;
   onShowRemoved: (value: boolean) => void;
@@ -83,7 +79,6 @@ export interface VolunteerSectionViewProps {
 /** The "Volunteer hours" card: the count, Add, the list, Show removed. */
 export function VolunteerSectionView(p: VolunteerSectionViewProps) {
   const returnFocus = useReturnFocus();
-  const full = p.activeCount >= p.max;
   return (
     <AlertDialog
       open={p.removing !== null}
@@ -95,12 +90,7 @@ export function VolunteerSectionView(p: VolunteerSectionViewProps) {
             {volunteerCountLine(p.activeCount)}
           </p>
           {!p.readOnly && (
-            <Button
-              type="button"
-              size="sm"
-              disabled={full || p.busy}
-              onClick={p.onAdd}
-            >
+            <Button type="button" size="sm" disabled={p.busy} onClick={p.onAdd}>
               Add volunteer activity
             </Button>
           )}
@@ -116,11 +106,6 @@ export function VolunteerSectionView(p: VolunteerSectionViewProps) {
         {p.readOnlyNote && (
           <p className="mb-3 text-sm text-amber-800" role="status">
             {p.readOnlyNote}
-          </p>
-        )}
-        {!p.readOnly && full && (
-          <p className="mb-3 text-sm text-gray-600" role="status">
-            {VOLUNTEER_FULL_NOTE}
           </p>
         )}
         <ErrorLine message={p.loadError ?? p.actionError} />
@@ -323,7 +308,6 @@ export default function VolunteerSection({
       <VolunteerSectionView
         academicYear={academicYear}
         activeCount={list.data?.activeCount ?? 0}
-        max={list.data?.max ?? MAX_VOLUNTEER_ACTIVITIES}
         items={items}
         showRemoved={showRemoved}
         onShowRemoved={setShowRemoved}

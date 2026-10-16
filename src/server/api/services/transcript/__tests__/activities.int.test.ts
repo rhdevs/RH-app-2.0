@@ -164,7 +164,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const result = await list(SOCCER_HEAD);
 
         expect(result.activeCount).toBe(1);
-        expect(result.max).toBe(20);
+        expect(result).not.toHaveProperty("max");
         const league = result.activities[0]!;
         expect(league.title).toBe("Inter-hall league");
         expect(league.period).toBe("full");
@@ -474,52 +474,49 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     /* ---------------------------------------------------------------- */
-    describe("the limit of 20 activities", () => {
-      it("accepts the 20th and refuses the 21st", async () => {
-        await fillSoccer(20);
-        expect((await list(SOCCER_HEAD)).activeCount).toBe(20);
-
-        expect(await errorOf(create(SOCCER_HEAD, "One too many"))).toBe(
-          "CONFLICT:AT_MOST_20_ACTIVITIES",
-        );
+    describe("no visible limit on activities", () => {
+      it("takes far more than 20 activities, and counts them plainly", async () => {
+        await fillSoccer(25);
+        expect((await list(SOCCER_HEAD)).activeCount).toBe(25);
+        expect(await errorOf(create(SOCCER_HEAD, "The 26th"))).toBe("ok");
         expect(
           await db.ccaActivity.count({
             where: { ccaID: SOCCER, academicYear: AY },
           }),
-        ).toBe(20);
+        ).toBe(26);
       });
 
-      it("counts only activities that are not removed", async () => {
-        await fillSoccer(20);
+      it("restores a removed activity whatever the count", async () => {
+        await fillSoccer(25);
         const id = await seeded(SOCCER, "Filler 1");
         await as(SOCCER_HEAD).activities.remove({ id, ccaID: SOCCER });
-
-        expect(await errorOf(create(SOCCER_HEAD, "Fits now"))).toBe("ok");
-        expect((await list(SOCCER_HEAD)).activeCount).toBe(20);
-      });
-
-      it("refuses to restore an activity if that would pass 20", async () => {
-        await fillSoccer(20);
-        const id = await seeded(SOCCER, "Filler 1");
-        await as(SOCCER_HEAD).activities.remove({ id, ccaID: SOCCER });
-        await create(SOCCER_HEAD, "Takes the free place");
-
+        await create(SOCCER_HEAD, "Another");
         expect(
           await errorOf(
             as(SOCCER_HEAD).activities.restore({ id, ccaID: SOCCER }),
           ),
-        ).toBe("CONFLICT:AT_MOST_20_ACTIVITIES");
-        const row = await db.ccaActivity.findUniqueOrThrow({ where: { id } });
-        expect(row.removedAt).toBeTruthy();
+        ).toBe("ok");
       });
 
-      it("counts each CCA and year on its own", async () => {
-        await fillSoccer(20);
-
+      it("keeps only a hidden safety cap far above real use", async () => {
+        await db.ccaActivity.createMany({
+          data: Array.from({ length: 999 }, (_, i) => ({
+            academicYear: AY,
+            ccaID: SOCCER,
+            title: `Bulk ${i}`,
+            period: "full",
+            createdBy: SOCCER_HEAD.id,
+          })),
+        });
+        // The seeded league makes 1,000 with these 999.
+        expect(await errorOf(create(SOCCER_HEAD, "Over the cap"))).toBe(
+          "CONFLICT:TOO_MANY_AT_ONCE",
+        );
+        // Another CCA is counted on its own.
         expect(
           await errorOf(create(OTHER_HEAD, "Other CCA is fine", HALL_NIGHT)),
         ).toBe("ok");
-      });
+      }, 120_000);
     });
 
     /* ---------------------------------------------------------------- */
@@ -630,14 +627,19 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("BAD_REQUEST:DUPLICATE_PARTICIPANT");
       });
 
-      it("rejects more than 200 people and over-long role or description", async () => {
-        const many = Array.from({ length: 201 }, (_, i) => ({
-          userID: `SEED-R${String(i)}`,
-          role: "",
-          description: "",
-        }));
+      it("rejects only past the hidden cap, and over-long role or description", async () => {
+        const many = (n: number) =>
+          Array.from({ length: n }, (_, i) => ({
+            userID: `SEED-R${String(i)}`,
+            role: "",
+            description: "",
+          }));
 
-        expect(await errorOf(set(many))).toMatch(/^BAD_REQUEST:/);
+        // 201 people are not refused for their number (these residents do not exist).
+        expect(await errorOf(set(many(201)))).toBe(
+          "NOT_FOUND:RESIDENT_NOT_FOUND",
+        );
+        expect(await errorOf(set(many(2001)))).toMatch(/^BAD_REQUEST:/);
         expect(
           await errorOf(set(people(["SEED-R04", "x".repeat(61)]))),
         ).toMatch(/^BAD_REQUEST:/);

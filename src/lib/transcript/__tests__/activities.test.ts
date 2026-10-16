@@ -85,14 +85,17 @@ const notesPage = (vm: TranscriptViewModel) =>
   vm.pages.find((p) => p.kind === "notes")!;
 
 describe("activity limits", () => {
-  it("fixes the limits the prompt names", () => {
-    expect(MAX_ACTIVITIES).toBe(20);
-    expect(MAX_PARTICIPANTS).toBe(200);
+  it("keeps the text limits, and only far-away hidden count caps", () => {
+    expect(MAX_ACTIVITIES).toBe(1000);
+    expect(MAX_PARTICIPANTS).toBe(2000);
     expect(ACTIVITY_TITLE_MAX).toBe(80);
     expect(ACTIVITY_DESCRIPTION_MAX).toBe(300);
     expect(PARTICIPANT_ROLE_MAX).toBe(60);
     expect(PARTICIPANT_DESCRIPTION_MAX).toBe(300);
-    expect(activityCountLine(3)).toBe("3 of 20");
+    expect(activityCountLine(3)).toBe("3 activities");
+    expect(activityCountLine(1)).toBe("1 activity");
+    expect(activityCountLine(0)).toBe("0 activities");
+    expect(activityCountLine(25)).not.toMatch(/ of /);
   });
 
   it("reads an unknown period as the full year", () => {
@@ -201,7 +204,7 @@ describe("activity input rules", () => {
     expect(row("", "x".repeat(301))).toBe(false);
   });
 
-  it("allows at most 200 participants", () => {
+  it("takes any realistic number of participants, and refuses only past the hidden cap", () => {
     const people = (n: number) =>
       Array.from({ length: n }, (_, i) => ({
         userID: `e${String(i).padStart(7, "0")}`,
@@ -215,7 +218,9 @@ describe("activity input rules", () => {
         participants: people(n),
       }).success;
     expect(parse(200)).toBe(true);
-    expect(parse(201)).toBe(false);
+    expect(parse(300)).toBe(true);
+    expect(parse(2000)).toBe(true);
+    expect(parse(2001)).toBe(false);
     expect(parse(0)).toBe(true);
   });
 });

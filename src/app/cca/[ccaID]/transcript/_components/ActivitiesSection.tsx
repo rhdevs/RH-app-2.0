@@ -18,7 +18,6 @@ import {
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
 import {
-  MAX_ACTIVITIES,
   PERIOD_LABEL,
   REMOVE_ACTIVITY_CONFIRMATION,
   activityCountLine,
@@ -40,12 +39,9 @@ export interface ActivityListItem extends EditableActivity {
 export const ACTIVITIES_HELPER =
   "Things this CCA did during the year. Each person ticked gets the activity on their transcript, under this CCA. People outside the CCA appear under Other involvement.";
 
-export const ACTIVITIES_FULL_NOTE = `This CCA has ${MAX_ACTIVITIES} activities for the year. Remove one to add another.`;
-
 export interface ActivitiesSectionViewProps {
   academicYear: string;
   activeCount: number;
-  max: number;
   items: ActivityListItem[];
   showRemoved: boolean;
   onShowRemoved: (value: boolean) => void;
@@ -67,7 +63,6 @@ export interface ActivitiesSectionViewProps {
 /** The "Activities" card: the count, Add activity, the list, Show removed. */
 export function ActivitiesSectionView(p: ActivitiesSectionViewProps) {
   const returnFocus = useReturnFocus();
-  const full = p.activeCount >= p.max;
   return (
     <AlertDialog
       open={p.removing !== null}
@@ -79,12 +74,7 @@ export function ActivitiesSectionView(p: ActivitiesSectionViewProps) {
             {activityCountLine(p.activeCount)}
           </p>
           {!p.readOnly && (
-            <Button
-              type="button"
-              size="sm"
-              disabled={full || p.busy}
-              onClick={p.onAdd}
-            >
+            <Button type="button" size="sm" disabled={p.busy} onClick={p.onAdd}>
               Add activity
             </Button>
           )}
@@ -100,11 +90,6 @@ export function ActivitiesSectionView(p: ActivitiesSectionViewProps) {
         {p.readOnlyNote && (
           <p className="mb-3 text-sm text-amber-800" role="status">
             {p.readOnlyNote}
-          </p>
-        )}
-        {!p.readOnly && full && (
-          <p className="mb-3 text-sm text-gray-600" role="status">
-            {ACTIVITIES_FULL_NOTE}
           </p>
         )}
         <ErrorLine message={p.loadError ?? p.actionError} />
@@ -278,7 +263,6 @@ export default function ActivitiesSection({
       <ActivitiesSectionView
         academicYear={academicYear}
         activeCount={list.data?.activeCount ?? 0}
-        max={list.data?.max ?? MAX_ACTIVITIES}
         items={items}
         showRemoved={showRemoved}
         onShowRemoved={setShowRemoved}

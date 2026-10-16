@@ -7,10 +7,12 @@ export const ACTIVITY_TITLE_MAX = 80;
 export const ACTIVITY_DESCRIPTION_MAX = 300;
 export const PARTICIPANT_ROLE_MAX = 60;
 export const PARTICIPANT_DESCRIPTION_MAX = 300;
-/** Active activities per CCA per academic year. */
-export const MAX_ACTIVITIES = 20;
-/** Active participants per activity. */
-export const MAX_PARTICIPANTS = 200;
+/**
+ * HIDDEN safety caps, far above real use and never shown on a screen: activities
+ * per CCA and year, and participants in one save.
+ */
+export const MAX_ACTIVITIES = 1000;
+export const MAX_PARTICIPANTS = 2000;
 
 export const ACTIVITY_PERIODS = ["full", "sem1", "sem2"] as const;
 export type ActivityPeriod = (typeof ACTIVITY_PERIODS)[number];
@@ -154,8 +156,9 @@ export function firstDuplicate(userIDs: readonly string[]): string | null {
 
 /* ---- wording -------------------------------------------------------------- */
 
+/** "1 activity", "3 activities": a plain count, never "of N". */
 export const activityCountLine = (active: number) =>
-  `${active} of ${MAX_ACTIVITIES}`;
+  `${active} ${active === 1 ? "activity" : "activities"}`;
 
 export const REMOVE_ACTIVITY_CONFIRMATION =
   "This takes the activity off every participant's transcript. You can restore it later from Show removed.";

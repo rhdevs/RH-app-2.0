@@ -16,7 +16,8 @@ export const DESCRIPTION_MAX = 800;
 export const CONTRIBUTION_ACTIVITY_MAX = 80;
 export const CONTRIBUTION_ROLE_MAX = 60;
 export const CONTRIBUTION_DESCRIPTION_MAX = 300;
-export const CONTRIBUTIONS_MAX_ITEMS = 10;
+/** HIDDEN safety cap on JCRC contribution rows in one save; never shown. */
+export const CONTRIBUTIONS_MAX_ITEMS = 200;
 export const TESTIMONIAL_MAX = 1500;
 
 export const PUBLISHED_NOTE = (academicYear: string) =>

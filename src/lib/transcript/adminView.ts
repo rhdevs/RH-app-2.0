@@ -144,17 +144,15 @@ const ERROR_TEXT: Record<string, string> = {
   SESSION_NOT_FOUND: "That session no longer exists.",
   SESSION_REMOVED: "That session has been removed. Restore it to edit it.",
   ONEOFF_HAS_ONE_SESSION: "A one-off activity has exactly one session.",
-  AT_MOST_30_ACTIVITIES:
-    "This CCA already has 30 volunteer activities for the year. Remove one first.",
-  AT_MOST_120_SESSIONS: "An activity can have at most 120 sessions.",
-  AT_MOST_300_PEOPLE: "An activity can have at most 300 people.",
   INVALID_ATTENDANCE:
     "Someone or some session in that save was removed. Reload and try again.",
   DUPLICATE_CHANGE: "The same tick was sent twice. Reload and try again.",
   HOURS_REQUIRED_FOR_ONEOFF: "A one-off activity needs its hours.",
   TOO_MANY_CHANGES: "Too many changes at once. Save in smaller steps.",
+  TOO_MANY_AT_ONCE:
+    "That is more than one save can take. Do it in smaller steps.",
   TOO_MANY_ROWS:
-    "This file has more than 2,000 rows. Split it and upload in parts.",
+    "This file has more than 10,000 rows. Split it and upload in parts.",
   UNDECIDED_AWARD_NAMES: "Decide every new award name before importing.",
   AWARD_TYPE_GONE:
     "An award chosen for a new name is no longer in the catalogue.",
@@ -167,14 +165,9 @@ const ERROR_TEXT: Record<string, string> = {
   AWARD_DUPLICATE: "That person already has this award for the year.",
   BATCH_NOT_FOUND: "That upload no longer exists.",
   BATCH_ALREADY_UNDONE: "That upload was already undone.",
-  AT_MOST_300_RECIPIENTS: "Assign to at most 300 people at a time.",
-  AT_MOST_500_AWARDS: "Select at most 500 awards at a time.",
   NOT_A_CCA_HEAD: "Only CCA heads can search residents.",
   ACTIVITY_NOT_FOUND: "That activity no longer exists.",
   ACTIVITY_REMOVED: "That activity has been removed. Restore it to edit it.",
-  AT_MOST_20_ACTIVITIES:
-    "This CCA already has 20 activities for the year. Remove one first.",
-  AT_MOST_200_PARTICIPANTS: "An activity can have at most 200 people.",
   DUPLICATE_PARTICIPANT: "The same person is listed twice.",
   JCRC_MEMBER_REQUIRED: "Only JCRC members have a JCRC page.",
   RECORD_NOT_FOUND: "That record no longer exists.",
@@ -185,7 +178,6 @@ const ERROR_TEXT: Record<string, string> = {
   HOURS_TOO_SMALL: "Hours must be at least 0.25.",
   HOURS_TOO_LARGE: "Hours must be at most 24.",
   HOURS_MUST_BE_QUARTERS: "Hours go up in steps of 0.25.",
-  AT_MOST_10_CONTRIBUTIONS: "Use at most 10 contributions.",
 };
 
 /** The server's validation codes (see manageInput.ts), as sentences. */

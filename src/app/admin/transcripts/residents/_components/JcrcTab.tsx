@@ -8,7 +8,6 @@ import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import { errorText, fieldError } from "~/lib/transcript/adminView";
 import {
-  CONTRIBUTIONS_MAX_ITEMS,
   CONTRIBUTION_ACTIVITY_MAX,
   CONTRIBUTION_DESCRIPTION_MAX,
   CONTRIBUTION_ROLE_MAX,
@@ -343,7 +342,6 @@ function JcrcForm({
             variant="outline"
             size="sm"
             className="mt-3"
-            disabled={live.length >= CONTRIBUTIONS_MAX_ITEMS}
             onClick={() =>
               patch({
                 contributions: [...draft.contributions, blankContribution()],
@@ -355,7 +353,7 @@ function JcrcForm({
           </Button>
         )}
         <p className="mt-2 text-xs text-gray-500">
-          {live.length} of {CONTRIBUTIONS_MAX_ITEMS} contributions.
+          {live.length} {live.length === 1 ? "contribution" : "contributions"}.
         </p>
       </fieldset>
 

@@ -14,6 +14,7 @@ import {
   MAX_BULK,
 } from "./awards";
 import { DURATIONS } from "./duration";
+import { CONTRIBUTIONS_MAX_ITEMS } from "./headView";
 import {
   MAX_VOLUNTEER_PEOPLE,
   VOLUNTEER_DESCRIPTION_MAX,
@@ -140,7 +141,9 @@ const jcrcFields = {
   portfolio: line(0, 80),
   position: line(0, 80),
   description: block(0, 800),
-  contributions: z.array(contributionRow).max(10, "AT_MOST_10_CONTRIBUTIONS"),
+  contributions: z
+    .array(contributionRow)
+    .max(CONTRIBUTIONS_MAX_ITEMS, "TOO_MANY_AT_ONCE"),
   testimonial: block(0, 1500),
 };
 
@@ -188,7 +191,7 @@ const participantRow = z.object({
 export const participantsSetInput = activityRefInput.extend({
   participants: z
     .array(participantRow)
-    .max(MAX_PARTICIPANTS, `AT_MOST_${MAX_PARTICIPANTS}_PARTICIPANTS`),
+    .max(MAX_PARTICIPANTS, "TOO_MANY_AT_ONCE"),
 });
 
 /* ---- volunteer activities ------------------------------------------------ */
@@ -276,9 +279,7 @@ export const volunteerSessionRefInput = z.object({
 export const volunteerPeopleSetInput = z.object({
   activityID: idInput.shape.id,
   ccaID: ccaIDInput,
-  userIDs: z
-    .array(userIDInput)
-    .max(MAX_VOLUNTEER_PEOPLE, `AT_MOST_${MAX_VOLUNTEER_PEOPLE}_PEOPLE`),
+  userIDs: z.array(userIDInput).max(MAX_VOLUNTEER_PEOPLE, "TOO_MANY_AT_ONCE"),
 });
 
 /** Cells changed in one save; one tick or un-tick each. */
@@ -335,7 +336,7 @@ export const awardsAssignInput = z.object({
   recipients: z
     .array(z.object({ userID: userIDInput, citation: awardCitation }))
     .min(1, "REQUIRED")
-    .max(MAX_ASSIGN, `AT_MOST_${MAX_ASSIGN}_RECIPIENTS`),
+    .max(MAX_ASSIGN, "TOO_MANY_AT_ONCE"),
 });
 
 export const awardUpdateInput = z.object({
@@ -348,7 +349,7 @@ export const awardsBulkInput = z.object({
   ids: z
     .array(awardIdInput)
     .min(1, "REQUIRED")
-    .max(MAX_BULK, `AT_MOST_${MAX_BULK}_AWARDS`),
+    .max(MAX_BULK, "TOO_MANY_AT_ONCE"),
 });
 
 export const awardBatchesListInput = z.object({

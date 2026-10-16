@@ -13,9 +13,9 @@ import { academicYearInput, idInput, line } from "./manageInput";
  */
 
 /** Rows in one upload. */
-export const MAX_IMPORT_ROWS = 2000;
+export const MAX_IMPORT_ROWS = 10_000;
 export const TOO_MANY_ROWS_MESSAGE =
-  "This file has more than 2,000 rows. Split it and upload in parts.";
+  "This file has more than 10,000 rows. Split it and upload in parts.";
 /** Rows written per chunk. */
 export const IMPORT_CHUNK_SIZE = 200;
 

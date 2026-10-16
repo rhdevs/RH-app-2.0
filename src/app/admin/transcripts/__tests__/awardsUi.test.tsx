@@ -256,7 +256,8 @@ describe("assign an award", () => {
     expect(html).toContain('data-testid="picker"');
     expect(html).toContain("Seed Resident 12");
     expect(html).toContain('aria-label="Remove Seed Resident 12"');
-    expect(html).toContain("1 selected (at most 300)");
+    expect(html).toContain("1 selected");
+    expect(html).not.toContain("at most");
   });
 
   it("prefills each person's citation hint with the award's default", () => {

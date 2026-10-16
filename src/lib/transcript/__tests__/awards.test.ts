@@ -242,11 +242,11 @@ describe("wording and limits", () => {
     expect(UNDO_BATCH_CONFIRMATION(1)).toContain("1 award ");
   });
 
-  it("fixes the limits", () => {
+  it("keeps the text limits, and only far-away hidden count caps", () => {
     expect(AWARD_NAME_MAX).toBe(80);
     expect(AWARD_CITATION_MAX).toBe(300);
-    expect(MAX_ASSIGN).toBe(300);
-    expect(MAX_BULK).toBe(500);
+    expect(MAX_ASSIGN).toBe(2000);
+    expect(MAX_BULK).toBe(2000);
   });
 });
 
@@ -287,7 +287,7 @@ describe("award inputs", () => {
     ).toBe(false);
   });
 
-  it("assigns to 1 to 300 people", () => {
+  it("assigns to anyone from 1 person up to the hidden cap", () => {
     const people = (n: number) =>
       awardsAssignInput.safeParse({
         academicYear: AY,
@@ -296,16 +296,20 @@ describe("award inputs", () => {
       }).success;
     expect(people(1)).toBe(true);
     expect(people(300)).toBe(true);
-    expect(people(301)).toBe(false);
+    expect(people(301)).toBe(true);
+    expect(people(2000)).toBe(true);
+    expect(people(2001)).toBe(false);
     expect(people(0)).toBe(false);
   });
 
-  it("removes or restores at most 500 awards at a time", () => {
+  it("removes or restores up to the hidden cap of awards at a time", () => {
     const ids = (n: number) =>
       awardsBulkInput.safeParse({ ids: Array.from({ length: n }, () => ID) })
         .success;
     expect(ids(500)).toBe(true);
-    expect(ids(501)).toBe(false);
+    expect(ids(501)).toBe(true);
+    expect(ids(2000)).toBe(true);
+    expect(ids(2001)).toBe(false);
     expect(ids(0)).toBe(false);
     expect(awardBatchUndoInput.safeParse({ batchId: ID }).success).toBe(true);
   });

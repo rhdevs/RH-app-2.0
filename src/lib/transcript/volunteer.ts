@@ -10,12 +10,13 @@ export const VOLUNTEER_TITLE_MAX = 80;
 export const VOLUNTEER_DESCRIPTION_MAX = 300;
 export const VOLUNTEER_HOURS_MIN = 0.25;
 export const VOLUNTEER_HOURS_MAX = 24;
-/** Active volunteer activities per CCA per academic year. */
-export const MAX_VOLUNTEER_ACTIVITIES = 30;
-/** Active sessions per activity. */
-export const MAX_VOLUNTEER_SESSIONS = 120;
-/** Active people per activity. */
-export const MAX_VOLUNTEER_PEOPLE = 300;
+/**
+ * HIDDEN safety caps, far above real use and never shown on a screen: volunteer
+ * activities per CCA and year, sessions per activity, and people in one save.
+ */
+export const MAX_VOLUNTEER_ACTIVITIES = 1000;
+export const MAX_VOLUNTEER_SESSIONS = 1000;
+export const MAX_VOLUNTEER_PEOPLE = 2000;
 /** Sessions the attendance grid draws at once. */
 export const GRID_PAGE_SIZE = 8;
 /** What the first session lasts when the activity has no default. */
@@ -166,8 +167,9 @@ export function compareVolunteerActivities(
 
 /* ---- wording ----------------------------------------------------------------- */
 
+/** "1 volunteer activity", "3 volunteer activities": a plain count. */
 export const volunteerCountLine = (active: number) =>
-  `${active} of ${MAX_VOLUNTEER_ACTIVITIES}`;
+  `${active} volunteer ${active === 1 ? "activity" : "activities"}`;
 
 export const NOT_VOLUNTEERING_NOTE =
   "This CCA is no longer a volunteering CCA.";

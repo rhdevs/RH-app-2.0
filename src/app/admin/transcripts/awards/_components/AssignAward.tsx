@@ -9,7 +9,6 @@ import { errorText, fieldError } from "~/lib/transcript/adminView";
 import {
   AWARD_CITATION_MAX,
   AWARD_NAME_MAX,
-  MAX_ASSIGN,
   assignResultLine,
 } from "~/lib/transcript/awards";
 import { counterText } from "~/lib/transcript/headView";
@@ -62,13 +61,7 @@ export function defaultFor(p: AssignAwardViewProps): string {
 export function canAssign(p: AssignAwardViewProps): boolean {
   const named =
     p.choice === NEW_AWARD ? p.newName.trim() !== "" : p.choice !== "";
-  return (
-    !p.readOnly &&
-    !p.assigning &&
-    named &&
-    p.recipients.length > 0 &&
-    p.recipients.length <= MAX_ASSIGN
-  );
+  return !p.readOnly && !p.assigning && named && p.recipients.length > 0;
 }
 
 /** "Assign an award": pick or create the award, add residents, Assign. */
@@ -191,7 +184,7 @@ export function AssignAwardView(p: AssignAwardViewProps) {
           )}
         </Button>
         <p className="text-xs text-gray-500" role="status">
-          {p.recipients.length} selected (at most {MAX_ASSIGN})
+          {p.recipients.length} selected
         </p>
       </div>
       <ErrorLine message={p.error} />

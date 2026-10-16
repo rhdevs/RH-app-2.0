@@ -114,7 +114,7 @@ export function volunteerProblem(draft: VolunteerDraft): string | null {
     }
   }
   if (draft.people.length > MAX_VOLUNTEER_PEOPLE) {
-    return `An activity can have at most ${MAX_VOLUNTEER_PEOPLE} people.`;
+    return "That is more people than one save can take. Save in smaller steps.";
   }
   return null;
 }

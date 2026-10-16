@@ -5,10 +5,9 @@
 
 export const AWARD_NAME_MAX = 80;
 export const AWARD_CITATION_MAX = 300;
-/** People in one "Assign an award". */
-export const MAX_ASSIGN = 300;
-/** Awards in one bulk remove or restore. */
-export const MAX_BULK = 500;
+/** HIDDEN safety caps per request: people in one assign, awards in one bulk action. */
+export const MAX_ASSIGN = 2000;
+export const MAX_BULK = 2000;
 
 /** Lower-case, trimmed, inner whitespace collapsed: what makes an award name unique. */
 export function normalizeAwardName(name: string): string {

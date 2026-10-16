@@ -104,11 +104,12 @@ describe("import: the columns", () => {
     expect(map()).not.toMatch(/<button[^>]*disabled=""[^>]*>Preview<\/button>/);
   });
 
-  it("refuses more than 2,000 rows with the plain message", () => {
-    const html = map({ rowCount: 2001 });
+  it("refuses more than 10,000 rows with the plain message", () => {
+    const html = map({ rowCount: 10_001 });
     expect(html).toContain(
-      "This file has more than 2,000 rows. Split it and upload in parts.",
+      "This file has more than 10,000 rows. Split it and upload in parts.",
     );
+    expect(map({ rowCount: 2001 })).not.toContain("more than");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Preview<\/button>/);
   });
 });

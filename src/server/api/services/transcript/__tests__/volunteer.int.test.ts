@@ -221,7 +221,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           academicYear: AY,
         });
 
-        expect(list.max).toBe(30);
+        expect(list).not.toHaveProperty("max");
         expect(list.activeCount).toBe(1);
         const t = list.activities[0]!;
         expect(t.title).toMatch(/^Weekly tuition/);
@@ -788,44 +788,31 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
       };
 
-      it("accepts the 30th activity and refuses the 31st", async () => {
-        await fill(29);
-        expect(
-          await errorOf(
-            as(CHILDREN_HEAD).activities.create(newActivity(CHILDREN)),
-          ),
-        ).toBe("ok");
-        expect(
-          await errorOf(
-            as(CHILDREN_HEAD).activities.create(newActivity(CHILDREN)),
-          ),
-        ).toBe("CONFLICT:AT_MOST_30_ACTIVITIES");
-      });
-
-      it("counts only active ones, and refuses a restore that would pass 30", async () => {
-        await fill(30);
-        const victim = await db.volunteerActivity.findFirstOrThrow({
-          where: { ccaID: CHILDREN, title: "Filler 5" },
-        });
+      it("takes far more than 30 volunteer activities, and restores whatever the count", async () => {
+        await fill(35);
         const head = as(CHILDREN_HEAD);
-        await head.activities.remove({ id: victim.id, ccaID: CHILDREN });
         expect(
           await errorOf(head.activities.create(newActivity(CHILDREN))),
         ).toBe("ok");
+        const victim = await db.volunteerActivity.findFirstOrThrow({
+          where: { ccaID: CHILDREN, title: "Filler 5" },
+        });
+        await head.activities.remove({ id: victim.id, ccaID: CHILDREN });
+        await head.activities.create(newActivity(CHILDREN));
         expect(
           await errorOf(
             head.activities.restore({ id: victim.id, ccaID: CHILDREN }),
           ),
-        ).toBe("CONFLICT:AT_MOST_30_ACTIVITIES");
-      });
+        ).toBe("ok");
+      }, 120_000);
 
-      it("refuses the 121st session, and a restore past 120", async () => {
+      it("takes more than 120 sessions, and restores one whatever the count", async () => {
         const t = await tuition();
         const have = await db.volunteerSession.count({
           where: { activityID: t.id, ...live },
         });
         await db.volunteerSession.createMany({
-          data: Array.from({ length: 120 - have }, (_, i) => ({
+          data: Array.from({ length: 125 - have }, (_, i) => ({
             activityID: t.id,
             academicYear: AY,
             ccaID: CHILDREN,
@@ -838,8 +825,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           await errorOf(
             head.sessions.add({ activityID: t.id, ccaID: CHILDREN }),
           ),
-        ).toBe("CONFLICT:AT_MOST_120_SESSIONS");
-
+        ).toBe("ok");
         const [first] = await sessionsOf(t.id);
         await head.sessions.remove({ sessionID: first!.id, ccaID: CHILDREN });
         await head.sessions.add({ activityID: t.id, ccaID: CHILDREN });
@@ -847,8 +833,32 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           await errorOf(
             head.sessions.restore({ sessionID: first!.id, ccaID: CHILDREN }),
           ),
-        ).toBe("CONFLICT:AT_MOST_120_SESSIONS");
+        ).toBe("ok");
       });
+
+      it("keeps only hidden safety caps far above real use", async () => {
+        const t = await tuition();
+        const have = await db.volunteerSession.count({
+          where: { activityID: t.id, ...live },
+        });
+        await db.volunteerSession.createMany({
+          data: Array.from({ length: 1000 - have }, (_, i) => ({
+            activityID: t.id,
+            academicYear: AY,
+            ccaID: CHILDREN,
+            date: new Date(Date.UTC(2027, 0, 1 + (i % 28))),
+            hours: 1,
+          })),
+        });
+        expect(
+          await errorOf(
+            as(CHILDREN_HEAD).sessions.add({
+              activityID: t.id,
+              ccaID: CHILDREN,
+            }),
+          ),
+        ).toBe("CONFLICT:TOO_MANY_AT_ONCE");
+      }, 120_000);
     });
 
     /* ---------------------------------------------------------------- */
@@ -895,12 +905,17 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await rows()).toEqual(before);
       });
 
-      it("rejects the same person twice and more than 300 people", async () => {
+      it("rejects the same person twice, and only past the hidden cap in number", async () => {
         expect(await errorOf(set(["SEED-R12", "SEED-R12"]))).toBe(
           "BAD_REQUEST:DUPLICATE_PARTICIPANT",
         );
-        const many = Array.from({ length: 301 }, (_, i) => `SEED-R${i}`);
-        expect(await errorOf(set(many))).toMatch(/^BAD_REQUEST:/);
+        const many = (n: number) =>
+          Array.from({ length: n }, (_, i) => `SEED-R${i}`);
+        // 301 people are not refused for their number (these residents do not exist).
+        expect(await errorOf(set(many(301)))).toBe(
+          "NOT_FOUND:RESIDENT_NOT_FOUND",
+        );
+        expect(await errorOf(set(many(2001)))).toMatch(/^BAD_REQUEST:/);
       });
 
       it("keeps a removed person's ticks but stops counting them, and brings them back", async () => {

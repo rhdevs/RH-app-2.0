@@ -400,25 +400,27 @@ describe("limits and wording", () => {
       award: "A",
     }));
 
-  it("takes 2000 rows and refuses 2001 with the plain message", () => {
-    expect(MAX_IMPORT_ROWS).toBe(2000);
+  it("takes 10,000 rows and refuses 10,001 with the plain message", () => {
+    expect(MAX_IMPORT_ROWS).toBe(10_000);
     expect(
-      awardImportPreviewInput.safeParse({ academicYear: AY, rows: rows(2000) })
-        .success,
+      awardImportPreviewInput.safeParse({
+        academicYear: AY,
+        rows: rows(10_000),
+      }).success,
     ).toBe(true);
     const over = awardImportPreviewInput.safeParse({
       academicYear: AY,
-      rows: rows(2001),
+      rows: rows(10_001),
     });
     expect(over.success).toBe(false);
     expect(TOO_MANY_ROWS_MESSAGE).toBe(
-      "This file has more than 2,000 rows. Split it and upload in parts.",
+      "This file has more than 10,000 rows. Split it and upload in parts.",
     );
     expect(errorText("TOO_MANY_ROWS")).toBe(TOO_MANY_ROWS_MESSAGE);
     expect(
       awardImportCommitInput.safeParse({
         academicYear: AY,
-        rows: rows(2001),
+        rows: rows(10_001),
         decisions: [],
       }).success,
     ).toBe(false);

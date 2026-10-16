@@ -59,7 +59,6 @@ export interface ActivityView {
 export interface ActivityList {
   /** Active (not removed) activities: the number the 20 limit counts. */
   activeCount: number;
-  max: number;
   activities: ActivityView[];
 }
 
@@ -120,7 +119,6 @@ export async function activitiesList(
 
   return {
     activeCount: count,
-    max: MAX_ACTIVITIES,
     activities: rows.map((r) => ({
       id: r.id,
       title: r.title,
@@ -147,7 +145,7 @@ async function requireActivity(db: PrismaClient, id: string, ccaID: number) {
   return row;
 }
 
-const tooMany = () => fail("CONFLICT", `AT_MOST_${MAX_ACTIVITIES}_ACTIVITIES`);
+const tooMany = () => fail("CONFLICT", "TOO_MANY_AT_ONCE");
 
 export async function activityCreate(
   db: PrismaClient,
@@ -292,7 +290,7 @@ export async function participantsSet(
   now: Date = new Date(),
 ) {
   if (input.participants.length > MAX_PARTICIPANTS) {
-    throw fail("BAD_REQUEST", `AT_MOST_${MAX_PARTICIPANTS}_PARTICIPANTS`);
+    throw fail("BAD_REQUEST", "TOO_MANY_AT_ONCE");
   }
   const activity = await requireActivity(db, input.id, input.ccaID);
   if (activity.removedAt) throw fail("CONFLICT", "ACTIVITY_REMOVED");

@@ -100,7 +100,7 @@ export function editorProblem(state: EditorState): string | null {
     return `Use at most ${ACTIVITY_DESCRIPTION_MAX} characters for the description.`;
   }
   if (state.people.length > MAX_PARTICIPANTS) {
-    return `An activity can have at most ${MAX_PARTICIPANTS} people.`;
+    return "That is more people than one save can take. Save in smaller steps.";
   }
   for (const p of state.people) {
     const name = p.displayName ?? p.userID;
