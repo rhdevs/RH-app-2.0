@@ -894,3 +894,64 @@ Every editable item can be created, viewed, edited, removed (softly) and restore
 **Gaps this pass closed.** Roster rows now have Clear role, Clear contribution and Reset to default (a live list only: a frozen list has no defaults to go back to; Save applies it). A JCRC page can be removed and restored (soft) by a manager. A manual CCA entry has the whole cycle. A resident's activity participation, volunteer ticks and awards can be edited from one place.
 
 **Gaps left, on purpose.** A volunteer person can only be added or dropped from the CCA's own volunteering screen (the resident panel edits ticks, not who is on the activity). An award upload cannot be redone, only its awards assigned again. An unlock or a hold cannot be edited, only ended and made again. A transcript period and a catalogue entry have no remove (the purge function and archiving cover them). A tick is a state, so unticking deletes the row.
+
+
+## 30. Requirements traceability
+
+Every requirement in the project brief, where it is implemented, and the tests that prove it. Paths are under `src/` unless they start with `docs/`, `scripts/` or `prisma/`. "int" tests run against the local database (`npm run test:db`); the others are unit and view tests (`npm run test`).
+
+### Feature requirements
+
+| Requirement | Where | Tests | Status |
+| --- | --- | --- | --- |
+| One transcript per resident per AY; leadership roles stated, plain members blank | `services/transcript/loader.ts` `loadTranscriptInput`; `lib/transcript/assemble.ts` | `lib/transcript/__tests__/assemble.test.ts`; `services/transcript/__tests__/transcript.int.test.ts` | done |
+| Only the resident's CCAs described; description from CcaProfile; missing ones handled | `loader.ts` `loadMemberships`; `assemble.ts` notes; `TranscriptSections.tsx` | `assemble.test.ts` ("Description not yet available"); `TranscriptDocument.test.tsx` | done |
+| CCA activities: heads and managers create per CCA per AY (title 80, description 300, period, max 20) | `services/transcript/activities.ts`; `lib/transcript/activities.ts`; `lib/transcript/manageInput.ts`; `app/cca/[ccaID]/transcript/_components/ActivityEditor.tsx`, `ActivitiesSection.tsx` | `activities.test.ts`, `manageInput.test.ts`, `activitiesUi.test.tsx`, `activities.int.test.ts` | done |
+| People from a CCA-member tick list plus search for anyone in the hall; per-person role 60 / description 300 with fallback | `ActivityEditor.tsx` (Select all, Clear all, search); `activities.ts` `participantsSet`; `assemble.ts` fallback | `activityEditor.test.ts`, `activitiesUi.test.tsx`, `activities.int.test.ts` | done |
+| Nested Activity / Role / Description table under the CCA row, "Additional contribution" last row (500) | `TranscriptSections.tsx`; `assemble.ts` | `TranscriptDocument.test.tsx`, `assemble.test.ts` | done |
+| Non-members get "Other involvement" (Activity, Organised by, Role, Description); activity descriptions on the notes page | `assemble.ts`; `TranscriptSections.tsx` | `TranscriptDocument.test.tsx`, `assemble.test.ts`, `activities.int.test.ts` | done |
+| Role period inside the membership period | `lib/transcript/duration.ts` `roleFits`; `manageRoster.ts` `assertRoleFitsMembership`; `lib/transcript/manualMembership.ts`; `headView.ts` `fitRolePeriod` | `rolePeriod.test.ts`, `rolePeriodRow.test.tsx`, `manualMembership.test.ts`, `transcriptManage.int.test.ts`, `corrections.int.test.ts` | done |
+| Volunteering CCAs by `CcaProfile.isVolunteering`; admin page lists tagged only, search to add, Remove | `services/transcript/manageRecords.ts` `setVolunteering`; `app/admin/transcripts/_components/VolunteeringTags.tsx` | `panels.test.tsx`, `transcriptManage.int.test.ts` | done |
+| Volunteer activities (regular / one-off, description), people tick list with Select all plus search, sessions (one-off has exactly one) | `services/transcript/manageVolunteer.ts`; `VolunteerEditor.tsx`; `lib/transcript/volunteer.ts`, `volunteerEditor.ts` | `volunteer.test.ts`, `volunteerEditor.test.ts`, `volunteerUi.test.tsx`, `volunteer.int.test.ts` | done |
+| Attendance grid: per-session Tick all / Clear all / Copy previous, per-person Tick all / Clear all, per-cell hours override, live totals, one session at a time on a phone | `VolunteerAttendance.tsx`; `lib/transcript/volunteerGrid.ts` | `volunteerGrid.test.ts`, `volunteerUi.test.tsx` | done |
+| Transcript shows total hours per activity, never session counts | `loader.ts` `loadVolunteering`; `TranscriptSections.tsx` | `assemble.test.ts`, `TranscriptDocument.test.tsx`, `volunteer.int.test.ts` | done |
+| Award catalogue (name, default citation, archive, no hard delete) | `services/transcript/manageAwards.ts`; `awards/_components/AwardCatalogue.tsx` | `awards.test.ts`, `awardsUi.test.tsx`, `awards.int.test.ts` | done |
+| One-shot assignment with search chips, per-person citation, duplicates skipped and listed | `manageAwards.ts` `awardsAssign`; `AssignAward.tsx`; `lib/transcript/awards.ts` `planAssignment` | `awards.test.ts`, `awardsUi.test.tsx`, `awards.int.test.ts` | done |
+| CSV import reusing the bulk-import pattern (template, upload/paste, column map, preview with Ready / Not found / Duplicate / Invalid, catalogue matching, import, history with batch undo); identifier NUS email or NUSNET | `services/transcript/awardImport.ts` (reuses `parseCsv`, `resolveIdentifier`, `bulkResolver`); `AwardImport.tsx`; `AwardHistory.tsx` | `awardImport.test.ts`, `awardImportUi.test.tsx`, `awardImport.int.test.ts` | done |
+| Awards list: group by award, search, filter by AY, inline edit, bulk remove / restore; transcript shows Award / Year with citation beneath | `AwardsList.tsx`; `manageAwards.ts`; `TranscriptSections.tsx` | `awardsUi.test.tsx`, `awards.int.test.ts`, `TranscriptDocument.test.tsx` | done |
+| JCRC page: role, responsibilities, contributions table (10 rows, 80/60/300, add/edit/remove/reorder), member's testimonial, Master and President signature placeholders | `manageRecords.ts` `jcrcSave`; `_components/JcrcSelf.tsx`; `JcrcPageBody.tsx`; `headView.ts` contribution helpers | `jcrcSelf.test.tsx`, `headView.test.ts`, `TranscriptDocument.test.tsx`, `transcriptManage.int.test.ts` | done |
+| CRUD everywhere with soft remove, Show removed and Restore, actor and time on every change | each service; matrix in section 29 | `activities.int.test.ts`, `volunteer.int.test.ts`, `awards.int.test.ts`, `corrections.int.test.ts` | done (exceptions listed in section 29: a tick is a state; catalogue archives; periods have no remove) |
+| Per-resident corrections: unlock one resident in review or published, correct, relock | `services/transcript/residentRecords.ts` (guard), `residentManage.ts`; `lib/transcript/corrections.ts`; `app/admin/transcripts/residents/**` | `corrections.test.ts`, `residentsUi.test.tsx`, `corrections.int.test.ts` | done |
+| Manual CCA entries (tagged "Manual" in admin views only) | `residentManual.ts`; `lib/transcript/manualMembership.ts`; `loader.ts` merge | `manualMembership.test.ts`, `residentsUi.test.tsx`, `corrections.int.test.ts` | done |
+| Withhold ("Your transcript is on hold. Contact the hall office.") and Release | `residentManage.ts`; `routers/transcript.ts` `mine.get`; `access.ts` `readiness`; `app/transcript/_components/OnHold.tsx` | `corrections.test.ts`, `corrections.int.test.ts` | done |
+| Per-resident history with required reasons; no "amended" mark | `residentRecords.ts` `recordResidentEvent`, `logCorrections`; `HistoryTab.tsx`; `residentInput.ts` `reasonInput` | `corrections.int.test.ts`, `residentsUi.test.tsx`, `residentView.test.ts` | done |
+| "My transcript" under My Applications (desktop and mobile), Ready badge and dot, first-opened record; link under My CCAs removed | `app/_components/header.tsx`; `services/transcript/access.ts`; `app/profile/page.tsx` | `headerEntry.test.tsx`, `transcript.int.test.ts` | done |
+| Per-AY download-by date shown as a banner | `periods.ts` `upsertDownloadBy`; `lib/transcript/pageState.ts` `downloadByBanner`; `app/transcript/page.tsx` | `downloadBanner.test.ts`, `periods.test.ts`, `transcript.int.test.ts` | done |
+
+### Academic years and freezing
+
+| Requirement | Where | Tests | Status |
+| --- | --- | --- | --- |
+| AY 1 Aug to 31 Jul, rolls over by date | `lib/transcript/academicYear.ts` | `academicYear.test.ts` | done |
+| Every record keyed by year, never referencing another year; tested, documented per-AY purge, no UI | `services/transcript/retention.ts`; section 23 | `retention.test.ts` (registry parses the schema), `lifecycle.int.test.ts`, `corrections.int.test.ts` | done |
+| Each CCA's roster frozen at its handover for its oldest unfrozen AY, never a future AY | `services/transcript/freeze.ts`; `lib/transcript/lifecycle.ts` `termAcademicYear`, `freezeTarget` | `lifecycle.test.ts`, `lifecycle.int.test.ts` | done |
+| Before handover a removed member is gone; after handover new members count toward the next AY | `loader.ts` (live vs frozen); `liveRoster.ts` | `lifecycle.int.test.ts`, `transcript.int.test.ts` | done |
+| Heads may Lock roster; Close year freezes every CCA not yet frozen | `freeze.ts`; `routers/transcriptManage.ts` `roster.lock`; `periods.ts` `closeYear` | `lifecycle.int.test.ts` | done |
+| After a freeze, the frozen year is editable by JCRC/admin only; the handover dialog warns heads | `editRights.ts`; `lib/transcript/lifecycle.ts` `editRefusal`; `app/cca/_components/CcaHandoverDialog.tsx` | `lifecycle.test.ts`, `lifecycle.int.test.ts` | done |
+| Any head change that removes a current head freezes first (handoverHeads, revokeCcaHead, transferCcaHead); grant-only never; a failed freeze refuses the head change | `freeze.ts` `freezeBeforeHeadChange`; hooks in `routers/cca.ts`, `routers/admin.ts` | `lifecycle.int.test.ts` | done |
+| Admin/JCRC can Unfreeze while the AY is not published | `freeze.ts` `unfreezeCca`; `FreezeTable.tsx` | `freezeTable.test.tsx`, `lifecycle.int.test.ts` | done |
+| Status collecting, closed (draft "Draft - check your information"), published; Reopen for review; Back to collecting (freezes stay); JCRC and admin control it | `periods.ts`; `lib/transcript/lifecycle.ts` `transitionBlocker`; `PeriodPanel.tsx`; `TranscriptDocument.tsx` | `lifecycle.test.ts`, `panels.test.tsx`, `TranscriptDocument.test.tsx`, `lifecycle.int.test.ts` | done |
+| Published locks edits except per-resident corrections | `editRights.ts`; `residentRecords.ts` | `corrections.test.ts`, `corrections.int.test.ts`, `transcriptManage.int.test.ts` | done |
+| Heads edit only the CCA's current term AY, or a year they locked, never after a handover or close-year freeze | `lib/transcript/lifecycle.ts` `editRefusal`; `editRights.ts` | `lifecycle.test.ts`, `lifecycle.int.test.ts` | done |
+| Residents keep access to past published transcripts | `periods.ts` `listViewableYears`; `routers/transcript.ts` `mine` | `transcript.int.test.ts` | done |
+
+### Decisions
+
+| Decision | Where | Tests | Status |
+| --- | --- | --- | --- |
+| No commitment level, no per-entry signatures; no verification (no code, QR, /verify, snapshots, reissue states) | `lib/transcript/types.ts`; the /verify pages are removed | `TranscriptDocument.test.tsx` (no verification text); print checks | done |
+| Awards editor is jcrc and admin | `lib/transcript/permissions.ts`; `manageAccess.ts` `requireManager` | `permissions.test.ts`, `transcriptManage.int.test.ts` | done |
+| No backfill: transcripts start at AY2026/27 | `lib/transcript/lifecycle.ts` `FIRST_ACADEMIC_YEAR` | `lifecycle.test.ts` | done |
+| Template C layout (crest every page, black and white, page 1 sections, JCRC page, notes page, one-line year cell, "Head (Sem 2)", notes key, no faculty) | `app/transcript/_components/*`; `assemble.ts` | `TranscriptDocument.test.tsx`, `assemble.test.ts`; print checks | done |
+| Durations full / sem1 / sem2 per member per CCA per AY, default from `decidedAt` vs `sem2Start` (Singapore midnight), shown only when not full | `lib/transcript/duration.ts`; `lib/transcript/sgDate.ts`; `manageRoster.ts` | `duration.test.ts`, `sgDate.test.ts`, `transcriptManage.int.test.ts` | done |
+| Vitest the only new dev dependency; `npm run test` DB-free, `npm run test:db` local DB | `package.json`, `vitest.config.ts` | both suites | done |
