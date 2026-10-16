@@ -1,7 +1,6 @@
 import Image from "next/image";
-import { type ReactNode } from "react";
 
-/** Source of the crest on every page of the transcript (and on /verify). */
+/** Source of the crest on every page of the transcript. */
 export const CREST = {
   src: "/transcript/rh-crest.png",
   alt: "Raffles Hall crest",
@@ -29,19 +28,16 @@ export function Crest() {
 }
 
 /**
- * Top of every transcript page: crest at the left, then the page title. `aside`
- * sits at the right (the QR code on page 1).
+ * Top of every transcript page: crest at the left, then the page title.
  */
 export function PageHeader({
   title,
   subtitle,
   level = "h2",
-  aside,
 }: {
   title: string;
   subtitle?: string;
   level?: "h1" | "h2";
-  aside?: ReactNode;
 }) {
   const Heading = level;
   return (
@@ -57,7 +53,6 @@ export function PageHeader({
           )}
         </div>
       </div>
-      {aside}
     </header>
   );
 }

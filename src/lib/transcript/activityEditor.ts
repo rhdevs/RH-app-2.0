@@ -233,6 +233,3 @@ export function outsiders(
 
 export const peopleCountLine = (n: number) =>
   `${n} ${n === 1 ? "person" : "people"} selected`;
-
-export const ACTIVITY_REMOVED_NOTE =
-  "This activity has been removed. Restore it to edit it.";

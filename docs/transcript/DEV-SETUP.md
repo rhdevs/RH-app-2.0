@@ -69,7 +69,7 @@ npx prisma db push
 npm run test:db
 ```
 
-`test:db` loads `.env` (Node's `--env-file`) and runs only the `*.int.test.ts` files. The suite re-runs the seed script first to get a known baseline, and before each test restores the period, the roster annotations and the issued transcripts. It temporarily edits one seeded CcaHead date and one seeded UserCCA row and puts them back. Run it after any change to `periods.ts`, `loader.ts`, `issue.ts` or the router.
+`test:db` loads `.env` (Node's `--env-file`) and runs only the `*.int.test.ts` files. The suite re-runs the seed script first to get a known baseline, and before each test restores the period and the roster annotations. It temporarily edits one seeded CcaHead date and one seeded UserCCA row and puts them back. Run it after any change to `periods.ts`, `loader.ts`, the services or the routers.
 
 ## Signing in locally
 
@@ -108,7 +108,7 @@ Start with `npm run dev:db:up`, `npm run dev:db:seed`, `npm run dev`. Sign in at
 | Academic year | `seed-r01` (admin) or `seed-r02` (JCRC) | Clear the date, press Publish | Error asking for the semester 2 date. Enter 12 Jan 2027, Save, Publish, confirm: status Published and "N members frozen, 0 rows could not be matched". Reopen, confirm: status Collecting. |
 | Volunteering CCAs | same | Flip a switch, reload | Change persists; the four RVC CCAs start on |
 | Awards | same | Add an award for `SEED-R12`, then void it | Appears, then disappears; "Show voided" brings it back. Locked while Published |
-| Preview | same | Pick a resident (3+ letters), open preview | Template C with the Preview bar; JCRC page only for `seed-r02`/`seed-r03`; no issue is created |
+| Preview | same | Pick a resident (3+ letters), open preview | Template C with the Preview bar; JCRC page only for `seed-r02`/`seed-r03`; nothing is recorded |
 
 Re-run `npm run dev:db:seed` afterwards to return the year to Collecting.
 
@@ -141,7 +141,7 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 | Names | `seed-r01` | Publish, add and void an award | "Published on ... by Seed Resident 01", "Recorded by ... Voided by ..." show names, not SEED- keys. |
 | Phone | any | `/transcript/preview/many-ccas` at 375 px wide | No horizontal scroll; the Year column stays on one line. |
 
-Run `npm run dev:db:seed` afterwards to restore the seeded state. If `prisma db push` complains about old local TranscriptIssue or JcrcService documents (their shapes changed), drop the local TranscriptIssue collection and delete the local JcrcService documents first, then re-seed.
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
 
 ## Manual check: year lifecycle and handover freeze
 
@@ -188,7 +188,7 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 
 ## Manual check: volunteer activities
 
-The seed gives AY2026/27 two RVC activities. RVC Children (9002, head `seed-r06`): "Weekly tuition for neighbourhood children", 10 weekly sessions of 2 hours from 7 September, the CCA's members plus one outsider as people, `seed-r12` ticked in every session (one with their own 1 hour, so 19 hours). RVC Special Projects (9001, head `seed-r07`): a one-off "Beach clean-up, East Coast Park" of 4 hours. A removed "Cancelled food drive" must never appear on a transcript. After pulling this change, `prisma db push` adds the four volunteer collections; the old `VolunteerRecord` collection is simply no longer used (the seed drops it locally).
+The seed gives AY2026/27 two RVC activities. RVC Children (9002, head `seed-r06`): "Weekly tuition for neighbourhood children", 10 weekly sessions of 2 hours from 7 September, the CCA's members plus one outsider as people, `seed-r12` ticked in every session (one with their own 1 hour, so 19 hours). RVC Special Projects (9001, head `seed-r07`): a one-off "Beach clean-up, East Coast Park" of 4 hours. A removed "Cancelled food drive" must never appear on a transcript. After pulling this change, `prisma db push` adds the four volunteer collections.
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |

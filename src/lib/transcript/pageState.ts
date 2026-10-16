@@ -3,7 +3,7 @@ import { formatSgDate, sgDateToInstant } from "./sgDate";
 import { yearFromParam } from "./assemble";
 
 /**
- * Page-level decisions for /transcript and /verify, kept PURE so they can be
+ * Page-level decisions for /transcript, kept PURE so they can be
  * tested without rendering a page or touching a database.
  */
 

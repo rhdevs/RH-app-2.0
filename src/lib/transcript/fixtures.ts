@@ -13,7 +13,7 @@ import {
  * TRANSCRIPT SPECIMENS — NOTHING HERE IS REAL.
  *
  * Fourteen made-up residents, each shaped to exercise one edge case of the
- * layout. Every name, matric number and verification code is invented, and
+ * layout. Every name and matric number is invented, and
  * every resident is flagged `isSpecimen`, which is what puts the SPECIMEN
  * watermark and banner on the pages (not the route). This is the ONLY fixture
  * source: the pages only ever go through the lookups at the bottom, so real

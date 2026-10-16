@@ -225,12 +225,6 @@ async function reset() {
   ]) {
     await model.deleteMany({ where: { ccaID: { in: CCA_IDS } } });
   }
-  // The single-record model this replaced: drop what an older seed left behind.
-  try {
-    await db.$runCommandRaw({ drop: "VolunteerRecord" });
-  } catch {
-    /* no such collection */
-  }
   await db.transcriptRosterEntry.deleteMany({ where: { userID: mine } });
   await db.ccaApplication.deleteMany({ where: { userID: mine } });
   await db.ccaHead.deleteMany({ where: { userID: mine } });

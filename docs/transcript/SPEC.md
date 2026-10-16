@@ -1,12 +1,12 @@
 # Transcript — Design and Data-Model Spec
 
-> **Current design:** verification, the QR code, issuing and stored snapshots were removed. Where an earlier section describes them, section 22 supersedes it.
+> **How to read this document.** Sections 1 to 21 record the original proposal and the early phases as they were written. Some of what they describe was later removed or replaced: verification, the QR code, issuing and stored snapshots (section 22), the single-record `VolunteerRecord` (section 25) and one-at-a-time awards (section 26). Sections 22 onward describe the feature as built, and section 30 maps every requirement to its code and tests.
 
 **Ask:** Each resident can download a generated end-of-Academic-Year (AY) transcript of their hall involvements, to (1) recognise their efforts and (2) formalise their involvements. Style target: an NUS Student Development Transcript.
 
-**Scope:** Phase 1 only. This document is a proposal; **nothing below is implemented**. No code, schema or dependency is changed by this PR.
+**Scope (original):** the Phase 1 proposal. Everything it proposed was later built, changed or dropped as the later sections say.
 
-**Status:** proposal, draft for review. Open questions are in section 10.
+**Status:** implemented. Open questions of the proposal are in section 10; the decisions taken are in sections 12 onward.
 
 ---
 
