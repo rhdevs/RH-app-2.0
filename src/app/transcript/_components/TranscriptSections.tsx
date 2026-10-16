@@ -148,7 +148,7 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
                 className={`break-inside-avoid ${hasNested ? "break-after-avoid" : ""}`}
               >
                 <td className={TD}>{row.number}</td>
-                <td className={TD}>{row.ccaName}</td>
+                <td className={`${TD} font-bold`}>{row.ccaName}</td>
                 <td className={TD}>
                   <SemText text={row.role} />
                 </td>
@@ -159,23 +159,25 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
               </tr>
               {row.activities.map((a) => (
                 <tr key={a.number} className="break-inside-avoid">
-                  <td className={`${NESTED} text-neutral-700`}>{a.number}</td>
-                  <td className={`${NESTED} pl-[18px]`}>
+                  <td className={NESTED}>{a.number}</td>
+                  <td className={`${NESTED} ${INDENT}`}>
                     <SemText text={a.title} />
                   </td>
                   <td className={NESTED}>{a.role}</td>
-                  <td className={NESTED}>{a.description}</td>
+                  <td className={`${NESTED} ${INDENT}`}>{a.description}</td>
                   <td className={NESTED} />
                 </tr>
               ))}
               {row.extraContribution && (
                 <tr className="break-inside-avoid">
                   <td className={NESTED} />
-                  <td className={`${NESTED} pl-[18px] italic`}>
+                  <td className={`${NESTED} ${INDENT} italic`}>
                     Additional contribution
                   </td>
                   <td className={NESTED} />
-                  <td className={NESTED}>{row.extraContribution}</td>
+                  <td className={`${NESTED} ${INDENT}`}>
+                    {row.extraContribution}
+                  </td>
                   <td className={NESTED} />
                 </tr>
               )}
@@ -189,6 +191,9 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
 
 /** Activity and contribution rows sit under their CCA in smaller type. */
 const NESTED = "px-1 py-0.5 align-top text-[10.5px]";
+
+/** The one small left indent (20px with the cell padding) of an activity's title and description; its Role cell is not offset. */
+const INDENT = "pl-5";
 
 /** Activities of CCAs the resident is not a member of. */
 function OtherInvolvement({ rows }: { rows: OtherInvolvementRow[] }) {

@@ -524,7 +524,13 @@ describe("TranscriptDocument: activities", () => {
       "Sang the opening solo and rehearsed the altos each week.",
       "",
     ]);
-    expect(row.cells[1]!.attrs).toContain("pl-[18px]");
+    // Title and description share one indent; number and Role are not offset.
+    expect(row.cells[1]!.attrs).toContain("pl-5");
+    expect(row.cells[3]!.attrs).toContain("pl-5");
+    expect(row.cells[0]!.attrs).not.toContain("pl-");
+    expect(row.cells[2]!.attrs).not.toContain("pl-");
+    expect(row.cells[1]!.attrs).not.toContain("font-bold");
+    expect(row.tr).not.toContain("text-neutral");
     expect(row.tr).toContain("break-inside-avoid");
 
     // The CCA row above never separates from its first activity.
@@ -539,6 +545,30 @@ describe("TranscriptDocument: activities", () => {
     expect(bare.cells[2]!.text).toBe("");
     expect(bare.cells[3]!.text).toContain("A December visit");
     expect(bare.cells[4]!.text).toBe("");
+  });
+
+  it("makes the CCA name bold and leaves the other CCA cells regular", () => {
+    const html = render("member-with-activities");
+    const cca = html.match(/<tr[^>]*>(<td[^>]*>1<\/td>.*?)<\/tr>/)![1]!;
+    const cells = [...cca.matchAll(/<td([^>]*)>/g)].map((m) => m[1]!);
+
+    expect(cells[1]).toContain("font-bold");
+    for (const i of [0, 2, 3, 4]) expect(cells[i]).not.toContain("font-bold");
+    // The Role cell has the same padding in a CCA row and in an activity row.
+    expect(cells[2]).not.toContain("pl-");
+  });
+
+  it("gives Additional contribution the same offsets as an activity row", () => {
+    const html = render("member-with-activities");
+    const row = html.match(
+      /<tr[^>]*>((?:<td[^>]*><\/td>)<td[^>]*italic">Additional contribution<\/td>.*?)<\/tr>/,
+    )![1]!;
+    const cells = [...row.matchAll(/<td([^>]*)>/g)].map((m) => m[1]!);
+
+    expect(cells[1]).toContain("pl-5");
+    expect(cells[1]).toContain("italic");
+    expect(cells[3]).toContain("pl-5");
+    expect(cells[2]).not.toContain("pl-");
   });
 
   it("prints Additional contribution as the last unnumbered row under its CCA", () => {
