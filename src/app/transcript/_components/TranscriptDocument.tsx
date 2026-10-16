@@ -5,7 +5,7 @@ import {
   type TranscriptViewModel,
 } from "~/lib/transcript/types";
 import { JcrcPageBody } from "./JcrcPageBody";
-import { MetaRow, PageHeader } from "./PageHeader";
+import { META_COLUMNS, MetaRow, PageHeader } from "./PageHeader";
 import { NotesBody, TranscriptSections } from "./TranscriptSections";
 
 export const EMPTY_YEAR_MESSAGE =
@@ -26,25 +26,35 @@ const HATCH =
 /**
  * Print rules.
  *
- * FOOTER, in two layers so it works everywhere. The resident's name and matric
- * are a plain `position: fixed` element, which every browser repeats on every
- * printed page. It is pinned to the bottom of the content area (a fixed element
- * pushed into the page margin is clipped on page 1 in Chrome), and each sheet
- * ends in a repeating empty table footer (`rh-print-spacer`) that reserves its
- * space, so body text never prints underneath it. "Page X of Y" is progressive
- * enhancement: an `@page` margin box counted by the browser (Chrome 131+), so
- * nothing is hard-coded and other browsers simply print no page numbers. The
- * name is deliberately NOT in a margin box too, or Chrome would print it twice.
+ * FOOTER, in two layers so it works everywhere. Where the browser supports
+ * `@page` margin boxes (Chrome 131+) both halves of the footer are margin
+ * boxes, so they share one baseline: the resident's name and matric at the left
+ * and "Page X of Y", counted by the browser, at the right. The name is written
+ * into the stylesheet as CSS hex escapes of every character, so nothing the
+ * resident typed can reach the CSS as markup. Everywhere else the name and
+ * matric are a plain `position: fixed` element, which every browser repeats on
+ * every printed page (pinned to the bottom of the content area: a fixed element
+ * pushed into the page margin is clipped on page 1 in Chrome), and no page
+ * numbers print. The fixed element is switched off where the margin boxes work
+ * (`interpolate-size`, which shipped in Chrome just before them), or Chrome
+ * would print the name twice. Each sheet ends in a repeating empty table footer
+ * (`rh-print-spacer`) that reserves the footer's space, so body text never
+ * prints underneath it.
  * On screen each logical page shows its own footer instead.
  *
  * Backgrounds are dropped when printing unless `print-color-adjust: exact`, so
  * the SPECIMEN watermark sets it. The hatch is removed in print so nothing
  * dark is printed.
  */
-const DOCUMENT_CSS = `
+/** Every character as a CSS hex escape: safe inside a CSS string whatever it is. */
+const cssString = (text: string) =>
+  [...text].map((c) => "\\" + c.codePointAt(0)!.toString(16) + " ").join("");
+
+const documentCss = (footerText: string) => `
 @page {
   size: A4;
   margin: 14mm 14mm 12mm;
+  @bottom-left { content: "${cssString(footerText)}"; vertical-align: top; font: 10.5px Arial, Helvetica, sans-serif; color: #000; }
   @bottom-right { content: "Page " counter(page) " of " counter(pages); vertical-align: top; font: 10.5px Arial, Helvetica, sans-serif; color: #000; }
 }
 .rh-paper { background-image: ${HATCH}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -57,6 +67,7 @@ const DOCUMENT_CSS = `
   .rh-paper.rh-specimen { background-image: ${WATERMARK}; }
   .rh-paper.rh-draft { background-image: ${DRAFT_WATERMARK}; }
   .rh-print-footer { display: block; position: fixed; left: 0; bottom: 0; font: 10.5px Arial, Helvetica, sans-serif; color: #000; }
+  @supports (interpolate-size: allow-keywords) { .rh-print-footer { display: none; } }
   .rh-print-spacer { display: table-footer-group; }
   .rh-print-spacer td { height: 8mm; padding: 0; }
 }`;
@@ -75,7 +86,11 @@ export function TranscriptDocument({
 
   return (
     <article className="font-[Arial,Helvetica,sans-serif] text-[11.5px] leading-[1.4] text-black">
-      <style dangerouslySetInnerHTML={{ __html: DOCUMENT_CSS }} />
+      <style
+        dangerouslySetInnerHTML={{
+          __html: documentCss(`${resident.name} (${resident.matric})`),
+        }}
+      />
       <p className="rh-print-footer">
         {resident.name} ({resident.matric})
       </p>
@@ -186,11 +201,7 @@ function pageParts(
               items={[
                 { label: "Name", value: resident.name.toUpperCase() },
                 { label: "Matric no.", value: resident.matric },
-                {
-                  label: "Residency",
-                  value: academicYear,
-                  detail: residenceDetail(issue.block, issue.yearOfResidence),
-                },
+                { label: "Academic year", value: academicYear },
                 {
                   label: "Date issued",
                   value: issue.issuedOn
@@ -223,6 +234,7 @@ function pageParts(
         body: (
           <>
             <MetaRow
+              columns={META_COLUMNS.jcrc}
               items={[
                 { label: "Name", value: resident.name.toUpperCase() },
                 { label: "Matric no.", value: resident.matric },
@@ -254,20 +266,3 @@ function pageParts(
 /** Shown at the top of page 1 while the year is closed for review. */
 export const DRAFT_NOTE =
   "Draft - check your information. If something is wrong, tell your CCA head or the JCRC.";
-
-const ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth"];
-
-function yearOfResidence(n: number): string {
-  return `${ORDINALS[n - 1] ?? `${n}th`} year`;
-}
-
-/** "Block 3 · Second year", or whichever half is known; undefined when neither. */
-function residenceDetail(
-  block: string | null,
-  year: number | null,
-): string | undefined {
-  const parts = [block, year === null ? null : yearOfResidence(year)].filter(
-    (part): part is string => Boolean(part),
-  );
-  return parts.length > 0 ? parts.join(" · ") : undefined;
-}

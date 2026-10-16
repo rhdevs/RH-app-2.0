@@ -57,25 +57,30 @@ export function PageHeader({
   );
 }
 
-/** The row of labelled facts under a page header. */
+/** Column widths of the details row: one row of four, no empty column. */
+export const META_COLUMNS = {
+  /** Name is about twice as wide as each of the others. */
+  main: "sm:grid-cols-[2fr_1fr_1fr_1fr]",
+  /** The JCRC page: Position is the long one. */
+  jcrc: "sm:grid-cols-[1.5fr_1fr_2fr_1fr]",
+} as const;
+
+/** The row of labelled facts under a page header, across the full width. */
 export function MetaRow({
   items,
+  columns = META_COLUMNS.main,
 }: {
-  items: Array<{ label: string; value: string; detail?: string }>;
+  items: Array<{ label: string; value: string }>;
+  columns?: string;
 }) {
   return (
-    <dl className="mb-2.5 mt-2 grid grid-cols-2 gap-1.5 text-[10.5px] sm:grid-cols-5">
+    <dl
+      className={`mb-2.5 mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[10.5px] ${columns}`}
+    >
       {items.map((item) => (
         <div key={item.label}>
           <dt className="font-bold uppercase text-neutral-600">{item.label}</dt>
-          <dd className="m-0 break-words text-xs font-bold">
-            {item.value}
-            {item.detail && (
-              <span className="block text-[10.5px] font-normal text-neutral-600">
-                {item.detail}
-              </span>
-            )}
-          </dd>
+          <dd className="m-0 break-words text-xs font-bold">{item.value}</dd>
         </div>
       ))}
     </dl>
