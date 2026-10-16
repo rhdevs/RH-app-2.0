@@ -9,7 +9,11 @@ import {
   UNFROZEN_BANNER,
   WRITES_LOCKED_NOTE,
   closeSummary,
+  FREEZE_REMAINING_LABEL,
+  freezeRemainingConfirmation,
+  freezeRemainingSummary,
   notFrozenText,
+  showFreezeRemaining,
   errorText,
   fieldError,
   isWritable,
@@ -17,6 +21,48 @@ import {
   statusLabel,
   yearOptions,
 } from "../adminView";
+
+describe("freeze remaining CCAs", () => {
+  it("shows the button only while the year is closed and a CCA is unfrozen", () => {
+    expect(showFreezeRemaining("closed", 1)).toBe(true);
+    expect(showFreezeRemaining("closed", 0)).toBe(false);
+    expect(showFreezeRemaining("collecting", 3)).toBe(false);
+    expect(showFreezeRemaining("published", 3)).toBe(false);
+    expect(showFreezeRemaining(null, 3)).toBe(false);
+    expect(FREEZE_REMAINING_LABEL(2)).toBe("Freeze remaining CCAs (2)");
+  });
+
+  it("confirms with the count and the first 5 names", () => {
+    expect(freezeRemainingConfirmation("AY2026/27", ["Soccer (MALE)"])).toBe(
+      "This freezes the member lists of 1 CCA for AY2026/27: Soccer (MALE). Their current members will be used.",
+    );
+    const seven = ["A", "B", "C", "D", "E", "F", "G"];
+    expect(freezeRemainingConfirmation("AY2026/27", seven)).toBe(
+      "This freezes the member lists of 7 CCAs for AY2026/27: A, B, C, D, E, and more. Their current members will be used.",
+    );
+    expect(
+      freezeRemainingConfirmation("AY2026/27", seven.slice(0, 5)),
+    ).not.toContain("and more");
+  });
+
+  it("says what happened, and what to do after a failure", () => {
+    expect(freezeRemainingSummary({ frozenNow: 1 })).toBe(
+      "1 CCA frozen. You can publish now.",
+    );
+    expect(freezeRemainingSummary({ frozenNow: 2, failed: 0 })).toBe(
+      "2 CCAs frozen. You can publish now.",
+    );
+    expect(
+      freezeRemainingSummary({
+        frozenNow: 1,
+        failed: 1,
+        failedNames: ["Chess"],
+      }),
+    ).toBe(
+      "1 CCA frozen, 1 could not be frozen: Chess. Press Freeze remaining CCAs again to finish them.",
+    );
+  });
+});
 
 describe("status", () => {
   it("labels the three states and reads anything else as collecting", () => {
@@ -214,7 +260,7 @@ describe("closing and publishing messages", () => {
 
   it("names the CCAs that block Publish, from the server's refusal too", () => {
     const text =
-      "Some CCAs are not frozen for AY2026/27: Chess Club, Soccer (MALE). Close the year again to freeze them.";
+      "Some CCAs are not frozen for AY2026/27: Chess Club, Soccer (MALE). Use Freeze remaining CCAs, then publish.";
     expect(notFrozenText("AY2026/27", ["Chess Club", "Soccer (MALE)"])).toBe(
       text,
     );

@@ -63,7 +63,7 @@ const renderPeriod = (over?: Partial<PeriodPanelViewProps>) =>
 describe("academic year panel", () => {
   it("lists the CCAs that block Publish, inline, only while the year is closed", () => {
     const text =
-      "Some CCAs are not frozen for AY2026/27: Soccer (MALE). Close the year again to freeze them.";
+      "Some CCAs are not frozen for AY2026/27: Soccer (MALE). Use Freeze remaining CCAs, then publish.";
     expect(
       renderPeriod({ status: "closed", notFrozenNames: ["Soccer (MALE)"] }),
     ).toContain(text);
@@ -73,6 +73,51 @@ describe("academic year panel", () => {
     expect(
       renderPeriod({ status: "collecting", notFrozenNames: ["Soccer (MALE)"] }),
     ).not.toContain("not frozen for");
+  });
+
+  it("offers Freeze remaining CCAs (N) next to Publish only while closed with unfrozen CCAs", () => {
+    const closed = renderPeriod({
+      status: "closed",
+      notFrozenNames: ["Soccer (MALE)", "Chess Club"],
+    });
+    expect(closed).toContain("Freeze remaining CCAs (2)");
+    expect(closed.indexOf("Publish")).toBeLessThan(
+      closed.indexOf("Freeze remaining CCAs (2)"),
+    );
+    for (const hidden of [
+      renderPeriod({ status: "closed", notFrozenNames: [] }),
+      renderPeriod({ status: "closed" }),
+      renderPeriod({ status: "collecting", notFrozenNames: ["Soccer (MALE)"] }),
+      renderPeriod({ status: "published", notFrozenNames: ["Soccer (MALE)"] }),
+    ]) {
+      expect(hidden).not.toContain("Freeze remaining CCAs");
+    }
+  });
+
+  it("disables the button while it works, and words the dialog", () => {
+    const busy = renderPeriod({
+      status: "closed",
+      notFrozenNames: ["Soccer (MALE)"],
+      acting: true,
+    });
+    expect(busy).toMatch(
+      /<button[^>]*disabled=""[^>]*>[^<]*Freeze remaining CCAs \(1\)/,
+    );
+    expect(
+      confirmationFor("freezeRemaining", "AY2026/27", null, ["Soccer (MALE)"]),
+    ).toEqual({
+      title: "Freeze remaining CCAs for AY2026/27?",
+      text: "This freezes the member lists of 1 CCA for AY2026/27: Soccer (MALE). Their current members will be used.",
+    });
+  });
+
+  it("shows the result line inline", () => {
+    expect(
+      renderPeriod({
+        status: "closed",
+        resultLine: "1 CCA frozen. You can publish now.",
+      }),
+    ).toContain("1 CCA frozen. You can publish now.");
   });
 
   const buttons = (html: string) =>
