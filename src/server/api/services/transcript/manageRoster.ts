@@ -91,6 +91,167 @@ const asDuration = (v: string | null | undefined): Duration | null =>
 const blankToNull = (v: string | null | undefined) =>
   v?.trim() ? v.trim() : null;
 
+type StoredEntry = {
+  userID: string;
+  duration: string | null;
+  roleLabel: string | null;
+  roleDuration: string | null;
+  extraContribution: string | null;
+};
+
+/** A frozen entry: it holds the settled values, so there are no defaults. */
+function frozenRow(e: StoredEntry, displayName: string | null): RosterRow {
+  const duration = asDuration(e.duration) ?? "full";
+  const roleDuration = e.roleLabel?.trim()
+    ? clampRoleDuration(duration, asDuration(e.roleDuration))
+    : null;
+  return {
+    userID: e.userID,
+    displayName,
+    isHead: Boolean(e.roleLabel),
+    defaultDuration: null,
+    duration,
+    defaultRoleLabel: null,
+    roleLabel: blankToNull(e.roleLabel),
+    defaultRoleDuration: null,
+    roleDuration,
+    extraContribution: blankToNull(e.extraContribution),
+    effective: {
+      duration,
+      roleLabel: blankToNull(e.roleLabel),
+      roleDuration,
+      extraContribution: blankToNull(e.extraContribution),
+    },
+  };
+}
+
+/** The earliest accepted application among a person's keys. */
+function earliestDecision(
+  apps: ReadonlyArray<{ userID: string; decidedAt: Date | null }>,
+  keys: readonly string[],
+): Date | null {
+  let decidedAt: Date | null = null;
+  for (const a of apps) {
+    if (!keys.includes(a.userID) || !a.decidedAt) continue;
+    if (!decidedAt || a.decidedAt < decidedAt) decidedAt = a.decidedAt;
+  }
+  return decidedAt;
+}
+
+/** A current member: stored overrides beside the derived defaults. */
+function liveRow(m: {
+  key: string;
+  displayName: string | null;
+  isHead: boolean;
+  grantedAt: Date | null;
+  own: StoredEntry | null;
+  decidedAt: Date | null;
+  sem2Start: Date | null;
+}): RosterRow {
+  const { own, decidedAt, sem2Start } = m;
+  return {
+    userID: m.key,
+    displayName: m.displayName,
+    isHead: m.isHead,
+    defaultDuration: defaultMembershipDuration(decidedAt, sem2Start),
+    duration: asDuration(own?.duration),
+    defaultRoleLabel: m.isHead ? "Head" : null,
+    roleLabel: blankToNull(own?.roleLabel),
+    defaultRoleDuration: m.isHead
+      ? defaultRoleDuration(m.grantedAt, sem2Start)
+      : null,
+    roleDuration: asDuration(own?.roleDuration),
+    extraContribution: blankToNull(own?.extraContribution),
+    effective: resolveEntry(
+      own,
+      { decidedAt, isHead: m.isHead, grantedAt: m.grantedAt },
+      sem2Start,
+    ),
+  };
+}
+
+/**
+ * ONE resident's roster row in each of the given CCAs (the CCAs they are a
+ * member of for the year), built from that resident's own records in a few
+ * batched reads instead of resolving each CCA's whole member list. The rows are
+ * the ones `rosterList` gives for them.
+ */
+export async function rosterRowsFor(
+  db: PrismaClient,
+  key: string,
+  keys: readonly string[],
+  academicYear: string,
+  ccaIDs: readonly number[],
+  now: Date = new Date(),
+): Promise<Map<number, { mode: "frozen" | "live"; row: RosterRow }>> {
+  const out = new Map<number, { mode: "frozen" | "live"; row: RosterRow }>();
+  if (ccaIDs.length === 0) return out;
+  const ids = [...ccaIDs];
+  const [period, freezes, entries, names] = await Promise.all([
+    getPeriod(db, academicYear),
+    db.ccaYearFreeze.findMany({
+      where: { ccaID: { in: ids }, ...NOT_UNFROZEN },
+      select: { ccaID: true, academicYear: true },
+    }),
+    db.transcriptRosterEntry.findMany({
+      where: { academicYear, userID: key, ccaID: { in: ids } },
+    }),
+    lookupResidents(db, [key]),
+  ]);
+  const sem2Start = period?.sem2Start ?? null;
+  const displayName = names.get(key)?.displayName ?? null;
+  const frozenYears = new Map<number, Set<string>>();
+  for (const f of freezes) {
+    const set = frozenYears.get(f.ccaID) ?? new Set<string>();
+    set.add(f.academicYear);
+    frozenYears.set(f.ccaID, set);
+  }
+  const live: number[] = [];
+  for (const ccaID of ids) {
+    const years = frozenYears.get(ccaID) ?? new Set<string>();
+    if (years.has(academicYear)) {
+      const e = entries.find((x) => x.ccaID === ccaID && x.frozen);
+      if (e) out.set(ccaID, { mode: "frozen", row: frozenRow(e, displayName) });
+    } else if (termAcademicYear(years, now) === academicYear) {
+      live.push(ccaID);
+    }
+  }
+  if (live.length === 0) return out;
+  const [heads, apps] = await Promise.all([
+    db.ccaHead.findMany({
+      where: { userID: { in: [...keys] }, ccaID: { in: live } },
+      select: { ccaID: true, grantedAt: true },
+    }),
+    db.ccaApplication.findMany({
+      where: {
+        ccaID: { in: live },
+        status: "accepted",
+        userID: { in: [...keys] },
+      },
+      select: { ccaID: true, userID: true, decidedAt: true },
+    }),
+  ]);
+  for (const ccaID of live) {
+    const head = heads.find((h) => h.ccaID === ccaID) ?? null;
+    out.set(ccaID, {
+      mode: "live",
+      row: liveRow({
+        key,
+        displayName,
+        isHead: head !== null,
+        grantedAt: head?.grantedAt ?? null,
+        own: entries.find((x) => x.ccaID === ccaID) ?? null,
+        decidedAt: earliestDecision(
+          apps.filter((a) => a.ccaID === ccaID),
+          keys,
+        ),
+        sem2Start,
+      }),
+    });
+  }
+  return out;
+}
+
 export async function rosterList(
   db: PrismaClient,
   ccaID: number,
@@ -131,30 +292,9 @@ export async function rosterList(
       db,
       entries.map((e) => e.userID),
     );
-    const rows = entries.map((e): RosterRow => {
-      const duration = asDuration(e.duration) ?? "full";
-      const roleDuration = e.roleLabel?.trim()
-        ? clampRoleDuration(duration, asDuration(e.roleDuration))
-        : null;
-      return {
-        userID: e.userID,
-        displayName: names.get(e.userID)?.displayName ?? null,
-        isHead: Boolean(e.roleLabel),
-        defaultDuration: null,
-        duration,
-        defaultRoleLabel: null,
-        roleLabel: blankToNull(e.roleLabel),
-        defaultRoleDuration: null,
-        roleDuration,
-        extraContribution: blankToNull(e.extraContribution),
-        effective: {
-          duration,
-          roleLabel: blankToNull(e.roleLabel),
-          roleDuration,
-          extraContribution: blankToNull(e.extraContribution),
-        },
-      };
-    });
+    const rows = entries.map((e) =>
+      frozenRow(e, names.get(e.userID)?.displayName ?? null),
+    );
     return { ...base, unresolved: 0, rows: sortRows(rows), mode: "frozen" };
   }
 
@@ -175,34 +315,17 @@ export async function rosterList(
   ]);
   const storedBy = new Map(stored.map((s) => [s.userID, s]));
 
-  const rows = members.map(({ entry, key, keys }): RosterRow => {
-    const own = storedBy.get(key) ?? null;
-    let decidedAt: Date | null = null;
-    for (const a of apps) {
-      if (!keys.includes(a.userID) || !a.decidedAt) continue;
-      if (!decidedAt || a.decidedAt < decidedAt) decidedAt = a.decidedAt;
-    }
-    const resolved = resolveEntry(
-      own,
-      { decidedAt, isHead: entry.isHead, grantedAt: entry.grantedAt },
-      sem2Start,
-    );
-    return {
-      userID: key,
+  const rows = members.map(({ entry, key, keys }) =>
+    liveRow({
+      key,
       displayName: entry.displayName ?? names.get(key)?.displayName ?? null,
       isHead: entry.isHead,
-      defaultDuration: defaultMembershipDuration(decidedAt, sem2Start),
-      duration: asDuration(own?.duration),
-      defaultRoleLabel: entry.isHead ? "Head" : null,
-      roleLabel: blankToNull(own?.roleLabel),
-      defaultRoleDuration: entry.isHead
-        ? defaultRoleDuration(entry.grantedAt, sem2Start)
-        : null,
-      roleDuration: asDuration(own?.roleDuration),
-      extraContribution: blankToNull(own?.extraContribution),
-      effective: resolved,
-    };
-  });
+      grantedAt: entry.grantedAt,
+      own: storedBy.get(key) ?? null,
+      decidedAt: earliestDecision(apps, keys),
+      sem2Start,
+    }),
+  );
   return { ...base, unresolved, rows: sortRows(rows), mode: "live" };
 }
 

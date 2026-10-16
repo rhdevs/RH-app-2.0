@@ -66,28 +66,38 @@ export async function lookupResidents(
   const out = new Map<string, ResidentSummary>();
   if (unique.length === 0) return out;
 
-  const users: UserRow[] = await db.user.findMany({
-    where: {
-      OR: [
-        { userID: { in: unique } },
-        {
+  const add = (users: UserRow[]) => {
+    for (const u of users) {
+      const key = personKey(u, u.userID ?? "");
+      const summary: ResidentSummary = {
+        userID: key,
+        displayName: u.displayName,
+      };
+      out.set(key, summary);
+      if (u.userID) out.set(u.userID, summary);
+    }
+  };
+  // By stored id first (indexed); the case-insensitive email match, which
+  // scans, only for the keys that are still unknown.
+  add(
+    await db.user.findMany({
+      where: { userID: { in: unique } },
+      select: USER_SELECT,
+    }),
+  );
+  const missing = unique.filter((k) => !out.has(k));
+  if (missing.length > 0) {
+    add(
+      await db.user.findMany({
+        where: {
           email: {
-            in: unique.map((k) => `${k.toLowerCase()}@u.nus.edu`),
+            in: missing.map((k) => `${k.toLowerCase()}@u.nus.edu`),
             mode: "insensitive",
           },
         },
-      ],
-    },
-    select: USER_SELECT,
-  });
-  for (const u of users) {
-    const key = personKey(u, u.userID ?? "");
-    const summary: ResidentSummary = {
-      userID: key,
-      displayName: u.displayName,
-    };
-    out.set(key, summary);
-    if (u.userID) out.set(u.userID, summary);
+        select: USER_SELECT,
+      }),
+    );
   }
   return out;
 }
@@ -205,8 +215,10 @@ export async function searchResidents(
     .map(({ u, key }) => ({
       userID: key,
       displayName: u.displayName,
-      maskedMatric: matrics.has(key)
-        ? maskMatricForSearch(matrics.get(key)!)
-        : null,
+      // A head searches by name only and does not need the masked matric.
+      maskedMatric:
+        !options.nameOnly && matrics.has(key)
+          ? maskMatricForSearch(matrics.get(key)!)
+          : null,
     }));
 }

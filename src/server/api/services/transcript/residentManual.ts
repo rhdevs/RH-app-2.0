@@ -19,12 +19,12 @@ import type {
 } from "~/lib/transcript/residentInput";
 import { loadResidentCcaIDs, NOT_REMOVED } from "./loader";
 import { requireCca } from "./manageAccess";
-import { rosterList, type RosterRow } from "./manageRoster";
+import { rosterRowsFor, type RosterRow } from "./manageRoster";
 import {
   assertCanEditForResidents,
   recordResidentEvent,
 } from "./residentRecords";
-import { actorLabels, requireResident } from "./residents";
+import { actorLabels, keysOf, requireResident } from "./residents";
 
 /**
  * A resident's CCA memberships for one year, for the correction screens: the
@@ -108,19 +108,25 @@ export async function residentMemberships(
   ]);
   const ccaBy = new Map(ccas.map((c) => [c.ccaID, c]));
 
+  const rows = await rosterRowsFor(
+    db,
+    key,
+    await keysOf(db, key),
+    input.academicYear,
+    rosterCcaIDs,
+    now,
+  );
   const roster: RosterMembership[] = [];
   for (const ccaID of rosterCcaIDs) {
     const cca = ccaBy.get(ccaID);
-    if (!cca) continue;
-    const list = await rosterList(db, ccaID, input.academicYear, now);
-    const row = list.rows.find((r) => r.userID === key);
-    if (!row || list.mode === "none") continue;
+    const found = rows.get(ccaID);
+    if (!cca || !found) continue;
     roster.push({
       ccaID,
       ccaName: cca.ccaName,
       category: cca.category,
-      mode: list.mode,
-      row,
+      mode: found.mode,
+      row: found.row,
     });
   }
 
