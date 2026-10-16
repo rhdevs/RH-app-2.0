@@ -254,7 +254,7 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
 
                   {/* Desktop Profile Dropdown */}
                   {isProfileDropdownOpen && (
-                    <div className="absolute right-0 z-50 mt-2 w-48 rounded-lg bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                    <div className="absolute right-0 z-50 mt-2 w-56 rounded-lg bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
                       <div className="py-1">
                         <button
                           onClick={handleProfile}
@@ -296,15 +296,17 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
 
                         <button
                           onClick={handleMyTranscript}
-                          className="flex w-full items-center px-4 py-2 text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
+                          className="flex w-full items-center px-4 py-2 text-left text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
                         >
                           <FileText
                             size={16}
-                            className="mr-3 text-gray-400"
+                            className="mr-3 shrink-0 text-gray-400"
                           />
-                          My transcript
+                          <span className="whitespace-nowrap text-left">
+                            My transcript
+                          </span>
                           {transcriptReady && (
-                            <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                            <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
                               Ready
                             </span>
                           )}
@@ -400,9 +402,9 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                       className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
                     >
                       <FileText size={18} />
-                      <span>My transcript</span>
+                      <span className="whitespace-nowrap">My transcript</span>
                       {transcriptReady && (
-                        <span className="ml-auto rounded-full bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white">
+                        <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900">
                           Ready
                         </span>
                       )}
