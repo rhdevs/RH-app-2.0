@@ -392,7 +392,14 @@ const toDrafts = (
   rows: ReadonlyArray<{ activity: string; role: string; description: string }>,
 ): ContributionDraft[] => rows.map((r) => ({ ...r, removed: false }));
 
-export default function JcrcSelf({ userID }: { userID: string }) {
+export default function JcrcSelf({
+  userID,
+  isMember,
+}: {
+  userID: string;
+  /** Holds the live jcrc role; an admin alone is not a JCRC member. */
+  isMember: boolean;
+}) {
   const utils = api.useUtils();
   const periods = api.transcript.periods.list.useQuery(undefined, {
     retry: false,
@@ -403,7 +410,7 @@ export default function JcrcSelf({ userID }: { userID: string }) {
 
   const mine = api.transcriptManage.jcrc.mine.useQuery(
     { academicYear: selected },
-    { enabled: selected !== "", retry: false },
+    { enabled: isMember && selected !== "", retry: false },
   );
 
   const savedDraft: JcrcDraft = mine.data
@@ -466,7 +473,7 @@ export default function JcrcSelf({ userID }: { userID: string }) {
       />
     );
   }
-  if (mine.error?.message === "JCRC_MEMBER_REQUIRED") {
+  if (!isMember || mine.error?.message === "JCRC_MEMBER_REQUIRED") {
     return (
       <SectionCard title="Your JCRC page">
         <p className="text-sm text-gray-700" role="status">
