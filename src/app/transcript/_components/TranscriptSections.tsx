@@ -146,8 +146,9 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
 }
 
 /**
- * The nested Activity | Role | Description table under a CCA row. The CCA's
- * additional contribution, when there is one, is its last row.
+ * The nested activity rows under a CCA row: three aligned columns (activity,
+ * role, description) with NO header row. The CCA's additional contribution,
+ * when there is one, is its last row.
  */
 function ActivityRows({
   activities,
@@ -159,25 +160,15 @@ function ActivityRows({
   return (
     <tr>
       <td colSpan={3} className="px-1 pb-1 pl-[18px] pt-0.5">
-        <table className="w-full table-fixed border-collapse text-[10.5px]">
+        <table
+          aria-label="Activities"
+          className="w-full table-fixed border-collapse text-[10.5px]"
+        >
           <colgroup>
             <col className="w-[34%]" />
             <col className="w-[22%]" />
             <col />
           </colgroup>
-          <thead>
-            <tr>
-              <th scope="col" className={`${TH} font-semibold`}>
-                Activity
-              </th>
-              <th scope="col" className={`${TH} font-semibold`}>
-                Role
-              </th>
-              <th scope="col" className={`${TH} font-semibold`}>
-                Description
-              </th>
-            </tr>
-          </thead>
           <tbody>
             {activities.map((a, i) => (
               <tr key={`${i}-${a.title}`} className="break-inside-avoid">

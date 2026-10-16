@@ -366,15 +366,44 @@ describe("TranscriptDocument: draft", () => {
 });
 
 describe("TranscriptDocument: activities", () => {
-  it("nests an Activity | Role | Description table under the CCA, with the semester in the title", () => {
+  it("nests the activity rows under the CCA, with the semester in the title", () => {
     const html = render("member-with-activities");
 
     expect(html).toContain("Annual hall concert");
     expect(html).toContain("Choir retreat (Sem 2)");
     expect(html).toContain("Soloist");
-    expect(html).toMatch(/<th[^>]*>Activity<\/th>/);
-    expect(html).toMatch(/<th[^>]*>Role<\/th>/);
-    expect(html).toMatch(/<th[^>]*>Description<\/th>/);
+  });
+
+  it("draws the nested activity rows with NO header row, and Other involvement keeps its own", () => {
+    const html = render("member-with-activities");
+    const leadership = html.slice(
+      html.indexOf("I. Leadership and CCA participation"),
+      html.indexOf("II. Other involvement"),
+    );
+
+    // One header row in that section: the CCA / Role / Year table itself.
+    expect(leadership.match(/<thead/g)).toHaveLength(1);
+    expect(leadership).not.toMatch(/<th[^>]*>Activity<\/th>/);
+    expect(leadership).not.toMatch(/<th[^>]*>Description<\/th>/);
+    // The three columns and the rows are still there.
+    expect(leadership).toContain('aria-label="Activities"');
+    expect(leadership).toContain("Annual hall concert");
+
+    const other = html.slice(html.indexOf("II. Other involvement"));
+    for (const word of ["Activity", "Organised by", "Role", "Description"]) {
+      expect(other).toMatch(new RegExp(`<th[^>]*>${word}</th>`));
+    }
+  });
+
+  it("draws the JCRC contributions with no header row", () => {
+    const html = render("jcrc-sports-secretary", JCRC_AY);
+    const start = html.indexOf("Contributions during the year");
+    const section = html.slice(start, html.indexOf("</section>", start));
+
+    expect(section).not.toContain("<thead");
+    expect(section).not.toMatch(/<th[ >]/);
+    expect(section).toContain("Inter-hall sports calendar");
+    expect(section).toContain('aria-label="Contributions"');
   });
 
   it("uses the person's own description, else the activity's", () => {

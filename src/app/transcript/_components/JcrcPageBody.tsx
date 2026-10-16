@@ -2,7 +2,6 @@ import { type JcrcPageModel } from "~/lib/transcript/types";
 
 const SEC_HEADING =
   "mb-0.5 mt-3 break-after-avoid border-b border-black text-xs font-bold uppercase";
-const TH = "border-b border-black px-1 py-0.5 text-left font-bold";
 const TD = "px-1 py-0.5 align-top";
 
 /**
@@ -33,25 +32,15 @@ export function JcrcPageBody({ jcrc }: { jcrc: JcrcPageModel }) {
 
       <section>
         <h2 className={SEC_HEADING}>Contributions during the year</h2>
-        <table className="w-full table-fixed border-collapse">
+        <table
+          aria-label="Contributions"
+          className="w-full table-fixed border-collapse"
+        >
           <colgroup>
             <col className="w-[34%]" />
             <col className="w-[22%]" />
             <col className="w-[44%]" />
           </colgroup>
-          <thead>
-            <tr>
-              <th scope="col" className={TH}>
-                Activity
-              </th>
-              <th scope="col" className={TH}>
-                Role
-              </th>
-              <th scope="col" className={TH}>
-                Description
-              </th>
-            </tr>
-          </thead>
           <tbody>
             {jcrc.contributions.map((item, index) => (
               <tr key={index} className="break-inside-avoid">
