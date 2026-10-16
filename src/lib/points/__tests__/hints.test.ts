@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_RANGE } from "~/lib/points/constants";
-import { adjustmentHint, meanHint, sdHint } from "~/lib/points/hints";
+import {
+  adjustmentHint,
+  advisoryHints,
+  meanHint,
+  sdHint,
+} from "~/lib/points/hints";
 
 describe("adjustmentHint", () => {
   it("is empty when both are inside the range", () => {
@@ -60,5 +65,25 @@ describe("adjustmentHint", () => {
     expect(
       adjustmentHint({ mean: Number.NaN, sd: Number.NaN }, DEFAULT_RANGE),
     ).toEqual([]);
+  });
+});
+
+describe("advisoryHints", () => {
+  const hints = ["Average is too high.", "Spread is too low."];
+
+  it("keeps every hint when nothing blocks the export", () => {
+    expect(advisoryHints(hints, [])).toEqual(hints);
+  });
+
+  it("drops hints already shown as an export blocker", () => {
+    expect(advisoryHints(hints, ["Spread is too low."])).toEqual([
+      "Average is too high.",
+    ]);
+  });
+
+  it("is empty when every hint is a blocker", () => {
+    expect(advisoryHints(hints, [...hints, "5 members need a score"])).toEqual(
+      [],
+    );
   });
 });

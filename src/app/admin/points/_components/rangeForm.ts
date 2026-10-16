@@ -29,6 +29,17 @@ const NUMBER = /^\d+(\.\d+)?$/;
 const limitsOf = (field: RangeField): readonly [number, number] =>
   field.startsWith("mean") ? MEAN_LIMITS : SD_LIMITS;
 
+/**
+ * Has JCRC stored any default range of their own? Opening or closing entry
+ * writes the "default" row too, so the row existing is not enough.
+ */
+export function hasSavedRanges(range: RangeOverride | null): boolean {
+  return (
+    range !== null &&
+    RANGE_FIELDS.some((f) => range[f] !== null && range[f] !== undefined)
+  );
+}
+
 export function toFormValues(range: RangeOverride): FormValues {
   const text = (n: number | null | undefined): string =>
     n === null || n === undefined ? "" : String(n);

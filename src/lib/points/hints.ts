@@ -33,3 +33,15 @@ export function adjustmentHint(
     (h): h is string => h !== null,
   );
 }
+
+/**
+ * The hints worth showing as advice: those not already listed as an export
+ * blocker with the same text, so no line appears twice in the summary.
+ */
+export function advisoryHints(
+  hints: readonly string[],
+  blockerMessages: readonly string[],
+): string[] {
+  const shown = new Set(blockerMessages);
+  return hints.filter((h) => !shown.has(h));
+}

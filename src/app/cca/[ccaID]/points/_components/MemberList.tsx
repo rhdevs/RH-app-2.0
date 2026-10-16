@@ -2,14 +2,13 @@
 
 import { ChevronDown } from "lucide-react";
 
-import { Checkbox } from "~/components/ui/checkbox";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "~/components/ui/collapsible";
-import { Switch } from "~/components/ui/switch";
 import type { PointsEntry } from "~/lib/points/entries";
+import { ActiveForInfo, ActiveForToggle } from "./ActiveForToggle";
 import {
   MatricStatus,
   RoleSelect,
@@ -61,23 +60,20 @@ export function MemberTable(props: ListProps) {
       <table className="w-full text-sm">
         <thead className="bg-gray-50 text-left text-xs font-medium uppercase tracking-wide text-gray-500">
           <tr>
-            <th scope="col" className="px-3 py-2">
-              Name
+            <th scope="col" className="px-2 py-2 first:pl-3">
+              Member
             </th>
-            <th scope="col" className="px-3 py-2">
-              Matric
-            </th>
-            <th scope="col" className="px-3 py-2">
+            <th scope="col" className="px-2 py-2 first:pl-3">
               Score (0–20)
             </th>
-            <th scope="col" className="px-3 py-2">
-              Sem-only
+            <th scope="col" className="px-2 py-2 first:pl-3">
+              <span className="inline-flex items-center gap-1">
+                Active for
+                <ActiveForInfo />
+              </span>
             </th>
-            <th scope="col" className="px-3 py-2">
-              Outgoing
-            </th>
-            <th scope="col" className="px-3 py-2">
-              Incoming
+            <th scope="col" className="px-2 py-2 pr-3">
+              Roles
             </th>
           </tr>
         </thead>
@@ -86,42 +82,47 @@ export function MemberTable(props: ListProps) {
             <tr
               key={e.rowKey}
               id={rowDomId("table", e.rowKey)}
-              className={`align-top transition-colors ${ring(highlightKey === e.rowKey)}`}
+              className={`align-middle transition-colors ${ring(highlightKey === e.rowKey)}`}
             >
-              <td className="px-3 py-2 font-medium text-gray-900">
-                {e.name ?? "Unknown member"}
-              </td>
-              <td className="px-3 py-2">
+              <td className="px-2 py-2 first:pl-3">
+                <p className="font-medium text-gray-900">
+                  {e.name ?? "Unknown member"}
+                </p>
                 <MatricStatus entry={e} />
               </td>
-              <td className="px-3 py-2">
+              <td className="px-2 py-2 first:pl-3">
                 <Score {...props} i={i} variant="table" />
               </td>
-              <td className="px-3 py-2">
-                <Checkbox
-                  aria-label={`${e.name ?? "Member"} is semester-only`}
-                  checked={e.semesterOnly}
+              <td className="px-2 py-2 first:pl-3">
+                <ActiveForToggle
+                  name={e.name ?? "Member"}
+                  semesterOnly={e.semesterOnly}
                   disabled={disabled}
-                  onCheckedChange={(v) =>
-                    state.update(e.rowKey, { semesterOnly: v === true })
-                  }
+                  onChange={(v) => state.update(e.rowKey, { semesterOnly: v })}
                 />
               </td>
-              <td className="px-3 py-2">
-                <RoleSelect
-                  label={`${e.name ?? "Member"}'s outgoing role`}
-                  value={e.outgoingRole}
-                  disabled={disabled}
-                  onChange={(r) => state.update(e.rowKey, { outgoingRole: r })}
-                />
-              </td>
-              <td className="px-3 py-2">
-                <RoleSelect
-                  label={`${e.name ?? "Member"}'s incoming role`}
-                  value={e.incomingRole}
-                  disabled={disabled}
-                  onChange={(r) => state.update(e.rowKey, { incomingRole: r })}
-                />
+              <td className="px-2 py-2 pr-3">
+                {/* Outgoing over incoming, so the table fits beside the summary. */}
+                <div className="grid grid-cols-[auto_1fr] items-center gap-x-1.5 gap-y-1 text-xs text-gray-500">
+                  <span aria-hidden>Out</span>
+                  <RoleSelect
+                    label={`${e.name ?? "Member"}'s outgoing role`}
+                    value={e.outgoingRole}
+                    disabled={disabled}
+                    onChange={(r) =>
+                      state.update(e.rowKey, { outgoingRole: r })
+                    }
+                  />
+                  <span aria-hidden>In</span>
+                  <RoleSelect
+                    label={`${e.name ?? "Member"}'s incoming role`}
+                    value={e.incomingRole}
+                    disabled={disabled}
+                    onChange={(r) =>
+                      state.update(e.rowKey, { incomingRole: r })
+                    }
+                  />
+                </div>
               </td>
             </tr>
           ))}
@@ -150,17 +151,19 @@ export function MemberCards(props: ListProps) {
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <Score {...props} i={i} variant="card" />
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <Switch
-                checked={e.semesterOnly}
+            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
+              <span className="inline-flex items-center gap-1">
+                Active for
+                <ActiveForInfo />
+              </span>
+              <ActiveForToggle
+                big
+                name={e.name ?? "Member"}
+                semesterOnly={e.semesterOnly}
                 disabled={disabled}
-                onCheckedChange={(v) =>
-                  state.update(e.rowKey, { semesterOnly: v })
-                }
-                aria-label={`${e.name ?? "Member"} is semester-only`}
+                onChange={(v) => state.update(e.rowKey, { semesterOnly: v })}
               />
-              Semester-only
-            </label>
+            </div>
           </div>
           <Collapsible className="mt-2">
             <CollapsibleTrigger className="group flex w-full items-center justify-between rounded-md py-2 text-sm text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">

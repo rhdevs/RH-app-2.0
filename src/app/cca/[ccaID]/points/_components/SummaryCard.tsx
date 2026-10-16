@@ -6,6 +6,7 @@ import { Button } from "~/components/ui/button";
 import { Progress } from "~/components/ui/progress";
 import { SD_LIMITS, SCORE_MAX, type Range } from "~/lib/points/constants";
 import type { ExportBlocker } from "~/lib/points/entries";
+import { advisoryHints } from "~/lib/points/hints";
 import { RangeMeter, ScoreHistogram } from "./Meters";
 import type { PointsState } from "./usePointsEntries";
 
@@ -30,6 +31,13 @@ export default function SummaryCard({
   const total = state.entries.length;
   const pct = total === 0 ? 0 : (state.scoredCount / total) * 100;
   const blockers = state.blockers.filter((b) => b.code !== "NOT_OPEN");
+  // While entry is open the mean/SD advice is already a blocker line.
+  const hints = entryOpen
+    ? advisoryHints(
+        state.hints,
+        blockers.map((b) => b.message),
+      )
+    : state.hints;
   return (
     <section
       aria-label="Summary"
@@ -67,9 +75,9 @@ export default function SummaryCard({
       />
       <ScoreHistogram counts={state.histogram} />
 
-      {state.hints.length > 0 && (
+      {hints.length > 0 && (
         <ul className="space-y-1 text-sm text-amber-800">
-          {state.hints.map((h) => (
+          {hints.map((h) => (
             <li key={h}>{h}</li>
           ))}
         </ul>

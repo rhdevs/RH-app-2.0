@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_RANGE } from "~/lib/points/constants";
 import {
+  hasSavedRanges,
   parseRangeForm,
   toFormValues,
 } from "~/app/admin/points/_components/rangeForm";
@@ -104,5 +105,28 @@ describe("toFormValues", () => {
       sdMin: "",
       sdMax: "",
     });
+  });
+});
+
+describe("hasSavedRanges", () => {
+  it("is false when there is no default row", () => {
+    expect(hasSavedRanges(null)).toBe(false);
+  });
+
+  it("is false for a row that only carries the entry switch", () => {
+    expect(
+      hasSavedRanges({
+        meanMin: null,
+        meanMax: null,
+        sdMin: null,
+        sdMax: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("is true once any range field is stored", () => {
+    expect(
+      hasSavedRanges({ meanMin: null, meanMax: 15, sdMin: null, sdMax: null }),
+    ).toBe(true);
   });
 });

@@ -4,6 +4,7 @@ import { api } from "~/trpc/react";
 import { useCapabilities } from "~/app/admin/_components/AdminCapabilityContext";
 import DefaultRangesForm from "./_components/DefaultRangesForm";
 import EntrySwitchPanel from "./_components/EntrySwitchPanel";
+import { hasSavedRanges } from "./_components/rangeForm";
 import WaiversPanel from "./_components/WaiversPanel";
 
 /**
@@ -72,7 +73,7 @@ export default function AdminPointsPage() {
           <EntrySwitchPanel entryOpen={data.entryOpen} onChanged={refresh} />
           <DefaultRangesForm
             effective={data.effectiveDefault}
-            hasRow={data.defaultRange !== null}
+            hasRow={hasSavedRanges(data.defaultRange)}
             builtIn={data.builtInDefault}
             onChanged={refresh}
           />
