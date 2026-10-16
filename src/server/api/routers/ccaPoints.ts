@@ -14,18 +14,29 @@ import {
   computeCapabilities,
   type AuditAction,
 } from "~/server/api/services/roles";
+import { buildDirectoryEntries } from "~/server/api/services/ccaDirectory";
+import { resolveRoster } from "~/server/api/services/ccaRoster";
 import {
+  clearFlat,
   isEntryOpen,
+  isFlatRow,
   listOverrideRows,
   rangeProblem,
   readDefaultRow,
   readOverrideRow,
   removeOverride,
   resolveRange,
+  waiverRows,
   writeDefaultRange,
   writeEntryOpen,
+  writeFlat,
   writeOverride,
 } from "~/server/api/services/ccaPointsConfig";
+import {
+  flatPointsProblem,
+  formatFlatPoints,
+  isValidFlatPoints,
+} from "~/lib/points/flat";
 import {
   DEFAULT_RANGE,
   MEAN_LIMITS,
@@ -102,6 +113,10 @@ const overrideInput = z.object({
   note: z.string().trim().min(1, "A note is required").max(REASON_MAX),
 });
 
+const flatPointsInput = z.number().refine(isValidFlatPoints, (n) => ({
+  message: flatPointsProblem(n) ?? "Not a valid number of points.",
+}));
+
 export const ccaPointsRouter = createTRPCRouter({
   /**
    * What a head needs to run their page: is entry open, and the range THIS CCA
@@ -119,12 +134,26 @@ export const ccaPointsRouter = createTRPCRouter({
         readOverrideRow(ctx.db, input.ccaID),
       ]);
       const resolved = resolveRange(defaultRow, overrideRow);
+      const flatPoints = overrideRow?.flatPoints ?? null;
+      // A flat CCA's page loads no roster, so it needs the name from here.
+      const flatCcaName =
+        flatPoints === null
+          ? null
+          : ((
+              await ctx.db.cCA.findFirst({
+                where: { ccaID: input.ccaID },
+                select: { ccaName: true },
+              })
+            )?.ccaName ?? null);
       return {
         entryOpen: isEntryOpen(defaultRow),
         range: resolved.range,
         isWaived: resolved.isWaived,
         waivedFields: resolved.waivedFields,
         note: resolved.isWaived ? (overrideRow?.note ?? null) : null,
+        /** Set when JCRC marked this CCA flat: the leader has nothing to do. */
+        flatPoints,
+        flatCcaName,
       };
     }),
 
@@ -136,7 +165,9 @@ export const ccaPointsRouter = createTRPCRouter({
       readDefaultRow(ctx.db),
       listOverrideRows(ctx.db),
     ]);
-    const ccaIDs = overrideRows.flatMap((r) =>
+    const waivers = waiverRows(overrideRows);
+    const flatRows = overrideRows.filter(isFlatRow);
+    const ccaIDs = [...waivers, ...flatRows].flatMap((r) =>
       r.ccaID === null ? [] : [r.ccaID],
     );
     const ccas =
@@ -147,6 +178,26 @@ export const ccaPointsRouter = createTRPCRouter({
             select: { ccaID: true, ccaName: true },
           });
     const nameById = new Map(ccas.map((c) => [c.ccaID, c.ccaName]));
+    const flatWithCounts = await Promise.all(
+      flatRows.flatMap((r) =>
+        r.ccaID === null || r.flatPoints === null
+          ? []
+          : [
+              (async () => {
+                const roster = await resolveRoster(ctx.db, r.ccaID!);
+                return {
+                  ccaID: r.ccaID!,
+                  ccaName: nameById.get(r.ccaID!) ?? `CCA ${r.ccaID}`,
+                  flatPoints: r.flatPoints!,
+                  memberCount: roster.heads.length + roster.members.length,
+                  /** A waiver on the same CCA is not used while it is flat. */
+                  hasWaiver: waivers.some((w) => w.ccaID === r.ccaID),
+                  updatedAt: r.updatedAt,
+                };
+              })(),
+            ],
+      ),
+    );
 
     return {
       entryOpen: isEntryOpen(defaultRow),
@@ -164,7 +215,8 @@ export const ccaPointsRouter = createTRPCRouter({
       builtInDefault: DEFAULT_RANGE,
       updatedAt: defaultRow?.updatedAt ?? null,
       updatedBy: defaultRow?.updatedBy ?? null,
-      overrides: overrideRows.flatMap((r) =>
+      flatCcas: flatWithCounts,
+      overrides: waivers.flatMap((r) =>
         r.ccaID === null
           ? []
           : [
@@ -299,4 +351,105 @@ export const ccaPointsRouter = createTRPCRouter({
       }
       return { cleared: existed };
     }),
+
+  /**
+   * Mark a CCA as FLAT: every member receives `flatPoints` as the whole CCA's
+   * points (the sandbox applies the maths). A waiver on the same CCA is kept but
+   * not used while it is flat.
+   */
+  setFlat: roleManagerProcedure
+    .input(
+      z.object({
+        ccaID: z.number().int().positive(),
+        flatPoints: flatPointsInput,
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const actorUserID = ctx.session.user.userID;
+      const roles = await requirePointsCapability(ctx.db, actorUserID);
+      const cca = await ctx.db.cCA.findFirst({
+        where: { ccaID: input.ccaID },
+        select: { ccaID: true },
+      });
+      if (!cca)
+        throw new TRPCError({ code: "NOT_FOUND", message: "CCA_NOT_FOUND" });
+      const now = new Date();
+      await writeFlat(ctx.db, input.ccaID, input.flatPoints, actorUserID, now);
+      await audit(ctx.db, {
+        actorUserID,
+        actorRoles: roles,
+        action: "ccaPoints.flat.set",
+        targetCcaID: input.ccaID,
+        reason: `${formatFlatPoints(input.flatPoints)} points each`,
+      });
+      return {
+        ccaID: input.ccaID,
+        flatPoints: input.flatPoints,
+        updatedAt: now,
+      };
+    }),
+
+  /** Take a CCA off flat points. Nothing to remove means nothing is audited. */
+  clearFlat: roleManagerProcedure
+    .input(z.object({ ccaID: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const actorUserID = ctx.session.user.userID;
+      const roles = await requirePointsCapability(ctx.db, actorUserID);
+      const existed = await clearFlat(ctx.db, input.ccaID);
+      if (existed) {
+        await audit(ctx.db, {
+          actorUserID,
+          actorRoles: roles,
+          action: "ccaPoints.flat.clear",
+          targetCcaID: input.ccaID,
+        });
+      }
+      return { cleared: existed };
+    }),
+
+  /**
+   * Everything the flat-points CSV needs: for every flat CCA, its value and its
+   * whole roster with matrics. THIS IS MEMBERSHIP PLUS JCRC'S OWN CONFIG, not
+   * leader-judged scores, so JCRC (and only a caller who passes the live
+   * capability re-check) may receive matrics here. The file itself is built in
+   * the browser.
+   */
+  flatExportData: roleManagerProcedure.query(async ({ ctx }) => {
+    await requirePointsCapability(ctx.db, ctx.session.user.userID);
+    const flatRows = (await listOverrideRows(ctx.db)).filter(isFlatRow);
+    const ids = flatRows.flatMap((r) => (r.ccaID === null ? [] : [r.ccaID]));
+    const named =
+      ids.length === 0
+        ? []
+        : await ctx.db.cCA.findMany({
+            where: { ccaID: { in: ids } },
+            select: { ccaID: true, ccaName: true },
+          });
+    const nameById = new Map(named.map((c) => [c.ccaID, c.ccaName]));
+    return Promise.all(
+      flatRows.flatMap((r) =>
+        r.ccaID === null || r.flatPoints === null
+          ? []
+          : [
+              (async () => {
+                const { entries } = await buildDirectoryEntries(
+                  ctx.db,
+                  r.ccaID!,
+                );
+                return {
+                  ccaID: r.ccaID!,
+                  ccaName: nameById.get(r.ccaID!) ?? `CCA ${r.ccaID}`,
+                  flatPoints: r.flatPoints!,
+                  members: entries.map((e) => ({
+                    rowKey: e.rowKey,
+                    matric: e.matric,
+                    name: e.name,
+                    resolved: e.resolved,
+                  })),
+                };
+              })(),
+            ],
+      ),
+    );
+  }),
 });

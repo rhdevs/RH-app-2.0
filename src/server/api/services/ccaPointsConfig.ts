@@ -14,7 +14,12 @@ import {
  *
  * Two kinds of row in one collection (see `model CcaPointsConfig`):
  *   "default"      hall-wide ranges + `entryOpen`
- *   "cca:<ccaID>"  a per-CCA waiver; blank fields mean "use the default"
+ *   "cca:<ccaID>"  a per-CCA waiver (blank fields mean "use the default")
+ *                  and/or a FLAT-points marking (`flatPoints`, null = not flat)
+ *
+ * One per-CCA row can therefore be a waiver, a flat marking, or both. Code that
+ * lists or deletes waivers must not touch the flat marking, and vice versa — see
+ * `waiverRows`, `removeOverride` and `clearFlat`.
  *
  * THE SWITCH IS CLOSED BY DEFAULT. An absent row, or a null `entryOpen`, reads
  * as closed: points entry is a NEW surface, so — like cca.management.enabled and
@@ -60,6 +65,27 @@ export function resolveRange(
 }
 
 export { rangeProblem };
+
+/** The fields of a per-CCA row that decide what kind of row it is. */
+export type ConfigRowLike = RangeOverride & {
+  note: string | null;
+  flatPoints: number | null;
+};
+
+/** Flat when `flatPoints` is a number (0 is a valid flat value). */
+export const isFlatRow = (row: ConfigRowLike | null): boolean =>
+  row?.flatPoints !== null && row?.flatPoints !== undefined;
+
+/** A real waiver: any range field or a note is set. */
+export const hasWaiver = (row: ConfigRowLike | null): boolean =>
+  row !== null &&
+  (row.note !== null ||
+    RANGE_FIELDS.some((f) => row[f] !== null && row[f] !== undefined));
+
+/** Rows that are waivers; a row that only marks a CCA flat is not one. */
+export function waiverRows<T extends ConfigRowLike>(rows: readonly T[]): T[] {
+  return rows.filter(hasWaiver);
+}
 
 /* -------------------------------------------------------------------------- */
 /* Database helpers                                                            */
@@ -153,13 +179,77 @@ export async function writeOverride(
   });
 }
 
-/** Returns whether a row existed. */
+/**
+ * Removes the WAIVER, returning whether there was one. A CCA that is also flat
+ * keeps its row (only the waiver fields are cleared); otherwise the row goes.
+ */
 export async function removeOverride(
   db: PrismaClient,
   ccaID: number,
 ): Promise<boolean> {
-  const { count } = await db.ccaPointsConfig.deleteMany({
-    where: { scope: ccaScope(ccaID) },
+  const row = await readOverrideRow(db, ccaID);
+  if (!row || !hasWaiver(row)) return false;
+  if (isFlatRow(row)) {
+    await db.ccaPointsConfig.update({
+      where: { scope: ccaScope(ccaID) },
+      data: { meanMin: null, meanMax: null, sdMin: null, sdMax: null, note: null },
+    });
+  } else {
+    await db.ccaPointsConfig.deleteMany({ where: { scope: ccaScope(ccaID) } });
+  }
+  return true;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Flat-points CCAs                                                            */
+/* -------------------------------------------------------------------------- */
+
+/** Every CCA currently marked flat, in ccaID order. */
+export function listFlatRows(db: PrismaClient): Promise<CcaPointsConfig[]> {
+  return db.ccaPointsConfig.findMany({
+    where: { scope: { startsWith: "cca:" }, flatPoints: { not: null } },
+    orderBy: { ccaID: "asc" },
   });
-  return count > 0;
+}
+
+/** Marks a CCA flat at `flatPoints`; any waiver on the same row is left alone. */
+export async function writeFlat(
+  db: PrismaClient,
+  ccaID: number,
+  flatPoints: number,
+  actorUserID: string,
+  now: Date,
+): Promise<void> {
+  await db.ccaPointsConfig.upsert({
+    where: { scope: ccaScope(ccaID) },
+    create: {
+      scope: ccaScope(ccaID),
+      ccaID,
+      flatPoints,
+      updatedAt: now,
+      updatedBy: actorUserID,
+    },
+    update: { flatPoints, updatedAt: now, updatedBy: actorUserID },
+  });
+}
+
+/**
+ * Removes the flat marking, returning whether the CCA was flat. A CCA that also
+ * has a waiver keeps its row; otherwise the row goes.
+ */
+export async function clearFlat(
+  db: PrismaClient,
+  ccaID: number,
+): Promise<boolean> {
+  const row = await readOverrideRow(db, ccaID);
+  if (!row || !isFlatRow(row)) return false;
+  if (hasWaiver(row)) {
+    await db.ccaPointsConfig.update({
+      where: { scope: ccaScope(ccaID) },
+      data: { flatPoints: null },
+    });
+  } else {
+    await db.ccaPointsConfig.deleteMany({ where: { scope: ccaScope(ccaID) } });
+  }
+  return true;
 }

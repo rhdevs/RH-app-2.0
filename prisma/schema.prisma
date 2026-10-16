@@ -681,6 +681,9 @@ model CcaPointsConfig {
   entryOpen Boolean?
   /// Why a waiver exists (required by the setOverride procedure, nullable here).
   note      String?
+  /// Per-CCA rows only: the CCA is a FLAT-points CCA and every member receives this
+  /// many points for it (null = not flat). Set by JCRC; the sandbox applies the maths.
+  flatPoints Float?
   updatedAt DateTime?
   updatedBy String?
 }

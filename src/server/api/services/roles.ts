@@ -263,6 +263,11 @@ export const AUDIT_ACTIONS = [
   "ccaPoints.default.set",
   "ccaPoints.override.set",
   "ccaPoints.override.clear",
+  // FLAT-points CCAs (the same page): `ccaPoints.flat.set` marks a CCA flat at a
+  // value (carried in `reason`) and `ccaPoints.flat.clear` removes the marking;
+  // both stamp `targetCcaID`. Config only, like the rest.
+  "ccaPoints.flat.set",
+  "ccaPoints.flat.clear",
   // Events feature. THE RULE, applied without exception: STATE-MACHINE
   // TRANSITIONS ARE AUDITED, FIELD SAVES ARE NOT. `event.create` and
   // `event.update` therefore write nothing — `update` fires on every save, and a

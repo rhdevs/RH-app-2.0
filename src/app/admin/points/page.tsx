@@ -4,6 +4,7 @@ import { api } from "~/trpc/react";
 import { useCapabilities } from "~/app/admin/_components/AdminCapabilityContext";
 import DefaultRangesForm from "./_components/DefaultRangesForm";
 import EntrySwitchPanel from "./_components/EntrySwitchPanel";
+import FlatCcasPanel from "./_components/FlatCcasPanel";
 import { hasSavedRanges } from "./_components/rangeForm";
 import WaiversPanel from "./_components/WaiversPanel";
 
@@ -82,6 +83,7 @@ export default function AdminPointsPage() {
             effectiveDefault={data.effectiveDefault}
             onChanged={refresh}
           />
+          <FlatCcasPanel flatCcas={data.flatCcas} onChanged={refresh} />
         </>
       )}
     </div>

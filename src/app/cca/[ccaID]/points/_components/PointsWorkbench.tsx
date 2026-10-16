@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { api } from "~/trpc/react";
 import { TooltipProvider } from "~/components/ui/tooltip";
 import type { RosterMember } from "~/lib/points/draft";
+import { flatNotice } from "~/lib/points/flat";
 import Workbench from "./Workbench";
 
 /**
@@ -66,7 +67,11 @@ export default function PointsWorkbench({ ccaID }: { ccaID: number }) {
   // who is not this CCA's head never loads it from this page.
   const directory = api.cca.memberDirectory.useQuery(
     { ccaID },
-    { ...QUERY_OPTS, enabled: context.isSuccess },
+    {
+      ...QUERY_OPTS,
+      // A flat CCA's leaders have nothing to enter, so its roster is never loaded.
+      enabled: context.isSuccess && context.data.flatPoints === null,
+    },
   );
 
   // Stable roster identity, keyed on content, so the draft merge runs once per
@@ -115,6 +120,25 @@ export default function PointsWorkbench({ ccaID }: { ccaID: number }) {
           else void directory.refetch();
         }}
       />
+    );
+  }
+  const notice = context.data ? flatNotice(context.data.flatPoints) : null;
+  if (context.data && notice !== null) {
+    return (
+      <header className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-xl font-semibold text-gray-900">Points</h2>
+          <span className="text-sm text-gray-500">
+            {context.data.flatCcaName ?? `CCA ${ccaID}`}
+          </span>
+        </div>
+        <p
+          className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700"
+          role="status"
+        >
+          {notice}
+        </p>
+      </header>
     );
   }
   if (!context.data || !directory.data || status === "loading")
