@@ -252,6 +252,7 @@ export default function FreezeTable({
       await Promise.all([
         utils.transcript.freezes.list.invalidate(),
         utils.transcript.periods.unfrozenCount.invalidate(),
+        utils.transcript.periods.unfrozenNames.invalidate(),
       ]);
     },
   });

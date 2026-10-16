@@ -633,6 +633,131 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     /* ---------------------------------------------------------------- */
+    describe("an upload that stops part way", () => {
+      it("keeps what was written as a partial batch, says so, and Undo removes exactly it", async () => {
+        const service = await import("../awardImport");
+        const rows: ImportRow[] = [];
+        const keys: Decision[] = [];
+        for (let a = 0; a < 25; a += 1) {
+          const name = `Partial Award ${String(a).padStart(2, "0")}`;
+          keys.push({ nameKey: name.toLowerCase(), action: "create" });
+          for (let n = 1; n <= 20; n += 1) {
+            rows.push({
+              identifier: `seed-r${String(n).padStart(2, "0")}@u.nus.edu`,
+              award: name,
+              citation: "",
+            });
+          }
+        }
+        expect(rows).toHaveLength(500); // three chunks of at most 200
+
+        // The second chunk's transaction fails.
+        let chunks = 0;
+        const flaky = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return (...args: unknown[]) => {
+                chunks += 1;
+                if (chunks === 2) {
+                  return Promise.reject(new Error("database went away"));
+                }
+                return (
+                  target.$transaction as unknown as (
+                    ...a: unknown[]
+                  ) => Promise<unknown>
+                )(...args);
+              };
+            }
+            return Reflect.get(target, prop, receiver) as unknown;
+          },
+        });
+
+        const message = await errorOf(
+          service.awardImportCommit(flaky, JCRC.id, {
+            academicYear: AY,
+            fileName: "partial.csv",
+            rows,
+            decisions: keys,
+          } as never),
+        );
+        expect(message).toBe("INTERNAL_SERVER_ERROR:UPLOAD_PARTIAL:200");
+
+        const batch = await db.awardImportBatch.findFirstOrThrow({
+          where: { fileName: "partial.csv" },
+        });
+        expect(batch).toMatchObject({
+          status: "partial",
+          rowCount: 500,
+          importedCount: 200,
+          skippedCount: 300,
+        });
+        expect(
+          await db.award.count({ where: { importBatchID: batch.id } }),
+        ).toBe(200);
+
+        const listed = (
+          await as(JCRC).awardBatches.list({ academicYear: AY })
+        ).find((b) => b.id === batch.id);
+        expect(listed).toMatchObject({ status: "partial", activeCount: 200 });
+
+        // Undo removes exactly that batch's awards, and nobody else's.
+        const others = await db.award.count({
+          where: { importBatchID: { not: batch.id }, ...live },
+        });
+        const undone = await as(JCRC).awardBatches.undo({ batchId: batch.id });
+        expect(undone.removed).toBe(200);
+        expect(
+          await db.award.count({
+            where: { importBatchID: { not: batch.id }, ...live },
+          }),
+        ).toBe(others);
+      }, 300_000);
+
+      it("explains it in plain words", async () => {
+        const { errorText } = await import("~/lib/transcript/adminView");
+        expect(errorText("UPLOAD_PARTIAL:200")).toBe(
+          "The upload stopped part way: 200 imported. Undo it from History, fix the file, and upload again.",
+        );
+      });
+
+      it("logs a published-year correction in the same transaction as the awards of each chunk", async () => {
+        await publish();
+        for (const n of [5, 6]) {
+          await as(JCRC).corrections.unlock({
+            userID: `SEED-R0${n}`,
+            academicYear: AY,
+            reason: "Late awards",
+          });
+        }
+        const result = await as(JCRC).awardImport.commit({
+          academicYear: AY,
+          fileName: "published.csv",
+          rows: [
+            {
+              identifier: "seed-r05@u.nus.edu",
+              award: "Hall Spirit Award",
+              citation: "",
+            },
+            {
+              identifier: "seed-r06@u.nus.edu",
+              award: "Hall Spirit Award",
+              citation: "",
+            },
+          ],
+          decisions: [{ nameKey: "hall spirit award", action: "create" }],
+        });
+        expect(result.imported).toBe(2);
+        const lines = await db.residentEvent.findMany({
+          where: { academicYear: AY, action: "correction" },
+        });
+        expect(lines.map((l) => l.summary).sort()).toEqual([
+          "Awards: Hall Spirit Award assigned (upload)",
+          "Awards: Hall Spirit Award assigned (upload)",
+        ]);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
     describe("undo", () => {
       it("works on an imported batch and removes only that batch", async () => {
         const first = await commit();

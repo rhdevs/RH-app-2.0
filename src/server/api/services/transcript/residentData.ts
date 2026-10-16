@@ -210,49 +210,54 @@ export async function participationSet(
     role: input.role === "" ? null : input.role,
     description: input.description === "" ? null : input.description,
   };
-  if (!row) {
-    await db.ccaActivityParticipant.create({
-      data: {
-        activityID: activity.id,
-        academicYear: activity.academicYear,
-        ccaID: activity.ccaID,
-        userID: resident.key,
-        ...text,
-        addedBy: actorUserID,
-        addedAt: now,
-      },
-    });
-  } else if (row.removedAt) {
-    await db.ccaActivityParticipant.update({
-      where: { id: row.id },
-      data: {
-        ...text,
-        removedAt: null,
-        removedBy: null,
-        updatedBy: actorUserID,
-        updatedAt: now,
-      },
-    });
-  } else if (planned.update.length > 0) {
-    await db.ccaActivityParticipant.update({
-      where: { id: row.id },
-      data: { ...text, updatedBy: actorUserID, updatedAt: now },
-    });
-  }
-  if (planned.add.length + planned.restore.length + planned.update.length > 0) {
-    await db.ccaActivity.update({
-      where: { id: activity.id },
-      data: { updatedBy: actorUserID, updatedAt: now },
-    });
-  }
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    activity.academicYear,
-    participantSummaries("Activities", activity.title, planned),
-    now,
-  );
+  await db.$transaction(async (tx) => {
+    if (!row) {
+      await tx.ccaActivityParticipant.create({
+        data: {
+          activityID: activity.id,
+          academicYear: activity.academicYear,
+          ccaID: activity.ccaID,
+          userID: resident.key,
+          ...text,
+          addedBy: actorUserID,
+          addedAt: now,
+        },
+      });
+    } else if (row.removedAt) {
+      await tx.ccaActivityParticipant.update({
+        where: { id: row.id },
+        data: {
+          ...text,
+          removedAt: null,
+          removedBy: null,
+          updatedBy: actorUserID,
+          updatedAt: now,
+        },
+      });
+    } else if (planned.update.length > 0) {
+      await tx.ccaActivityParticipant.update({
+        where: { id: row.id },
+        data: { ...text, updatedBy: actorUserID, updatedAt: now },
+      });
+    }
+    if (
+      planned.add.length + planned.restore.length + planned.update.length >
+      0
+    ) {
+      await tx.ccaActivity.update({
+        where: { id: activity.id },
+        data: { updatedBy: actorUserID, updatedAt: now },
+      });
+    }
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      activity.academicYear,
+      participantSummaries("Activities", activity.title, planned),
+      now,
+    );
+  });
   return { activityID: activity.id, userID: resident.key };
 }
 
@@ -282,29 +287,31 @@ export async function participationRemove(
       affectedUserIDs: [resident.key],
     },
   );
-  if (!row.removedAt) {
-    await db.ccaActivityParticipant.update({
-      where: { id: row.id },
-      data: { removedAt: now, removedBy: actorUserID },
-    });
-    await db.ccaActivity.update({
-      where: { id: activity.id },
-      data: { updatedBy: actorUserID, updatedAt: now },
-    });
-    await logCorrections(
-      db,
-      guard,
-      actorUserID,
-      activity.academicYear,
-      participantSummaries("Activities", activity.title, {
-        add: [],
-        restore: [],
-        update: [],
-        remove: [{ userID: resident.key }],
-      }),
-      now,
-    );
-  }
+  await db.$transaction(async (tx) => {
+    if (!row.removedAt) {
+      await tx.ccaActivityParticipant.update({
+        where: { id: row.id },
+        data: { removedAt: now, removedBy: actorUserID },
+      });
+      await tx.ccaActivity.update({
+        where: { id: activity.id },
+        data: { updatedBy: actorUserID, updatedAt: now },
+      });
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        activity.academicYear,
+        participantSummaries("Activities", activity.title, {
+          add: [],
+          restore: [],
+          update: [],
+          remove: [{ userID: resident.key }],
+        }),
+        now,
+      );
+    }
+  });
   return { activityID: activity.id, userID: resident.key };
 }
 

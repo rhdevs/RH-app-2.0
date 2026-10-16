@@ -256,27 +256,26 @@ export async function awardsAssign(
         })),
       });
     }
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      input.academicYear,
+      plan.create.map((r) => ({
+        userID: r.userID,
+        summary: correctionSummary("Awards", type.name, "assigned"),
+      })),
+      now,
+    );
     return {
       assigned: plan.create.length,
       assignedNames: plan.create.map((r) => r.displayName ?? r.userID),
-      created: plan.create.map((r) => r.userID),
       skipped: plan.skipped.map((r) => ({
         userID: r.userID,
         displayName: r.displayName,
       })),
     };
   });
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    input.academicYear,
-    result.created.map((userID) => ({
-      userID,
-      summary: correctionSummary("Awards", type.name, "assigned"),
-    })),
-    now,
-  );
   return {
     assigned: result.assigned,
     assignedNames: result.assignedNames,
@@ -347,28 +346,30 @@ export async function awardUpdate(
     { academicYear: award.academicYear, affectedUserIDs: [award.userID] },
   );
   if (award.voidedAt) throw fail("CONFLICT", "AWARD_REMOVED");
-  await db.award.update({
-    where: { id: award.id },
-    data: {
-      title: input.title,
-      citation: input.citation,
-      updatedBy: actorUserID,
-      updatedAt: now,
-    },
-  });
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    award.academicYear,
-    [
-      {
-        userID: award.userID,
-        summary: correctionSummary("Awards", input.title, "edited"),
+  await db.$transaction(async (tx) => {
+    await tx.award.update({
+      where: { id: award.id },
+      data: {
+        title: input.title,
+        citation: input.citation,
+        updatedBy: actorUserID,
+        updatedAt: now,
       },
-    ],
-    now,
-  );
+    });
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      award.academicYear,
+      [
+        {
+          userID: award.userID,
+          summary: correctionSummary("Awards", input.title, "edited"),
+        },
+      ],
+      now,
+    );
+  });
   return { id: award.id };
 }
 
@@ -385,27 +386,29 @@ export async function awardRemove(
     { academicYear: award.academicYear, affectedUserIDs: [award.userID] },
   );
   if (!award.voidedAt) {
-    await db.award.update({
-      where: { id },
-      data: { voidedAt: now, voidedBy: actorUserID },
+    await db.$transaction(async (tx) => {
+      await tx.award.update({
+        where: { id },
+        data: { voidedAt: now, voidedBy: actorUserID },
+      });
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        award.academicYear,
+        [
+          {
+            userID: award.userID,
+            summary: correctionSummary(
+              "Awards",
+              award.title ?? "Award",
+              "removed",
+            ),
+          },
+        ],
+        now,
+      );
     });
-    await logCorrections(
-      db,
-      guard,
-      actorUserID,
-      award.academicYear,
-      [
-        {
-          userID: award.userID,
-          summary: correctionSummary(
-            "Awards",
-            award.title ?? "Award",
-            "removed",
-          ),
-        },
-      ],
-      now,
-    );
   }
   return { id };
 }
@@ -453,32 +456,34 @@ export async function awardRestore(
   );
   if (!award.voidedAt) return { id };
   if (await activeTwin(db, award)) throw fail("CONFLICT", "AWARD_DUPLICATE");
-  await db.award.update({
-    where: { id },
-    data: {
-      voidedAt: null,
-      voidedBy: null,
-      updatedBy: actorUserID,
-      updatedAt: now,
-    },
-  });
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    award.academicYear,
-    [
-      {
-        userID: award.userID,
-        summary: correctionSummary(
-          "Awards",
-          award.title ?? "Award",
-          "restored",
-        ),
+  await db.$transaction(async (tx) => {
+    await tx.award.update({
+      where: { id },
+      data: {
+        voidedAt: null,
+        voidedBy: null,
+        updatedBy: actorUserID,
+        updatedAt: now,
       },
-    ],
-    now,
-  );
+    });
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      award.academicYear,
+      [
+        {
+          userID: award.userID,
+          summary: correctionSummary(
+            "Awards",
+            award.title ?? "Award",
+            "restored",
+          ),
+        },
+      ],
+      now,
+    );
+  });
   return { id };
 }
 
@@ -518,7 +523,7 @@ async function bulkTargets(
 
 /** Log a bulk change's corrections, year by year. */
 async function logBulk(
-  db: PrismaClient,
+  db: Pick<PrismaClient, "residentEvent">,
   actorUserID: string,
   guards: Map<string, { correction: boolean }>,
   changed: ReadonlyArray<{
@@ -555,11 +560,13 @@ export async function awardsBulkRemove(
   const { rows, guards } = await bulkTargets(db, actorUserID, ids);
   const live = rows.filter((r) => !r.voidedAt);
   if (live.length > 0) {
-    await db.award.updateMany({
-      where: { id: { in: live.map((r) => r.id) } },
-      data: { voidedAt: now, voidedBy: actorUserID },
+    await db.$transaction(async (tx) => {
+      await tx.award.updateMany({
+        where: { id: { in: live.map((r) => r.id) } },
+        data: { voidedAt: now, voidedBy: actorUserID },
+      });
+      await logBulk(tx, actorUserID, guards, live, "removed", now);
     });
-    await logBulk(db, actorUserID, guards, live, "removed", now);
   }
   return { removed: live.length };
 }
@@ -601,23 +608,25 @@ export async function awardsBulkRestore(
     }
   }
   if (restorable.length > 0) {
-    await db.award.updateMany({
-      where: { id: { in: restorable } },
-      data: {
-        voidedAt: null,
-        voidedBy: null,
-        updatedBy: actorUserID,
-        updatedAt: now,
-      },
+    await db.$transaction(async (tx) => {
+      await tx.award.updateMany({
+        where: { id: { in: restorable } },
+        data: {
+          voidedAt: null,
+          voidedBy: null,
+          updatedBy: actorUserID,
+          updatedAt: now,
+        },
+      });
+      await logBulk(
+        tx,
+        actorUserID,
+        guards,
+        removed.filter((r) => restorable.includes(r.id)),
+        "restored",
+        now,
+      );
     });
-    await logBulk(
-      db,
-      actorUserID,
-      guards,
-      removed.filter((r) => restorable.includes(r.id)),
-      "restored",
-      now,
-    );
   }
   return { restored: restorable.length, skipped };
 }
@@ -656,6 +665,7 @@ export async function awardBatchesList(db: PrismaClient, academicYear: string) {
     skippedCount: r.skippedCount,
     createdByName: label(r.createdBy),
     createdAt: r.createdAt ?? null,
+    status: r.status ?? "complete",
     undone: r.undoneAt != null,
     undoneAt: r.undoneAt ?? null,
     undoneByName: label(r.undoneBy),
@@ -705,22 +715,22 @@ export async function awardBatchUndo(
       where: { importBatchID: batchId, ...NOT_VOIDED },
       data: { voidedAt: now, voidedBy: actorUserID },
     });
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      batch.academicYear,
+      active.map((a) => ({
+        userID: a.userID,
+        summary: correctionSummary(
+          "Awards",
+          a.title ?? "Award",
+          "removed (upload undone)",
+        ),
+      })),
+      now,
+    );
     return { id: batchId, removed: result.count };
   });
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    batch.academicYear,
-    active.map((a) => ({
-      userID: a.userID,
-      summary: correctionSummary(
-        "Awards",
-        a.title ?? "Award",
-        "removed (upload undone)",
-      ),
-    })),
-    now,
-  );
   return undone;
 }

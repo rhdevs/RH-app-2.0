@@ -225,34 +225,38 @@ export async function manualSave(
       extraContribution: input.extraContribution,
     }),
   };
-  if (existing) {
-    await db.manualMembership.update({
-      where,
-      data: { ...changes, updatedBy: actorUserID, updatedAt: now },
+  await db.$transaction(async (tx) => {
+    if (existing) {
+      await tx.manualMembership.update({
+        where,
+        data: { ...changes, updatedBy: actorUserID, updatedAt: now },
+      });
+    } else {
+      await tx.manualMembership.create({
+        data: {
+          academicYear: input.academicYear,
+          userID: resident.key,
+          ccaID: input.ccaID,
+          ...changes,
+          createdBy: actorUserID,
+          createdAt: now,
+        },
+      });
+    }
+    await recordResidentEvent(tx, {
+      academicYear: input.academicYear,
+      userID: resident.key,
+      action: existing ? "manual_edit" : "manual_add",
+      summary: correctionSummary(
+        "Manual entry",
+        cca.ccaName,
+        existing
+          ? joinChanges(membershipChangeParts(existing, input))
+          : "added",
+      ),
+      actor: actorUserID,
+      at: now,
     });
-  } else {
-    await db.manualMembership.create({
-      data: {
-        academicYear: input.academicYear,
-        userID: resident.key,
-        ccaID: input.ccaID,
-        ...changes,
-        createdBy: actorUserID,
-        createdAt: now,
-      },
-    });
-  }
-  await recordResidentEvent(db, {
-    academicYear: input.academicYear,
-    userID: resident.key,
-    action: existing ? "manual_edit" : "manual_add",
-    summary: correctionSummary(
-      "Manual entry",
-      cca.ccaName,
-      existing ? joinChanges(membershipChangeParts(existing, input)) : "added",
-    ),
-    actor: actorUserID,
-    at: now,
   });
   return { userID: resident.key, ccaID: input.ccaID };
 }
@@ -273,28 +277,30 @@ async function setManualRemoved(
   if (Boolean(row.removedAt) === removed) {
     return { userID: resident.key, ccaID: input.ccaID };
   }
-  await db.manualMembership.update({
-    where,
-    data: removed
-      ? { removedAt: now, removedBy: actorUserID }
-      : {
-          removedAt: null,
-          removedBy: null,
-          updatedBy: actorUserID,
-          updatedAt: now,
-        },
-  });
-  await recordResidentEvent(db, {
-    academicYear: input.academicYear,
-    userID: resident.key,
-    action: removed ? "manual_remove" : "manual_restore",
-    summary: correctionSummary(
-      "Manual entry",
-      cca.ccaName,
-      removed ? "removed" : "restored",
-    ),
-    actor: actorUserID,
-    at: now,
+  await db.$transaction(async (tx) => {
+    await tx.manualMembership.update({
+      where,
+      data: removed
+        ? { removedAt: now, removedBy: actorUserID }
+        : {
+            removedAt: null,
+            removedBy: null,
+            updatedBy: actorUserID,
+            updatedAt: now,
+          },
+    });
+    await recordResidentEvent(tx, {
+      academicYear: input.academicYear,
+      userID: resident.key,
+      action: removed ? "manual_remove" : "manual_restore",
+      summary: correctionSummary(
+        "Manual entry",
+        cca.ccaName,
+        removed ? "removed" : "restored",
+      ),
+      actor: actorUserID,
+      at: now,
+    });
   });
   return { userID: resident.key, ccaID: input.ccaID };
 }

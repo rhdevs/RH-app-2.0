@@ -194,13 +194,59 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await errorOf(setRole(R12, "Captain"))).toBe("ok");
       });
 
-      it("refuses a second unlock, and an unlock while the year is collecting", async () => {
+      it("refuses an unlock while the year is collecting, and asking again changes nothing", async () => {
         expect(await errorOf(unlock(R12))).toBe(
           "PRECONDITION_FAILED:YEAR_NOT_IN_REVIEW",
         );
         await publishYear();
         expect(await errorOf(unlock(R12))).toBe("ok");
-        expect(await errorOf(unlock(R12))).toBe("CONFLICT:ALREADY_UNLOCKED");
+        expect(await errorOf(unlock(R12))).toBe("ok");
+        expect(
+          await db.residentUnlock.count({
+            where: { academicYear: AY, userID: R12.id },
+          }),
+        ).toBe(1);
+        expect(
+          (await events(R12)).filter((e) => e.action === "unlock"),
+        ).toHaveLength(1);
+      });
+
+      it("keeps one active unlock and one history line when five unlocks arrive at once", async () => {
+        await publishYear();
+        const results = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            errorOf(unlock(R12, "Wrong role on file")),
+          ),
+        );
+        expect(results).toEqual(["ok", "ok", "ok", "ok", "ok"]);
+        const rows = await db.residentUnlock.findMany({
+          where: { academicYear: AY, userID: R12.id },
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.activeKey).toBe(`${AY}|${R12.id}`);
+        expect(
+          (await events(R12)).filter((e) => e.action === "unlock"),
+        ).toHaveLength(1);
+      });
+
+      it("frees the key on relock, so the resident can be unlocked again", async () => {
+        await publishYear();
+        await unlock(R12);
+        await as(JCRC).transcriptManage.corrections.relock({
+          userID: R12.id,
+          academicYear: AY,
+        });
+        const [ended] = await db.residentUnlock.findMany({
+          where: { academicYear: AY, userID: R12.id },
+        });
+        expect(ended!.activeKey).toBe(`${AY}|${R12.id}|ended|${ended!.id}`);
+        expect(await errorOf(unlock(R12, "Again"))).toBe("ok");
+        expect(
+          await db.residentUnlock.count({
+            where: { academicYear: AY, userID: R12.id },
+          }),
+        ).toBe(2);
+        expect(await errorOf(setRole(R12, "Vice-Captain"))).toBe("ok");
       });
 
       it("requires a reason", async () => {
@@ -685,10 +731,32 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       });
 
-      it("refuses a second hold, a release with no hold, and a missing reason", async () => {
+      it("keeps one hold and one history line when five holds arrive at once", async () => {
+        await publishYear();
+        const results = await Promise.all(
+          Array.from({ length: 5 }, () => errorOf(withhold(R12))),
+        );
+        expect(results).toEqual(["ok", "ok", "ok", "ok", "ok"]);
+        expect(
+          await db.residentWithhold.count({
+            where: { academicYear: AY, userID: R12.id },
+          }),
+        ).toBe(1);
+        expect(
+          (await events(R12)).filter((e) => e.action === "withhold"),
+        ).toHaveLength(1);
+        // Released, it can be held again.
+        await as(ADMIN).transcriptManage.corrections.release({
+          userID: R12.id,
+          academicYear: AY,
+        });
+        expect(await errorOf(withhold(R12))).toBe("ok");
+      });
+
+      it("asks again for a hold changes nothing, refuses a release with no hold, and a missing reason", async () => {
         await publishYear();
         expect(await errorOf(withhold(R12))).toBe("ok");
-        expect(await errorOf(withhold(R12))).toBe("CONFLICT:ALREADY_WITHHELD");
+        expect(await errorOf(withhold(R12))).toBe("ok");
         expect(
           await errorOf(
             as(ADMIN).transcriptManage.corrections.release({
@@ -915,6 +983,102 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             })
           ).isJcrcMember,
         ).toBe(true);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("a correction and its history line are one write", () => {
+      /** A database whose history writes inside a transaction fail. */
+      const lossyHistory = () =>
+        new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return (fn: (tx: unknown) => Promise<unknown>, opts?: unknown) =>
+                target.$transaction(
+                  (tx) =>
+                    fn(
+                      new Proxy(tx, {
+                        get(t, p, r) {
+                          if (p === "residentEvent") {
+                            return {
+                              create: () =>
+                                Promise.reject(new Error("history failed")),
+                            };
+                          }
+                          return Reflect.get(t, p, r) as unknown;
+                        },
+                      }),
+                    ),
+                  opts as never,
+                );
+            }
+            return Reflect.get(target, prop, receiver) as unknown;
+          },
+        });
+
+      it("leaves an award alone when its history line cannot be written", async () => {
+        const awards = await import("../manageAwards");
+        await publishYear();
+        await unlock(R12);
+        const award = await db.award.findFirstOrThrow({
+          where: {
+            academicYear: AY,
+            userID: R12.id,
+            title: "Outstanding Newcomer",
+          },
+        });
+
+        await expect(
+          awards.awardRemove(lossyHistory(), JCRC.id, award.id),
+        ).rejects.toThrow("history failed");
+        const after = await db.award.findUniqueOrThrow({
+          where: { id: award.id },
+        });
+        expect(after.voidedAt ?? null).toBeNull();
+        expect(
+          (await events(R12)).filter((e) => e.action === "correction"),
+        ).toHaveLength(0);
+
+        // With a working history, both are written.
+        await awards.awardRemove(db, JCRC.id, award.id);
+        expect(
+          (await db.award.findUniqueOrThrow({ where: { id: award.id } }))
+            .voidedAt,
+        ).not.toBeNull();
+        expect(
+          (await events(R12)).filter((e) => e.action === "correction"),
+        ).toHaveLength(1);
+      });
+
+      it("leaves a roster entry and a manual entry alone when their history cannot be written", async () => {
+        const roster = await import("../manageRoster");
+        const manual = await import("../residentManual");
+        await publishYear();
+        await unlock(R12);
+
+        await expect(
+          roster.rosterUpsert(lossyHistory(), JCRC.id, {
+            ccaID: SOCCER,
+            academicYear: AY,
+            userID: R12.id,
+            roleLabel: "Vice-Captain",
+          }),
+        ).rejects.toThrow("history failed");
+        expect((await entryOf(R12)).roleLabel ?? null).toBeNull();
+
+        await expect(
+          manual.manualSave(lossyHistory(), JCRC.id, {
+            userID: R12.id,
+            academicYear: AY,
+            ccaID: DANCE,
+            duration: "full",
+          } as never),
+        ).rejects.toThrow("history failed");
+        expect(
+          await db.manualMembership.count({
+            where: { academicYear: AY, userID: R12.id, ccaID: DANCE },
+          }),
+        ).toBe(0);
       });
     });
 

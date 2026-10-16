@@ -102,30 +102,32 @@ export async function jcrcSave(
     updatedAt: now,
     updatedBy: actorUserID,
   };
-  await db.jcrcService.upsert({
-    where: {
-      academicYear_userID: { academicYear: fields.academicYear, userID: key },
-    },
-    create: { academicYear: fields.academicYear, userID: key, ...data },
-    update: data,
-  });
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    fields.academicYear,
-    [
-      {
-        userID: key,
-        summary: correctionSummary(
-          "JCRC page",
-          fields.position.trim() ? fields.position : "record",
-          "saved",
-        ),
+  await db.$transaction(async (tx) => {
+    await tx.jcrcService.upsert({
+      where: {
+        academicYear_userID: { academicYear: fields.academicYear, userID: key },
       },
-    ],
-    now,
-  );
+      create: { academicYear: fields.academicYear, userID: key, ...data },
+      update: data,
+    });
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      fields.academicYear,
+      [
+        {
+          userID: key,
+          summary: correctionSummary(
+            "JCRC page",
+            fields.position.trim() ? fields.position : "record",
+            "saved",
+          ),
+        },
+      ],
+      now,
+    );
+  });
   return jcrcGet(db, key, fields.academicYear);
 }
 
@@ -158,34 +160,36 @@ async function setJcrcRemoved(
   if (!row)
     throw new TRPCError({ code: "NOT_FOUND", message: "RECORD_NOT_FOUND" });
   if (Boolean(row.removedAt) === removed) return { userID: resident.key };
-  await db.jcrcService.update({
-    where: { id: row.id },
-    data: removed
-      ? { removedAt: now, removedBy: actorUserID }
-      : {
-          removedAt: null,
-          removedBy: null,
-          updatedAt: now,
-          updatedBy: actorUserID,
+  await db.$transaction(async (tx) => {
+    await tx.jcrcService.update({
+      where: { id: row.id },
+      data: removed
+        ? { removedAt: now, removedBy: actorUserID }
+        : {
+            removedAt: null,
+            removedBy: null,
+            updatedAt: now,
+            updatedBy: actorUserID,
+          },
+    });
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      fields.academicYear,
+      [
+        {
+          userID: resident.key,
+          summary: correctionSummary(
+            "JCRC page",
+            row.position?.trim() ? row.position : "record",
+            removed ? "removed" : "restored",
+          ),
         },
+      ],
+      now,
+    );
   });
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    fields.academicYear,
-    [
-      {
-        userID: resident.key,
-        summary: correctionSummary(
-          "JCRC page",
-          row.position?.trim() ? row.position : "record",
-          removed ? "removed" : "restored",
-        ),
-      },
-    ],
-    now,
-  );
   return { userID: resident.key };
 }
 

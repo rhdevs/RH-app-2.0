@@ -29,6 +29,8 @@ export interface BatchItem {
   createdByName: string | null;
   createdAt: Date | string | null;
   undone: boolean;
+  /** complete | partial (stopped part way). */
+  status?: string;
   undoneAt: Date | string | null;
   undoneByName: string | null;
   activeCount: number;
@@ -114,7 +116,7 @@ export function AwardHistoryView(p: AwardHistoryViewProps) {
                     <td className="px-3 py-2 text-gray-700">
                       {b.undone
                         ? `Undone${b.undoneByName ? ` by ${b.undoneByName}` : ""}${b.undoneAt ? ` on ${formatSgDate(b.undoneAt)}` : ""}`
-                        : `${b.activeCount} active`}
+                        : `${b.status === "partial" ? "Partly imported, " : ""}${b.activeCount} active`}
                     </td>
                     <td className="px-3 py-2 text-right">
                       {!b.undone && !p.readOnly && (

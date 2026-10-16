@@ -729,16 +729,17 @@ export async function volunteerPeopleSet(
       where: { id: activity.id },
       data: { updatedBy: actorUserID, updatedAt: now },
     });
-    return { id: activity.id, added, removed };
+    const out = { id: activity.id, added, removed };
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      activity.academicYear,
+      summaries,
+      now,
+    );
+    return out;
   }, SAVE_TX);
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    activity.academicYear,
-    summaries,
-    now,
-  );
   return result;
 }
 
@@ -850,19 +851,20 @@ export async function volunteerAttendanceSave(
         },
       });
     }
-    return {
+    const out = {
       created: toCreate.length,
       updated: toUpdate.length,
       deleted: toDelete.length,
     };
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      activity.academicYear,
+      summaries,
+      now,
+    );
+    return out;
   }, SAVE_TX);
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    activity.academicYear,
-    summaries,
-    now,
-  );
   return result;
 }

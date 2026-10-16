@@ -66,10 +66,28 @@ const plural = (n: number, one: string, many: string) =>
 /** "Closed AY2026/27. 12 CCAs frozen, 77 were frozen already." */
 export function closeSummary(
   academicYear: string,
-  result: { frozenNow: number; alreadyFrozen: number },
+  result: {
+    frozenNow: number;
+    alreadyFrozen: number;
+    skipped?: number;
+    failed?: number;
+    failedNames?: readonly string[];
+    closed?: boolean;
+  },
 ): string {
-  return `${academicYear} closed. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen.`;
+  if (result.closed === false) {
+    const names = result.failedNames?.length
+      ? `: ${result.failedNames.join(", ")}`
+      : "";
+    return `${academicYear} is not closed yet. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen, ${plural(result.failed ?? 0, "CCA", "CCAs")} could not be frozen${names}. Press Close year again to finish them.`;
+  }
+  const skipped = result.skipped ? `, ${result.skipped} left as they were` : "";
+  return `${academicYear} closed. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen${skipped}.`;
 }
+
+/** The sentence for CCAs that block Publish: also shown inline on the panel. */
+export const notFrozenText = (academicYear: string, names: readonly string[]) =>
+  `Some CCAs are not frozen for ${academicYear}: ${names.join(", ")}. Close the year again to freeze them.`;
 
 export const CLOSE_CONFIRMATION = (academicYear: string, unfrozen: number) =>
   `This freezes the member list of ${plural(unfrozen, "CCA", "CCAs")} that ${unfrozen === 1 ? "is" : "are"} not frozen yet, and opens ${academicYear} for review. Residents will see a draft.`;
@@ -208,6 +226,15 @@ export function errorText(message: string | null | undefined): string {
   const validation = validationText(message);
   if (validation) return validation;
   const code = message.split(":")[0]!;
+  if (code === "UPLOAD_PARTIAL") {
+    // "UPLOAD_PARTIAL:<rows written>", from an import that stopped part way.
+    return `The upload stopped part way: ${message.split(":")[1] ?? "0"} imported. Undo it from History, fix the file, and upload again.`;
+  }
+  if (code === "CCAS_NOT_FROZEN") {
+    // "CCAS_NOT_FROZEN:<academic year>:<names>", from Publish.
+    const [, year = "", ...names] = message.split(":");
+    return notFrozenText(year, [names.join(":")]);
+  }
   const known = ERROR_TEXT[message] ?? ERROR_TEXT[code];
   if (known) return known;
   // Zod errors and other readable messages from the API are kept short.

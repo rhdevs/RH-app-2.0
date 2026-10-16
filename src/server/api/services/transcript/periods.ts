@@ -210,10 +210,36 @@ async function claimStatus(
 
 export interface CloseResult {
   academicYear: string;
+  /** False when some CCA could not be frozen: the year stays collecting. */
+  closed: boolean;
   /** CCAs frozen by this close (the ones that were not frozen already). */
   frozenNow: number;
   /** CCAs that already had an active freeze for this year. */
   alreadyFrozen: number;
+  /** CCAs a freeze left alone (frozen meanwhile, or nothing to freeze). */
+  skipped: number;
+  /** CCAs whose freeze failed; run Close year again to finish them. */
+  failed: number;
+  failedNames: string[];
+}
+
+/** The names of the CCAs with no active freeze for a year, A to Z. */
+export async function listUnfrozen(
+  db: PrismaClient,
+  academicYear: string,
+): Promise<string[]> {
+  const [ccas, frozen] = await Promise.all([
+    db.cCA.findMany({ select: { ccaID: true, ccaName: true } }),
+    db.ccaYearFreeze.findMany({
+      where: { academicYear, ...NOT_UNFROZEN },
+      select: { ccaID: true },
+    }),
+  ]);
+  const done = new Set(frozen.map((f) => f.ccaID));
+  return ccas
+    .filter((c) => !done.has(c.ccaID))
+    .map((c) => c.ccaName)
+    .sort((a, b) => a.localeCompare(b, "en"));
 }
 
 /** How many CCAs a close would freeze, for the confirmation dialog. */
@@ -221,18 +247,15 @@ export async function countUnfrozen(
   db: PrismaClient,
   academicYear: string,
 ): Promise<number> {
-  const [ccas, frozen] = await Promise.all([
-    db.cCA.count(),
-    db.ccaYearFreeze.count({ where: { academicYear, ...NOT_UNFROZEN } }),
-  ]);
-  return Math.max(0, ccas - frozen);
+  return (await listUnfrozen(db, academicYear)).length;
 }
 
 /**
  * CLOSE YEAR: freeze every CCA that has no active freeze for this year (reason
  * "close_year"), then move the year to closed. Each CCA freezes in its own
- * transaction, so a failure part-way leaves the year collecting with some CCAs
- * frozen; running it again finishes the rest.
+ * transaction, one CCA at a time. A CCA whose freeze fails is counted and the
+ * rest still go on; the year then stays collecting (with the others frozen) and
+ * running Close year again finishes the failed ones.
  */
 export async function closeYear(
   db: PrismaClient,
@@ -243,30 +266,46 @@ export async function closeYear(
   await requireTransition(db, "close", academicYear, now);
 
   const [ccas, frozen] = await Promise.all([
-    db.cCA.findMany({ select: { ccaID: true } }),
+    db.cCA.findMany({ select: { ccaID: true, ccaName: true } }),
     db.ccaYearFreeze.findMany({
       where: { academicYear, ...NOT_UNFROZEN },
       select: { ccaID: true },
     }),
   ]);
   const done = new Set(frozen.map((f) => f.ccaID));
-  const todo = ccas.map((c) => c.ccaID).filter((id) => !done.has(id));
+  const todo = ccas.filter((c) => !done.has(c.ccaID));
 
-  const queue = [...todo];
   let frozenNow = 0;
-  const worker = async () => {
-    for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+  let skipped = 0;
+  const failedNames: string[] = [];
+  // One CCA at a time: each freeze is its own transaction, and a slow or failing
+  // one never races the others.
+  for (const cca of todo) {
+    try {
       const result = await freezeCca(db, {
-        ccaID: id,
+        ccaID: cca.ccaID,
         reason: "close_year",
         actorUserID,
         now,
         academicYear,
       });
       if (result.kind === "frozen") frozenNow += 1;
+      else skipped += 1;
+    } catch {
+      failedNames.push(cca.ccaName);
     }
+  }
+  const counts = {
+    academicYear,
+    frozenNow,
+    alreadyFrozen: ccas.length - todo.length,
+    skipped,
+    failed: failedNames.length,
+    failedNames,
   };
-  await Promise.all(Array.from({ length: 4 }, worker));
+  // Some CCA is still unfrozen: leave the year collecting, so Close year can be
+  // run again and a year is never half closed.
+  if (failedNames.length > 0) return { ...counts, closed: false };
 
   await transitioning(() =>
     claimStatus(db, academicYear, "close", STATUS_COLLECTING, {
@@ -274,18 +313,18 @@ export async function closeYear(
       closedBy: actorUserID,
     }),
   );
-  return {
-    academicYear,
-    frozenNow,
-    alreadyFrozen: ccas.length - todo.length,
-  };
+  return { ...counts, closed: true };
 }
 
 export interface PublishResult {
   academicYear: string;
 }
 
-/** PUBLISH: closed -> published. Freezes nothing: every list is frozen already. */
+/**
+ * PUBLISH: closed -> published. Freezes nothing, so it refuses while any CCA has
+ * no active freeze for the year (one unfrozen during review, or created after
+ * Close year): a head change later could not freeze it in a published year.
+ */
 export async function publish(
   db: PrismaClient,
   academicYear: string,
@@ -293,6 +332,13 @@ export async function publish(
   now: Date = new Date(),
 ): Promise<PublishResult> {
   await requireTransition(db, "publish", academicYear, now);
+  const unfrozen = await listUnfrozen(db, academicYear);
+  if (unfrozen.length > 0) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: `CCAS_NOT_FROZEN:${academicYear}:${unfrozen.join(", ")}`,
+    });
+  }
   await transitioning(() =>
     claimStatus(db, academicYear, "publish", STATUS_CLOSED, {
       publishedAt: now,

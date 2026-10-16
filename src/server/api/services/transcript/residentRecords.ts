@@ -154,7 +154,7 @@ export function recordResidentEvent(
  * nothing when the write was an ordinary one.
  */
 export async function logCorrections(
-  db: PrismaClient,
+  db: Pick<PrismaClient, "residentEvent">,
   guard: { correction: boolean },
   actorUserID: string,
   academicYear: string,

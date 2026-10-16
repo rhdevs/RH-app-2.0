@@ -622,6 +622,97 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
       });
 
+      it("refuses to publish while a CCA is not frozen, and says which", async () => {
+        const c = as(JCRC).transcript;
+        await c.periods.close({ academicYear: AY });
+        expect(await c.periods.unfrozenNames({ academicYear: AY })).toEqual([]);
+
+        await c.freezes.unfreeze({
+          academicYear: AY,
+          ccaID: SOCCER,
+          reason: "Fixing a roster",
+        });
+        expect(await c.periods.unfrozenNames({ academicYear: AY })).toEqual([
+          "Soccer (MALE)",
+        ]);
+        expect(await errorOf(c.periods.publish({ academicYear: AY }))).toBe(
+          "PRECONDITION_FAILED:CCAS_NOT_FROZEN:AY2026/27:Soccer (MALE)",
+        );
+        expect(
+          (
+            await db.transcriptPeriod.findUniqueOrThrow({
+              where: { academicYear: AY },
+            })
+          ).status,
+        ).toBe("closed");
+
+        // Back to collecting, then Close year freezes it again; now it publishes.
+        await c.periods.backToCollecting({ academicYear: AY });
+        const again = await c.periods.close({ academicYear: AY });
+        expect(again).toMatchObject({ closed: true, frozenNow: 1, failed: 0 });
+        expect(await errorOf(c.periods.publish({ academicYear: AY }))).toBe(
+          "ok",
+        );
+      });
+
+      it("closes one CCA at a time, counts a failure, stays collecting, and finishes on the next run", async () => {
+        const periods = await import("../periods");
+        // The third freeze transaction fails; the others go on.
+        let transactions = 0;
+        const flaky = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return (...args: unknown[]) => {
+                transactions += 1;
+                if (transactions === 3) {
+                  return Promise.reject(new Error("database went away"));
+                }
+                return (
+                  target.$transaction as unknown as (
+                    ...a: unknown[]
+                  ) => Promise<unknown>
+                )(...args);
+              };
+            }
+            return Reflect.get(target, prop, receiver) as unknown;
+          },
+        });
+
+        const first = await periods.closeYear(flaky, AY, JCRC.id);
+        expect(first).toMatchObject({
+          closed: false,
+          frozenNow: 11,
+          alreadyFrozen: 2,
+          skipped: 0,
+          failed: 1,
+        });
+        expect(first.failedNames).toHaveLength(1);
+        const status = async () =>
+          (
+            await db.transcriptPeriod.findUniqueOrThrow({
+              where: { academicYear: AY },
+            })
+          ).status;
+        expect(await status()).toBe("collecting");
+        expect(
+          await db.ccaYearFreeze.count({
+            where: {
+              academicYear: AY,
+              OR: [{ unfrozenAt: null }, { unfrozenAt: { isSet: false } }],
+            },
+          }),
+        ).toBe(13);
+
+        const second = await periods.closeYear(db, AY, JCRC.id);
+        expect(second).toMatchObject({
+          closed: true,
+          frozenNow: 1,
+          alreadyFrozen: 13,
+          failed: 0,
+        });
+        expect(await status()).toBe("closed");
+      });
+
       it("lists each CCA's state for the admin table, with names", async () => {
         const { rows, unfrozen } = await as(JCRC).transcript.freezes.list({
           academicYear: AY,

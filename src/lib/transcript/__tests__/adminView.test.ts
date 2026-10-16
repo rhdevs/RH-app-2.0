@@ -9,6 +9,7 @@ import {
   UNFROZEN_BANNER,
   WRITES_LOCKED_NOTE,
   closeSummary,
+  notFrozenText,
   errorText,
   fieldError,
   isWritable,
@@ -181,5 +182,50 @@ describe("validation messages", () => {
     expect(fieldError(zodError, "citation")).toBeNull();
     expect(fieldError(null, "title")).toBeNull();
     expect(fieldError(undefined, "title")).toBeNull();
+  });
+});
+
+describe("closing and publishing messages", () => {
+  it("says what a close that stopped part way did, and how to finish", () => {
+    expect(
+      closeSummary("AY2026/27", {
+        closed: false,
+        frozenNow: 11,
+        alreadyFrozen: 2,
+        failed: 1,
+        failedNames: ["Soccer (MALE)"],
+      }),
+    ).toBe(
+      "AY2026/27 is not closed yet. 11 CCAs frozen now, 2 already frozen, 1 CCA could not be frozen: Soccer (MALE). Press Close year again to finish them.",
+    );
+  });
+
+  it("mentions CCAs left alone only when there were some", () => {
+    expect(
+      closeSummary("AY2026/27", {
+        frozenNow: 1,
+        alreadyFrozen: 1,
+        skipped: 2,
+      }),
+    ).toBe(
+      "AY2026/27 closed. 1 CCA frozen now, 1 already frozen, 2 left as they were.",
+    );
+  });
+
+  it("names the CCAs that block Publish, from the server's refusal too", () => {
+    const text =
+      "Some CCAs are not frozen for AY2026/27: Chess Club, Soccer (MALE). Close the year again to freeze them.";
+    expect(notFrozenText("AY2026/27", ["Chess Club", "Soccer (MALE)"])).toBe(
+      text,
+    );
+    expect(
+      errorText("CCAS_NOT_FROZEN:AY2026/27:Chess Club, Soccer (MALE)"),
+    ).toBe(text);
+  });
+
+  it("explains a partial upload", () => {
+    expect(errorText("UPLOAD_PARTIAL:200")).toContain(
+      "The upload stopped part way: 200 imported.",
+    );
   });
 });

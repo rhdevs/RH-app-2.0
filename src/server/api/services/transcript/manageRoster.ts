@@ -485,46 +485,49 @@ export async function rosterUpsert(
       })
     : null;
 
-  const row = await db.transcriptRosterEntry.upsert({
-    where: {
-      academicYear_userID_ccaID: {
+  const row = await db.$transaction(async (tx) => {
+    const row = await tx.transcriptRosterEntry.upsert({
+      where: {
+        academicYear_userID_ccaID: {
+          academicYear: input.academicYear,
+          userID: target.key,
+          ccaID: input.ccaID,
+        },
+      },
+      create: {
         academicYear: input.academicYear,
         userID: target.key,
         ccaID: input.ccaID,
+        frozen: false,
+        ...changes,
       },
-    },
-    create: {
-      academicYear: input.academicYear,
-      userID: target.key,
-      ccaID: input.ccaID,
-      frozen: false,
-      ...changes,
-    },
-    update: changes,
-  });
-  if (guard.correction) {
-    const cca = await db.cCA.findUnique({
-      where: { ccaID: input.ccaID },
-      select: { ccaName: true },
+      update: changes,
     });
-    await logCorrections(
-      db,
-      guard,
-      actorUserID,
-      input.academicYear,
-      [
-        {
-          userID: target.key,
-          summary: correctionSummary(
-            "Roster",
-            cca?.ccaName ?? `CCA ${input.ccaID}`,
-            joinChanges(membershipChangeParts(before, input)),
-          ),
-        },
-      ],
-      now,
-    );
-  }
+    if (guard.correction) {
+      const cca = await tx.cCA.findUnique({
+        where: { ccaID: input.ccaID },
+        select: { ccaName: true },
+      });
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        input.academicYear,
+        [
+          {
+            userID: target.key,
+            summary: correctionSummary(
+              "Roster",
+              cca?.ccaName ?? `CCA ${input.ccaID}`,
+              joinChanges(membershipChangeParts(before, input)),
+            ),
+          },
+        ],
+        now,
+      );
+    }
+    return row;
+  });
   return {
     userID: row.userID,
     ccaID: row.ccaID,

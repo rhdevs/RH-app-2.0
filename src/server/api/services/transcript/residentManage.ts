@@ -146,9 +146,22 @@ export async function residentPanel(
 
 /* ---- unlock / relock ---------------------------------------------------------- */
 
+const isDuplicateKey = (error: unknown) =>
+  (error as { code?: string }).code === "P2002";
+
+/** "<year>|<userID>" while a row is active; unique, so at most one is. */
+const activeKeyOf = (academicYear: string, userID: string) =>
+  `${academicYear}|${userID}`;
+
+/** The key an ended row is rewritten to, so a new one can take the active key. */
+const endedKeyOf = (academicYear: string, userID: string, id: string) =>
+  `${academicYear}|${userID}|ended|${id}`;
+
 /**
  * Unlock ONE resident's records so a manager can correct them while the year is
- * in review or published. Needs a reason. At most one unlock is active at a time.
+ * in review or published. Needs a reason. At most one unlock is active at a
+ * time, kept by a unique key, so asking again (or twice at once) leaves the one
+ * unlock and one history line.
  */
 export async function unlockResident(
   db: PrismaClient,
@@ -162,25 +175,33 @@ export async function unlockResident(
     throw fail("PRECONDITION_FAILED", "YEAR_NOT_IN_REVIEW");
   }
   if (await activeUnlock(db, input.academicYear, resident.key)) {
-    throw fail("CONFLICT", "ALREADY_UNLOCKED");
+    return { userID: resident.key };
   }
-  await db.residentUnlock.create({
-    data: {
-      academicYear: input.academicYear,
-      userID: resident.key,
-      reason: input.reason,
-      unlockedBy: actorUserID,
-      unlockedAt: now,
-    },
-  });
-  await recordResidentEvent(db, {
-    academicYear: input.academicYear,
-    userID: resident.key,
-    action: "unlock",
-    reason: input.reason,
-    actor: actorUserID,
-    at: now,
-  });
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.residentUnlock.create({
+        data: {
+          academicYear: input.academicYear,
+          userID: resident.key,
+          reason: input.reason,
+          activeKey: activeKeyOf(input.academicYear, resident.key),
+          unlockedBy: actorUserID,
+          unlockedAt: now,
+        },
+      });
+      await recordResidentEvent(tx, {
+        academicYear: input.academicYear,
+        userID: resident.key,
+        action: "unlock",
+        reason: input.reason,
+        actor: actorUserID,
+        at: now,
+      });
+    });
+  } catch (error) {
+    // Someone unlocked this resident at the same moment: that unlock stands.
+    if (!isDuplicateKey(error)) throw error;
+  }
   return { userID: resident.key };
 }
 
@@ -194,17 +215,25 @@ export async function relockResident(
   const resident = await requireResident(db, input.userID);
   const active = await activeUnlock(db, input.academicYear, resident.key);
   if (!active) throw fail("CONFLICT", "NOT_UNLOCKED");
-  await db.residentUnlock.update({
-    where: { id: active.id },
-    data: { relockedAt: now, relockedBy: actorUserID },
-  });
-  await recordResidentEvent(db, {
-    academicYear: input.academicYear,
-    userID: resident.key,
-    action: "relock",
-    reason: input.note ? input.note : null,
-    actor: actorUserID,
-    at: now,
+  await db.$transaction(async (tx) => {
+    // Claim it: of two relocks at once, only one ends it and logs it.
+    const claimed = await tx.residentUnlock.updateMany({
+      where: { id: active.id, ...NOT_RELOCKED },
+      data: {
+        relockedAt: now,
+        relockedBy: actorUserID,
+        activeKey: endedKeyOf(input.academicYear, resident.key, active.id),
+      },
+    });
+    if (claimed.count !== 1) return;
+    await recordResidentEvent(tx, {
+      academicYear: input.academicYear,
+      userID: resident.key,
+      action: "relock",
+      reason: input.note ? input.note : null,
+      actor: actorUserID,
+      at: now,
+    });
   });
   return { userID: resident.key };
 }
@@ -220,25 +249,32 @@ export async function withholdResident(
 ) {
   const resident = await requireResident(db, input.userID);
   if (await activeWithhold(db, input.academicYear, resident.key)) {
-    throw fail("CONFLICT", "ALREADY_WITHHELD");
+    return { userID: resident.key };
   }
-  await db.residentWithhold.create({
-    data: {
-      academicYear: input.academicYear,
-      userID: resident.key,
-      reason: input.reason,
-      withheldBy: actorUserID,
-      withheldAt: now,
-    },
-  });
-  await recordResidentEvent(db, {
-    academicYear: input.academicYear,
-    userID: resident.key,
-    action: "withhold",
-    reason: input.reason,
-    actor: actorUserID,
-    at: now,
-  });
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.residentWithhold.create({
+        data: {
+          academicYear: input.academicYear,
+          userID: resident.key,
+          reason: input.reason,
+          activeKey: activeKeyOf(input.academicYear, resident.key),
+          withheldBy: actorUserID,
+          withheldAt: now,
+        },
+      });
+      await recordResidentEvent(tx, {
+        academicYear: input.academicYear,
+        userID: resident.key,
+        action: "withhold",
+        reason: input.reason,
+        actor: actorUserID,
+        at: now,
+      });
+    });
+  } catch (error) {
+    if (!isDuplicateKey(error)) throw error;
+  }
   return { userID: resident.key };
 }
 
@@ -252,21 +288,25 @@ export async function releaseResident(
   const resident = await requireResident(db, input.userID);
   const active = await activeWithhold(db, input.academicYear, resident.key);
   if (!active) throw fail("CONFLICT", "NOT_WITHHELD");
-  await db.residentWithhold.update({
-    where: { id: active.id },
-    data: {
-      releasedAt: now,
-      releasedBy: actorUserID,
-      releaseNote: input.note ? input.note : null,
-    },
-  });
-  await recordResidentEvent(db, {
-    academicYear: input.academicYear,
-    userID: resident.key,
-    action: "release",
-    reason: input.note ? input.note : null,
-    actor: actorUserID,
-    at: now,
+  await db.$transaction(async (tx) => {
+    const claimed = await tx.residentWithhold.updateMany({
+      where: { id: active.id, ...NOT_RELEASED },
+      data: {
+        releasedAt: now,
+        releasedBy: actorUserID,
+        releaseNote: input.note ? input.note : null,
+        activeKey: endedKeyOf(input.academicYear, resident.key, active.id),
+      },
+    });
+    if (claimed.count !== 1) return;
+    await recordResidentEvent(tx, {
+      academicYear: input.academicYear,
+      userID: resident.key,
+      action: "release",
+      reason: input.note ? input.note : null,
+      actor: actorUserID,
+      at: now,
+    });
   });
   return { userID: resident.key };
 }

@@ -380,21 +380,22 @@ export async function participantsSet(
       where: { id: activity.id },
       data: { updatedBy: actorUserID, updatedAt: now },
     });
-    return {
+    const out = {
       id: activity.id,
       added: diff.add.length + diff.restore.length,
       updated: diff.update.length,
       removed: diff.remove.length,
       unchanged: diff.unchanged,
     };
+    await logCorrections(
+      tx,
+      guard,
+      actorUserID,
+      activity.academicYear,
+      summaries,
+      now,
+    );
+    return out;
   }, PEOPLE_TX);
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    activity.academicYear,
-    summaries,
-    now,
-  );
   return result;
 }

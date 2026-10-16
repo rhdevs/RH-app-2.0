@@ -23,6 +23,7 @@ import {
   closeSummary,
   errorText,
   normaliseStatus,
+  notFrozenText,
   statusLabel,
   yearOptions,
 } from "~/lib/transcript/adminView";
@@ -68,6 +69,8 @@ export interface PeriodPanelViewProps {
   resultLine: string | null;
   /** How many CCAs a Close year would freeze, for its confirmation. */
   unfrozenCount: number | null;
+  /** CCAs with no active freeze for the year: they block Publish. */
+  notFrozenNames?: readonly string[];
   /** The download-by date (a Singapore calendar date), "" when none. */
   downloadByValue: string;
   onDownloadByChange: (value: string) => void;
@@ -260,6 +263,11 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
             </Button>
           ))}
         </div>
+        {status === "closed" && (p.notFrozenNames?.length ?? 0) > 0 && (
+          <p className="mt-3 text-sm text-amber-800" role="status">
+            {notFrozenText(p.selected, p.notFrozenNames ?? [])}
+          </p>
+        )}
         {p.resultLine && !dialogOpen && (
           <p className="mt-3 text-sm text-gray-700" role="status">
             {p.resultLine}
@@ -350,10 +358,16 @@ export default function PeriodPanel() {
     { enabled: year !== "", retry: false },
   );
 
+  const notFrozen = api.transcript.periods.unfrozenNames.useQuery(
+    { academicYear: year },
+    { enabled: year !== "", retry: false },
+  );
+
   const refresh = async () => {
     await Promise.all([
       utils.transcript.periods.list.invalidate(),
       utils.transcript.periods.unfrozenCount.invalidate(),
+      utils.transcript.periods.unfrozenNames.invalidate(),
       utils.transcript.freezes.list.invalidate(),
     ]);
   };
@@ -465,6 +479,7 @@ export default function PeriodPanel() {
       actionError={actionError ? errorText(actionError.message) : null}
       resultLine={resultLine}
       unfrozenCount={unfrozen.data ?? null}
+      notFrozenNames={notFrozen.data}
       downloadByValue={downloadBy}
       onDownloadByChange={(v) => {
         setDownloadBy(v);

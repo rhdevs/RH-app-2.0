@@ -31,6 +31,7 @@ import {
   backToCollecting,
   closeYear,
   countUnfrozen,
+  listUnfrozen,
   getPeriod,
   listPeriods,
   listViewableYears,
@@ -117,6 +118,11 @@ export const transcriptRouter = createTRPCRouter({
       ),
 
     /** How many CCAs a Close year would freeze, for its confirmation. */
+    /** The CCAs with no active freeze for a year, for the panel and Publish. */
+    unfrozenNames: managerProcedure
+      .input(z.object({ academicYear }))
+      .query(({ ctx, input }) => listUnfrozen(ctx.db, input.academicYear)),
+
     unfrozenCount: managerProcedure
       .input(z.object({ academicYear }))
       .query(({ ctx, input }) => countUnfrozen(ctx.db, input.academicYear)),

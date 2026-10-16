@@ -61,6 +61,20 @@ const renderPeriod = (over?: Partial<PeriodPanelViewProps>) =>
   renderToStaticMarkup(<PeriodPanelView {...period(over)} />);
 
 describe("academic year panel", () => {
+  it("lists the CCAs that block Publish, inline, only while the year is closed", () => {
+    const text =
+      "Some CCAs are not frozen for AY2026/27: Soccer (MALE). Close the year again to freeze them.";
+    expect(
+      renderPeriod({ status: "closed", notFrozenNames: ["Soccer (MALE)"] }),
+    ).toContain(text);
+    expect(
+      renderPeriod({ status: "closed", notFrozenNames: [] }),
+    ).not.toContain("not frozen for");
+    expect(
+      renderPeriod({ status: "collecting", notFrozenNames: ["Soccer (MALE)"] }),
+    ).not.toContain("not frozen for");
+  });
+
   const buttons = (html: string) =>
     [...html.matchAll(/<button[^>]*type="button"[^>]*>([^<]*)</g)].map(
       (m) => m[1],

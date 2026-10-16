@@ -150,6 +150,9 @@ export interface SkippedRow {
   reason: string;
 }
 
+/** 200 rows and their history lines in one transaction. */
+const CHUNK_TX = { timeout: 30_000, maxWait: 10_000 } as const;
+
 export async function awardImportCommit(
   db: PrismaClient,
   actorUserID: string,
@@ -290,43 +293,59 @@ export async function awardImportCommit(
     },
   });
 
+  // Chunk by chunk, each with its own history lines in the same transaction. A
+  // chunk that fails after earlier ones were written leaves a PARTIAL batch that
+  // says what was written, so History can show it and Undo removes exactly it.
   let imported = 0;
   try {
     for (let i = 0; i < toWrite.length; i += IMPORT_CHUNK_SIZE) {
       const chunk = toWrite.slice(i, i + IMPORT_CHUNK_SIZE);
-      await db.award.createMany({
-        data: chunk.map((a) => ({
-          academicYear: input.academicYear,
-          userID: a.userID,
-          title: a.title,
-          citation: a.citation,
-          awardTypeID: a.awardTypeID,
-          importBatchID: batch.id,
-          recordedBy: actorUserID,
-          recordedAt: now,
-        })),
-      });
+      await db.$transaction(async (tx) => {
+        await tx.award.createMany({
+          data: chunk.map((a) => ({
+            academicYear: input.academicYear,
+            userID: a.userID,
+            title: a.title,
+            citation: a.citation,
+            awardTypeID: a.awardTypeID,
+            importBatchID: batch.id,
+            recordedBy: actorUserID,
+            recordedAt: now,
+          })),
+        });
+        await logCorrections(
+          tx,
+          guard,
+          actorUserID,
+          input.academicYear,
+          chunk.map((a) => ({
+            userID: a.userID,
+            summary: correctionSummary("Awards", a.title, "assigned (upload)"),
+          })),
+          now,
+        );
+      }, CHUNK_TX);
       imported += chunk.length;
     }
-  } finally {
-    // Even if a chunk failed, the batch says what was written, so it can be undone.
+  } catch (error) {
     await db.awardImportBatch.update({
       where: { id: batch.id },
-      data: { importedCount: imported, skippedCount: rows.length - imported },
+      data: {
+        status: "partial",
+        importedCount: imported,
+        skippedCount: rows.length - imported,
+      },
+    });
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: `UPLOAD_PARTIAL:${imported}`,
+      cause: error,
     });
   }
-
-  await logCorrections(
-    db,
-    guard,
-    actorUserID,
-    input.academicYear,
-    toWrite.slice(0, imported).map((a) => ({
-      userID: a.userID,
-      summary: correctionSummary("Awards", a.title, "assigned (upload)"),
-    })),
-    now,
-  );
+  await db.awardImportBatch.update({
+    where: { id: batch.id },
+    data: { importedCount: imported, skippedCount: rows.length - imported },
+  });
 
   return {
     batchId: batch.id,
