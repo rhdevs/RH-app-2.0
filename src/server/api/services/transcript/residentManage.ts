@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
 import { residentStateOf } from "~/lib/transcript/corrections";
 import { normaliseYearStatus } from "~/lib/transcript/lifecycle";
+import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import type {
   historyInput,
   relockInput,
@@ -174,34 +175,36 @@ export async function unlockResident(
   if (normaliseYearStatus(period?.status) === "collecting") {
     throw fail("PRECONDITION_FAILED", "YEAR_NOT_IN_REVIEW");
   }
-  if (await activeUnlock(db, input.academicYear, resident.key)) {
-    return { userID: resident.key };
-  }
-  try {
-    await db.$transaction(async (tx) => {
-      await tx.residentUnlock.create({
-        data: {
+  // Each try re-reads first: a call that lost a write conflict to another
+  // unlock at the same moment finds that unlock and stops there.
+  await retryWriteConflicts(async () => {
+    if (await activeUnlock(db, input.academicYear, resident.key)) return;
+    try {
+      await db.$transaction(async (tx) => {
+        await tx.residentUnlock.create({
+          data: {
+            academicYear: input.academicYear,
+            userID: resident.key,
+            reason: input.reason,
+            activeKey: activeKeyOf(input.academicYear, resident.key),
+            unlockedBy: actorUserID,
+            unlockedAt: now,
+          },
+        });
+        await recordResidentEvent(tx, {
           academicYear: input.academicYear,
           userID: resident.key,
+          action: "unlock",
           reason: input.reason,
-          activeKey: activeKeyOf(input.academicYear, resident.key),
-          unlockedBy: actorUserID,
-          unlockedAt: now,
-        },
+          actor: actorUserID,
+          at: now,
+        });
       });
-      await recordResidentEvent(tx, {
-        academicYear: input.academicYear,
-        userID: resident.key,
-        action: "unlock",
-        reason: input.reason,
-        actor: actorUserID,
-        at: now,
-      });
-    });
-  } catch (error) {
-    // Someone unlocked this resident at the same moment: that unlock stands.
-    if (!isDuplicateKey(error)) throw error;
-  }
+    } catch (error) {
+      // Someone unlocked this resident at the same moment: that unlock stands.
+      if (!isDuplicateKey(error)) throw error;
+    }
+  });
   return { userID: resident.key };
 }
 
@@ -215,26 +218,29 @@ export async function relockResident(
   const resident = await requireResident(db, input.userID);
   const active = await activeUnlock(db, input.academicYear, resident.key);
   if (!active) throw fail("CONFLICT", "NOT_UNLOCKED");
-  await db.$transaction(async (tx) => {
-    // Claim it: of two relocks at once, only one ends it and logs it.
-    const claimed = await tx.residentUnlock.updateMany({
-      where: { id: active.id, ...NOT_RELOCKED },
-      data: {
-        relockedAt: now,
-        relockedBy: actorUserID,
-        activeKey: endedKeyOf(input.academicYear, resident.key, active.id),
-      },
-    });
-    if (claimed.count !== 1) return;
-    await recordResidentEvent(tx, {
-      academicYear: input.academicYear,
-      userID: resident.key,
-      action: "relock",
-      reason: input.note ? input.note : null,
-      actor: actorUserID,
-      at: now,
-    });
-  });
+  // A retry re-runs the claim: if another relock won, it claims nothing.
+  await retryWriteConflicts(() =>
+    db.$transaction(async (tx) => {
+      // Claim it: of two relocks at once, only one ends it and logs it.
+      const claimed = await tx.residentUnlock.updateMany({
+        where: { id: active.id, ...NOT_RELOCKED },
+        data: {
+          relockedAt: now,
+          relockedBy: actorUserID,
+          activeKey: endedKeyOf(input.academicYear, resident.key, active.id),
+        },
+      });
+      if (claimed.count !== 1) return;
+      await recordResidentEvent(tx, {
+        academicYear: input.academicYear,
+        userID: resident.key,
+        action: "relock",
+        reason: input.note ? input.note : null,
+        actor: actorUserID,
+        at: now,
+      });
+    }),
+  );
   return { userID: resident.key };
 }
 
@@ -248,33 +254,34 @@ export async function withholdResident(
   now: Date = new Date(),
 ) {
   const resident = await requireResident(db, input.userID);
-  if (await activeWithhold(db, input.academicYear, resident.key)) {
-    return { userID: resident.key };
-  }
-  try {
-    await db.$transaction(async (tx) => {
-      await tx.residentWithhold.create({
-        data: {
+  // As for unlock: re-read on every try, so a lost conflict ends quietly.
+  await retryWriteConflicts(async () => {
+    if (await activeWithhold(db, input.academicYear, resident.key)) return;
+    try {
+      await db.$transaction(async (tx) => {
+        await tx.residentWithhold.create({
+          data: {
+            academicYear: input.academicYear,
+            userID: resident.key,
+            reason: input.reason,
+            activeKey: activeKeyOf(input.academicYear, resident.key),
+            withheldBy: actorUserID,
+            withheldAt: now,
+          },
+        });
+        await recordResidentEvent(tx, {
           academicYear: input.academicYear,
           userID: resident.key,
+          action: "withhold",
           reason: input.reason,
-          activeKey: activeKeyOf(input.academicYear, resident.key),
-          withheldBy: actorUserID,
-          withheldAt: now,
-        },
+          actor: actorUserID,
+          at: now,
+        });
       });
-      await recordResidentEvent(tx, {
-        academicYear: input.academicYear,
-        userID: resident.key,
-        action: "withhold",
-        reason: input.reason,
-        actor: actorUserID,
-        at: now,
-      });
-    });
-  } catch (error) {
-    if (!isDuplicateKey(error)) throw error;
-  }
+    } catch (error) {
+      if (!isDuplicateKey(error)) throw error;
+    }
+  });
   return { userID: resident.key };
 }
 
@@ -288,26 +295,28 @@ export async function releaseResident(
   const resident = await requireResident(db, input.userID);
   const active = await activeWithhold(db, input.academicYear, resident.key);
   if (!active) throw fail("CONFLICT", "NOT_WITHHELD");
-  await db.$transaction(async (tx) => {
-    const claimed = await tx.residentWithhold.updateMany({
-      where: { id: active.id, ...NOT_RELEASED },
-      data: {
-        releasedAt: now,
-        releasedBy: actorUserID,
-        releaseNote: input.note ? input.note : null,
-        activeKey: endedKeyOf(input.academicYear, resident.key, active.id),
-      },
-    });
-    if (claimed.count !== 1) return;
-    await recordResidentEvent(tx, {
-      academicYear: input.academicYear,
-      userID: resident.key,
-      action: "release",
-      reason: input.note ? input.note : null,
-      actor: actorUserID,
-      at: now,
-    });
-  });
+  await retryWriteConflicts(() =>
+    db.$transaction(async (tx) => {
+      const claimed = await tx.residentWithhold.updateMany({
+        where: { id: active.id, ...NOT_RELEASED },
+        data: {
+          releasedAt: now,
+          releasedBy: actorUserID,
+          releaseNote: input.note ? input.note : null,
+          activeKey: endedKeyOf(input.academicYear, resident.key, active.id),
+        },
+      });
+      if (claimed.count !== 1) return;
+      await recordResidentEvent(tx, {
+        academicYear: input.academicYear,
+        userID: resident.key,
+        action: "release",
+        reason: input.note ? input.note : null,
+        actor: actorUserID,
+        at: now,
+      });
+    }),
+  );
   return { userID: resident.key };
 }
 

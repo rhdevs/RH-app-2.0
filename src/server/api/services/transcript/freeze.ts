@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { resolveEntry } from "~/lib/transcript/duration";
+import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import {
   FREEZE_REASONS,
   FREEZE_STATE_LABEL,
@@ -117,9 +118,18 @@ export interface FreezeInput {
 
 /**
  * Freeze a CCA's member list. Idempotent: a year that is already frozen is left
- * as it is. Refuses a year whose period is published.
+ * as it is. Refuses a year whose period is published. A freeze that loses a
+ * write conflict is run again from the start (it re-reads what is frozen, so a
+ * freeze that won meanwhile makes it "unchanged").
  */
-export async function freezeCca(
+export function freezeCca(
+  db: PrismaClient,
+  input: FreezeInput,
+): Promise<FreezeResult> {
+  return retryWriteConflicts(() => freezeOnce(db, input));
+}
+
+async function freezeOnce(
   db: PrismaClient,
   input: FreezeInput,
 ): Promise<FreezeResult> {
