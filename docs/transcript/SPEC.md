@@ -707,7 +707,8 @@ CCA memberships are cleared and re-recruited after each CCA's handover, so freez
 
 **Year status.** `collecting -> closed -> published`.
 - **Close year** (needs semester 2 start, a year that has begun): freezes every CCA with no active freeze (`close_year`), then closes.
-- **Publish** (from closed only): freezes nothing.
+- **Publish** (from closed only): freezes nothing; it refuses while any CCA has no active freeze.
+- **Freeze remaining CCAs** (`periods.freezeRemaining`, admin or jcrc, closed only): freezes every CCA with no active freeze, one at a time, with the same code and reason (`close_year`) as Close year, and stays closed. It returns the frozen, already-frozen, left-alone and failed counts and can be run again after a failure. It writes no `ResidentEvent`; the actor and time are on each freeze. Refused with `CONFLICT:NOT_CLOSED` while collecting or published.
 - **Reopen for review**: published to closed. **Back to collecting**: closed to collecting; frozen lists stay frozen.
 - **Unfreeze** one CCA (manager, reason required, year not published): its entries become annotations again and the current member list is used until it is frozen again.
 
@@ -959,7 +960,7 @@ Every requirement in the project brief, where it is implemented, and the tests t
 
 ## 31. Final fixes
 
-**Publish needs every CCA frozen.** `periods.publish` refuses with `PRECONDITION_FAILED:CCAS_NOT_FROZEN` while ANY CCA has no active freeze for the year (a freeze undone during review, or a CCA created after Close year). The text is "Some CCAs are not frozen for AY2026/27: Soccer (MALE), Chess Club. Close the year again to freeze them." The Academic year panel shows the same line inline while the year is closed (`periods.unfrozenNames`). To fix it: Back to collecting, then Close year (it freezes only the CCAs that are not frozen).
+**Publish needs every CCA frozen.** `periods.publish` refuses with `PRECONDITION_FAILED:CCAS_NOT_FROZEN` while ANY CCA has no active freeze for the year (a freeze undone during review, or a CCA created after Close year). The text is "Some CCAs are not frozen for AY2026/27: Soccer (MALE), Chess Club. Use Freeze remaining CCAs, then publish." The Academic year panel shows the same line inline while the year is closed (`periods.unfrozenNames`), with a "Freeze remaining CCAs (N)" button next to Publish. The button is hidden unless the year is closed and at least one CCA is unfrozen. Its confirmation reads "This freezes the member lists of N CCAs for AY2026/27: <first 5 names>, and more. Their current members will be used." (", and more" only past five), the button is disabled while it runs, and an inline line reports the result. The year stays closed.
 
 **Close year goes one CCA at a time.** Each CCA freezes in its own transaction, in turn (no parallel workers). A CCA whose freeze fails is counted and the rest go on; the year then stays collecting and the result says "not closed yet", with the frozen, already-frozen, left-alone and failed counts and the failed names. Running Close year again finishes the rest.
 

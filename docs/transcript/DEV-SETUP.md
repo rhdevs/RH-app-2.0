@@ -281,8 +281,8 @@ Seed with `npm run dev:db:seed -- --with-published-year` (see above) so `seed-r1
 | --- | --- | --- | --- |
 | Year switcher | `seed-r12` | `/transcript` | Pills "AY2025/26" and "AY2026/27 (not yet available)". The second shows the calm "isn't available yet" page, with the pills still there. |
 | Draft entry | `seed-r01`, then `seed-r12` | Close year on `/admin/transcripts` (AY2026/27), then `/transcript` | The pill reads "AY2026/27 (draft)" and opens the draft view. |
-| Publish needs every CCA frozen | `seed-r01` | While AY2026/27 is closed, Unfreeze Soccer (MALE) in the CCA member lists, then Publish | Refused, and the panel lists it: "Some CCAs are not frozen for AY2026/27: Soccer (MALE). Close the year again to freeze them." |
-| Fix it | `seed-r01` | Back to collecting, Close year, Publish | Close year freezes Soccer again ("1 CCA frozen now"); Publish works. |
+| Publish needs every CCA frozen | `seed-r01` | While AY2026/27 is closed, Unfreeze Soccer (MALE) in the CCA member lists, then Publish | Refused, and the panel lists it: "Some CCAs are not frozen for AY2026/27: Soccer (MALE). Use Freeze remaining CCAs, then publish." A "Freeze remaining CCAs (1)" button sits next to Publish. |
+| Fix it | `seed-r01` | Press "Freeze remaining CCAs (1)", confirm (it names Soccer (MALE)), then Publish | "1 CCA frozen. You can publish now."; the year stays Closed and the button disappears; Publish works. |
 | Menu item | `seed-r12` | Open the profile menu (desktop and phone) | "My transcript" on one line with the "Ready" badge at the right, readable on the dark phone menu. |
 | No header rows | `seed-r01` | Preview `seed-r12` and `seed-r02` for AY2026/27 | Activity rows under a CCA and the JCRC contributions have no heading row; "Other involvement" keeps its headings. |
 | Plain counts | `seed-r04` | `/cca/9005/transcript` | "1 activity", never "1 of 20"; Add activity is never greyed out. |
