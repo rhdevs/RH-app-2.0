@@ -343,3 +343,27 @@ describe("the 1 June warning", () => {
     ).toBe(false);
   });
 });
+
+describe("a published year is never a working year (F2)", () => {
+  const set = (...ys: string[]) => new Set(ys);
+  const OCT_2026 = new Date("2026-10-15T00:00:00Z");
+  const SEP_2027 = new Date("2027-09-10T00:00:00Z");
+
+  it("skips a published year the CCA has no freeze for", () => {
+    expect(termAcademicYear(set(), SEP_2027, set("AY2026/27"))).toBe(
+      "AY2027/28",
+    );
+    expect(termAcademicYear(set(), SEP_2027)).toBe("AY2026/27");
+  });
+
+  it("freezes the next unpublished year, or nothing when that is in the future", () => {
+    expect(freezeTarget(set(), SEP_2027, set("AY2026/27"))).toEqual({
+      kind: "freeze",
+      academicYear: "AY2027/28",
+    });
+    expect(freezeTarget(set(), OCT_2026, set("AY2026/27"))).toEqual({
+      kind: "skipped",
+      reason: "already_frozen_for_current_year",
+    });
+  });
+});

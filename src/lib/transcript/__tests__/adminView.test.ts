@@ -275,3 +275,52 @@ describe("closing and publishing messages", () => {
     );
   });
 });
+
+describe("freeze results with reasons and unmatched members (F5, F19)", () => {
+  it("names each failed CCA with a short reason", () => {
+    expect(
+      closeSummary("AY2026/27", {
+        closed: false,
+        frozenNow: 3,
+        alreadyFrozen: 1,
+        failed: 2,
+        failedNames: ["Soccer (MALE)", "Chess Club"],
+        failures: [
+          { name: "Soccer (MALE)", code: "PERIOD_PUBLISHED" },
+          { name: "Chess Club", code: "UNKNOWN" },
+        ],
+      }),
+    ).toContain(
+      "could not be frozen: Soccer (MALE) (year published), Chess Club (UNKNOWN).",
+    );
+    expect(
+      freezeRemainingSummary({
+        frozenNow: 0,
+        failed: 1,
+        failures: [{ name: "Chess Club", code: "FREEZE_RACE" }],
+      }),
+    ).toContain("Chess Club (list changed while freezing)");
+  });
+
+  it("reports members the roster could not match", () => {
+    expect(
+      closeSummary("AY2026/27", {
+        frozenNow: 2,
+        alreadyFrozen: 0,
+        unresolved: 1,
+      }),
+    ).toBe(
+      "AY2026/27 closed. 2 CCAs frozen now, 0 already frozen. 1 member could not be matched.",
+    );
+    expect(freezeRemainingSummary({ frozenNow: 1, unresolved: 3 })).toBe(
+      "1 CCA frozen. You can publish now. 3 members could not be matched.",
+    );
+    expect(freezeRemainingSummary({ frozenNow: 1, unresolved: 0 })).toBe(
+      "1 CCA frozen. You can publish now.",
+    );
+  });
+
+  it("explains NOTHING_TO_LOCK (F4)", () => {
+    expect(errorText("NOTHING_TO_LOCK")).toMatch(/nothing to lock/);
+  });
+});

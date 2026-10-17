@@ -7,7 +7,7 @@ import {
   type RosterRowData,
   type RosterRowViewProps,
 } from "../_components/RosterEditor";
-import { TranscriptNotes } from "../_components/TranscriptTab";
+import { TranscriptNotes, showLock } from "../_components/TranscriptTab";
 import { rosterNotice } from "~/lib/transcript/headView";
 import { draftOf } from "~/lib/transcript/headView";
 
@@ -263,5 +263,36 @@ describe("transcript page route", () => {
   it("renders for a real id", async () => {
     const { default: Page } = await import("../page");
     expect(() => Page({ params: { ccaID: "9005" } })).not.toThrow();
+  });
+});
+
+describe("Lock member list visibility (F4)", () => {
+  const base = {
+    mode: "live",
+    readOnly: false,
+    year: "AY2026/27",
+    termAcademicYear: "AY2026/27",
+    currentAcademicYear: "AY2026/27",
+  };
+
+  it("shows the lock for the working year when it is not a future one", () => {
+    expect(showLock(base)).toBe(true);
+  });
+
+  it("hides it for a working year later than today's", () => {
+    expect(
+      showLock({
+        ...base,
+        year: "AY2027/28",
+        termAcademicYear: "AY2027/28",
+      }),
+    ).toBe(false);
+  });
+
+  it("hides it when frozen, read-only, another year, or the year is unknown", () => {
+    expect(showLock({ ...base, mode: "frozen" })).toBe(false);
+    expect(showLock({ ...base, readOnly: true })).toBe(false);
+    expect(showLock({ ...base, year: "AY2025/26" })).toBe(false);
+    expect(showLock({ ...base, currentAcademicYear: null })).toBe(false);
   });
 });

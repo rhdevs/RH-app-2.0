@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   FreezeTableView,
+  UnfreezePreviewPanel,
+  canConfirmUnfreeze,
   visibleFreezeRows,
   type FreezeRowView,
   type FreezeTableViewProps,
@@ -62,6 +64,10 @@ const props = (
   onUnfreeze: noop,
   pending: false,
   unfreezeError: null,
+  preview: null,
+  previewError: null,
+  confirmed: false,
+  onConfirmed: noop,
   ...over,
 });
 const render = (over?: Partial<FreezeTableViewProps>) =>
@@ -126,5 +132,59 @@ describe("CCA member lists table", () => {
     expect(render({ loadError: "Something went wrong. Try again." })).toContain(
       'role="alert"',
     );
+  });
+});
+
+describe("unmatched members (F19)", () => {
+  it("says how many members could not be matched when a list was frozen", () => {
+    const html = render({
+      rows: [{ ...ROWS[1]!, unresolvedCount: 2 }, ROWS[2]!],
+    });
+    expect(html).toContain("2 members could not be matched");
+    expect(render()).not.toContain("could not be matched");
+  });
+});
+
+describe("the Unfreeze preview (F17)", () => {
+  const preview = {
+    dropped: [{ userID: "SEED-R12", name: "Seed Resident 12" }],
+    added: [{ userID: "SEED-R20", name: "Seed Resident 20" }],
+  };
+  const panel = (
+    over: Partial<Parameters<typeof UnfreezePreviewPanel>[0]> = {},
+  ) =>
+    renderToStaticMarkup(
+      <UnfreezePreviewPanel
+        preview={preview}
+        previewError={null}
+        confirmed={false}
+        onConfirmed={noop}
+        pending={false}
+        {...over}
+      />,
+    );
+
+  it("names who would be dropped and who added", () => {
+    const html = panel();
+    expect(html).toContain("Would be dropped");
+    expect(html).toContain("Seed Resident 12");
+    expect(html).toContain("Would be added");
+    expect(html).toContain("Seed Resident 20");
+    expect(html).toContain("I understand who would be dropped and added.");
+  });
+
+  it("says Nobody for an empty list, and waits while loading", () => {
+    expect(panel({ preview: { dropped: [], added: [] } })).toContain("Nobody");
+    const loading = panel({ preview: null });
+    expect(loading).toContain("Loading who would change");
+    expect(loading).toMatch(/<input[^>]*type="checkbox"[^>]*disabled=""/);
+  });
+
+  it("allows Unfreeze only with a reason, the preview and the tick", () => {
+    const ok = { reason: "Fixing it", preview, confirmed: true };
+    expect(canConfirmUnfreeze(ok)).toBe(true);
+    expect(canConfirmUnfreeze({ ...ok, confirmed: false })).toBe(false);
+    expect(canConfirmUnfreeze({ ...ok, preview: null })).toBe(false);
+    expect(canConfirmUnfreeze({ ...ok, reason: " x " })).toBe(false);
   });
 });
