@@ -6,7 +6,6 @@ import {
   awardImportCommitInput,
   awardImportPreviewInput,
 } from "~/lib/transcript/awardImport";
-import { currentAcademicYear } from "~/lib/transcript/academicYear";
 
 import {
   academicYearInput,
@@ -54,11 +53,6 @@ import {
   assertCanEditCcaYear,
   editRefusalFor,
 } from "~/server/api/services/transcript/editRights";
-import {
-  freezeCca,
-  headChangeFreezeTarget,
-  termYearOf,
-} from "~/server/api/services/transcript/freeze";
 import {
   awardImportCommit,
   awardImportPreview,
@@ -343,46 +337,6 @@ export const transcriptManageRouter = createTRPCRouter({
           // Why this person cannot edit the year (null when they can).
           editRefusal: refusal,
         };
-      }),
-
-    /** The year this CCA is working on, for the handover warning and the tab. */
-    term: identifiedProcedure
-      .input(z.object({ ccaID: ccaIDInput }))
-      .query(async ({ ctx, input }) => {
-        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
-        await requireCca(ctx.db, input.ccaID);
-        const now = new Date();
-        const [term, onHandover] = await Promise.all([
-          termYearOf(ctx.db, input.ccaID, now),
-          headChangeFreezeTarget(ctx.db, input.ccaID, now),
-        ]);
-        return {
-          termAcademicYear: term,
-          currentAcademicYear: currentAcademicYear(now),
-          // Whether a handover now would freeze a member list, and which year's.
-          willFreezeOnHandover: onHandover.kind === "freeze",
-          handoverFreezeYear:
-            onHandover.kind === "freeze" ? onHandover.academicYear : null,
-        };
-      }),
-
-    /** Head (or manager) locks the member list early. Edits stay open until close. */
-    lock: identifiedProcedure
-      .input(z.object({ ccaID: ccaIDInput }))
-      .mutation(async ({ ctx, input }) => {
-        await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
-        await requireCca(ctx.db, input.ccaID);
-        const result = await freezeCca(ctx.db, {
-          ccaID: input.ccaID,
-          reason: "lock",
-          actorUserID: ctx.session.user.userID,
-        });
-        // Nothing to lock (the working year is a future one): say so rather
-        // than report a success that froze nothing.
-        if (result.kind === "skipped") {
-          throw new TRPCError({ code: "CONFLICT", message: "NOTHING_TO_LOCK" });
-        }
-        return result;
       }),
 
     upsert: identifiedProcedure

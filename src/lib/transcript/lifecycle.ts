@@ -1,42 +1,45 @@
 import { currentAcademicYear, parseAcademicYear } from "./academicYear";
 
 /**
- * THE YEAR LIFECYCLE, as pure rules: which academic year a CCA is working on,
- * what each status allows, and who may edit what. No clock is read here: every
- * function takes `now`, so a test can move through the years.
+ * THE YEAR LIFECYCLE, as pure rules. ONE step per year:
  *
- * An academic year runs 1 Aug to 31 Jul. A CCA's member list is frozen at its
- * own handover (the CCA is then cleared and re-recruited), so each CCA has its
- * own "term year": the oldest year it has not frozen yet.
+ *   collecting --Open transcripts--> published ("Open")
+ *
+ *  - COLLECTING: the CCA's current heads fill in the current year's records;
+ *    residents see nothing. Each CCA's member list is its LIVE list.
+ *  - OPEN TRANSCRIPTS (JCRC or admin, around April, before 1 August): locks every
+ *    CCA's member list for the year as it is, then opens transcripts to every
+ *    resident. After that only per-resident corrections change anything.
+ *
+ * No clock is read here: every function takes `now`, so a test can move through
+ * the years.
  */
 
 /** Transcripts start at AY2026/27; there is no earlier year. */
 export const FIRST_ACADEMIC_YEAR = "AY2026/27";
 
+/**
+ * A year is "collecting" or "published" (shown as "Open"). "closed" is a
+ * retired value: nothing produces it any more, and a stored one reads as
+ * collecting. It stays in the type only for older helpers that still name it.
+ */
 export type YearStatus = "collecting" | "closed" | "published";
 
-export type FreezeReason = "handover" | "head_removed" | "lock" | "close_year";
+/** Why a CCA's member list was locked: Open transcripts is the only one. */
+export type FreezeReason = "open";
 
-export const FREEZE_REASONS: readonly FreezeReason[] = [
-  "handover",
-  "head_removed",
-  "lock",
-  "close_year",
-];
+export const FREEZE_REASONS: readonly FreezeReason[] = ["open"];
 
 /** The state words shown for a CCA's member list. */
 export const FREEZE_STATE_LABEL: Record<FreezeReason | "none", string> = {
-  none: "Not frozen",
-  handover: "Frozen at handover",
-  head_removed: "Head removed",
-  lock: "Locked by head",
-  close_year: "Closed with the year",
+  none: "Not saved",
+  open: "Saved when transcripts opened",
 };
 
 export function normaliseYearStatus(
   status: string | null | undefined,
 ): YearStatus {
-  return status === "published" || status === "closed" ? status : "collecting";
+  return status === "published" ? "published" : "collecting";
 }
 
 /** "AY2026/27" for start year 2026. */
@@ -71,168 +74,93 @@ export function academicYearsUpTo(last: string): string[] {
   return out;
 }
 
-/**
- * The year a CCA is working on: the earliest year, from AY2026/27 up to the
- * year after the current one, that it has not frozen and that is not already
- * published. A handover in March freezes this year, so new members after it
- * count toward next year even before 1 August. A CCA with no freeze for a
- * published year (one created after it was published) starts in the next
- * unpublished year: a published year is never its working year. If every year
- * in that span is taken, the span's end.
- */
-export function termAcademicYear(
-  activelyFrozenYears: ReadonlySet<string>,
-  now: Date,
-  publishedYears: ReadonlySet<string> = new Set(),
-): string {
-  const ceiling = nextAcademicYear(currentAcademicYear(now));
-  const years = academicYearsUpTo(ceiling);
-  return (
-    years.find((y) => !activelyFrozenYears.has(y) && !publishedYears.has(y)) ??
-    ceiling
-  );
-}
+/* ---- opening transcripts --------------------------------------------------- */
 
-export type FreezeSkipReason =
-  | "already_frozen_for_current_year"
-  /** Closed with the year, and no head change since: last year is recorded. */
-  | "late_handover_after_close_year";
-
-export type FreezeTarget =
-  | { kind: "freeze"; academicYear: string }
-  | { kind: "skipped"; reason: FreezeSkipReason };
+export type OpenBlocker = "ALREADY_PUBLISHED" | "YEAR_NOT_STARTED";
 
 /**
- * Which year a handover, head removal or head lock freezes: the CCA's term
- * year, but never a future one and never a published one. If the term year is already ahead of today's
- * year, the current year is frozen and there is nothing to do.
+ * Why Open transcripts must be refused for a year, or null if it may go ahead:
+ * the year must still be collecting, and be the current year or a past one
+ * (never a future year).
  */
-export function freezeTarget(
-  activelyFrozenYears: ReadonlySet<string>,
-  now: Date,
-  publishedYears: ReadonlySet<string> = new Set(),
-): FreezeTarget {
-  const term = termAcademicYear(activelyFrozenYears, now, publishedYears);
-  if (isLater(term, currentAcademicYear(now))) {
-    return { kind: "skipped", reason: "already_frozen_for_current_year" };
-  }
-  return { kind: "freeze", academicYear: term };
-}
-
-/* ---- the year status machine ---------------------------------------------- */
-
-export type YearAction = "close" | "publish" | "reopen" | "backToCollecting";
-
-export type TransitionBlocker =
-  | "NOT_COLLECTING"
-  | "NOT_CLOSED"
-  | "NOT_PUBLISHED"
-  | "SEM2_START_REQUIRED"
-  | "YEAR_NOT_STARTED";
-
-/** Where each action leads. */
-export const NEXT_STATUS: Record<YearAction, YearStatus> = {
-  close: "closed",
-  publish: "published",
-  reopen: "closed",
-  backToCollecting: "collecting",
-};
-
-/**
- * Why `action` must be refused now, or null if it may go ahead.
- *  - close:            collecting only; the year must have begun; needs sem2Start.
- *  - publish:          closed only.
- *  - reopen:           published only (back to review).
- *  - backToCollecting: closed only.
- * A year with no period row counts as collecting with no semester 2 date.
- */
-export function transitionBlocker(
-  action: YearAction,
-  period: { status: string | null; sem2Start: Date | null } | null,
+export function openBlocker(
   academicYear: string,
+  status: YearStatus,
   now: Date,
-): TransitionBlocker | null {
-  const status = normaliseYearStatus(period?.status);
-  switch (action) {
-    case "close":
-      if (status !== "collecting") return "NOT_COLLECTING";
-      if (isLater(academicYear, currentAcademicYear(now))) {
-        return "YEAR_NOT_STARTED";
-      }
-      if (!period?.sem2Start) return "SEM2_START_REQUIRED";
-      return null;
-    case "publish":
-      return status === "closed" ? null : "NOT_CLOSED";
-    case "reopen":
-      return status === "published" ? null : "NOT_PUBLISHED";
-    case "backToCollecting":
-      return status === "closed" ? null : "NOT_CLOSED";
+): OpenBlocker | null {
+  if (status === "published") return "ALREADY_PUBLISHED";
+  if (isLater(academicYear, currentAcademicYear(now))) {
+    return "YEAR_NOT_STARTED";
   }
-}
-
-/** The actions that make sense for a status, in the order they are offered. */
-export function validActions(status: YearStatus): YearAction[] {
-  switch (status) {
-    case "collecting":
-      return ["close"];
-    case "closed":
-      return ["publish", "backToCollecting"];
-    case "published":
-      return ["reopen"];
-  }
+  return null;
 }
 
 /* ---- who may edit a CCA's records for a year ------------------------------ */
 
 export type EditRefusal =
   | "PERIOD_PUBLISHED"
-  | "YEAR_CLOSED"
-  | "CCA_YEAR_FROZEN"
+  /** Heads edit only the current academic year; other years are read-only. */
   | "NOT_THE_TERM_YEAR"
   | "NOT_A_HEAD_OF_THIS_CCA";
 
 /**
  * May this person change a CCA's records for a year?
- *  - Nobody, once the year is published (except per-resident corrections, which
- *    are a separate path).
- *  - Managers (admin or jcrc): any CCA, collecting or closed.
- *  - The head of this CCA: only while the year is collecting, and only for the
- *    CCA's term year while its list is not frozen, or for a year whose list the
- *    head froze with their own "lock". Any other year (past or future) is not
- *    theirs to edit.
+ *  - Nobody once transcripts for the year are open (published), except the
+ *    per-resident corrections, which are a separate path.
+ *  - Managers (admin or jcrc): any CCA, for any year still collecting.
+ *  - A current head of this CCA (whoever heads it now, so new heads after a
+ *    handover too): only the CURRENT academic year. Other years are read-only.
  *  - Anyone else: no.
  */
 export function editRefusal(input: {
   isManager: boolean;
   isHead: boolean;
   status: YearStatus;
-  /** The reason of the CCA's ACTIVE freeze for this year, or null. */
-  freezeReason: FreezeReason | null;
-  /** Is this year the CCA's term year (its oldest unfrozen year)? */
-  isTermYear: boolean;
+  /** This year is the current academic year (by date, Singapore). */
+  isCurrentYear: boolean;
 }): EditRefusal | null {
   if (input.status === "published") return "PERIOD_PUBLISHED";
   if (input.isManager) return null;
   if (!input.isHead) return "NOT_A_HEAD_OF_THIS_CCA";
-  if (input.status === "closed") return "YEAR_CLOSED";
-  if (input.freezeReason === "lock") return null;
-  if (input.freezeReason !== null) return "CCA_YEAR_FROZEN";
-  return input.isTermYear ? null : "NOT_THE_TERM_YEAR";
+  return input.isCurrentYear ? null : "NOT_THE_TERM_YEAR";
 }
 
-/* ---- the June warning ------------------------------------------------------ */
+/* ---- reminders on the admin page ------------------------------------------ */
 
-/** From 1 June of the year's own August-to-July span until the year is closed. */
-export function showUnfrozenWarning(
+/** Midnight in Singapore on a calendar day, as an instant. */
+const sgMidnight = (year: number, monthIndex: number, day: number) =>
+  Date.UTC(year, monthIndex, day) - 8 * 60 * 60 * 1000;
+
+/**
+ * From 1 April of the year (Singapore), while it is still collecting: time to
+ * open transcripts, before 1 August.
+ */
+export function showOpenReminder(
   academicYear: string,
   status: YearStatus,
   now: Date,
-  unfrozenCount: number,
 ): boolean {
-  if (status !== "collecting" || unfrozenCount === 0) return false;
+  if (status !== "collecting") return false;
   const ay = parseAcademicYear(academicYear);
   if (!ay) return false;
-  // 1 June of the year the AY ends in, midnight Singapore.
-  const june = Date.UTC(ay.startYear + 1, 5, 1) - 8 * 60 * 60 * 1000;
-  return now.getTime() >= june;
+  return now.getTime() >= sgMidnight(ay.startYear + 1, 3, 1);
+}
+
+/**
+ * The PREVIOUS academic year when it is still collecting once the current one
+ * has begun (from 1 August): its transcripts must be opened before CCAs change
+ * their member lists in the August application period. Null when there is no
+ * such year (before the first transcript year) or it is open.
+ */
+export function previousYearNotOpen(
+  now: Date,
+  statusOf: (academicYear: string) => YearStatus,
+): string | null {
+  const current = parseAcademicYear(currentAcademicYear(now));
+  const first = parseAcademicYear(FIRST_ACADEMIC_YEAR);
+  if (!current || !first) return null;
+  const previous = current.startYear - 1;
+  if (previous < first.startYear) return null;
+  const year = formatAcademicYear(previous);
+  return statusOf(year) === "collecting" ? year : null;
 }

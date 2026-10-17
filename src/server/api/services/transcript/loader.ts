@@ -1,5 +1,4 @@
 import type { PrismaClient } from "@prisma/client";
-import { termAcademicYear } from "~/lib/transcript/lifecycle";
 import { instantToSgDate } from "~/lib/transcript/sgDate";
 import { canonicalUserID } from "~/lib/identity";
 import {
@@ -44,7 +43,7 @@ import {
  */
 
 export interface LoadOptions {
-  /** Defaults to now. Decides each CCA's term year. */
+  /** No longer used: an open year reads locked lists, otherwise live ones. */
   now?: Date;
 }
 
@@ -142,7 +141,8 @@ export async function loadTranscriptInput(
   db: PrismaClient,
   userID: string,
   academicYear: string,
-  options: LoadOptions,
+  // Kept for callers; which list is read depends only on the year's status.
+  _options: LoadOptions,
 ): Promise<TranscriptInput> {
   const user = await findUserByAnyKey(db, userID);
   const key = personKey(user, userID);
@@ -164,7 +164,7 @@ export async function loadTranscriptInput(
     key,
     user,
     academicYear,
-    options.now ?? new Date(),
+    period?.status === "published",
     period?.sem2Start ?? null,
   );
   const activities = await loadActivities(db, key, academicYear, memberCcaIDs);
@@ -345,7 +345,8 @@ async function loadMemberships(
   key: string,
   user: { id: string; email: string; userID: string | null } | null,
   academicYear: string,
-  now: Date,
+  /** An open (published) year reads the locked lists; otherwise the live ones. */
+  published: boolean,
   sem2Start: Date | null,
 ): Promise<{
   memberships: CcaMembershipInput[];
@@ -354,14 +355,15 @@ async function loadMemberships(
   /** The ones that come from the roster (frozen or live), not from a manual entry. */
   rosterCcaIDs: number[];
 }> {
-  const frozenRows = await db.transcriptRosterEntry.findMany({
-    where: { academicYear, userID: key, frozen: true },
-  });
-  const frozenIDs = new Set(frozenRows.map((r) => r.ccaID));
-  const entries: Array<{ ccaID: number } & ResolvedEntry> = frozenRows.map(
-    (r) => {
+  const entries: Array<{ ccaID: number } & ResolvedEntry> = [];
+  if (published) {
+    // Transcripts are open: each CCA's member list as it was locked.
+    const frozenRows = await db.transcriptRosterEntry.findMany({
+      where: { academicYear, userID: key, frozen: true },
+    });
+    for (const r of frozenRows) {
       const duration = isDuration(r.duration) ? r.duration : "full";
-      return {
+      entries.push({
         ccaID: r.ccaID,
         duration,
         roleLabel: r.roleLabel,
@@ -372,50 +374,22 @@ async function loadMemberships(
             )
           : null,
         extraContribution: r.extraContribution,
-      };
-    },
-  );
-
-  // CCAs not frozen for this year: current membership, if this is the CCA's
-  // term year.
-  const live = (await liveMemberships(db, key, user)).filter(
-    (m) => !frozenIDs.has(m.ccaID),
-  );
-  if (live.length > 0) {
-    const [freezes, stored, published] = await Promise.all([
-      db.ccaYearFreeze.findMany({
-        where: { ccaID: { in: live.map((m) => m.ccaID) }, ...NOT_UNFROZEN },
-        select: { ccaID: true, academicYear: true },
-      }),
-      db.transcriptRosterEntry.findMany({
-        where: { academicYear, userID: key },
-      }),
-      // A published year is never a CCA's working year: a CCA with no freeze
-      // for it has no members for it.
-      db.transcriptPeriod.findMany({
-        where: { status: "published" },
-        select: { academicYear: true },
-      }),
-    ]);
-    const publishedYears = new Set(published.map((p) => p.academicYear));
-    const frozenYears = new Map<number, Set<string>>();
-    for (const f of freezes) {
-      const set = frozenYears.get(f.ccaID) ?? new Set<string>();
-      set.add(f.academicYear);
-      frozenYears.set(f.ccaID, set);
-    }
-    const byCca = new Map(stored.map((r) => [r.ccaID, r]));
-    for (const m of live) {
-      const term = termAcademicYear(
-        frozenYears.get(m.ccaID) ?? new Set(),
-        now,
-        publishedYears,
-      );
-      if (term !== academicYear) continue;
-      entries.push({
-        ccaID: m.ccaID,
-        ...resolveEntry(byCca.get(m.ccaID), m, sem2Start),
       });
+    }
+  } else {
+    // Still collecting: each CCA's current (live) membership.
+    const live = await liveMemberships(db, key, user);
+    if (live.length > 0) {
+      const stored = await db.transcriptRosterEntry.findMany({
+        where: { academicYear, userID: key },
+      });
+      const byCca = new Map(stored.map((r) => [r.ccaID, r]));
+      for (const m of live) {
+        entries.push({
+          ccaID: m.ccaID,
+          ...resolveEntry(byCca.get(m.ccaID), m, sem2Start),
+        });
+      }
     }
   }
 
@@ -470,7 +444,7 @@ export async function loadResidentCcaIDs(
   db: PrismaClient,
   userID: string,
   academicYear: string,
-  options: LoadOptions = {},
+  _options: LoadOptions = {},
 ): Promise<{ key: string; rosterCcaIDs: number[]; memberCcaIDs: Set<number> }> {
   const user = await findUserByAnyKey(db, userID);
   const key = personKey(user, userID);
@@ -482,7 +456,7 @@ export async function loadResidentCcaIDs(
     key,
     user,
     academicYear,
-    options.now ?? new Date(),
+    period?.status === "published",
     period?.sem2Start ?? null,
   );
   return { key, rosterCcaIDs, memberCcaIDs };

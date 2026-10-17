@@ -15,11 +15,9 @@ import { instantToSgDate } from "~/lib/transcript/sgDate";
 import { lookupResidents } from "./residents";
 import {
   normaliseYearStatus,
-  termAcademicYear,
   type FreezeReason,
   type YearStatus,
 } from "~/lib/transcript/lifecycle";
-import { activeFreeze, termYearOf } from "./freeze";
 import { liveMembers } from "./liveRoster";
 import { NOT_UNFROZEN } from "./loader";
 import {
@@ -70,9 +68,9 @@ export interface RosterList {
   unresolved: number;
   rows: RosterRow[];
   /**
-   * Where the list comes from: the FROZEN entries (the CCA has an active freeze
-   * for this year), the LIVE members (this is the CCA's term year and it is not
-   * frozen), or NONE (no member list was recorded for this year).
+   * Where the list comes from: the LOCKED entries (transcripts for the year are
+   * open), the LIVE members (the year is still collecting), or NONE (open, but
+   * this CCA had no list saved).
    */
   mode: "frozen" | "live" | "none";
   freeze: {
@@ -81,8 +79,6 @@ export interface RosterList {
     frozenByName: string | null;
     memberCount: number | null;
   } | null;
-  /** The year this CCA is working on now (its oldest unfrozen year). */
-  termAcademicYear: string;
 }
 
 const asDuration = (v: string | null | undefined): Duration | null =>
@@ -182,17 +178,14 @@ export async function rosterRowsFor(
   keys: readonly string[],
   academicYear: string,
   ccaIDs: readonly number[],
-  now: Date = new Date(),
+  // Kept for callers; which list is read depends only on the year's status.
+  _now: Date = new Date(),
 ): Promise<Map<number, { mode: "frozen" | "live"; row: RosterRow }>> {
   const out = new Map<number, { mode: "frozen" | "live"; row: RosterRow }>();
   if (ccaIDs.length === 0) return out;
   const ids = [...ccaIDs];
-  const [period, freezes, entries, names] = await Promise.all([
+  const [period, entries, names] = await Promise.all([
     getPeriod(db, academicYear),
-    db.ccaYearFreeze.findMany({
-      where: { ccaID: { in: ids }, ...NOT_UNFROZEN },
-      select: { ccaID: true, academicYear: true },
-    }),
     db.transcriptRosterEntry.findMany({
       where: { academicYear, userID: key, ccaID: { in: ids } },
     }),
@@ -200,19 +193,14 @@ export async function rosterRowsFor(
   ]);
   const sem2Start = period?.sem2Start ?? null;
   const displayName = names.get(key)?.displayName ?? null;
-  const frozenYears = new Map<number, Set<string>>();
-  for (const f of freezes) {
-    const set = frozenYears.get(f.ccaID) ?? new Set<string>();
-    set.add(f.academicYear);
-    frozenYears.set(f.ccaID, set);
-  }
+  // An open (published) year reads the locked lists; otherwise the live ones.
+  const published = normaliseYearStatus(period?.status) === "published";
   const live: number[] = [];
   for (const ccaID of ids) {
-    const years = frozenYears.get(ccaID) ?? new Set<string>();
-    if (years.has(academicYear)) {
+    if (published) {
       const e = entries.find((x) => x.ccaID === ccaID && x.frozen);
       if (e) out.set(ccaID, { mode: "frozen", row: frozenRow(e, displayName) });
-    } else if (termAcademicYear(years, now) === academicYear) {
+    } else {
       live.push(ccaID);
     }
   }
@@ -256,23 +244,23 @@ export async function rosterList(
   db: PrismaClient,
   ccaID: number,
   academicYear: string,
-  now: Date = new Date(),
+  // Kept for callers; which list is read depends only on the year's status.
+  _now: Date = new Date(),
 ): Promise<RosterList> {
-  const [period, freezes] = await Promise.all([
-    getPeriod(db, academicYear),
-    db.ccaYearFreeze.findMany({ where: { ccaID, ...NOT_UNFROZEN } }),
-  ]);
+  const period = await getPeriod(db, academicYear);
   const sem2Start = period?.sem2Start ?? null;
-  const term = termAcademicYear(
-    new Set(freezes.map((f) => f.academicYear)),
-    now,
-  );
-  const frozen = freezes.find((f) => f.academicYear === academicYear) ?? null;
+  const published = normaliseYearStatus(period?.status) === "published";
+  // An open (published) year shows the list as it was locked; a collecting
+  // year shows the live list.
+  const frozen = published
+    ? await db.ccaYearFreeze.findFirst({
+        where: { ccaID, academicYear, ...NOT_UNFROZEN },
+      })
+    : null;
   const label = frozen ? await actorLabels(db, [frozen.frozenBy]) : null;
   const base = {
     status: normaliseYearStatus(period?.status),
     sem2Start: sem2Start ? instantToSgDate(sem2Start) : null,
-    termAcademicYear: term,
     freeze:
       frozen && label
         ? {
@@ -298,8 +286,8 @@ export async function rosterList(
     return { ...base, unresolved: 0, rows: sortRows(rows), mode: "frozen" };
   }
 
-  // Not frozen, and not the year this CCA is working on: no list was recorded.
-  if (academicYear !== term) {
+  // Open, but this CCA had no list saved (it did not exist then): no members.
+  if (published) {
     return { ...base, unresolved: 0, rows: [], mode: "none" };
   }
 
@@ -342,20 +330,20 @@ const sortRows = (rows: RosterRow[]) =>
 type UpsertInput = z.infer<typeof rosterUpsertInput>;
 
 /**
- * Who an edit is about. In a FROZEN list it must be someone on the frozen list;
- * otherwise a current member of the CCA, and only for the year the CCA is
- * working on (a year it has moved past has no list to edit).
+ * Who an edit is about. In an open (published) year it must be someone on the
+ * CCA's locked list; while collecting, a current member of the CCA (the live
+ * list). Who may edit which year at all is the edit guard's business.
  */
 async function findTarget(
   db: PrismaClient,
   input: UpsertInput,
-  now: Date,
 ): Promise<{ key: string; keys: string[]; frozen: boolean }> {
   const notAMember = new TRPCError({
     code: "BAD_REQUEST",
     message: "NOT_A_MEMBER",
   });
-  if (await activeFreeze(db, input.ccaID, input.academicYear)) {
+  const period = await getPeriod(db, input.academicYear);
+  if (normaliseYearStatus(period?.status) === "published") {
     const entry = await db.transcriptRosterEntry.findFirst({
       where: {
         academicYear: input.academicYear,
@@ -366,9 +354,6 @@ async function findTarget(
     });
     if (!entry) throw notAMember;
     return { key: entry.userID, keys: [entry.userID], frozen: true };
-  }
-  if ((await termYearOf(db, input.ccaID, now)) !== input.academicYear) {
-    throw notAMember;
   }
   const { members } = await liveMembers(db, input.ccaID);
   const live = members.find((m) => m.keys.includes(input.userID));
@@ -447,7 +432,7 @@ export async function rosterUpsert(
   input: UpsertInput,
   now: Date = new Date(),
 ) {
-  const target = await findTarget(db, input, now);
+  const target = await findTarget(db, input);
   const guard = await assertCanEditForResidents(
     db,
     { userID: actorUserID },

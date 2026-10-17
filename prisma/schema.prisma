@@ -1375,9 +1375,10 @@ model Authenticator {
 /// it decides each member's DEFAULT duration from CcaApplication.decidedAt),
 /// and `status` gates who can do what.
 ///
-/// status: "collecting" (heads/JCRC edit, residents cannot download) ->
-/// "published" (residents download, edits locked). Admin/JCRC publish and may
-/// reopen (reopenedAt/By). Nothing here ever changes UserCCA.
+/// status: "collecting" (heads/JCRC edit, residents see nothing) ->
+/// "published" (Open transcripts: every CCA's list is locked, residents
+/// download, edits locked except per-resident corrections). One step, never
+/// undone. Nothing here ever changes UserCCA.
 model TranscriptPeriod {
   id           String    @id @default(auto()) @map("_id") @db.ObjectId
   academicYear String    @unique(map: "transcript_period_ay")
@@ -1385,18 +1386,11 @@ model TranscriptPeriod {
   /// Last day residents are asked to download by (a Singapore calendar date,
   /// stored as midnight Singapore time). Shown as a banner; nothing is enforced.
   downloadBy   DateTime?
-  /// collecting | closed | published
+  /// collecting | published ("Open": set by Open transcripts)
   status       String?   @default("collecting")
+  /// Who opened transcripts for the year, and when.
   publishedAt  DateTime?
   publishedBy  String?
-  reopenedAt   DateTime?
-  reopenedBy   String?
-  /// Who closed the year (Close year) and when.
-  closedAt     DateTime?
-  closedBy     String?
-  /// Who put a closed year back to collecting, and when.
-  backToCollectingAt DateTime?
-  backToCollectingBy String?
 }
 
 /// Per member, per CCA, per academic year ANNOTATIONS on top of the live

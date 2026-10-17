@@ -1,31 +1,28 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
+import { currentAcademicYear } from "~/lib/transcript/academicYear";
 import {
   editRefusal,
   normaliseYearStatus,
   type EditRefusal,
-  type FreezeReason,
 } from "~/lib/transcript/lifecycle";
 import { accessFor } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
-import { activeFreeze, termYearOf } from "./freeze";
 import { getPeriod } from "./periods";
 
 /**
  * WHO MAY CHANGE A CCA'S TRANSCRIPT RECORDS FOR A YEAR. One guard, decided from
  * LIVE role and headship reads, so every edit screen applies the same rule:
  *  - nobody once the year is published;
- *  - managers (admin or jcrc) for any CCA, collecting or closed;
- *  - the head of THIS CCA only while the year is collecting, for the CCA's term
- *    year while its list is not frozen, or a year frozen by the head's own lock;
+ *  - managers (admin or jcrc): any CCA, for any year still collecting;
+ *  - a current head of THIS CCA (whoever heads it now, new heads after a
+ *    handover too): only the CURRENT academic year; other years are read-only;
  *  - everyone else: no.
  * The pure rule is `editRefusal` (src/lib/transcript/lifecycle.ts).
  */
 
 const CODE: Record<EditRefusal, "PRECONDITION_FAILED" | "FORBIDDEN"> = {
   PERIOD_PUBLISHED: "PRECONDITION_FAILED",
-  YEAR_CLOSED: "FORBIDDEN",
-  CCA_YEAR_FROZEN: "FORBIDDEN",
   NOT_THE_TERM_YEAR: "FORBIDDEN",
   NOT_A_HEAD_OF_THIS_CCA: "FORBIDDEN",
 };
@@ -40,24 +37,20 @@ export async function editRefusalFor(
 ): Promise<EditRefusal | null> {
   const roles = await getUserRoles(db, userID);
   const isManager = accessFor("manager", roles);
-  const [period, freeze, headRow, term] = await Promise.all([
+  const [period, headRow] = await Promise.all([
     getPeriod(db, academicYear),
-    activeFreeze(db, ccaID, academicYear),
     isManager
       ? Promise.resolve(null)
       : db.ccaHead.findUnique({
           where: { userID_ccaID: { userID, ccaID } },
           select: { id: true },
         }),
-    // Only a head is limited to the term year; a manager is not.
-    isManager ? Promise.resolve(academicYear) : termYearOf(db, ccaID, now),
   ]);
   return editRefusal({
     isManager,
     isHead: headRow !== null,
     status: normaliseYearStatus(period?.status),
-    freezeReason: (freeze?.reason as FreezeReason | undefined) ?? null,
-    isTermYear: term === academicYear,
+    isCurrentYear: academicYear === currentAcademicYear(now),
   });
 }
 
