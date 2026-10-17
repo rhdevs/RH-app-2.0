@@ -27,8 +27,8 @@ const DOWNLOAD_BY = new Date("2027-12-30T16:00:00Z");
 const PREFIX = "SEED-";
 
 /**
- * `--with-published-year` ALSO seeds a past year, AY2025/26, already closed and
- * published: every seeded CCA frozen, roster entries, activities, volunteer
+ * `--with-published-year` ALSO seeds a past year, AY2025/26, whose transcripts
+ * are already open: every seeded CCA's list saved, roster entries, activities, volunteer
  * hours, awards and one JCRC page. LOCAL ONLY, for clicking through a published
  * transcript, the Ready badge and the year switcher, and for trying Unlock and
  * Withhold. Transcripts really start at AY2026/27; this year exists only here.
@@ -383,36 +383,8 @@ async function seed() {
     ],
   });
 
-  // Two CCAs whose member list is already frozen for the year, so the admin
-  // table shows each state: 9014 at its handover (earlier, by its old head
-  // resident 01 acting as admin), 9013 locked by its head. Everyone else is
-  // not frozen. A frozen CCA reads its frozen entries, whoever is in it now.
-  for (const [ccaID, reason, frozenAt, frozenBy] of [
-    [9014, "handover", new Date("2026-09-20T04:00:00Z"), uid(1)],
-    [9013, "lock", new Date("2026-10-05T04:00:00Z"), uid(2)],
-  ]) {
-    const members = [...memberships.values()].filter((m) => m.ccaID === ccaID);
-    await db.transcriptRosterEntry.createMany({
-      data: members.map((m) => ({
-        academicYear: AY,
-        userID: uid(m.n),
-        ccaID,
-        frozen: true,
-        duration: "full",
-        updatedBy: frozenBy,
-      })),
-    });
-    await db.ccaYearFreeze.create({
-      data: {
-        academicYear: AY,
-        ccaID,
-        reason,
-        frozenAt,
-        frozenBy,
-        memberCount: members.length,
-      },
-    });
-  }
+  // No member list is saved for AY2026/27: it is still collecting, so every
+  // CCA's list is its live list until the JCRC opens transcripts.
 
   // Volunteer activities of two RVC CCAs (see docs/transcript/SPEC.md):
   //  - RVC Children (9002, head R06): weekly tuition, 10 weekly sessions of
@@ -770,7 +742,7 @@ async function seed() {
 /** The optional published past year (see WITH_PUBLISHED_YEAR). */
 async function seedPublishedYear() {
   const at = (iso) => new Date(iso);
-  const closedAt = at("2026-07-15T04:00:00Z");
+  const openedAt = at("2026-07-20T04:00:00Z");
   await db.transcriptPeriod.create({
     data: {
       academicYear: PAST_AY,
@@ -778,14 +750,12 @@ async function seedPublishedYear() {
       sem2Start: at("2026-01-11T16:00:00Z"),
       downloadBy: DOWNLOAD_BY,
       status: "published",
-      closedAt,
-      closedBy: uid(2),
-      publishedAt: at("2026-07-20T04:00:00Z"),
+      publishedAt: openedAt,
       publishedBy: uid(2),
     },
   });
 
-  // Every seeded CCA closed with the year: its member list as frozen entries.
+  // Every seeded CCA's member list saved when transcripts opened.
   for (const ccaID of CCA_IDS) {
     const members = [...memberships.values()].filter((m) => m.ccaID === ccaID);
     await db.transcriptRosterEntry.createMany({
@@ -808,8 +778,8 @@ async function seedPublishedYear() {
       data: {
         academicYear: PAST_AY,
         ccaID,
-        reason: "close_year",
-        frozenAt: closedAt,
+        reason: "open",
+        frozenAt: openedAt,
         frozenBy: uid(2),
         memberCount: members.length,
       },
