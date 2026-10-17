@@ -82,6 +82,7 @@ export function MemberTable(props: ListProps) {
             <tr
               key={e.rowKey}
               id={rowDomId("table", e.rowKey)}
+              data-row-key={e.rowKey}
               className={`align-middle transition-colors ${ring(highlightKey === e.rowKey)}`}
             >
               <td className="px-2 py-2 first:pl-3">
@@ -141,6 +142,7 @@ export function MemberCards(props: ListProps) {
         <li
           key={e.rowKey}
           id={rowDomId("card", e.rowKey)}
+          data-row-key={e.rowKey}
           className={`rounded-lg border border-gray-200 bg-white p-3 transition-colors ${ring(highlightKey === e.rowKey)}`}
         >
           <div className="flex items-start justify-between gap-2">

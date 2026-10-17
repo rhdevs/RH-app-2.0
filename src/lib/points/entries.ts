@@ -156,3 +156,16 @@ export function exportBlockers(
   if (scoreIssues.length === 0) blockers.push(...rangeBlockers(entries, range));
   return blockers;
 }
+
+/**
+ * Re-judge an export against the CURRENT settings from the server (JCRC may have
+ * closed entry or changed the range since the page loaded). Pure: the caller
+ * supplies the freshly fetched context.
+ */
+export function exportAllowedNow(
+  entries: readonly PointsEntry[],
+  fresh: { entryOpen: boolean; range: Readonly<Range> },
+): { allowed: boolean; blockers: ExportBlocker[] } {
+  const blockers = exportBlockers(entries, fresh.range, fresh.entryOpen);
+  return { allowed: blockers.length === 0, blockers };
+}

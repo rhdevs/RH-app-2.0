@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+} from "react";
 import { CheckCircle2 } from "lucide-react";
 
 import type { Range } from "~/lib/points/constants";
@@ -9,7 +15,7 @@ import type { ExportBlocker } from "~/lib/points/entries";
 import DraftPanel from "./DraftPanel";
 import ExportDialog from "./ExportDialog";
 import { rowDomId } from "./fields";
-import { DEFAULT_VIEW, visibleEntries, type ListView } from "./listView";
+import { DEFAULT_VIEW, heldVisibleEntries, type ListView } from "./listView";
 import { MemberCards, MemberTable } from "./MemberList";
 import MobileBar from "./MobileBar";
 import PointsHeader from "./PointsHeader";
@@ -46,12 +52,15 @@ export default function Workbench({
   roster,
   userID,
   context,
+  refreshContext,
 }: {
   ccaID: number;
   ccaName: string;
   roster: RosterMember[];
   userID: string | null;
   context: EntryContext;
+  /** Re-reads JCRC's settings; null when the read failed. */
+  refreshContext: () => Promise<EntryContext | null>;
 }) {
   const { entryOpen, range } = context;
   const state = usePointsEntries({
@@ -61,7 +70,23 @@ export default function Workbench({
     range,
     entryOpen,
   });
-  const [view, setView] = useState<ListView>(DEFAULT_VIEW);
+  const [view, setViewState] = useState<ListView>(DEFAULT_VIEW);
+  // The row being edited stays put until the leader moves to another row, so a
+  // keystroke never makes it vanish ("Unscored only") or jump ("sort by score").
+  const [heldKey, setHeldKey] = useState<string | null>(null);
+  const shownOrder = useRef<string[]>([]);
+  const setView = useCallback((next: ListView) => {
+    shownOrder.current = []; // a changed filter, sort or search applies at once
+    setViewState(next);
+  }, []);
+  const rowOf = (el: EventTarget | null): string | null =>
+    el instanceof Element
+      ? (el.closest("[data-row-key]")?.getAttribute("data-row-key") ?? null)
+      : null;
+  const onListFocus = (e: FocusEvent<HTMLElement>) =>
+    setHeldKey(rowOf(e.target));
+  const onListBlur = (e: FocusEvent<HTMLElement>) =>
+    setHeldKey(rowOf(e.relatedTarget));
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState<string | null>(null);
@@ -73,13 +98,20 @@ export default function Workbench({
     return () => window.clearTimeout(timer);
   }, [highlightKey]);
 
-  const rows = visibleEntries(state.entries, view);
+  const rows = heldVisibleEntries(
+    state.entries,
+    view,
+    heldKey,
+    shownOrder.current,
+  );
+  shownOrder.current = rows.map((r) => r.rowKey);
   const disabled = !entryOpen;
 
   const showBlocker = (b: ExportBlocker) => {
     const key = b.rowKeys?.[0];
     if (!key) return;
     setView(DEFAULT_VIEW); // the row must be visible to be found
+    setHeldKey(null);
     setSheetOpen(false);
     setHighlightKey(key);
     window.setTimeout(() => scrollToRow(key), 50);
@@ -124,8 +156,7 @@ export default function Workbench({
             <button
               type="button"
               onClick={() => {
-                state.clearDraft();
-                setExported(null);
+                if (state.clearDraft()) setExported(null);
               }}
               className="font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
             >
@@ -150,7 +181,7 @@ export default function Workbench({
               {view.unscoredOnly ? "Everyone shown is scored." : ""}
             </p>
           ) : (
-            <>
+            <div onFocus={onListFocus} onBlur={onListBlur}>
               <div className="hidden lg:block">
                 <MemberTable
                   rows={rows}
@@ -167,7 +198,7 @@ export default function Workbench({
                   highlightKey={highlightKey}
                 />
               </div>
-            </>
+            </div>
           )}
         </div>
         <aside className="hidden lg:sticky lg:top-4 lg:block">{summary}</aside>
@@ -190,6 +221,7 @@ export default function Workbench({
         entries={state.entries}
         mean={state.stats.mean}
         sd={state.stats.sd}
+        refreshContext={refreshContext}
         onExported={setExported}
       />
     </div>

@@ -70,21 +70,47 @@ function isDraftRow(v: unknown): v is DraftRow {
   );
 }
 
-/** A saved draft for this CCA, or null when it is missing, corrupt or not ours. */
-export function parseDraft(raw: string | null, ccaID: number): Draft | null {
-  if (raw === null) return null;
+/**
+ * What reading the stored draft found. "unreadable" is kept apart from "none" so
+ * the page never overwrites something it could not understand.
+ */
+export type ParsedDraft =
+  | { status: "ok"; draft: Draft }
+  | { status: "none" }
+  | { status: "unreadable" };
+
+const UNREADABLE: ParsedDraft = { status: "unreadable" };
+
+/** Nothing stored → none; a draft for this CCA → ok; anything else → unreadable. */
+export function parseDraft(raw: string | null, ccaID: number): ParsedDraft {
+  if (raw === null) return { status: "none" };
   let data: unknown;
   try {
     data = JSON.parse(raw);
   } catch {
-    return null;
+    return UNREADABLE;
   }
-  if (!isRecord(data) || data.version !== DRAFT_VERSION) return null;
-  if (data.ccaID !== ccaID || typeof data.savedAt !== "string") return null;
-  if (!isRecord(data.rows)) return null;
-  const rows = Object.values(data.rows);
-  if (!rows.every(isDraftRow)) return null;
-  return data as Draft;
+  if (!isRecord(data) || data.version !== DRAFT_VERSION) return UNREADABLE;
+  if (data.ccaID !== ccaID || typeof data.savedAt !== "string")
+    return UNREADABLE;
+  if (Number.isNaN(Date.parse(data.savedAt))) return UNREADABLE;
+  if (!isRecord(data.rows)) return UNREADABLE;
+  // Rebuild every row from the four editable fields only, so a stored row can
+  // never carry a matric, name or key that competes with the roster's.
+  const rows: Record<string, DraftRow> = {};
+  for (const [key, value] of Object.entries(data.rows)) {
+    if (!isDraftRow(value)) return UNREADABLE;
+    rows[key] = {
+      basePoints: value.basePoints,
+      semesterOnly: value.semesterOnly,
+      outgoingRole: value.outgoingRole,
+      incomingRole: value.incomingRole,
+    };
+  }
+  return {
+    status: "ok",
+    draft: { version: DRAFT_VERSION, ccaID, savedAt: data.savedAt, rows },
+  };
 }
 
 export function buildDraft(
@@ -130,4 +156,56 @@ export function mergeDraftWithRoster(
     ? Object.keys(draft.rows).filter((k) => !keys.has(k)).length
     : 0;
   return { entries, droppedCount };
+}
+
+/**
+ * A changed roster laid over what is on screen NOW (not over the stored draft, which
+ * lags by the autosave delay). Members still present keep their current values;
+ * new members start from the prefill; anyone gone is dropped and counted. Identity
+ * (matric, name, resolved) always comes from the fresh roster.
+ */
+export function mergeRosterOverEntries(
+  roster: readonly RosterMember[],
+  current: readonly PointsEntry[],
+): { entries: PointsEntry[]; droppedCount: number } {
+  const byKey = new Map(current.map((e) => [e.rowKey, e]));
+  const keys = new Set(roster.map((m) => m.rowKey));
+  const entries = roster.map((member) => {
+    const now = byKey.get(member.rowKey);
+    if (!now) return prefillEntry(member);
+    return {
+      ...prefillEntry(member),
+      basePoints: now.basePoints,
+      semesterOnly: now.semesterOnly,
+      outgoingRole: now.outgoingRole,
+      incomingRole: now.incomingRole,
+    };
+  });
+  const droppedCount = current.filter((e) => !keys.has(e.rowKey)).length;
+  return { entries, droppedCount };
+}
+
+/**
+ * Whether the draft may be written now: only after an edit, only with a storage
+ * key, and never while the stored draft is unreadable (writing would destroy it).
+ */
+export function canAutosave(state: {
+  storageKey: string | null;
+  touched: boolean;
+  unreadable: boolean;
+}): boolean {
+  return state.storageKey !== null && state.touched && !state.unreadable;
+}
+
+/** Remove a stored draft. False when the browser refused, so the caller can say so. */
+export function removeDraftItem(
+  storage: Pick<Storage, "removeItem">,
+  key: string,
+): boolean {
+  try {
+    storage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
 }

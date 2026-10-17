@@ -24,6 +24,33 @@ export default function DraftPanel({ state }: { state: PointsState }) {
   const [confirming, setConfirming] = useState(false);
   return (
     <div className="space-y-2 text-sm">
+      {state.unreadable && (
+        <p
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900"
+          role="alert"
+        >
+          A draft saved on this device couldn&rsquo;t be read. Your changes
+          won&rsquo;t be saved until you discard it.
+          <button
+            type="button"
+            onClick={() => state.discardUnreadable()}
+            className="font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          >
+            Discard unreadable draft
+          </button>
+        </p>
+      )}
+
+      {state.clearFailed && (
+        <p
+          className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-800"
+          role="alert"
+        >
+          Couldn&rsquo;t clear the draft from this browser. Clear this
+          site&rsquo;s data in your browser settings.
+        </p>
+      )}
+
       {state.droppedCount > 0 && (
         <p
           className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900"
@@ -49,11 +76,13 @@ export default function DraftPanel({ state }: { state: PointsState }) {
         <p className="text-gray-600" aria-live="polite">
           {!state.draftsEnabled
             ? "Drafts can't be saved for this account."
-            : state.saveFailed
-              ? "Couldn't save the draft on this device. Keep this tab open until you export."
-              : state.savedAt
-                ? `Draft saved on this device · ${time(state.savedAt)}`
-                : "Nothing saved yet."}
+            : state.unreadable
+              ? "Not saving: the stored draft couldn't be read."
+              : state.saveFailed
+                ? "Couldn't save the draft on this device. Keep this tab open until you export."
+                : state.savedAt
+                  ? `Draft saved on this device · ${time(state.savedAt)}`
+                  : "Nothing saved yet."}
         </p>
         {state.draftsEnabled && state.savedAt && (
           <button

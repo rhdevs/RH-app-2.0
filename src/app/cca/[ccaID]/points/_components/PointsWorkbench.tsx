@@ -21,6 +21,22 @@ import Workbench from "./Workbench";
  */
 const QUERY_OPTS = { retry: false, refetchOnWindowFocus: false } as const;
 
+/**
+ * JCRC can open, close or re-range entry while a leader is working, so this one
+ * query (config only) is re-read every minute and when the tab regains focus. The
+ * roster is not: a refetched roster must never shuffle rows mid-typing.
+ */
+const CONTEXT_OPTS = {
+  retry: false,
+  refetchInterval: 60_000,
+  refetchOnWindowFocus: true,
+} as const;
+const ROSTER_OPTS = {
+  ...QUERY_OPTS,
+  refetchOnReconnect: false,
+  refetchOnMount: false,
+} as const;
+
 function Skeleton() {
   return (
     <div className="space-y-4" role="status" aria-label="Loading points entry">
@@ -62,13 +78,16 @@ function Problem({
 
 export default function PointsWorkbench({ ccaID }: { ccaID: number }) {
   const { data: session, status } = useSession();
-  const context = api.ccaPoints.getEntryContext.useQuery({ ccaID }, QUERY_OPTS);
+  const context = api.ccaPoints.getEntryContext.useQuery(
+    { ccaID },
+    CONTEXT_OPTS,
+  );
   // The roster is requested only once the head check has passed, so a viewer
   // who is not this CCA's head never loads it from this page.
   const directory = api.cca.memberDirectory.useQuery(
     { ccaID },
     {
-      ...QUERY_OPTS,
+      ...ROSTER_OPTS,
       // A flat CCA's leaders have nothing to enter, so its roster is never loaded.
       enabled: context.isSuccess && context.data.flatPoints === null,
     },
@@ -105,7 +124,13 @@ export default function PointsWorkbench({ ccaID }: { ccaID: number }) {
     [rosterKey],
   );
 
-  const failed = context.error ?? directory.error;
+  // A failed background re-read keeps the page (and the leader's work) as it is;
+  // only a lost head role, or a first load that failed, replaces it.
+  const contextProblem =
+    context.error && (!context.data || context.error.data?.code === "FORBIDDEN")
+      ? context.error
+      : null;
+  const failed = contextProblem ?? directory.error;
   if (failed) {
     if (failed.data?.code === "FORBIDDEN") {
       return <Problem message="Only this CCA's heads can enter points." />;
@@ -152,6 +177,10 @@ export default function PointsWorkbench({ ccaID }: { ccaID: number }) {
         roster={roster}
         userID={session?.user?.userID ?? null}
         context={context.data}
+        refreshContext={async () => {
+          const result = await context.refetch();
+          return result.status === "success" ? result.data : null;
+        }}
       />
     </TooltipProvider>
   );
