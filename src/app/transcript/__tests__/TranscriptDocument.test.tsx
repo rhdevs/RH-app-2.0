@@ -436,41 +436,23 @@ describe("TranscriptDocument: print", () => {
   });
 });
 
-describe("TranscriptDocument: draft", () => {
-  const draft = (slug: string, year = AY): string => {
-    const fixture = getFixtureBySlug(slug)!;
-    return renderToStaticMarkup(
-      <TranscriptDocument
-        transcript={assembleTranscript(fixture.input, year, { draft: true })}
-      />,
-    );
-  };
-
-  it("puts the draft note at the top of page 1 and a DRAFT watermark on every page", () => {
-    const html = draft("jcrc-sports-secretary", JCRC_AY);
-
-    expect(html).toContain(
-      "Draft - check your information. If something is wrong, tell your CCA head or the JCRC.",
-    );
-    expect(html.match(/rh-draft/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(html).toContain("DRAFT");
-    // the note is printed once, on page 1
-    expect(html.match(/Draft - check your information/g)).toHaveLength(1);
-  });
-
-  it("is not marked as a draft when the year is published", () => {
-    const html = render("plain-member");
-
-    expect(html).not.toContain("Draft - check your information");
-    expect(html).not.toMatch(/class="rh-paper[^"]*rh-draft/);
-  });
-
-  it("keeps the crest, footer and closing block", () => {
-    const html = draft("plain-member");
-
-    expect(html).toContain("END OF TRANSCRIPT");
-    expect(html).toContain("Page 1 of 1");
-    expect(html).toContain("Raffles Hall crest");
+describe("TranscriptDocument: no draft", () => {
+  it("never draws a draft note or a DRAFT watermark, whatever it is given", () => {
+    const fixture = getFixtureBySlug("jcrc-sports-secretary")!;
+    for (const html of [
+      render("plain-member"),
+      renderToStaticMarkup(
+        <TranscriptDocument
+          transcript={assembleTranscript(fixture.input, JCRC_AY, {
+            draft: true,
+          })}
+        />,
+      ),
+    ]) {
+      expect(html).not.toContain("Draft - check your information");
+      expect(html).not.toContain("rh-draft");
+      expect(html).not.toContain("DRAFT");
+    }
   });
 });
 

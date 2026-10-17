@@ -27,8 +27,7 @@ const decide = (input: {
       isManager: input.role === "manager",
       isHead: input.role === "head",
       status: input.status,
-      freezeReason: null,
-      isTermYear: true,
+      isCurrentYear: true,
     }),
     isManager: input.role === "manager",
     status: input.status,
@@ -40,9 +39,6 @@ describe("decideWrite: who may write, by year state, role and unlock", () => {
   it("lets the ordinary guard's yes through, and it is not a correction", () => {
     expect(
       decide({ status: "collecting", role: "manager", affected: ["A"] }),
-    ).toEqual({ allow: true, correction: false });
-    expect(
-      decide({ status: "closed", role: "manager", affected: ["A"] }),
     ).toEqual({ allow: true, correction: false });
     expect(
       decide({ status: "collecting", role: "head", affected: ["A"] }),
@@ -113,14 +109,6 @@ describe("decideWrite: who may write, by year state, role and unlock", () => {
   });
 
   it("an unlock does not widen what a head or manager may do outside a published year", () => {
-    expect(
-      decide({
-        status: "closed",
-        role: "head",
-        affected: ["A"],
-        unlocked: ["A"],
-      }),
-    ).toEqual({ allow: false, refusal: "YEAR_CLOSED" });
     expect(
       decide({
         status: "collecting",

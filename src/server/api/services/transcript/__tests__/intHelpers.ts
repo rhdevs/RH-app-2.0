@@ -1,10 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 
 /**
- * Shared by the database tests: put the freezes back as the seed left them.
- * The seed freezes two CCAs for the year (one at handover, one locked by its
- * head) and every other CCA is not frozen; a test that closes the year, freezes
- * a CCA or unfreezes one must not leak into the next.
+ * Shared by the database tests: put the saved member lists back as the seed
+ * left them. The seed saves none for the collecting year; a test that opens
+ * transcripts or saves a CCA's list must not leak into the next.
  */
 const SEED_CCAS = { gte: 9001, lte: 9014 };
 

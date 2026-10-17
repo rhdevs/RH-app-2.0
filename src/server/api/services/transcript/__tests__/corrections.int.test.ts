@@ -105,10 +105,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       }
     }, 120_000);
 
-    /** The admin buttons: Close year, then Publish. */
+    /** The admin button: Open transcripts. */
     const publishYear = async () => {
-      await as(JCRC).transcript.periods.close({ academicYear: AY });
-      await as(JCRC).transcript.periods.publish({ academicYear: AY });
+      await as(JCRC).transcript.periods.open({ academicYear: AY });
     };
     const unlock = (who: { id: string }, reason = "Wrong role on file") =>
       as(JCRC).transcriptManage.corrections.unlock({
@@ -666,9 +665,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           academicYear: null,
         });
         // The year is still listed, and others are unaffected.
-        expect(await as(R12).transcript.mine.years()).toEqual([
-          { academicYear: AY, draft: false },
-        ]);
+        expect(await as(R12).transcript.mine.years()).toEqual([AY]);
         // R20 is not held: opening the year records the opening, so no badge.
         expect((await get(R20)).status).toBe("ready");
         expect(await as(R20).transcript.mine.readiness()).toEqual({
@@ -677,8 +674,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       });
 
-      it("holds a draft too, and a manager's preview still renders with a note flag", async () => {
-        await as(JCRC).transcript.periods.close({ academicYear: AY });
+      it("still lets a manager preview a held resident, with a note flag", async () => {
+        await publishYear();
         await withhold(R12);
 
         expect(await get(R12)).toEqual({

@@ -6,7 +6,7 @@ import {
 } from "../_components/AwardsPanel";
 import {
   PeriodPanelView,
-  confirmationFor,
+  panelReminders,
   type PeriodPanelViewProps,
 } from "../_components/PeriodPanel";
 import { PreviewPickerView, previewHref } from "../_components/PreviewPicker";
@@ -35,6 +35,7 @@ const period = (
   selected: "AY2026/27",
   onSelect: noop,
   status: "collecting",
+  canOpen: true,
   publishedLine: null,
   sem2Value: "2027-01-11",
   onSem2Change: noop,
@@ -42,11 +43,10 @@ const period = (
   onSaveSem2: noop,
   saving: false,
   saveError: null,
-  confirming: null,
+  confirming: false,
   onConfirming: noop,
   onConfirm: noop,
   acting: false,
-  unfrozenCount: 12,
   actionError: null,
   resultLine: null,
   downloadByValue: "",
@@ -61,141 +61,67 @@ const renderPeriod = (over?: Partial<PeriodPanelViewProps>) =>
   renderToStaticMarkup(<PeriodPanelView {...period(over)} />);
 
 describe("academic year panel", () => {
-  it("lists the CCAs that block Publish, inline, only while the year is closed", () => {
-    const text =
-      "Some CCAs are not frozen for AY2026/27: Soccer (MALE). Use Freeze remaining CCAs, then publish.";
-    expect(
-      renderPeriod({ status: "closed", notFrozenNames: ["Soccer (MALE)"] }),
-    ).toContain(text);
-    expect(
-      renderPeriod({ status: "closed", notFrozenNames: [] }),
-    ).not.toContain("not frozen for");
-    expect(
-      renderPeriod({ status: "collecting", notFrozenNames: ["Soccer (MALE)"] }),
-    ).not.toContain("not frozen for");
-  });
-
-  it("offers Freeze remaining CCAs (N) next to Publish only while closed with unfrozen CCAs", () => {
-    const closed = renderPeriod({
-      status: "closed",
-      notFrozenNames: ["Soccer (MALE)", "Chess Club"],
-    });
-    expect(closed).toContain("Freeze remaining CCAs (2)");
-    expect(closed.indexOf("Publish")).toBeLessThan(
-      closed.indexOf("Freeze remaining CCAs (2)"),
-    );
-    for (const hidden of [
-      renderPeriod({ status: "closed", notFrozenNames: [] }),
-      renderPeriod({ status: "closed" }),
-      renderPeriod({ status: "collecting", notFrozenNames: ["Soccer (MALE)"] }),
-      renderPeriod({ status: "published", notFrozenNames: ["Soccer (MALE)"] }),
-    ]) {
-      expect(hidden).not.toContain("Freeze remaining CCAs");
-    }
-  });
-
-  it("disables the button while it works, and words the dialog", () => {
-    const busy = renderPeriod({
-      status: "closed",
-      notFrozenNames: ["Soccer (MALE)"],
-      acting: true,
-    });
-    expect(busy).toMatch(
-      /<button[^>]*disabled=""[^>]*>[^<]*Freeze remaining CCAs \(1\)/,
-    );
-    expect(
-      confirmationFor("freezeRemaining", "AY2026/27", null, ["Soccer (MALE)"]),
-    ).toEqual({
-      title: "Freeze remaining CCAs for AY2026/27?",
-      text: "This freezes the member lists of 1 CCA for AY2026/27: Soccer (MALE). Their current members will be used.",
-    });
-  });
-
-  it("shows the result line inline", () => {
-    expect(
-      renderPeriod({
-        status: "closed",
-        resultLine: "1 CCA frozen. You can publish now.",
-      }),
-    ).toContain("1 CCA frozen. You can publish now.");
-  });
-
   const buttons = (html: string) =>
     [...html.matchAll(/<button[^>]*type="button"[^>]*>([^<]*)</g)].map(
       (m) => m[1],
     );
 
-  it("offers only Close year while the year is collecting", () => {
+  it("offers one button, Open transcripts, while the year is collecting", () => {
     const html = renderPeriod();
 
     expect(html).toContain("Academic year");
     expect(html).toContain("Collecting");
-    expect(buttons(html)).toContain("Close year");
-    for (const other of [
+    expect(buttons(html)).toEqual(["Open transcripts"]);
+    for (const gone of [
+      "Close year",
       "Publish",
       "Reopen for review",
       "Back to collecting",
+      "Freeze remaining",
+      "draft",
     ]) {
-      expect(buttons(html)).not.toContain(other);
+      expect(html).not.toContain(gone);
     }
     expect(html).toContain('value="2027-01-11"');
   });
 
-  it("offers Publish and Back to collecting while the year is closed", () => {
-    const html = renderPeriod({ status: "closed" });
-
-    expect(html).toContain("Closed");
-    expect(buttons(html)).toContain("Publish");
-    expect(buttons(html)).toContain("Back to collecting");
-    expect(buttons(html)).not.toContain("Close year");
-    expect(buttons(html)).not.toContain("Reopen for review");
-    // the date can still be corrected during review
-    expect(html).not.toMatch(
-      /<input[^>]*id="transcripts-sem2"[^>]*\sdisabled=""/,
-    );
-  });
-
-  it("offers only Reopen for review once published, and locks the date", () => {
+  it("hides the button once the year is open, says so, and locks the semester 2 date", () => {
     const html = renderPeriod({
       status: "published",
-      publishedLine: "Published on 15 Oct 2026 by Seed Resident 02.",
+      canOpen: false,
+      publishedLine: "Opened on 15 Apr 2027 by Seed Resident 02.",
+      freezeTable: <p>member list results</p>,
     });
 
-    expect(html).toContain("Published");
-    expect(buttons(html)).toContain("Reopen for review");
-    for (const other of ["Close year", "Publish", "Back to collecting"]) {
-      expect(buttons(html)).not.toContain(other);
-    }
-    expect(html).toContain("Published on 15 Oct 2026 by Seed Resident 02.");
+    expect(html).toContain(">Open<");
+    expect(buttons(html)).not.toContain("Open transcripts");
+    expect(html).toContain("Opened on 15 Apr 2027 by Seed Resident 02.");
     expect(html).toMatch(/<input[^>]*id="transcripts-sem2"[^>]*\sdisabled=""/);
+    // The member-list results appear only once the year is open.
+    expect(html).toContain("member list results");
+    expect(
+      renderPeriod({ freezeTable: <p>member list results</p> }),
+    ).not.toContain("member list results");
+  });
+
+  it("offers no Open transcripts for a future year", () => {
+    expect(buttons(renderPeriod({ canOpen: false }))).not.toContain(
+      "Open transcripts",
+    );
   });
 
   it("treats a year with no period yet as collecting, with an empty date", () => {
     const html = renderPeriod({ status: null, sem2Value: "" });
 
     expect(html).toContain("Collecting");
-    expect(buttons(html)).toContain("Close year");
+    expect(buttons(html)).toContain("Open transcripts");
     expect(html).toMatch(/<input[^>]*id="transcripts-sem2"[^>]*value=""/);
   });
 
-  it("words each confirmation, with the count of CCAs a close will freeze", () => {
-    expect(confirmationFor("close", "AY2026/27", 12)).toEqual({
-      title: "Close AY2026/27?",
-      text: "This freezes the member list of 12 CCAs that are not frozen yet, and opens AY2026/27 for review. Residents will see a draft.",
-    });
-    expect(confirmationFor("publish", "AY2026/27", null).title).toBe(
-      "Publish AY2026/27?",
-    );
-    expect(confirmationFor("reopen", "AY2026/27", null).title).toBe(
-      "Reopen AY2026/27 for review?",
-    );
-    expect(confirmationFor("backToCollecting", "AY2026/27", null).text).toBe(
-      "This puts the year back to collecting. Frozen member lists stay frozen.",
-    );
-  });
-
-  it("states the Singapore-midnight rule beside the date", () => {
-    expect(renderPeriod()).toContain("midnight Singapore time");
+  it("no longer says the semester 2 date is needed to close the year", () => {
+    const html = renderPeriod();
+    expect(html).toContain("midnight Singapore time");
+    expect(html).not.toContain("before the year can be closed");
   });
 
   it("disables Save until the date has changed", () => {
@@ -207,26 +133,27 @@ describe("academic year panel", () => {
     ).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Save</);
   });
 
-  it("shows the result of an action in words, and an error as an alert", () => {
+  it("shows the result in words, and an error as an alert", () => {
     const html = renderPeriod({
-      resultLine: "AY2026/27 closed. 12 CCAs frozen now, 77 already frozen.",
-      actionError: "Set the semester 2 start date before closing the year.",
+      resultLine:
+        "Transcripts for AY2026/27 are open. 12 CCA member lists saved.",
+      actionError: "Transcripts for this academic year are already open.",
     });
 
-    expect(html).toContain("12 CCAs frozen now, 77 already frozen.");
+    expect(html).toContain("12 CCA member lists saved.");
     expect(html).toContain('role="alert"');
-    expect(html).toContain(
-      "Set the semester 2 start date before closing the year.",
-    );
+    expect(html).toContain("already open");
   });
 
-  it("shows a save error inline", () => {
+  it("shows the reminders it is given, the August one as an alert", () => {
     const html = renderPeriod({
-      saveError:
-        "The semester 2 start date must fall inside the academic year.",
+      reminders: {
+        openReminder: "Transcripts for AY2026/27 are not open yet.",
+        previousYear: "Transcripts for AY2025/26 are still not open.",
+      },
     });
-
-    expect(html).toContain("must fall inside the academic year");
+    expect(html).toContain("Transcripts for AY2026/27 are not open yet.");
+    expect(html).toMatch(/role="alert"[^>]*>Transcripts for AY2025\/26/);
   });
 
   it("lists every year offered, newest first as given", () => {
@@ -239,11 +166,55 @@ describe("academic year panel", () => {
   });
 
   it("uses sentence case and no exclamation marks or the word successfully", () => {
-    const html = renderPeriod({ status: "published" });
+    const html = renderPeriod({ status: "published", canOpen: false });
     const text = html.replace(/<[^>]*>/g, " ");
 
     expect(text).not.toContain("!");
     expect(text.toLowerCase()).not.toContain("successfully");
+  });
+});
+
+describe("the admin reminders, by date (time travel)", () => {
+  const periods = (open: string[]) =>
+    ["AY2026/27", "AY2027/28"].map((academicYear) => ({
+      academicYear,
+      status: open.includes(academicYear) ? "published" : "collecting",
+    }));
+
+  it("says nothing in October", () => {
+    expect(
+      panelReminders(
+        periods([]),
+        "AY2026/27",
+        new Date("2026-10-15T00:00:00Z"),
+      ),
+    ).toEqual({ openReminder: null, previousYear: null });
+  });
+
+  it("reminds from 1 April to open the year", () => {
+    expect(
+      panelReminders(periods([]), "AY2026/27", new Date("2027-04-02T00:00:00Z"))
+        .openReminder,
+    ).toBe(
+      "Transcripts for AY2026/27 are not open yet. Open them at the end of the year, before 1 August.",
+    );
+    expect(
+      panelReminders(
+        periods(["AY2026/27"]),
+        "AY2026/27",
+        new Date("2027-04-02T00:00:00Z"),
+      ).openReminder,
+    ).toBeNull();
+  });
+
+  it("warns from 1 August when the previous year was never opened", () => {
+    const august = new Date("2027-08-05T00:00:00Z");
+    expect(panelReminders(periods([]), "AY2027/28", august).previousYear).toBe(
+      "Transcripts for AY2026/27 are still not open. Open them now, before CCAs change their member lists in the August application period.",
+    );
+    expect(
+      panelReminders(periods(["AY2026/27"]), "AY2027/28", august).previousYear,
+    ).toBeNull();
   });
 });
 

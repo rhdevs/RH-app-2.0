@@ -52,7 +52,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
   () => {
     let db: PrismaClient;
     let createCaller: typeof CreateCaller;
-    let freeze: typeof import("../freeze");
     let retention: typeof import("../retention");
     let loader: typeof import("../loader");
     let assemble: typeof import("~/lib/transcript/assemble");
@@ -97,7 +96,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       reseed();
       ({ db } = await import("~/server/db"));
       ({ createCaller } = await import("~/server/api/root"));
-      freeze = await import("../freeze");
       retention = await import("../retention");
       loader = await import("../loader");
       assemble = await import("~/lib/transcript/assemble");
@@ -632,65 +630,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           ).activities,
         ).toHaveLength(1);
         expect(await hoursOf("SEED-R12", "Weekly tuition")).toBe(19);
-      });
-
-      it("refuses the head once the CCA's list is frozen at handover, but not a manager", async () => {
-        await freeze.freezeCca(db, {
-          ccaID: CHILDREN,
-          reason: "handover",
-          actorUserID: ADMIN.id,
-        });
-        const t = await tuition();
-        const head = as(CHILDREN_HEAD);
-
-        expect(
-          await errorOf(head.activities.create(newActivity(CHILDREN))),
-        ).toBe("FORBIDDEN:CCA_YEAR_FROZEN");
-        expect(
-          await errorOf(
-            head.sessions.add({ activityID: t.id, ccaID: CHILDREN }),
-          ),
-        ).toBe("FORBIDDEN:CCA_YEAR_FROZEN");
-        expect(
-          await errorOf(
-            head.attendance.save({
-              activityID: t.id,
-              ccaID: CHILDREN,
-              changes: [],
-            }),
-          ),
-        ).toBe("FORBIDDEN:CCA_YEAR_FROZEN");
-        expect(
-          await errorOf(
-            head.people.set({ activityID: t.id, ccaID: CHILDREN, userIDs: [] }),
-          ),
-        ).toBe("FORBIDDEN:CCA_YEAR_FROZEN");
-
-        // Reading is open; a manager can still write until the year is published.
-        expect(
-          (await head.activities.get({ id: t.id, ccaID: CHILDREN })).sessions,
-        ).toHaveLength(10);
-        expect(
-          await errorOf(as(JCRC).activities.create(newActivity(CHILDREN))),
-        ).toBe("ok");
-        expect(
-          await errorOf(
-            as(JCRC).sessions.add({ activityID: t.id, ccaID: CHILDREN }),
-          ),
-        ).toBe("ok");
-      });
-
-      it("lets a head who locked their own list keep editing", async () => {
-        await freeze.freezeCca(db, {
-          ccaID: CHILDREN,
-          reason: "lock",
-          actorUserID: CHILDREN_HEAD.id,
-        });
-        expect(
-          await errorOf(
-            as(CHILDREN_HEAD).activities.create(newActivity(CHILDREN)),
-          ),
-        ).toBe("ok");
       });
 
       it("refuses everyone once the year is published", async () => {

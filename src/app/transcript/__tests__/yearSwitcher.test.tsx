@@ -4,12 +4,10 @@ import { describe, expect, it } from "vitest";
 import { selectTranscriptState } from "~/lib/transcript/pageState";
 import { YearSwitcher } from "../_components/YearSwitcher";
 
-const choicesFor = (
-  viewable: Array<{ academicYear: string; draft: boolean }>,
-) => {
+const choicesFor = (published: string[]) => {
   const state = selectTranscriptState({
     authenticated: true,
-    viewable,
+    published,
     requested: null,
     currentAcademicYear: "AY2026/27",
   });
@@ -19,7 +17,7 @@ const choicesFor = (
 
 describe("the year switcher", () => {
   it("labels the collecting current year 'not yet available' beside a published one", () => {
-    const state = choicesFor([{ academicYear: "AY2025/26", draft: false }]);
+    const state = choicesFor(["AY2025/26"]);
     const html = renderToStaticMarkup(
       <YearSwitcher
         choices={state.choices}
@@ -35,11 +33,8 @@ describe("the year switcher", () => {
     );
   });
 
-  it("labels a closed current year '(draft)'", () => {
-    const state = choicesFor([
-      { academicYear: "AY2025/26", draft: false },
-      { academicYear: "AY2026/27", draft: true },
-    ]);
+  it("never labels a year a draft", () => {
+    const state = choicesFor(["AY2025/26"]);
     const html = renderToStaticMarkup(
       <YearSwitcher
         choices={state.choices}
@@ -47,7 +42,7 @@ describe("the year switcher", () => {
         basePath="/transcript"
       />,
     );
-    expect(html).toContain(">AY2026/27 (draft)<");
+    expect(html).not.toContain("draft");
   });
 
   it("draws nothing without choices", () => {

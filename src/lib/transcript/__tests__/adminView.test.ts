@@ -1,94 +1,39 @@
 import { describe, expect, it } from "vitest";
 import {
-  ACTION_LABEL,
-  BACK_TO_COLLECTING_CONFIRMATION,
-  CLOSE_CONFIRMATION,
-  PUBLISH_CONFIRMATION,
-  REOPEN_CONFIRMATION,
-  UNFREEZE_WARNING,
-  UNFROZEN_BANNER,
+  OPEN_CONFIRMATION,
+  OPEN_LABEL,
+  OPEN_REMINDER,
+  PREVIOUS_YEAR_WARNING,
   WRITES_LOCKED_NOTE,
-  closeSummary,
-  FREEZE_REMAINING_LABEL,
-  freezeRemainingConfirmation,
-  freezeRemainingSummary,
-  notFrozenText,
-  showFreezeRemaining,
   errorText,
   fieldError,
   isWritable,
+  lockFailureText,
   normaliseStatus,
+  openSummary,
   statusLabel,
+  unresolvedNote,
   yearOptions,
 } from "../adminView";
 
-describe("freeze remaining CCAs", () => {
-  it("shows the button only while the year is closed and a CCA is unfrozen", () => {
-    expect(showFreezeRemaining("closed", 1)).toBe(true);
-    expect(showFreezeRemaining("closed", 0)).toBe(false);
-    expect(showFreezeRemaining("collecting", 3)).toBe(false);
-    expect(showFreezeRemaining("published", 3)).toBe(false);
-    expect(showFreezeRemaining(null, 3)).toBe(false);
-    expect(FREEZE_REMAINING_LABEL(2)).toBe("Freeze remaining CCAs (2)");
-  });
-
-  it("confirms with the count and the first 5 names", () => {
-    expect(freezeRemainingConfirmation("AY2026/27", ["Soccer (MALE)"])).toBe(
-      "This freezes the member lists of 1 CCA for AY2026/27: Soccer (MALE). Their current members will be used.",
-    );
-    const seven = ["A", "B", "C", "D", "E", "F", "G"];
-    expect(freezeRemainingConfirmation("AY2026/27", seven)).toBe(
-      "This freezes the member lists of 7 CCAs for AY2026/27: A, B, C, D, E, and more. Their current members will be used.",
-    );
-    expect(
-      freezeRemainingConfirmation("AY2026/27", seven.slice(0, 5)),
-    ).not.toContain("and more");
-  });
-
-  it("says what happened, and what to do after a failure", () => {
-    expect(freezeRemainingSummary({ frozenNow: 1 })).toBe(
-      "1 CCA frozen. You can publish now.",
-    );
-    expect(freezeRemainingSummary({ frozenNow: 2, failed: 0 })).toBe(
-      "2 CCAs frozen. You can publish now.",
-    );
-    expect(
-      freezeRemainingSummary({
-        frozenNow: 1,
-        failed: 1,
-        failedNames: ["Chess"],
-      }),
-    ).toBe(
-      "1 CCA frozen, 1 could not be frozen: Chess. Press Freeze remaining CCAs again to finish them.",
-    );
-  });
-});
-
 describe("status", () => {
-  it("labels the three states and reads anything else as collecting", () => {
-    expect(statusLabel("published")).toBe("Published");
-    expect(statusLabel("closed")).toBe("Closed");
+  it("labels a year Collecting or Open, and reads anything else as collecting", () => {
+    expect(statusLabel("published")).toBe("Open");
     expect(statusLabel("collecting")).toBe("Collecting");
+    expect(statusLabel("closed")).toBe("Collecting");
     expect(statusLabel(null)).toBe("Collecting");
     expect(statusLabel("bogus")).toBe("Collecting");
     expect(normaliseStatus(undefined)).toBe("collecting");
-    expect(normaliseStatus("closed")).toBe("closed");
   });
 
-  it("locks the manager screens only once the year is published", () => {
+  it("locks the manager screens only once transcripts are open", () => {
     expect(isWritable("collecting")).toBe(true);
     expect(isWritable(null)).toBe(true);
-    expect(isWritable("closed")).toBe(true);
     expect(isWritable("published")).toBe(false);
   });
 
-  it("names each year action", () => {
-    expect(ACTION_LABEL).toEqual({
-      close: "Close year",
-      publish: "Publish",
-      reopen: "Reopen for review",
-      backToCollecting: "Back to collecting",
-    });
+  it("has one action: Open transcripts", () => {
+    expect(OPEN_LABEL).toBe("Open transcripts");
   });
 });
 
@@ -107,59 +52,35 @@ describe("yearOptions", () => {
   });
 });
 
-describe("summaries", () => {
-  it("states how many CCAs a close froze, pluralised", () => {
-    expect(
-      closeSummary("AY2026/27", { frozenNow: 12, alreadyFrozen: 77 }),
-    ).toBe("AY2026/27 closed. 12 CCAs frozen now, 77 already frozen.");
-    expect(closeSummary("AY2026/27", { frozenNow: 1, alreadyFrozen: 0 })).toBe(
-      "AY2026/27 closed. 1 CCA frozen now, 0 already frozen.",
-    );
-  });
-});
-
 describe("wording", () => {
-  it("uses the required confirmation text", () => {
-    expect(CLOSE_CONFIRMATION("AY2026/27", 12)).toBe(
-      "This freezes the member list of 12 CCAs that are not frozen yet, and opens AY2026/27 for review. Residents will see a draft.",
-    );
-    expect(CLOSE_CONFIRMATION("AY2026/27", 1)).toContain(
-      "1 CCA that is not frozen yet",
-    );
-    expect(PUBLISH_CONFIRMATION("AY2026/27")).toBe(
-      "This lets residents download their AY2026/27 transcripts. Edits stop until you reopen the year for review.",
-    );
-    expect(REOPEN_CONFIRMATION).toBe(
-      "This takes the published transcripts back to review. Residents see a draft again and you can fix data. Frozen member lists stay frozen.",
-    );
-    expect(BACK_TO_COLLECTING_CONFIRMATION).toBe(
-      "This puts the year back to collecting. Frozen member lists stay frozen.",
-    );
-    expect(UNFREEZE_WARNING("AY2026/27")).toBe(
-      "The CCA's current member list will be used for AY2026/27 until it is frozen again.",
+  it("uses the required Open transcripts confirmation", () => {
+    expect(OPEN_CONFIRMATION("AY2026/27")).toBe(
+      "Open transcripts for AY2026/27? Every CCA's member list will be saved as it is now, all residents will be able to see and download their transcripts, and CCA heads will no longer be able to edit. After this, only JCRC and admin can fix individual residents.",
     );
   });
 
-  it("words the 1 June banner for one CCA and for several", () => {
-    expect(UNFROZEN_BANNER(3, "AY2026/27")).toBe(
-      "3 CCAs are not frozen for AY2026/27 yet. Close the year before memberships change.",
+  it("words the 1 April reminder and the 1 August warning", () => {
+    expect(OPEN_REMINDER("AY2026/27")).toBe(
+      "Transcripts for AY2026/27 are not open yet. Open them at the end of the year, before 1 August.",
     );
-    expect(UNFROZEN_BANNER(1, "AY2026/27")).toBe(
-      "1 CCA is not frozen for AY2026/27 yet. Close the year before memberships change.",
+    expect(PREVIOUS_YEAR_WARNING("AY2026/27")).toBe(
+      "Transcripts for AY2026/27 are still not open. Open them now, before CCAs change their member lists in the August application period.",
     );
   });
 
   it("has no exclamation marks and never says 'successfully'", () => {
     for (const text of [
-      CLOSE_CONFIRMATION("AY2026/27", 3),
-      PUBLISH_CONFIRMATION("AY2026/27"),
-      REOPEN_CONFIRMATION,
-      BACK_TO_COLLECTING_CONFIRMATION,
-      UNFREEZE_WARNING("AY2026/27"),
-      UNFROZEN_BANNER(2, "AY2026/27"),
+      OPEN_CONFIRMATION("AY2026/27"),
+      OPEN_REMINDER("AY2026/27"),
+      PREVIOUS_YEAR_WARNING("AY2026/27"),
       WRITES_LOCKED_NOTE,
-      closeSummary("AY2026/27", { frozenNow: 3, alreadyFrozen: 1 }),
-      errorText("SEM2_START_REQUIRED"),
+      openSummary("AY2026/27", {
+        opened: true,
+        lockedNow: 3,
+        alreadyLocked: 1,
+        failures: [],
+        unresolved: 0,
+      }),
     ]) {
       expect(text).not.toContain("!");
       expect(text.toLowerCase()).not.toContain("successfully");
@@ -167,31 +88,74 @@ describe("wording", () => {
   });
 });
 
+describe("the Open transcripts result", () => {
+  it("says the year is open and how many lists were saved", () => {
+    expect(
+      openSummary("AY2026/27", {
+        opened: true,
+        lockedNow: 10,
+        alreadyLocked: 2,
+        failures: [],
+        unresolved: 0,
+      }),
+    ).toBe("Transcripts for AY2026/27 are open. 12 CCA member lists saved.");
+  });
+
+  it("names each CCA that could not be saved, with a short reason, and how to finish", () => {
+    const text = openSummary("AY2026/27", {
+      opened: false,
+      lockedNow: 3,
+      alreadyLocked: 0,
+      failures: [
+        { name: "Soccer (MALE)", code: "FREEZE_RACE" },
+        { name: "Chess Club", code: "UNKNOWN" },
+      ],
+      unresolved: 0,
+    });
+    expect(text).toBe(
+      "Transcripts for AY2026/27 are not open yet. 2 CCAs could not be saved: Soccer (MALE) (list changed while saving), Chess Club (UNKNOWN). Press Open transcripts again to finish.",
+    );
+  });
+
+  it("reports members the roster could not match", () => {
+    expect(unresolvedNote(1)).toBe("1 member could not be matched");
+    expect(
+      openSummary("AY2026/27", {
+        opened: true,
+        lockedNow: 1,
+        alreadyLocked: 0,
+        failures: [],
+        unresolved: 3,
+      }),
+    ).toContain("3 members could not be matched.");
+  });
+
+  it("keeps the short reasons readable", () => {
+    expect(lockFailureText("P2034")).toBe("busy, try again");
+    expect(lockFailureText("PERIOD_PUBLISHED")).toBe("year already open");
+  });
+});
+
 describe("errorText", () => {
   it("turns known codes into plain sentences", () => {
-    expect(errorText("SEM2_START_REQUIRED")).toBe(
-      "Set the semester 2 start date before closing the year.",
-    );
     expect(errorText("PERIOD_PUBLISHED")).toBe(WRITES_LOCKED_NOTE);
     expect(errorText("RATE_LIMITED:30")).not.toMatch(/RATE_LIMITED/);
   });
 
-  it("explains the lifecycle refusals in plain words", () => {
-    expect(errorText("NOT_COLLECTING")).toBe(
-      "This academic year is not collecting.",
-    );
-    expect(errorText("NOT_CLOSED")).toBe("This academic year is not closed.");
+  it("explains the refusals of Open transcripts and of the edit guard", () => {
     expect(errorText("YEAR_NOT_STARTED")).toMatch(/has not started yet/);
-    expect(errorText("NOT_FROZEN")).toBe("That member list is not frozen.");
-    expect(errorText("CCA_YEAR_FROZEN")).toBe(
-      "This member list is frozen. Ask the JCRC for changes.",
-    );
-    expect(errorText("YEAR_CLOSED")).toBe(
-      "This year is closed. Ask the JCRC for changes.",
-    );
-    expect(errorText("TRANSCRIPT_FREEZE_FAILED")).toMatch(
-      /head change was not made/,
-    );
+    expect(errorText("ALREADY_PUBLISHED")).toMatch(/already open/);
+    expect(errorText("NOT_THE_TERM_YEAR")).toMatch(/current academic year/);
+    for (const gone of [
+      "SEM2_START_REQUIRED",
+      "NOT_CLOSED",
+      "YEAR_CLOSED",
+      "CCA_YEAR_FROZEN",
+      "TRANSCRIPT_FREEZE_FAILED",
+      "NOTHING_TO_LOCK",
+    ]) {
+      expect(errorText(gone)).toBe("Something went wrong. Try again.");
+    }
   });
 
   it("never shows a bare code or a long dump", () => {
@@ -202,6 +166,12 @@ describe("errorText", () => {
 
   it("keeps a short readable message", () => {
     expect(errorText("Title is required")).toBe("Title is required");
+  });
+
+  it("explains a partial upload", () => {
+    expect(errorText("UPLOAD_PARTIAL:200")).toContain(
+      "The upload stopped part way: 200 imported.",
+    );
   });
 });
 
@@ -228,99 +198,5 @@ describe("validation messages", () => {
     expect(fieldError(zodError, "citation")).toBeNull();
     expect(fieldError(null, "title")).toBeNull();
     expect(fieldError(undefined, "title")).toBeNull();
-  });
-});
-
-describe("closing and publishing messages", () => {
-  it("says what a close that stopped part way did, and how to finish", () => {
-    expect(
-      closeSummary("AY2026/27", {
-        closed: false,
-        frozenNow: 11,
-        alreadyFrozen: 2,
-        failed: 1,
-        failedNames: ["Soccer (MALE)"],
-      }),
-    ).toBe(
-      "AY2026/27 is not closed yet. 11 CCAs frozen now, 2 already frozen, 1 CCA could not be frozen: Soccer (MALE). Press Close year again to finish them.",
-    );
-  });
-
-  it("mentions CCAs left alone only when there were some", () => {
-    expect(
-      closeSummary("AY2026/27", {
-        frozenNow: 1,
-        alreadyFrozen: 1,
-        skipped: 2,
-      }),
-    ).toBe(
-      "AY2026/27 closed. 1 CCA frozen now, 1 already frozen, 2 left as they were.",
-    );
-  });
-
-  it("names the CCAs that block Publish, from the server's refusal too", () => {
-    const text =
-      "Some CCAs are not frozen for AY2026/27: Chess Club, Soccer (MALE). Use Freeze remaining CCAs, then publish.";
-    expect(notFrozenText("AY2026/27", ["Chess Club", "Soccer (MALE)"])).toBe(
-      text,
-    );
-    expect(
-      errorText("CCAS_NOT_FROZEN:AY2026/27:Chess Club, Soccer (MALE)"),
-    ).toBe(text);
-  });
-
-  it("explains a partial upload", () => {
-    expect(errorText("UPLOAD_PARTIAL:200")).toContain(
-      "The upload stopped part way: 200 imported.",
-    );
-  });
-});
-
-describe("freeze results with reasons and unmatched members (F5, F19)", () => {
-  it("names each failed CCA with a short reason", () => {
-    expect(
-      closeSummary("AY2026/27", {
-        closed: false,
-        frozenNow: 3,
-        alreadyFrozen: 1,
-        failed: 2,
-        failedNames: ["Soccer (MALE)", "Chess Club"],
-        failures: [
-          { name: "Soccer (MALE)", code: "PERIOD_PUBLISHED" },
-          { name: "Chess Club", code: "UNKNOWN" },
-        ],
-      }),
-    ).toContain(
-      "could not be frozen: Soccer (MALE) (year published), Chess Club (UNKNOWN).",
-    );
-    expect(
-      freezeRemainingSummary({
-        frozenNow: 0,
-        failed: 1,
-        failures: [{ name: "Chess Club", code: "FREEZE_RACE" }],
-      }),
-    ).toContain("Chess Club (list changed while freezing)");
-  });
-
-  it("reports members the roster could not match", () => {
-    expect(
-      closeSummary("AY2026/27", {
-        frozenNow: 2,
-        alreadyFrozen: 0,
-        unresolved: 1,
-      }),
-    ).toBe(
-      "AY2026/27 closed. 2 CCAs frozen now, 0 already frozen. 1 member could not be matched.",
-    );
-    expect(freezeRemainingSummary({ frozenNow: 1, unresolved: 3 })).toBe(
-      "1 CCA frozen. You can publish now. 3 members could not be matched.",
-    );
-    expect(freezeRemainingSummary({ frozenNow: 1, unresolved: 0 })).toBe(
-      "1 CCA frozen. You can publish now.",
-    );
-  });
-
-  it("explains NOTHING_TO_LOCK (F4)", () => {
-    expect(errorText("NOTHING_TO_LOCK")).toMatch(/nothing to lock/);
   });
 });

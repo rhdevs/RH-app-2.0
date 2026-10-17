@@ -183,15 +183,19 @@ describe("schema: new transcript models", () => {
     );
   });
 
-  it("records who closed a year and who put it back to collecting", () => {
+  it("records only who opened a year: no close, reopen or back-to-collecting stamps", () => {
     const names = current.get("TranscriptPeriod")!.map((f) => f.name);
+    expect(names).toContain("publishedAt");
+    expect(names).toContain("publishedBy");
     for (const f of [
       "closedAt",
       "closedBy",
+      "reopenedAt",
+      "reopenedBy",
       "backToCollectingAt",
       "backToCollectingBy",
     ]) {
-      expect(names, f).toContain(f);
+      expect(names, f).not.toContain(f);
     }
   });
 

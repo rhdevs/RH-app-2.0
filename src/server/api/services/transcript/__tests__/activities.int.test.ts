@@ -50,7 +50,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
   () => {
     let db: PrismaClient;
     let createCaller: typeof CreateCaller;
-    let freeze: typeof import("../freeze");
+    let periods: typeof import("../periods");
     let retention: typeof import("../retention");
     let loader: typeof import("../loader");
     let assemble: typeof import("~/lib/transcript/assemble");
@@ -95,7 +95,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       reseed();
       ({ db } = await import("~/server/db"));
       ({ createCaller } = await import("~/server/api/root"));
-      freeze = await import("../freeze");
+      periods = await import("../periods");
       retention = await import("../retention");
       loader = await import("../loader");
       assemble = await import("~/lib/transcript/assemble");
@@ -370,56 +370,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
         expect(await errorOf(other(JCRC, "AY2027/28"))).toBe("ok");
         expect(await errorOf(create(SOCCER_HEAD, "This year"))).toBe("ok");
-      });
-
-      it("refuses the head once the CCA's list is frozen at handover, but not a manager", async () => {
-        await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "handover",
-          actorUserID: ADMIN.id,
-        });
-        const id = await seeded(SOCCER, "Inter-hall league");
-
-        expect(await errorOf(create(SOCCER_HEAD, "Late idea"))).toBe(
-          "FORBIDDEN:CCA_YEAR_FROZEN",
-        );
-        expect(
-          await errorOf(
-            as(SOCCER_HEAD).activities.remove({ id, ccaID: SOCCER }),
-          ),
-        ).toBe("FORBIDDEN:CCA_YEAR_FROZEN");
-        expect(
-          await errorOf(
-            as(SOCCER_HEAD).participants.set({
-              id,
-              ccaID: SOCCER,
-              participants: [],
-            }),
-          ),
-        ).toBe("FORBIDDEN:CCA_YEAR_FROZEN");
-
-        // The head can still READ it; a manager can still write.
-        expect((await list(SOCCER_HEAD)).activeCount).toBe(1);
-        expect(await errorOf(create(JCRC, "Added by the JCRC"))).toBe("ok");
-        expect(
-          await errorOf(
-            as(ADMIN).participants.set({
-              id,
-              ccaID: SOCCER,
-              participants: people(["SEED-R04", "SEED-R09"]),
-            }),
-          ),
-        ).toBe("ok");
-      });
-
-      it("lets a head who locked their own list keep editing until the year closes", async () => {
-        await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "lock",
-          actorUserID: SOCCER_HEAD.id,
-        });
-
-        expect(await errorOf(create(SOCCER_HEAD, "After the lock"))).toBe("ok");
       });
 
       it("refuses everyone, managers included, once the year is published, unless a resident is unlocked", async () => {
@@ -764,13 +714,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
       });
 
-      it("follows the frozen member list: a member who left stays a member", async () => {
-        await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "handover",
-          actorUserID: ADMIN.id,
-          now: NOW,
-        });
+      it("follows the list saved when transcripts opened: a member who left stays a member", async () => {
+        await periods.openTranscripts(db, AY, ADMIN.id, NOW);
         await db.userCCA.deleteMany({
           where: { userID: "SEED-R12", ccaID: SOCCER },
         });
@@ -782,13 +727,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe(true);
       });
 
-      it("treats a person who is not in the frozen list as other involvement", async () => {
-        await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "handover",
-          actorUserID: ADMIN.id,
-          now: NOW,
-        });
+      it("treats a person who is not in the saved list as other involvement", async () => {
+        await periods.openTranscripts(db, AY, ADMIN.id, NOW);
 
         const { input } = await transcriptFor("SEED-R20");
         expect(input.activities![0]!.isMember).toBe(false);

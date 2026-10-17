@@ -153,11 +153,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     let baselineFreezes: FreezeBaseline = [];
 
-    /** Close the year (freezing every CCA), then publish it. */
-    const publishAy = async (who: Who = JCRC) => {
-      await as(who).transcript.periods.close({ academicYear: AY });
-      return as(who).transcript.periods.publish({ academicYear: AY });
-    };
+    /** Open transcripts for the year (locking every CCA's list). */
+    const publishAy = async (who: Who = JCRC) =>
+      as(who).transcript.periods.open({ academicYear: AY });
 
     const reset = async () => {
       await restoreFreezes(db, baselineFreezes);
@@ -203,8 +201,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           status: "collecting",
           publishedAt: null,
           publishedBy: null,
-          reopenedAt: null,
-          reopenedBy: null,
         },
       });
     };
@@ -688,25 +684,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           ),
         ).toBe("ok");
 
-        await as(JCRC).transcript.periods.reopen({ academicYear: AY });
-        await as(JCRC).transcript.periods.backToCollecting({
-          academicYear: AY,
-        });
-        // The close froze every CCA, so their heads are read-only until a CCA is
-        // unfrozen; the JCRC can unfreeze it while the year is not published.
-        expect(await errorOf(writes[0]![1]())).toBe(
-          "FORBIDDEN:CCA_YEAR_FROZEN",
-        );
-        for (const ccaID of [SOCCER, RVC_CHILDREN]) {
-          await as(JCRC).transcript.freezes.unfreeze({
-            academicYear: AY,
-            ccaID,
-            reason: "Heads still need to finish",
-          });
-        }
-        for (const [name, run] of writes.slice(0, 2)) {
-          expect(await errorOf(run()), name).toBe("ok");
-        }
       });
     });
 
@@ -1556,12 +1533,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const listed = await as(ADMIN).transcript.periods.list();
         const period = listed.periods.find((x) => x.academicYear === AY)!;
         expect(period.publishedByName).toBe("Seed Resident 02");
-        await as(ADMIN).transcript.periods.reopen({ academicYear: AY });
-        const afterReopen = await as(ADMIN).transcript.periods.list();
-        expect(
-          afterReopen.periods.find((x) => x.academicYear === AY)!
-            .reopenedByName,
-        ).toBe("Seed Resident 01");
       });
 
       it("stores the download-by date as midnight Singapore, accepts it while published, and refuses a bad one", async () => {
@@ -1576,9 +1547,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
 
         await c.setSem2Start({ academicYear: AY, sem2Start: "2027-01-12" });
-        await c.close({ academicYear: AY });
-        await c.publish({ academicYear: AY });
-        // still editable once published
+        await c.open({ academicYear: AY });
+        // still editable once open
         expect(
           await errorOf(
             c.setDownloadBy({ academicYear: AY, downloadBy: "2028-01-15" }),
@@ -1620,19 +1590,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }),
           ),
         ).toMatch(/^FORBIDDEN:/);
-        await c.reopen({ academicYear: AY });
       });
 
-      it("tells a close how many CCAs it froze, and reopens to review", async () => {
-        const closed = await as(JCRC).transcript.periods.close({
-          academicYear: AY,
-        });
-        expect(closed.frozenNow + closed.alreadyFrozen).toBe(14);
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-        const reopened = await as(JCRC).transcript.periods.reopen({
-          academicYear: AY,
-        });
-        expect(reopened).toEqual({ academicYear: AY });
+      it("tells Open transcripts how many CCA lists it saved", async () => {
+        const opened = await publishAy(JCRC);
+        expect(opened.opened).toBe(true);
+        expect(opened.lockedNow + opened.alreadyLocked).toBe(14);
       });
 
       it("sends no full matric in any list a head or manager can read", async () => {

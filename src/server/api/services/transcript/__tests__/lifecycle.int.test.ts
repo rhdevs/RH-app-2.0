@@ -1,15 +1,23 @@
 import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 /**
- * INTEGRATION TESTS of the year lifecycle against the LOCAL development
- * database (skipped unless DATABASE_URL is localhost and the database is
- * `rhapp_transcript_dev`; run with `npm run test:db`). Services take an
- * injectable `now`, so the handover scenarios move through the calendar. The
- * seed is re-run before every test, so each starts from the same baseline and
- * head changes cannot leak.
+ * INTEGRATION TESTS of the one-step year (collecting -> Open transcripts)
+ * against the LOCAL development database (skipped unless DATABASE_URL is
+ * localhost and the database is `rhapp_transcript_dev`; run with
+ * `npm run test:db`). The seed is re-run before every test, so each starts
+ * from the same baseline and head changes cannot leak.
  */
 
 const REQUIRED_DB = "rhapp_transcript_dev";
@@ -50,8 +58,6 @@ const SOCCER_MEMBERS = [
   "SEED-R18",
 ];
 
-const MAR_2027 = new Date("2027-03-11T04:00:00Z");
-const MAY_2027 = new Date("2027-05-20T04:00:00Z");
 const SEP_2027 = new Date("2027-09-10T04:00:00Z");
 
 describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
@@ -61,8 +67,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let db: PrismaClient;
     let createCaller: typeof CreateCaller;
     let freeze: typeof import("../freeze");
+    let periods: typeof import("../periods");
     let retention: typeof import("../retention");
-    let rosterSvc: typeof import("../manageRoster");
     let loader: typeof import("../loader");
     let ipCounter = 0;
 
@@ -110,8 +116,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ({ db } = await import("~/server/db"));
       ({ createCaller } = await import("~/server/api/root"));
       freeze = await import("../freeze");
+      periods = await import("../periods");
       retention = await import("../retention");
-      rosterSvc = await import("../manageRoster");
       loader = await import("../loader");
     }, 120_000);
 
@@ -125,12 +131,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await db.$disconnect();
       }
     }, 120_000);
-
-    const activeFreezes = (ccaID: number) =>
-      db.ccaYearFreeze.findMany({
-        where: { ccaID, ...loader.NOT_UNFROZEN },
-        orderBy: { academicYear: "asc" },
-      });
 
     const frozenKeys = async (ccaID: number, academicYear: string) =>
       (
@@ -157,698 +157,356 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           s.kind === "involvements" ? s.rows.map((r) => r.ccaName) : [],
         );
 
-    /* ---- (a) a March handover ------------------------------------------ */
-    describe("a handover in March", () => {
-      it("freezes this year's members, so clearing and re-recruiting changes next year only", async () => {
-        const result = await freeze.freezeBeforeHeadChange(db, {
-          ccaID: SOCCER,
-          reason: "handover",
-          actorUserID: SOCCER_HEAD.id,
-          keepOnly: ["SEED-R09"],
-          now: MAR_2027,
-        });
-        expect(result).toBeUndefined();
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
 
-        const [f] = await activeFreezes(SOCCER);
-        expect(f).toMatchObject({
-          academicYear: AY,
-          reason: "handover",
-          frozenBy: SOCCER_HEAD.id,
-          memberCount: SOCCER_MEMBERS.length,
-        });
-        expect(await frozenKeys(SOCCER, AY)).toEqual(SOCCER_MEMBERS);
+    /** A moment inside AY2026/27, when the year may be opened. */
+    const APR_2027 = new Date("2027-04-15T04:00:00Z");
+    const GHOST = "GHOST-NO-SUCH-USER";
 
-        // The new heads clear the CCA and recruit afresh.
-        await db.userCCA.deleteMany({ where: { ccaID: SOCCER } });
-        await db.userCCA.create({ data: { userID: R20.id, ccaID: SOCCER } });
+    const lockCount = (academicYear = AY) =>
+      db.ccaYearFreeze.count({
+        where: { academicYear, ...loader.NOT_UNFROZEN },
+      });
+    const statusOf = async (academicYear = AY) =>
+      (await db.transcriptPeriod.findUnique({ where: { academicYear } }))
+        ?.status ?? null;
+    const names = (userID: string, ay: string) =>
+      as(JCRC)
+        .transcript.preview({ userID, academicYear: ay })
+        .then((r) => involvementNames(r.transcript));
 
-        // AY2026/27 still lists the old members.
-        const old = await rosterSvc.rosterList(db, SOCCER, AY, MAR_2027);
-        expect(old.mode).toBe("frozen");
-        expect(old.rows.map((r) => r.userID).sort()).toEqual(SOCCER_MEMBERS);
-        expect(old.freeze).toMatchObject({ reason: "handover" });
-        expect(old.termAcademicYear).toBe(NEXT);
-
-        // The new members count toward the next year, even before 1 August.
-        const next = await rosterSvc.rosterList(db, SOCCER, NEXT, MAR_2027);
-        expect(next.mode).toBe("live");
-        // the head is a member too (a head change that keeps them leaves them in)
-        expect(next.rows.map((r) => r.userID).sort()).toEqual(
-          [R20.id, SOCCER_HEAD.id].sort(),
+    /* ---- (A) the removed procedures ------------------------------------- */
+    describe("what is gone", () => {
+      it("has no Close, Publish, Reopen, Back to collecting, Freeze remaining, Unfreeze, Lock or term", async () => {
+        const { appRouter } = await import("~/server/api/root");
+        const procedures = Object.keys(
+          (appRouter as unknown as { _def: { procedures: object } })._def
+            .procedures,
         );
-
-        // ...and the transcripts say the same.
-        const names = (userID: string, ay: string) =>
-          as(JCRC)
-            .transcript.preview({ userID, academicYear: ay })
-            .then((r) => involvementNames(r.transcript));
-        expect(await names(R12.id, AY)).toContain("Soccer (MALE)");
-        expect(await names(R20.id, AY)).not.toContain("Soccer (MALE)");
-        expect(await names(R20.id, NEXT)).toContain("Soccer (MALE)");
-        expect(await names(R12.id, NEXT)).not.toContain("Soccer (MALE)");
+        expect(procedures).toContain("transcript.periods.open");
+        for (const gone of [
+          "transcript.periods.close",
+          "transcript.periods.publish",
+          "transcript.periods.reopen",
+          "transcript.periods.backToCollecting",
+          "transcript.periods.freezeRemaining",
+          "transcript.periods.unfrozenNames",
+          "transcript.periods.unfrozenCount",
+          "transcript.freezes.unfreeze",
+          "transcript.freezes.unfreezePreview",
+          "transcriptManage.roster.lock",
+          "transcriptManage.roster.term",
+        ]) {
+          expect(procedures, gone).not.toContain(gone);
+        }
       });
     });
 
-    /* ---- (b) a September handover -------------------------------------- */
-    describe("a handover in September", () => {
-      it("freezes the oldest unfrozen year (AY2026/27), not the current one", async () => {
-        await freeze.freezeBeforeHeadChange(db, {
-          ccaID: SOCCER,
-          reason: "handover",
-          actorUserID: SOCCER_HEAD.id,
-          keepOnly: ["SEED-R09"],
-          now: SEP_2027,
-        });
-
-        const rows = await activeFreezes(SOCCER);
-        expect(rows.map((r) => r.academicYear)).toEqual([AY]);
-        expect(await frozenKeys(SOCCER, AY)).toEqual(SOCCER_MEMBERS);
-        expect(await frozenKeys(SOCCER, NEXT)).toEqual([]);
-      });
-    });
-
-    /* ---- (c) a second handover ----------------------------------------- */
-    describe("a second change after the freeze", () => {
-      it("is skipped, and does not block the head change", async () => {
-        const first = await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "handover",
-          actorUserID: SOCCER_HEAD.id,
-          now: MAR_2027,
-        });
-        expect(first).toMatchObject({ kind: "frozen", academicYear: AY });
-
-        const second = await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "handover",
-          actorUserID: SOCCER_HEAD.id,
-          now: MAY_2027,
-        });
-        expect(second).toEqual({
-          kind: "skipped",
-          reason: "already_frozen_for_current_year",
-        });
-
-        await expect(
-          freeze.freezeBeforeHeadChange(db, {
-            ccaID: SOCCER,
-            reason: "handover",
-            actorUserID: SOCCER_HEAD.id,
-            keepOnly: ["SEED-R09"],
-            now: MAY_2027,
-          }),
-        ).resolves.toBeUndefined();
-        expect(await activeFreezes(SOCCER)).toHaveLength(1);
-      });
-
-      it("is idempotent for the same year and leaves a frozen list alone", async () => {
-        await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "lock",
-          actorUserID: SOCCER_HEAD.id,
-          now: MAR_2027,
-        });
-        const again = await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "close_year",
-          actorUserID: ADMIN.id,
-          academicYear: AY,
-          now: MAY_2027,
-        });
-
-        expect(again).toEqual({ kind: "unchanged", academicYear: AY });
-        const [f] = await activeFreezes(SOCCER);
-        expect(f?.reason).toBe("lock");
-      });
-    });
-
-    /* ---- (d) admin paths ------------------------------------------------ */
-    describe("the head-removing paths", () => {
-      it("freezes before an admin revokes a head, and not for a grant-only change", async () => {
-        // Grant only: nobody is removed, nothing freezes.
-        await as(ADMIN).admin.grantCcaHead({ userID: R09.id, ccaID: SOCCER });
-        expect(await activeFreezes(SOCCER)).toHaveLength(0);
-        expect(await heads(SOCCER)).toEqual([R09.id, SOCCER_HEAD.id].sort());
-
-        await as(ADMIN).admin.revokeCcaHead({
-          userID: SOCCER_HEAD.id,
-          ccaID: SOCCER,
-        });
-
-        const [f] = await activeFreezes(SOCCER);
-        expect(f).toMatchObject({ academicYear: AY, reason: "head_removed" });
-        expect(await heads(SOCCER)).toEqual([R09.id]);
-      });
-
-      it("freezes before an admin transfers a head", async () => {
-        await as(ADMIN).admin.transferCcaHead({
-          fromUserID: SOCCER_HEAD.id,
-          toUserID: R09.id,
-          ccaID: SOCCER,
-        });
-
-        const [f] = await activeFreezes(SOCCER);
-        expect(f).toMatchObject({ reason: "head_removed" });
-        expect(await heads(SOCCER)).toEqual([R09.id]);
-      });
-
-      it("freezes before a head's own handover", async () => {
+    /* ---- (B) head changes never lock anything -------------------------- */
+    describe("head changes", () => {
+      it("a head's handover locks nothing", async () => {
         await as(SOCCER_HEAD).cca.handoverHeads({
           ccaID: SOCCER,
           newHeadUserIDs: [R09.id],
         });
-
-        const [f] = await activeFreezes(SOCCER);
-        expect(f).toMatchObject({ reason: "handover" });
         expect(await heads(SOCCER)).toEqual([R09.id]);
+        expect(await db.ccaYearFreeze.count()).toBe(0);
       });
 
-      it("does not freeze when a handover keeps every head", async () => {
-        await as(SOCCER_HEAD).cca.handoverHeads({
+      it("an admin revoke or transfer locks nothing", async () => {
+        await as(ADMIN).admin.grantCcaHead({ userID: R09.id, ccaID: SOCCER });
+        await as(ADMIN).admin.revokeCcaHead({
+          userID: SOCCER_HEAD.id,
           ccaID: SOCCER,
-          newHeadUserIDs: [SOCCER_HEAD.id, R09.id],
         });
-
-        expect(await activeFreezes(SOCCER)).toHaveLength(0);
-        expect(await heads(SOCCER)).toEqual([R09.id, SOCCER_HEAD.id].sort());
+        await as(ADMIN).admin.transferCcaHead({
+          fromUserID: R09.id,
+          toUserID: R12.id,
+          ccaID: SOCCER,
+        });
+        expect(await heads(SOCCER)).toEqual([R12.id]);
+        expect(await db.ccaYearFreeze.count()).toBe(0);
       });
     });
 
-    /* ---- (e) a failing freeze ------------------------------------------- */
-    describe("a freeze that fails", () => {
-      it("refuses the handover and leaves the heads unchanged", async () => {
-        const failing = new Proxy(db, {
-          get(target, prop, receiver) {
-            if (prop === "$transaction") {
-              return () => Promise.reject(new Error("database went away"));
-            }
-            return Reflect.get(target, prop, receiver) as unknown;
-          },
+    /* ---- (C) Open transcripts ------------------------------------------- */
+    describe("Open transcripts", () => {
+      it("locks every CCA's list as it is, then opens the year, recording who", async () => {
+        const result = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        const ccas = await db.cCA.count();
+        expect(result).toMatchObject({
+          opened: true,
+          lockedNow: ccas,
+          alreadyLocked: 0,
+          failures: [],
         });
-
-        const outcome = await errorOf(
-          asOn(failing, SOCCER_HEAD).cca.handoverHeads({
-            ccaID: SOCCER,
-            newHeadUserIDs: [R09.id],
-          }),
-        );
-
-        expect(outcome).toBe("PRECONDITION_FAILED:TRANSCRIPT_FREEZE_FAILED");
-        expect(await heads(SOCCER)).toEqual([SOCCER_HEAD.id]);
-        expect(await activeFreezes(SOCCER)).toHaveLength(0);
+        expect(await lockCount()).toBe(ccas);
+        const period = await db.transcriptPeriod.findUniqueOrThrow({
+          where: { academicYear: AY },
+        });
+        expect(period).toMatchObject({
+          status: "published",
+          publishedBy: JCRC.id,
+        });
+        expect(period.publishedAt?.toISOString()).toBe(APR_2027.toISOString());
+        expect(await frozenKeys(SOCCER, AY)).toEqual(SOCCER_MEMBERS);
       });
 
-      it("also refuses an admin revoke, leaving the head in place", async () => {
+      it("is for JCRC and admin only (live roles)", async () => {
+        for (const who of [SOCCER_HEAD, R12]) {
+          expect(
+            await errorOf(
+              as(who).transcript.periods.open({ academicYear: AY }),
+            ),
+          ).toBe("FORBIDDEN:INSUFFICIENT_ROLE");
+        }
+        // A session claiming jcrc for someone whose LIVE roles are resident.
+        expect(
+          await errorOf(
+            as({ id: R12.id, roles: ["jcrc"] }).transcript.periods.open({
+              academicYear: AY,
+            }),
+          ),
+        ).toBe("FORBIDDEN:INSUFFICIENT_ROLE");
+        expect(await lockCount()).toBe(0);
+        expect(await statusOf()).toBe("collecting");
+      });
+
+      it("never opens a future year, and never opens a year twice", async () => {
+        expect(
+          await errorOf(periods.openTranscripts(db, NEXT, JCRC.id, APR_2027)),
+        ).toBe("PRECONDITION_FAILED:YEAR_NOT_STARTED");
+        await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        expect(
+          await errorOf(periods.openTranscripts(db, AY, JCRC.id, APR_2027)),
+        ).toBe("CONFLICT:ALREADY_PUBLISHED");
+      });
+
+      it("opens a past year that is still collecting", async () => {
+        const result = await periods.openTranscripts(db, AY, JCRC.id, SEP_2027);
+        expect(result.opened).toBe(true);
+        expect(await statusOf()).toBe("published");
+      });
+
+      it("stays collecting if one CCA fails, says which and why, logs no message text, and finishes on the next run", async () => {
+        const logged = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        // Soccer's lock fails once, inside its transaction.
+        let failOnce = true;
         const failing = new Proxy(db, {
           get(target, prop, receiver) {
             if (prop === "$transaction") {
-              return () => Promise.reject(new Error("database went away"));
+              return (fn: (tx: unknown) => Promise<unknown>, opts?: unknown) =>
+                (
+                  target.$transaction as unknown as (
+                    f: (tx: PrismaClient) => Promise<unknown>,
+                    o?: unknown,
+                  ) => Promise<unknown>
+                )(
+                  (tx) =>
+                    fn(
+                      new Proxy(tx, {
+                        get(t, p, r) {
+                          const model: unknown = Reflect.get(t, p, r);
+                          if (p !== "ccaYearFreeze") return model;
+                          return new Proxy(model as object, {
+                            get(m, mp, mr) {
+                              const real: unknown = Reflect.get(m, mp, mr);
+                              if (mp !== "upsert") return real;
+                              return (args: {
+                                where: {
+                                  academicYear_ccaID: { ccaID: number };
+                                };
+                              }) => {
+                                if (
+                                  failOnce &&
+                                  args.where.academicYear_ccaID.ccaID === SOCCER
+                                ) {
+                                  failOnce = false;
+                                  throw Object.assign(
+                                    new Error(`boom for ${R12.id}`),
+                                    { code: "P2010" },
+                                  );
+                                }
+                                return (
+                                  real as (a: unknown) => Promise<unknown>
+                                ).call(m, args);
+                              };
+                            },
+                          });
+                        },
+                      }) as PrismaClient,
+                    ),
+                  opts,
+                );
             }
-            return Reflect.get(target, prop, receiver) as unknown;
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
           },
-        });
+        }) as PrismaClient;
 
-        const outcome = await errorOf(
-          asOn(failing, ADMIN).admin.revokeCcaHead({
-            userID: SOCCER_HEAD.id,
-            ccaID: SOCCER,
-          }),
+        const first = await periods.openTranscripts(
+          failing,
+          AY,
+          JCRC.id,
+          APR_2027,
+        );
+        const ccas = await db.cCA.count();
+        expect(first.opened).toBe(false);
+        expect(first.failures).toEqual([
+          { name: "Soccer (MALE)", code: "P2010" },
+        ]);
+        expect(first.lockedNow).toBe(ccas - 1);
+        expect(await statusOf()).toBe("collecting");
+        // Residents see nothing yet.
+        expect(await as(R12).transcript.mine.get({ academicYear: AY })).toEqual(
+          { status: "not_open", academicYear: AY },
         );
 
-        expect(outcome).toBe("PRECONDITION_FAILED:TRANSCRIPT_FREEZE_FAILED");
-        expect(await heads(SOCCER)).toEqual([SOCCER_HEAD.id]);
+        // The log line: ccaID, year, code and error name; no message, no ids.
+        const line = logged.mock.calls
+          .map((c) => String(c[0]))
+          .find((l) => l.includes("transcript_lock_failed"))!;
+        expect(JSON.parse(line)).toEqual({
+          evt: "transcript_lock_failed",
+          ccaID: SOCCER,
+          academicYear: AY,
+          code: "P2010",
+          name: "Error",
+        });
+        expect(line).not.toContain("boom");
+        expect(line).not.toContain(R12.id);
+
+        // Running it again keeps what is locked and finishes the rest.
+        const second = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        expect(second).toMatchObject({
+          opened: true,
+          lockedNow: 1,
+          alreadyLocked: ccas - 1,
+          failures: [],
+        });
+        expect(await statusOf()).toBe("published");
+      });
+
+      it("reports members the roster could not match", async () => {
+        await db.userCCA.create({ data: { userID: GHOST, ccaID: SOCCER } });
+        try {
+          const result = await periods.openTranscripts(
+            db,
+            AY,
+            JCRC.id,
+            APR_2027,
+          );
+          expect(result.unresolved).toBeGreaterThanOrEqual(1);
+          const soccer = await db.ccaYearFreeze.findFirstOrThrow({
+            where: { academicYear: AY, ccaID: SOCCER },
+          });
+          expect(soccer.unresolvedCount).toBe(1);
+          expect(soccer.memberCount).toBe(SOCCER_MEMBERS.length);
+          const list = await as(ADMIN).transcript.freezes.list({
+            academicYear: AY,
+          });
+          expect(
+            list.rows.find((r) => r.ccaID === SOCCER)?.unresolvedCount,
+          ).toBe(1);
+        } finally {
+          await db.userCCA.deleteMany({ where: { userID: GHOST } });
+        }
       });
     });
 
-    /* ---- (f) who may edit ----------------------------------------------- */
+    /* ---- (D) which member list a transcript reads ------------------------ */
+    describe("member lists", () => {
+      it("reads the live list while collecting: a member removed is gone", async () => {
+        expect(await names(R12.id, AY)).toContain("Soccer (MALE)");
+        await db.userCCA.deleteMany({
+          where: { ccaID: SOCCER, userID: R12.id },
+        });
+        expect(await names(R12.id, AY)).not.toContain("Soccer (MALE)");
+      });
+
+      it("after opening, removing a member from the live CCA does not change the published transcript", async () => {
+        await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        const before = await as(R12).transcript.mine.get({ academicYear: AY });
+
+        // The August application period clears the CCA and recruits afresh.
+        await db.userCCA.deleteMany({ where: { ccaID: SOCCER } });
+        await db.userCCA.create({ data: { userID: R20.id, ccaID: SOCCER } });
+
+        const after = await as(R12).transcript.mine.get({ academicYear: AY });
+        expect(after).toEqual(before);
+        expect(await names(R12.id, AY)).toContain("Soccer (MALE)");
+        expect(await names(R20.id, AY)).not.toContain("Soccer (MALE)");
+        // The new recruit counts toward the next (collecting) year.
+        expect(await names(R20.id, NEXT)).toContain("Soccer (MALE)");
+      });
+    });
+
+    /* ---- (E) who may edit -------------------------------------------------- */
     describe("edit rights", () => {
-      const edit = (who: { id: string; roles: string[] }) =>
+      const editAs = (
+        who: { id: string; roles: string[] },
+        academicYear = AY,
+      ) =>
         errorOf(
           as(who).transcriptManage.roster.upsert({
             ccaID: SOCCER,
-            academicYear: AY,
+            academicYear,
             userID: R12.id,
-            extraContribution: "Kept the books.",
+            extraContribution: "Kept the kit room tidy.",
           }),
         );
 
-      it("lets a head edit a list that is not frozen", async () => {
-        expect(await edit(SOCCER_HEAD)).toBe("ok");
-      });
-
-      it("makes a handover-frozen list read-only for the head, but not for a manager", async () => {
-        await freeze.freezeCca(db, {
+      it("lets the current head edit the current year, and a new head after a handover", async () => {
+        expect(await editAs(SOCCER_HEAD)).toBe("ok");
+        await as(SOCCER_HEAD).cca.handoverHeads({
           ccaID: SOCCER,
-          reason: "handover",
-          actorUserID: SOCCER_HEAD.id,
+          newHeadUserIDs: [R09.id],
         });
-
-        expect(await edit(SOCCER_HEAD)).toBe("FORBIDDEN:CCA_YEAR_FROZEN");
-        expect(await edit(JCRC)).toBe("ok");
-        expect(await edit(ADMIN)).toBe("ok");
-        // the edit lands on the frozen entry, which stays frozen
-        const entry = await db.transcriptRosterEntry.findFirstOrThrow({
-          where: { academicYear: AY, ccaID: SOCCER, userID: R12.id },
-        });
-        expect(entry).toMatchObject({
-          frozen: true,
-          extraContribution: "Kept the books.",
-        });
+        expect(await editAs(R(9, ["cca_head", "resident"]))).toBe("ok");
+        // The old head is not a head any more.
+        expect(await editAs(SOCCER_HEAD)).toBe(
+          "FORBIDDEN:NOT_A_HEAD_OF_THIS_CCA",
+        );
       });
 
-      it("lets a head edit after their own lock, while the year is collecting", async () => {
-        await as(SOCCER_HEAD).transcriptManage.roster.lock({ ccaID: SOCCER });
-
-        expect(await edit(SOCCER_HEAD)).toBe("ok");
-        // but only people on the frozen list can be edited
-        expect(
-          await errorOf(
-            as(SOCCER_HEAD).transcriptManage.roster.upsert({
-              ccaID: SOCCER,
-              academicYear: AY,
-              userID: R20.id,
-              extraContribution: "x",
-            }),
-          ),
-        ).toBe("BAD_REQUEST:NOT_A_MEMBER");
-
-        // once the year is closed the head is read-only, lock or not
-        await as(JCRC).transcript.periods.close({ academicYear: AY });
-        expect(await edit(SOCCER_HEAD)).toBe("FORBIDDEN:YEAR_CLOSED");
-        expect(await edit(JCRC)).toBe("ok");
+      it("keeps other years read-only for heads, but not for managers", async () => {
+        expect(await editAs(SOCCER_HEAD, "AY2025/26")).toBe(
+          "FORBIDDEN:NOT_THE_TERM_YEAR",
+        );
+        expect(await editAs(SOCCER_HEAD, NEXT)).toBe(
+          "FORBIDDEN:NOT_THE_TERM_YEAR",
+        );
+        expect(await editAs(ADMIN, NEXT)).toBe("ok");
       });
 
-      it("refuses everyone once the year is published, and strangers always", async () => {
-        await as(JCRC).transcript.periods.close({ academicYear: AY });
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-
-        // A manager is refused until the resident is unlocked (a correction);
-        // a head never gets that power.
-        expect(await edit(JCRC)).toBe("FORBIDDEN:ONLY_UNLOCKED_RESIDENTS");
-        expect(await edit(SOCCER_HEAD)).toBe(
+      it("refuses everyone but a per-resident correction once transcripts are open", async () => {
+        await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        expect(await editAs(SOCCER_HEAD)).toBe(
           "PRECONDITION_FAILED:PERIOD_PUBLISHED",
         );
-        expect(await edit(R09)).toBe("FORBIDDEN:NOT_A_HEAD_OF_THIS_CCA");
-      });
+        expect(await editAs(JCRC)).toBe("FORBIDDEN:ONLY_UNLOCKED_RESIDENTS");
 
-      it("shows the head why a list is read-only, and a manager that it is editable", async () => {
-        await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "handover",
-          actorUserID: SOCCER_HEAD.id,
-        });
-
-        const head = await as(SOCCER_HEAD).transcriptManage.roster.list({
-          ccaID: SOCCER,
+        await as(JCRC).transcriptManage.corrections.unlock({
+          userID: R12.id,
           academicYear: AY,
+          reason: "Wrong contribution on file",
         });
-        const manager = await as(JCRC).transcriptManage.roster.list({
-          ccaID: SOCCER,
-          academicYear: AY,
-        });
-
-        expect(head.editRefusal).toBe("CCA_YEAR_FROZEN");
-        expect(head.mode).toBe("frozen");
-        expect(manager.editRefusal).toBeNull();
-        expect(head.freeze?.frozenByName).toBe("Seed Resident 04");
-      });
-
-      it("says no list was recorded for a year the CCA has moved past", async () => {
-        const list = await as(SOCCER_HEAD).transcriptManage.roster.list({
-          ccaID: SOCCER,
-          academicYear: NEXT,
-        });
-
-        expect(list.mode).toBe("none");
-        expect(list.rows).toEqual([]);
-        expect(
-          await errorOf(
-            as(SOCCER_HEAD).transcriptManage.roster.upsert({
-              ccaID: SOCCER,
-              academicYear: NEXT,
-              userID: R12.id,
-              extraContribution: "x",
-            }),
-          ),
-        ).toBe("BAD_REQUEST:NOT_A_MEMBER");
+        expect(await editAs(JCRC)).toBe("ok");
+        expect(await editAs(SOCCER_HEAD)).toBe(
+          "PRECONDITION_FAILED:PERIOD_PUBLISHED",
+        );
       });
     });
 
-    /* ---- (g) the year status machine ------------------------------------ */
-    describe("closing, publishing, reopening and unfreezing", () => {
-      it("closing freezes the remaining CCAs; publishing freezes nothing", async () => {
-        const closed = await as(JCRC).transcript.periods.close({
-          academicYear: AY,
-        });
-        expect(closed).toMatchObject({ frozenNow: 12, alreadyFrozen: 2 });
-        expect(
-          (
-            await db.transcriptPeriod.findUniqueOrThrow({
-              where: { academicYear: AY },
-            })
-          ).status,
-        ).toBe("closed");
-        const before = await db.ccaYearFreeze.count({
-          where: { academicYear: AY, ...loader.NOT_UNFROZEN },
-        });
-        expect(before).toBe(14);
-
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-        expect(
-          await db.ccaYearFreeze.count({
-            where: { academicYear: AY, ...loader.NOT_UNFROZEN },
-          }),
-        ).toBe(before);
-      });
-
-      it("refuses to close without a semester 2 date, or a year that has not begun", async () => {
-        await as(JCRC).transcript.periods.setSem2Start({
-          academicYear: AY,
-          sem2Start: null,
-        });
-        expect(
-          await errorOf(
-            as(JCRC).transcript.periods.close({ academicYear: AY }),
-          ),
-        ).toBe("PRECONDITION_FAILED:SEM2_START_REQUIRED");
-        expect(
-          await errorOf(
-            as(JCRC).transcript.periods.close({ academicYear: NEXT }),
-          ),
-        ).toBe("PRECONDITION_FAILED:YEAR_NOT_STARTED");
-        expect(await activeFreezes(9006)).toHaveLength(0);
-      });
-
-      it("moves through the whole cycle and refuses the wrong step", async () => {
-        const p = as(JCRC).transcript.periods;
-        const status = async () =>
-          (
-            await db.transcriptPeriod.findUniqueOrThrow({
-              where: { academicYear: AY },
-            })
-          ).status;
-
-        expect(await errorOf(p.publish({ academicYear: AY }))).toBe(
-          "CONFLICT:NOT_CLOSED",
-        );
-        await p.close({ academicYear: AY });
-        expect(await status()).toBe("closed");
-        expect(await errorOf(p.close({ academicYear: AY }))).toBe(
-          "CONFLICT:NOT_COLLECTING",
-        );
-        expect(await errorOf(p.reopen({ academicYear: AY }))).toBe(
-          "CONFLICT:NOT_PUBLISHED",
-        );
-
-        await p.backToCollecting({ academicYear: AY });
-        expect(await status()).toBe("collecting");
-        // frozen lists stay frozen
-        expect(await activeFreezes(SOCCER)).toHaveLength(1);
-
-        await p.close({ academicYear: AY });
-        await p.publish({ academicYear: AY });
-        expect(await status()).toBe("published");
-        expect(await errorOf(p.backToCollecting({ academicYear: AY }))).toBe(
-          "CONFLICT:NOT_CLOSED",
-        );
-
-        await p.reopen({ academicYear: AY });
-        expect(await status()).toBe("closed");
-      });
-
-      it("unfreezing a CCA brings back live reading, with a reason, and not once published", async () => {
-        await as(JCRC).transcript.periods.close({ academicYear: AY });
-        const unfreeze = (reason: string) =>
-          as(JCRC).transcript.freezes.unfreeze({
-            academicYear: AY,
-            ccaID: SOCCER,
-            reason,
-          });
-
-        expect(await errorOf(unfreeze("  "))).toMatch(/^BAD_REQUEST:/);
-        expect(await errorOf(unfreeze("Frozen by mistake"))).toBe("ok");
-
-        const [row] = await db.ccaYearFreeze.findMany({
-          where: { ccaID: SOCCER, academicYear: AY },
-        });
-        expect(row).toMatchObject({
-          unfrozenBy: JCRC.id,
-          unfreezeReason: "Frozen by mistake",
-        });
-        expect(row?.unfrozenAt).toBeInstanceOf(Date);
-        expect(await activeFreezes(SOCCER)).toHaveLength(0);
-        expect(await frozenKeys(SOCCER, AY)).toEqual([]);
-        // the current member list is read again, until it is frozen again
-        const list = await rosterSvc.rosterList(db, SOCCER, AY);
-        expect(list.mode).toBe("live");
-        expect(list.rows.map((r) => r.userID).sort()).toEqual(SOCCER_MEMBERS);
-        expect(await errorOf(unfreeze("again"))).toBe("NOT_FOUND:NOT_FROZEN");
-
-        // freezing again reuses the same document
-        await freeze.freezeCca(db, {
-          ccaID: SOCCER,
-          reason: "lock",
-          actorUserID: SOCCER_HEAD.id,
-        });
-        const rows = await db.ccaYearFreeze.findMany({
-          where: { ccaID: SOCCER, academicYear: AY },
-        });
-        expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ reason: "lock", unfrozenAt: null });
-
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-        expect(await errorOf(unfreeze("late"))).toBe(
-          "FORBIDDEN:PERIOD_PUBLISHED",
-        );
-      });
-
-      it("refuses to publish while a CCA is not frozen, and says which", async () => {
-        const c = as(JCRC).transcript;
-        await c.periods.close({ academicYear: AY });
-        expect(await c.periods.unfrozenNames({ academicYear: AY })).toEqual([]);
-
-        await c.freezes.unfreeze({
-          academicYear: AY,
-          ccaID: SOCCER,
-          reason: "Fixing a roster",
-        });
-        expect(await c.periods.unfrozenNames({ academicYear: AY })).toEqual([
-          "Soccer (MALE)",
-        ]);
-        expect(await errorOf(c.periods.publish({ academicYear: AY }))).toBe(
-          "PRECONDITION_FAILED:CCAS_NOT_FROZEN:AY2026/27:Soccer (MALE)",
-        );
-        expect(
-          (
-            await db.transcriptPeriod.findUniqueOrThrow({
-              where: { academicYear: AY },
-            })
-          ).status,
-        ).toBe("closed");
-
-        // Back to collecting, then Close year freezes it again; now it publishes.
-        await c.periods.backToCollecting({ academicYear: AY });
-        const again = await c.periods.close({ academicYear: AY });
-        expect(again).toMatchObject({ closed: true, frozenNow: 1, failed: 0 });
-        expect(await errorOf(c.periods.publish({ academicYear: AY }))).toBe(
-          "ok",
-        );
-      });
-
-      describe("freeze remaining CCAs", () => {
-        const live = [{ unfrozenAt: null }, { unfrozenAt: { isSet: false } }];
-        const activeFreezes = () =>
-          db.ccaYearFreeze.count({ where: { academicYear: AY, OR: live } });
-
-        it("freezes the unfrozen CCA while closed, stays closed, and then Publish succeeds", async () => {
-          const c = as(JCRC).transcript;
-          await c.periods.close({ academicYear: AY });
-          const before = await activeFreezes();
-          await c.freezes.unfreeze({
-            academicYear: AY,
-            ccaID: SOCCER,
-            reason: "Fixing a roster",
-          });
-          expect(await errorOf(c.periods.publish({ academicYear: AY }))).toBe(
-            "PRECONDITION_FAILED:CCAS_NOT_FROZEN:AY2026/27:Soccer (MALE)",
-          );
-
-          const result = await c.periods.freezeRemaining({ academicYear: AY });
-          expect(result).toMatchObject({ frozenNow: 1, failed: 0, skipped: 0 });
-          expect(await activeFreezes()).toBe(before);
-          expect(
-            (
-              await db.transcriptPeriod.findUniqueOrThrow({
-                where: { academicYear: AY },
-              })
-            ).status,
-          ).toBe("closed");
-          const freeze = await db.ccaYearFreeze.findFirstOrThrow({
-            where: { academicYear: AY, ccaID: SOCCER, OR: live },
-          });
-          expect(freeze.reason).toBe("close_year");
-          expect(freeze.frozenBy).toBe(JCRC.id);
-          expect(await errorOf(c.periods.publish({ academicYear: AY }))).toBe(
-            "ok",
-          );
-        });
-
-        it("freezes 0 on a second run", async () => {
-          const c = as(ADMIN).transcript;
-          await c.periods.close({ academicYear: AY });
-          await c.freezes.unfreeze({
-            academicYear: AY,
-            ccaID: SOCCER,
-            reason: "Fixing a roster",
-          });
-          await c.periods.freezeRemaining({ academicYear: AY });
-          expect(
-            await c.periods.freezeRemaining({ academicYear: AY }),
-          ).toMatchObject({ frozenNow: 0, failed: 0 });
-        });
-
-        it("is refused while collecting or published", async () => {
-          const c = as(JCRC).transcript;
-          expect(
-            await errorOf(c.periods.freezeRemaining({ academicYear: AY })),
-          ).toBe("CONFLICT:NOT_CLOSED");
-          await c.periods.close({ academicYear: AY });
-          await c.periods.publish({ academicYear: AY });
-          expect(
-            await errorOf(c.periods.freezeRemaining({ academicYear: AY })),
-          ).toBe("CONFLICT:NOT_CLOSED");
-        });
-
-        it("is refused for heads and residents", async () => {
-          await as(JCRC).transcript.periods.close({ academicYear: AY });
-          for (const who of [SOCCER_HEAD, R20]) {
-            expect(
-              await errorOf(
-                as(who).transcript.periods.freezeRemaining({
-                  academicYear: AY,
-                }),
-              ),
-            ).toMatch(/^FORBIDDEN/);
-          }
-        });
-      });
-
-      it("closes one CCA at a time, counts a failure, stays collecting, and finishes on the next run", async () => {
-        const periods = await import("../periods");
-        // The third freeze transaction fails; the others go on.
-        let transactions = 0;
-        const flaky = new Proxy(db, {
-          get(target, prop, receiver) {
-            if (prop === "$transaction") {
-              return (...args: unknown[]) => {
-                transactions += 1;
-                if (transactions === 3) {
-                  return Promise.reject(new Error("database went away"));
-                }
-                return (
-                  target.$transaction as unknown as (
-                    ...a: unknown[]
-                  ) => Promise<unknown>
-                )(...args);
-              };
-            }
-            return Reflect.get(target, prop, receiver) as unknown;
-          },
-        });
-
-        const first = await periods.closeYear(flaky, AY, JCRC.id);
-        expect(first).toMatchObject({
-          closed: false,
-          frozenNow: 11,
-          alreadyFrozen: 2,
-          skipped: 0,
-          failed: 1,
-        });
-        expect(first.failedNames).toHaveLength(1);
-        const status = async () =>
-          (
-            await db.transcriptPeriod.findUniqueOrThrow({
-              where: { academicYear: AY },
-            })
-          ).status;
-        expect(await status()).toBe("collecting");
-        expect(
-          await db.ccaYearFreeze.count({
-            where: {
-              academicYear: AY,
-              OR: [{ unfrozenAt: null }, { unfrozenAt: { isSet: false } }],
-            },
-          }),
-        ).toBe(13);
-
-        const second = await periods.closeYear(db, AY, JCRC.id);
-        expect(second).toMatchObject({
-          closed: true,
-          frozenNow: 1,
-          alreadyFrozen: 13,
-          failed: 0,
-        });
-        expect(await status()).toBe("closed");
-      });
-
-      it("lists each CCA's state for the admin table, with names", async () => {
-        const { rows, unfrozen } = await as(JCRC).transcript.freezes.list({
-          academicYear: AY,
-        });
-
-        expect(rows).toHaveLength(14);
-        expect(unfrozen).toBe(12);
-        const dance = rows.find((r) => r.ccaID === 9014)!;
-        expect(dance).toMatchObject({
-          state: "Frozen at handover",
-          frozenByName: "Seed Resident 01",
-        });
-        expect(rows.find((r) => r.ccaID === 9013)?.state).toBe(
-          "Locked by head",
-        );
-        expect(rows.find((r) => r.ccaID === SOCCER)?.state).toBe("Not frozen");
-        expect(
-          await errorOf(
-            as(SOCCER_HEAD).transcript.freezes.list({ academicYear: AY }),
-          ),
-        ).toBe("FORBIDDEN:INSUFFICIENT_ROLE");
-      });
-    });
-
-    /* ---- (h) the resident's view ---------------------------------------- */
+    /* ---- what a resident sees -------------------------------------------- */
     describe("what a resident sees", () => {
-      it("sees a DRAFT while the year is closed, with nothing recorded, and the real thing once published", async () => {
-        await as(JCRC).transcript.periods.close({ academicYear: AY });
-
-        const draft = await as(R12).transcript.mine.get({ academicYear: AY });
-        expect(draft).toMatchObject({ status: "ready", draft: true });
-        if (draft.status !== "ready") throw new Error("not ready");
-        expect(draft.transcript.isDraft).toBe(true);
-        expect(draft.downloadBy).toBeNull();
-        expect(
-          await db.transcriptAccess.count({ where: { userID: R12.id } }),
-        ).toBe(0);
-        expect(await as(R12).transcript.mine.readiness()).toEqual({
-          ready: false,
-          academicYear: null,
-        });
-        expect(await as(R12).transcript.mine.years()).toEqual([
-          { academicYear: AY, draft: true },
-        ]);
-
-        await as(JCRC).transcript.periods.publish({ academicYear: AY });
-        expect(await as(R12).transcript.mine.readiness()).toEqual({
-          ready: true,
-          academicYear: AY,
-        });
-        const real = await as(R12).transcript.mine.get({ academicYear: AY });
-        expect(real).toMatchObject({ status: "ready", draft: false });
-        expect(
-          await db.transcriptAccess.count({ where: { userID: R12.id } }),
-        ).toBe(1);
-      });
-
-      it("sees nothing while the year is collecting", async () => {
+      it("sees nothing while collecting, and the transcript (no draft) once open", async () => {
         expect(await as(R12).transcript.mine.get({ academicYear: AY })).toEqual(
           {
             status: "not_open",
@@ -856,6 +514,15 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           },
         );
         expect(await as(R12).transcript.mine.years()).toEqual([]);
+
+        await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        const open = await as(R12).transcript.mine.get({ academicYear: AY });
+        expect(open.status).toBe("ready");
+        expect(open).not.toHaveProperty("draft");
+        if (open.status === "ready") {
+          expect(open.transcript.isDraft).toBe(false);
+        }
+        expect(await as(R12).transcript.mine.years()).toEqual([AY]);
       });
     });
 
@@ -1007,6 +674,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       };
 
       it("counts without deleting on a dry run, then removes only that year", async () => {
+        // A saved list for the year, so every collection has rows to copy.
+        await freeze.freezeCca(db, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          actorUserID: JCRC.id,
+        });
         await copyYear();
         const keep = await counts(AY);
         const old = await counts(OLD);

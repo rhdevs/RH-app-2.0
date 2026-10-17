@@ -1,19 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { describe, expect, it, vi } from "vitest";
-import {
-  assertCollecting,
-  backToCollecting,
-  closeYear,
-  publish,
-  reopen,
-  upsertSem2Start,
-} from "../periods";
+import { assertCollecting, openTranscripts, upsertSem2Start } from "../periods";
 
 const SEM2 = new Date("2027-01-11T00:00:00Z");
 const collecting = { status: "collecting", sem2Start: SEM2 };
 const published = { status: "published", sem2Start: SEM2 };
-const closed = { status: "closed", sem2Start: SEM2 };
 /** A moment inside AY2026/27, so the year has begun. */
 const NOW = new Date("2027-03-01T00:00:00Z");
 
@@ -109,75 +101,22 @@ describe("upsertSem2Start", () => {
   });
 });
 
-describe("year transitions are checked before any write", () => {
-  const who = "SEED-R02";
+describe("Open transcripts is checked before any write", () => {
+  const open = (period: object | null, year = "AY2026/27", now = NOW) =>
+    codeOf(openTranscripts(dbWith(period).db, year, "SEED-R02", now));
 
-  it("close needs a period with a semester 2 date", async () => {
-    expect(
-      await codeOf(closeYear(dbWith(null).db, "AY2026/27", who, NOW)),
-    ).toBe("PRECONDITION_FAILED:SEM2_START_REQUIRED");
-    const noDate = { status: "collecting", sem2Start: null };
-    expect(
-      await codeOf(closeYear(dbWith(noDate).db, "AY2026/27", who, NOW)),
-    ).toBe("PRECONDITION_FAILED:SEM2_START_REQUIRED");
+  it("refuses a year that is already open", async () => {
+    expect(await open(published)).toBe("CONFLICT:ALREADY_PUBLISHED");
   });
 
-  it("close refuses a year that has not begun", async () => {
-    expect(
-      await codeOf(closeYear(dbWith(collecting).db, "AY2027/28", who, NOW)),
-    ).toBe("PRECONDITION_FAILED:YEAR_NOT_STARTED");
-  });
-
-  it("close refuses a year that is already closed or published", async () => {
-    expect(
-      await codeOf(closeYear(dbWith(closed).db, "AY2026/27", who, NOW)),
-    ).toBe("CONFLICT:NOT_COLLECTING");
-    expect(
-      await codeOf(closeYear(dbWith(published).db, "AY2026/27", who, NOW)),
-    ).toBe("CONFLICT:NOT_COLLECTING");
-  });
-
-  it("publish works only from closed", async () => {
-    expect(
-      await codeOf(publish(dbWith(collecting).db, "AY2026/27", who, NOW)),
-    ).toBe("CONFLICT:NOT_CLOSED");
-    expect(
-      await codeOf(publish(dbWith(published).db, "AY2026/27", who, NOW)),
-    ).toBe("CONFLICT:NOT_CLOSED");
-    expect(await codeOf(publish(dbWith(null).db, "AY2026/27", who, NOW))).toBe(
-      "CONFLICT:NOT_CLOSED",
+  it("refuses a future year", async () => {
+    expect(await open(collecting, "AY2027/28")).toBe(
+      "PRECONDITION_FAILED:YEAR_NOT_STARTED",
     );
   });
 
-  it("reopen for review works only from published", async () => {
-    expect(
-      await codeOf(reopen(dbWith(collecting).db, "AY2026/27", who, NOW)),
-    ).toBe("CONFLICT:NOT_PUBLISHED");
-    expect(await codeOf(reopen(dbWith(closed).db, "AY2026/27", who, NOW))).toBe(
-      "CONFLICT:NOT_PUBLISHED",
-    );
-    expect(await codeOf(reopen(dbWith(null).db, "AY2026/27", who, NOW))).toBe(
-      "CONFLICT:NOT_PUBLISHED",
-    );
-  });
-
-  it("back to collecting works only from closed", async () => {
-    expect(
-      await codeOf(backToCollecting(dbWith(collecting).db, "AY2026/27", "SEED-R02", NOW)),
-    ).toBe("CONFLICT:NOT_CLOSED");
-    expect(
-      await codeOf(backToCollecting(dbWith(published).db, "AY2026/27", "SEED-R02", NOW)),
-    ).toBe("CONFLICT:NOT_CLOSED");
-  });
-
-  it("every transition refuses a malformed academic year", async () => {
-    expect(
-      await codeOf(closeYear(dbWith(collecting).db, "bogus", who, NOW)),
-    ).toBe("BAD_REQUEST:INVALID_ACADEMIC_YEAR");
-    expect(await codeOf(publish(dbWith(closed).db, "bogus", who, NOW))).toBe(
-      "BAD_REQUEST:INVALID_ACADEMIC_YEAR",
-    );
-    expect(await codeOf(reopen(dbWith(published).db, "2026", who, NOW))).toBe(
+  it("refuses a malformed academic year", async () => {
+    expect(await open(collecting, "2026")).toBe(
       "BAD_REQUEST:INVALID_ACADEMIC_YEAR",
     );
   });

@@ -1,35 +1,34 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("~/trpc/react", () => ({ api: {} }));
 vi.mock("next-auth/react", () => ({ useSession: () => ({ data: null }) }));
 
-const { HandoverTranscriptWarning } = await import("../CcaHandoverDialog");
+const { HandoverTranscriptReminder } = await import("../CcaHandoverDialog");
 
-const render = (
-  state: Parameters<typeof HandoverTranscriptWarning>[0]["state"],
-) =>
-  renderToStaticMarkup(
-    <HandoverTranscriptWarning ccaID={9005} state={state} />,
-  );
-
-describe("the transcript warning in the handover dialog (F15)", () => {
-  it("names the year only when the handover will freeze it", () => {
-    const html = render({ kind: "freezes", year: "AY2026/27" });
-    expect(html).toContain("freezes the member list for AY2026/27");
-    expect(html).toContain('href="/cca/9005/transcript"');
-  });
-
-  it("says nothing about freezing when no freeze would happen", () => {
-    expect(render({ kind: "none" })).toBe("");
-    expect(render({ kind: "loading" })).toBe("");
-  });
-
-  it("falls back to a general reminder when the check fails", () => {
-    const html = render({ kind: "unknown" });
-    expect(html).toContain(
-      "Finish this year&#x27;s transcript records before handing over.",
+describe("the transcript reminder in the handover dialog", () => {
+  it("only reminds the outgoing heads, with a link to the records", () => {
+    const html = renderToStaticMarkup(
+      <HandoverTranscriptReminder ccaID={9005} />,
     );
-    expect(html).not.toContain("freezes the member list");
+    expect(html).toContain(
+      "Before you hand over, make sure this year&#x27;s transcript records (roles, activities, contributions and volunteer hours) are up to date. The new heads can continue them until the JCRC opens transcripts.",
+    );
+    expect(html).toContain('href="/cca/9005/transcript"');
+    expect(html).toContain("Open transcript records");
+  });
+
+  it("says nothing about freezing or locking, and computes no year", () => {
+    const html = renderToStaticMarkup(
+      <HandoverTranscriptReminder ccaID={9005} />,
+    );
+    expect(html).not.toMatch(/freez|lock/i);
+    expect(html).not.toMatch(/AY\d{4}/);
+    const source = readFileSync(
+      "src/app/cca/_components/CcaHandoverDialog.tsx",
+      "utf8",
+    );
+    expect(source).not.toMatch(/roster\.term|freeze/);
   });
 });
