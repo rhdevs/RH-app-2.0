@@ -508,7 +508,7 @@ Decisions are locked in `CLAUDE.md` ("Data model decisions"). All models live in
 
 | Model | Key | Fields |
 | --- | --- | --- |
-| `TranscriptPeriod` | `academicYear` (unique, "AY2026/27") | `sem2Start`, `status` (collecting | published, default collecting), `publishedAt/By`, `reopenedAt/By` |
+| `TranscriptPeriod` | `academicYear` (unique, "AY2026/27") | `downloadBy`, `status` (collecting | published, default collecting), `publishedAt/By` |
 | `TranscriptRosterEntry` | unique (`academicYear`, `userID`, `ccaID`) | `duration` (full | sem1 | sem2), `roleLabel`, `roleDuration` (full | sem1 | sem2), `extraContribution`, `frozen` (default false), `updatedBy`, `updatedAt` |
 | `VolunteerRecord` | index (`academicYear`, `userID`) | `ccaID` (the volunteering CCA that recorded it), `kind` (regular | oneoff), `activity`, `activityDate`, `hours`, `recordedBy`, `recordedAt`, `voidedAt` |
 | `Award` | index (`academicYear`, `userID`) | `title`, `citation`, `ceremony` (default "Colours Awards"), `recordedBy`, `recordedAt`, `voidedAt` |
@@ -517,7 +517,7 @@ Decisions are locked in `CLAUDE.md` ("Data model decisions"). All models live in
 
 **The one change to an existing model:** `CcaProfile.isVolunteering Boolean?`, set by admin/JCRC. The heads of a tagged CCA (the four "RVC ..." CCAs) may record volunteer hours for any resident.
 
-**Durations.** The default duration comes from `CcaApplication.decidedAt` against `TranscriptPeriod.sem2Start` (decided before: full; after: sem2). A head may override it. Roles can also be sem1, sem2 or full. The transcript prints a duration only when it is not a full year.
+**Durations (manual labels).** "Semester 1 only" and "Semester 2 only" are labels a head (or JCRC/admin) chooses to say roughly how much someone did. They are never guessed from join or grant dates: there is no Semester 2 start date, and `CcaApplication.decidedAt` and `CcaHead.grantedAt` are not read. Every membership and role is a full year until someone picks otherwise. The duration choices are "Full year" (the default, nothing stored), "Semester 1 only" and "Semester 2 only" (no "Default (...)" entry). A role period must still fit inside the membership period: a semester member can hold a role only for that semester, and changing the membership pulls the role period inside it with a one-line note. The transcript prints a duration only when it is not a full year.
 
 **Status.** collecting (heads/JCRC edit; residents cannot download) -> published (residents download; edits locked). Admin and JCRC control it and may reopen.
 
@@ -536,7 +536,6 @@ Code: `src/server/api/services/transcript/{periods,loader,issue}.ts` and the `tr
 | Procedure | Who | What |
 | --- | --- | --- |
 | `periods.list` | admin, jcrc | All periods, plus the current academic year |
-| `periods.setSem2Start` | admin, jcrc | Set or clear the semester-2 start date (must fall inside the year; refused once published) |
 | `periods.publish` | admin, jcrc | Freeze the roster and open the year to residents |
 | `periods.reopen` | admin, jcrc | Back to collecting; supersedes issued transcripts |
 | `preview` | admin, jcrc | One resident's transcript: frozen if published, live if not. Never creates an issue |
@@ -545,11 +544,11 @@ Code: `src/server/api/services/transcript/{periods,loader,issue}.ts` and the `tr
 
 Builders: `roleManagerProcedure` (admin + jcrc; scrc is stopped here) plus a live `getUserRoles` re-check (I-5), `identifiedProcedure` for `mine.get`, `publicProcedure` for `verify`. `verify` uses the repo's `rateLimit` and `clientIp` (`src/lib/rateLimit.ts`): 30 requests per 10 minutes per client address.
 
-**Publish.** Needs the period to exist and `sem2Start` to be set. In one transaction it claims the status (compare-and-set, so two concurrent publishes cannot both win), clears old freeze flags, then writes a frozen entry for every LIVE member, resolved through the same roster resolver the head screens use (UserCCA under either key format, the embedded `User.userCCA` array, and CcaHead). Rows that cannot be resolved to one person are counted and skipped, never guessed at. For each member:
+**Publish (superseded by section 23).** In one transaction it claims the status (compare-and-set, so two concurrent publishes cannot both win), clears old freeze flags, then writes a frozen entry for every LIVE member, resolved through the same roster resolver the head screens use (UserCCA under either key format, the embedded `User.userCCA` array, and CcaHead). Rows that cannot be resolved to one person are counted and skipped, never guessed at. For each member:
 
-- `duration` = the stored override, else `sem2` if their accepted application was decided on or after `sem2Start`, else `full`.
+- `duration` = the stored choice, else `full`.
 - `roleLabel` = the stored override, else `Head` if they hold a CcaHead row.
-- `roleDuration` = the stored override, else (for a head) `sem2` if granted on or after `sem2Start`, else `full`.
+- `roleDuration` = the stored choice, else (for a head) `full`, always inside the membership period.
 
 Members who have left get no entry. After publish the loader reads only frozen entries, so someone who leaves later still appears and someone who joins later does not.
 
@@ -628,7 +627,7 @@ Router `transcriptManage` (`src/server/api/routers/transcriptManage.ts`, registe
 
 Route `/admin/transcripts`, for admin and jcrc only. Gate: the admin layout, then `src/app/admin/transcripts/layout.tsx`, which re-reads the roles live and redirects anyone else to `/admin` (signed out: `/login`); every procedure behind the screens checks the role again. The "Transcripts" tab is shown by the `manageCcaHeads` capability, which equals admin or jcrc (a DB test keeps it in step with `canManageTranscriptPeriods`).
 
-1. **Academic year.** Status, semester 2 start date, publish and reopen, each behind a confirmation dialog stating the consequence. The date is typed as a calendar date and stored as midnight Singapore time (`2027-01-12` is `2027-01-11T16:00Z`); the roster screen shows it back as the same date. Publish reports "N members frozen, M rows could not be matched".
+1. **Academic year.** Status and the download-by date, and Open transcripts behind a confirmation dialog stating the consequence (section 23). The date is typed as a calendar date and stored as midnight Singapore time (`2027-12-31` is `2027-12-30T16:00Z`). There is no Semester 2 start date.
 2. **Volunteering CCAs.** One switch per CCA bound to `ccaTags.setVolunteering`, with a filter.
 3. **Awards.** Add and void for a chosen year; locked once the year is published; voided awards hidden unless asked for.
 4. **Preview as a resident.** `/admin/transcripts/preview/[userID]?ay=2026-27` renders the live Template C document with the "Preview. Not issued." bar. It never creates an issue. Printing from it includes the admin chrome.
@@ -640,7 +639,7 @@ Errors are inline red `role="alert"` lines (the app mounts no toaster). Resident
 **CCA head tab.** `/cca/[ccaID]/transcript`, one entry ("Transcript") in the CCA dashboard navigation. There is no page-level guard, like the sibling sections: every call is `roster.list`, `roster.upsert` or `volunteer.*`, which require the head of THIS CCA or a manager, so the head of another CCA sees the shell and then "You do not head this CCA". A plain resident never reaches `/cca` (the layout sends them home).
 
 - **Member roster.** One row per current member for the chosen year: Duration (Default, Full year, Semester 1 only, Semester 2 only, with the computed default in the first option's label), Role (blank means member; a current head's placeholder shows the default), Role period (shown when a role is typed or the member is a current head), Additional contribution (500 characters, counter). Each row saves on its own, and Save is enabled only for a changed row. Blank or "Default" clears the override. Limits: role 60, contribution 500.
-- **Notes.** A published year shows "Transcripts for AYxxxx/xx are published. Editing is closed. Ask the JCRC to reopen it." and every field is read-only. While the semester 2 start date is unset: "Default durations assume the full year until the JCRC sets the semester 2 start date." An empty CCA description links to the CCA details form.
+- **Notes.** An open year shows "Transcripts for AYxxxx/xx are open. Editing is closed. Ask the JCRC to fix individual residents." and every field is read-only. An empty CCA description links to the CCA details form.
 - **Volunteer hours.** Only when the CCA is tagged `isVolunteering` (the flag now comes back on `roster.list`); other CCAs render nothing. Resident search (3+ characters, debounced), kind, activity (120), a date for a one-off (inside 1 August to 31 July), hours (0.25 to 200 in quarters). Records list with who recorded each, a confirmed Void, and total hours per resident.
 - **Matric.** Shown only in the resident search results; hidden once a resident is chosen and never rendered in the roster or the records.
 
@@ -695,11 +694,12 @@ A year has two states: **collecting** and **open** (stored as `published`). Ther
 
 **Collecting.** Every CCA's transcript uses its LIVE member list: someone removed from the CCA is not on it, someone added is. Heads fill in records during the year.
 
-**Open transcripts** (`transcript.periods.open`, admin or jcrc only, live role check; `periods.openTranscripts`). Allowed for the current academic year or a past year still collecting, never a future year (`PRECONDITION_FAILED:YEAR_NOT_STARTED`) and never twice (`CONFLICT:ALREADY_PUBLISHED`). It does not need a semester 2 date. It locks every CCA's list as it is now, one CCA at a time, each in its own transaction:
+**Open transcripts** (`transcript.periods.open`, admin or jcrc only, live role check; `periods.openTranscripts`). Allowed for the current academic year or a past year still collecting, never a future year (`PRECONDITION_FAILED:YEAR_NOT_STARTED`), never a year before transcripts began (`BAD_REQUEST:YEAR_BEFORE_START`; the download-by date is refused the same way) and never twice (`CONFLICT:ALREADY_PUBLISHED`). It needs no dates at all. It locks every CCA's list as it is now, one CCA at a time, each in its own transaction:
 - The entries are computed from a read INSIDE the transaction (F1). A duplicate key counts as "already locked" only if an active lock for that CCA and year now exists; otherwise the lock is retried from a fresh read (bounded) and then reported as failed.
 - Each person is counted once by their resolved key (F26); a second account that resolves to the same person is counted as not matched. `CcaYearFreeze.unresolvedCount` stores how many members could not be matched (F19).
 - A CCA that fails is logged as one JSON line with only `evt: "transcript_lock_failed"`, `ccaID`, `academicYear`, the error code and the error name, never a message (F5), and is returned with a short code. If any CCA failed the year stays collecting, nothing is opened, and the result names each failed CCA with a short reason. Running it again keeps the CCAs already locked and finishes the rest.
-- When every CCA is locked the year becomes `published` with `publishedAt` and `publishedBy`.
+- The CCA list is read again right before the year is claimed, and any CCA created meanwhile is locked too (F29).
+- When every CCA is locked the year becomes `published` with `publishedAt` and `publishedBy`. Any status but `published` is claimed, so an old `closed` row opens too (F31). With no period row it is created; two opens at once both succeed and the year is opened once (F28).
 
 The confirmation reads: "Open transcripts for {AY}? Every CCA's member list will be saved as it is now, all residents will be able to see and download their transcripts, and CCA heads will no longer be able to edit. After this, only JCRC and admin can fix individual residents."
 
@@ -711,7 +711,7 @@ The confirmation reads: "Open transcripts for {AY}? Every CCA's member list will
 
 **Residents.** A collecting year is "not available yet"; an open year is the transcript, with the Ready badge. There is no draft anywhere: no draft view, no "(draft)" in the year switcher, no draft banner.
 
-**Admin screen.** The Academic year section shows the status (Collecting or Open), the semester 2 and download-by dates, and one button, "Open transcripts", hidden once open and not offered for a future year. Once open, a read-only "CCA member lists" table shows each CCA's saved list (date, who, members, members not matched). Reminders:
+**Admin screen.** The Academic year section shows the status (Collecting or Open), the download-by date, and one button, "Open transcripts", hidden once open and not offered for a future year. A read-only "CCA member lists" table shows each CCA's saved list (date, who, members, members not matched) once the year is open, and also while it is still collecting if some lists are already saved, with "Some CCAs are saved; press Open transcripts again to finish." (F30). Every admin year picker (this panel, awards, residents, JCRC page, preview) offers each year from AY2026/27 to the current one, with or without a period row, plus any existing period, newest first (F27). Reminders:
 - From 1 April while the current year is collecting: "Transcripts for {AY} are not open yet. Open them at the end of the year, before 1 August."
 - From 1 August while the previous year is still collecting: "Transcripts for {prev AY} are still not open. Open them now, before CCAs change their member lists in the August application period."
 
@@ -949,7 +949,7 @@ Every requirement in the project brief, where it is implemented, and the tests t
 | Awards editor is jcrc and admin | `lib/transcript/permissions.ts`; `manageAccess.ts` `requireManager` | `permissions.test.ts`, `transcriptManage.int.test.ts` | done |
 | No backfill: transcripts start at AY2026/27 | `lib/transcript/lifecycle.ts` `FIRST_ACADEMIC_YEAR` | `lifecycle.test.ts` | done |
 | Template C layout (crest every page, black and white, page 1 sections, JCRC page, notes page, one-line year cell, "Head (Sem 2)", notes key, no faculty) | `app/transcript/_components/*`; `assemble.ts` | `TranscriptDocument.test.tsx`, `assemble.test.ts`; print checks | done |
-| Durations full / sem1 / sem2 per member per CCA per AY, default from `decidedAt` vs `sem2Start` (Singapore midnight), shown only when not full | `lib/transcript/duration.ts`; `lib/transcript/sgDate.ts`; `manageRoster.ts` | `duration.test.ts`, `sgDate.test.ts`, `transcriptManage.int.test.ts` | done |
+| Durations full / sem1 / sem2 per member per CCA per AY, full by default, Semester 1 / Semester 2 chosen by hand, shown only when not full | `lib/transcript/duration.ts`; `lib/transcript/headView.ts`; `manageRoster.ts` | `duration.test.ts`, `rolePeriod.test.ts`, `headView.test.ts`, `transcript.int.test.ts`, `lifecycle.int.test.ts` | done |
 | Vitest the only new dev dependency; `npm run test` DB-free, `npm run test:db` local DB | `package.json`, `vitest.config.ts` | both suites | done |
 
 

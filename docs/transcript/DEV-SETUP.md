@@ -54,7 +54,7 @@ npm run dev:db:seed
 
 ## What the seed creates
 
-Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications before and after the 2027-01-11 semester-2 start, roster entries (sem1-only, sem2-only, a head whose role starts in sem2), volunteer activities, awards, JCRC service for two members, and CCA activities (Soccer: a full-year league that `SEED-R20`, who is not in Soccer, also took part in; Hall Choir: a semester 2 activity; RVC Children: one live activity and one removed), and one manual CCA entry with its history line (`SEED-R17` in Dance Crew, semester 2). The year starts collecting: nothing is unlocked or withheld.
+Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications (their dates are not used), roster entries with semester labels chosen by hand (sem1-only, sem2-only, a head whose role period is semester 2), volunteer activities, awards, JCRC service for two members, and CCA activities (Soccer: a full-year league that `SEED-R20`, who is not in Soccer, also took part in; Hall Choir: a semester 2 activity; RVC Children: one live activity and one removed), and one manual CCA entry with its history line (`SEED-R17` in Dance Crew, semester 2). The year starts collecting: nothing is unlocked or withheld.
 
 ### A published year to click through (opt-in)
 
@@ -62,7 +62,7 @@ Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CC
 npm run dev:db:seed -- --with-published-year
 ```
 
-Does everything the plain seed does, and ALSO creates a past year, `AY2025/26`, already opened (Open transcripts): semester 2 from 12 Jan 2026, every seeded CCA's member list saved (heads as "Head"), Soccer's "Inter-hall league 2025/26" (with `SEED-R20` as Other involvement), RVC Children's "Reading buddies" (8 hours for `SEED-R12`), two awards, `SEED-R02`'s JCRC page, and a download-by date in the future. Nobody has opened it yet, so `seed-r12` sees the "Ready" badge, the published transcript with a year switcher, and "not available yet" for the collecting `AY2026/27`; as `seed-r01` you can Unlock, correct, Relock, Withhold and Release on it at `/admin/transcripts/residents`. Like the rest of the seed it refuses anything but the local `rhapp_transcript_dev` database. A plain `npm run dev:db:seed` (and every `npm run test:db` run) removes this year again. Transcripts really start at AY2026/27; this year exists only locally.
+Does everything the plain seed does, and ALSO creates a past year, `AY2025/26`, already opened (Open transcripts): every seeded CCA's member list saved (heads as "Head"), Soccer's "Inter-hall league 2025/26" (with `SEED-R20` as Other involvement), RVC Children's "Reading buddies" (8 hours for `SEED-R12`), two awards, `SEED-R02`'s JCRC page, and a download-by date in the future. Nobody has opened it yet, so `seed-r12` sees the "Ready" badge, the published transcript with a year switcher, and "not available yet" for the collecting `AY2026/27`; as `seed-r01` you can Unlock, correct, Relock, Withhold and Release on it at `/admin/transcripts/residents`. Like the rest of the seed it refuses anything but the local `rhapp_transcript_dev` database. A plain `npm run dev:db:seed` (and every `npm run test:db` run) removes this year again. Transcripts really start at AY2026/27; this year exists only locally.
 
 ## A caveat
 
@@ -96,7 +96,7 @@ It works only against the local `rhapp_transcript_dev` database (the seed refuse
 | `seed-r02@u.nus.edu` | JCRC member | Sports Secretary; not a CCA head |
 | `seed-r03@u.nus.edu` | JCRC member and CCA head | Heads RHMP Sets (a normal CCA) |
 | `seed-r04@u.nus.edu` | head of a normal CCA | Heads Soccer (MALE) |
-| `seed-r05@u.nus.edu` | head of a normal CCA | Heads Hall Choir; took over in semester 2 |
+| `seed-r05@u.nus.edu` | head of a normal CCA | Heads Hall Choir; role period chosen as semester 2 |
 | `seed-r06@u.nus.edu` | head of a volunteering CCA | Heads RVC Children |
 | `seed-r07@u.nus.edu` | head of a volunteering CCA | Heads RVC Special Projects |
 | `seed-r10@u.nus.edu` | head of a volunteering CCA | Heads RVC Pioneers |
@@ -114,7 +114,10 @@ Start with `npm run dev:db:up`, `npm run dev:db:seed`, `npm run dev`. Sign in at
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
 | Gate | `seed-r04` (head), then `seed-r15` (plain member) | Open `/admin/transcripts` | Sent back to `/admin` or `/`; no Transcripts tab |
-| Academic year | `seed-r01` (admin) or `seed-r02` (JCRC) | Press Open transcripts | The confirmation "Open transcripts for AY2026/27? Every CCA's member list will be saved as it is now, ...". Confirm: status Open, "Transcripts for AY2026/27 are open. 14 CCA member lists saved.", the button is gone and the CCA member lists table appears. There is no Reopen; reseed to go back. |
+| Academic year | `seed-r01` (admin) or `seed-r02` (JCRC) | Press Open transcripts (there is no Semester 2 start date to set) | The confirmation "Open transcripts for AY2026/27? Every CCA's member list will be saved as it is now, ...". Confirm: status Open, "Transcripts for AY2026/27 are open. 14 CCA member lists saved.", the button is gone and the CCA member lists table appears. There is no Reopen; reseed to go back. |
+| Year picker | `seed-r01` | Open the year list on the Academic year panel, Awards, Resident corrections, JCRC page and Preview | Every year from AY2026/27 to the current one is offered (newest first), even a year that has never had any dates saved. A previous year flagged by the 1 August warning can be selected and opened. |
+| Manual semester labels | `seed-r04` | Set a member to "Semester 2 only" and save; then Open transcripts as `seed-r01` | The transcript says "Semester 2" for that member only. Nobody else changes: join and head-grant dates never decide a semester. |
+| Collecting year with some lists saved | `seed-r01` | (Dev only) lock one CCA, then press Open with a CCA failing | The panel shows the per-CCA table and "Some CCAs are saved; press Open transcripts again to finish." even though the year is still Collecting. |
 | Volunteering CCAs | same | Flip a switch, reload | Change persists; the four RVC CCAs start on |
 | Awards | same | Add an award for `SEED-R12`, then void it | Appears, then disappears; "Show voided" brings it back. Locked once Open |
 | Preview | same | Pick a resident (3+ letters), open preview | Template C with the Preview bar; JCRC page only for `seed-r02`/`seed-r03`; nothing is recorded |
@@ -145,7 +148,7 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 | Download-by banner | `seed-r01`, then `seed-r12` | Academic year panel: set Download by, Save, publish. Open `/transcript` as the resident | "Download your AY2026/27 transcript before 31 Dec 2027." (the seeded date). Clear the date: no banner. |
 | Volunteering CCAs | `seed-r01` | `/admin/transcripts`, Volunteering CCAs | Only the four RVC CCAs, "4 volunteering CCAs". Type "soc", add Soccer: it joins the list. Remove it: a confirmation says hours already recorded stay. |
 | JCRC contributions | `seed-r02` | `/admin/transcripts/jcrc` | One card per contribution with counters. Move up and down, Remove (shows "Removed. Undo"), Undo, Add contribution (a plain count, "2 contributions", never "of 10"), Save. Preview: the rows in three columns with no header row. |
-| Role period | `seed-r04` | `/cca/9005/transcript`, give a member a role | With a semester 2 membership the role period offers only the default and "Semester 2 only". Narrow a full-year member who has a full-year role: the role period changes with a one-line note. |
+| Role period | `seed-r04` | `/cca/9005/transcript`, give a member a role | Duration offers "Full year" (the default), "Semester 1 only" and "Semester 2 only", with no "Default (...)" entry. With a semester 2 membership the role period offers only "Semester 2 only". Narrow a full-year member who has a role to another period: the role period changes with a one-line note. |
 | Picker | `seed-r06` | Volunteer hours, search "Seed" | Placeholder "Name". Arrow keys move, Enter picks, Escape closes. As `seed-r01` the placeholder is "Name, email or matric". |
 | Names | `seed-r01` | Add and void an award, then Open transcripts | "Opened on ... by Seed Resident 01", "Recorded by ... Voided by ..." show names, not SEED- keys. |
 | Phone | any | `/transcript/preview/many-ccas` at 375 px wide | No horizontal scroll; the Year column stays on one line. |
