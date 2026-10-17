@@ -5,6 +5,7 @@ import { useCapabilities } from "~/app/admin/_components/AdminCapabilityContext"
 import DefaultRangesForm from "./_components/DefaultRangesForm";
 import EntrySwitchPanel from "./_components/EntrySwitchPanel";
 import FlatCcasPanel from "./_components/FlatCcasPanel";
+import SettingsExport from "./_components/SettingsExport";
 import { hasSavedRanges } from "./_components/rangeForm";
 import WaiversPanel from "./_components/WaiversPanel";
 
@@ -105,6 +106,10 @@ export default function AdminPointsPage() {
             overrides={data.overrides}
             effectiveDefault={data.effectiveDefault}
             onChanged={refresh}
+          />
+          <SettingsExport
+            effectiveDefault={data.effectiveDefault}
+            waivers={data.overrides}
           />
           <FlatCcasPanel flatCcas={data.flatCcas} onChanged={refresh} />
         </>
