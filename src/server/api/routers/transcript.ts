@@ -24,6 +24,7 @@ import { isWithheld } from "~/server/api/services/transcript/residentManage";
 import {
   listFreezes,
   unfreezeCca,
+  unfreezePreview,
 } from "~/server/api/services/transcript/freeze";
 import { loadTranscriptInput } from "~/server/api/services/transcript/loader";
 import {
@@ -166,6 +167,18 @@ export const transcriptRouter = createTRPCRouter({
     list: managerProcedure
       .input(z.object({ academicYear }))
       .query(({ ctx, input }) => listFreezes(ctx.db, input.academicYear)),
+
+    /** Who an Unfreeze would drop and add if the CCA were frozen again today. */
+    unfreezePreview: managerProcedure
+      .input(
+        z.object({
+          academicYear,
+          ccaID: z.number().int().positive().max(1_000_000),
+        }),
+      )
+      .query(({ ctx, input }) =>
+        unfreezePreview(ctx.db, input.ccaID, input.academicYear),
+      ),
 
     unfreeze: managerProcedure
       .input(

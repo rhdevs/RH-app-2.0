@@ -29,6 +29,44 @@ import type { RosterEntry } from "~/server/api/services/ccaRoster";
  * from here (only an admin/JCRC can re-grant).
  */
 
+export type HandoverWarningState =
+  | { kind: "loading" }
+  | { kind: "none" }
+  | { kind: "unknown" }
+  | { kind: "freezes"; year: string };
+
+/**
+ * The transcript note in the handover dialog. It names a year only when the
+ * handover will really freeze that year's member list; when that cannot be
+ * worked out, it still asks the head to finish the records first.
+ */
+export function HandoverTranscriptWarning({
+  ccaID,
+  state,
+}: {
+  ccaID: number;
+  state: HandoverWarningState;
+}) {
+  if (state.kind === "loading" || state.kind === "none") return null;
+  return (
+    <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      {state.kind === "freezes" ? (
+        <>
+          Before you hand over, finish this year&apos;s transcript records for
+          your members (roles, contributions, volunteer hours). Handing over
+          freezes the member list for {state.year}, and after that only the JCRC
+          can change it.
+        </>
+      ) : (
+        <>Finish this year&apos;s transcript records before handing over.</>
+      )}{" "}
+      <Link href={`/cca/${ccaID}/transcript`} className="font-medium underline">
+        Open transcript records
+      </Link>
+    </p>
+  );
+}
+
 /** Canonical userID candidates a head roster entry could match. */
 function headKeys(entry: RosterEntry): string[] {
   return entry.kind === "resolved" ? entry.membershipKeys : [entry.key];
@@ -119,20 +157,19 @@ export default function CcaHandoverDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          {term.data && (
-            <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              Before you hand over, finish this year&apos;s transcript records for
-              your members (roles, contributions, volunteer hours). Handing over
-              freezes the member list for {term.data.termAcademicYear}, and after
-              that only the JCRC can change it.{" "}
-              <Link
-                href={`/cca/${ccaID}/transcript`}
-                className="font-medium underline"
-              >
-                Open transcript records
-              </Link>
-            </p>
-          )}
+          <HandoverTranscriptWarning
+            ccaID={ccaID}
+            state={
+              term.error
+                ? { kind: "unknown" }
+                : term.data
+                  ? term.data.willFreezeOnHandover &&
+                    term.data.handoverFreezeYear
+                    ? { kind: "freezes", year: term.data.handoverFreezeYear }
+                    : { kind: "none" }
+                  : { kind: "loading" }
+            }
+          />
           <HeadCandidateInput
             ccaID={ccaID}
             confirmLabel="Add"
@@ -204,9 +241,9 @@ export default function CcaHandoverDialog({
 
           {myUserID && selected.length > 0 && !iAmKept && (
             <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              You&rsquo;re not on the new list, so you&rsquo;ll stop being a head
-              and lose access to this page. Only an admin or the JCRC can add you
-              back.
+              You&rsquo;re not on the new list, so you&rsquo;ll stop being a
+              head and lose access to this page. Only an admin or the JCRC can
+              add you back.
             </p>
           )}
 

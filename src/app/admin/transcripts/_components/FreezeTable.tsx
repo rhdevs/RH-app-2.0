@@ -19,6 +19,7 @@ import {
   UNFROZEN_BANNER,
   errorText,
   normaliseStatus,
+  unresolvedNote,
 } from "~/lib/transcript/adminView";
 import { showUnfrozenWarning } from "~/lib/transcript/lifecycle";
 import { formatSgDate } from "~/lib/transcript/sgDate";
@@ -36,6 +37,14 @@ export interface FreezeRowView {
   frozenAt: Date | string | null;
   frozenByName: string | null;
   memberCount: number | null;
+  /** Members the resolver could not match when it was frozen. */
+  unresolvedCount?: number | null;
+}
+
+/** Who an Unfreeze would drop and add if the CCA were frozen again today. */
+export interface UnfreezePreviewView {
+  dropped: Array<{ userID: string; name: string }>;
+  added: Array<{ userID: string; name: string }>;
 }
 
 /** Rows to show: all, or only the ones not frozen. */
@@ -66,6 +75,93 @@ export interface FreezeTableViewProps {
   onUnfreeze: () => void;
   pending: boolean;
   unfreezeError: string | null;
+  /** The drop/add preview for the CCA being unfrozen; null while loading. */
+  preview: UnfreezePreviewView | null;
+  previewError: string | null;
+  /** The admin ticked "I understand"; Unfreeze stays disabled until then. */
+  confirmed: boolean;
+  onConfirmed: (value: boolean) => void;
+}
+
+/** One list of names in the Unfreeze preview, or "Nobody". */
+function PreviewList(p: {
+  title: string;
+  people: UnfreezePreviewView["dropped"];
+}) {
+  return (
+    <div>
+      <p className="text-xs font-semibold text-gray-700">{p.title}</p>
+      {p.people.length === 0 ? (
+        <p className="text-sm text-gray-500">Nobody</p>
+      ) : (
+        <ul className="list-disc pl-5 text-sm text-gray-800">
+          {p.people.map((person) => (
+            <li key={person.userID}>{person.name}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Unfreeze is allowed only with a reason, once the drop/add preview has loaded
+ * and the admin has ticked that they understand it.
+ */
+export function canConfirmUnfreeze(p: {
+  reason: string;
+  preview: UnfreezePreviewView | null;
+  confirmed: boolean;
+}): boolean {
+  return p.reason.trim().length >= 3 && p.preview !== null && p.confirmed;
+}
+
+/**
+ * In the Unfreeze dialog: who would be dropped and who added if the CCA were
+ * frozen again from today's members, and the "I understand" tick.
+ */
+export function UnfreezePreviewPanel(p: {
+  preview: UnfreezePreviewView | null;
+  previewError: string | null;
+  confirmed: boolean;
+  onConfirmed: (value: boolean) => void;
+  pending: boolean;
+}) {
+  return (
+    <div className="space-y-2 rounded-md border border-gray-200 p-3">
+      <p className="text-sm text-gray-700">
+        If this CCA is frozen again, its list is rebuilt from today&rsquo;s
+        members:
+      </p>
+      {p.previewError ? (
+        <ErrorLine message={p.previewError} />
+      ) : p.preview === null ? (
+        <p className="text-sm text-gray-500" aria-busy="true">
+          Loading who would change
+        </p>
+      ) : (
+        <>
+          <PreviewList
+            title="Would be dropped (frozen now, no longer members)"
+            people={p.preview.dropped}
+          />
+          <PreviewList
+            title="Would be added (members now, not on the frozen list)"
+            people={p.preview.added}
+          />
+        </>
+      )}
+      <label className="flex items-start gap-2 text-sm text-gray-800">
+        <input
+          type="checkbox"
+          checked={p.confirmed}
+          disabled={p.pending || p.preview === null}
+          onChange={(e) => p.onConfirmed(e.target.checked)}
+        />
+        I understand who would be dropped and added.
+      </label>
+    </div>
+  );
 }
 
 /**
@@ -78,7 +174,11 @@ export function FreezeTableView(p: FreezeTableViewProps) {
   const status = normaliseStatus(p.status);
   const shown = visibleFreezeRows(p.rows, p.onlyUnfrozen);
   const canUnfreeze = status !== "published";
-  const reasonOk = p.reason.trim().length >= 3;
+  const canConfirm = canConfirmUnfreeze({
+    reason: p.reason,
+    preview: p.preview,
+    confirmed: p.confirmed,
+  });
 
   return (
     <AlertDialog
@@ -152,7 +252,14 @@ export function FreezeTableView(p: FreezeTableViewProps) {
                       {r.frozenAt ? formatSgDate(r.frozenAt) : ""}
                     </td>
                     <td className="px-2 py-2">{r.frozenByName ?? ""}</td>
-                    <td className="px-2 py-2">{r.memberCount ?? ""}</td>
+                    <td className="px-2 py-2">
+                      {r.memberCount ?? ""}
+                      {r.unresolvedCount ? (
+                        <span className="block text-xs text-amber-800">
+                          {unresolvedNote(r.unresolvedCount)}
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-2 py-2 text-right">
                       {r.frozen && canUnfreeze && (
                         <Button
@@ -190,6 +297,13 @@ export function FreezeTableView(p: FreezeTableViewProps) {
             {UNFREEZE_WARNING(p.academicYear)}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        <UnfreezePreviewPanel
+          preview={p.preview}
+          previewError={p.previewError}
+          confirmed={p.confirmed}
+          onConfirmed={p.onConfirmed}
+          pending={p.pending}
+        />
         <div>
           <label htmlFor="unfreeze-reason" className={FIELD_LABEL}>
             Reason (required)
@@ -209,7 +323,7 @@ export function FreezeTableView(p: FreezeTableViewProps) {
           <Button
             type="button"
             onClick={p.onUnfreeze}
-            disabled={p.pending || !reasonOk}
+            disabled={p.pending || !canConfirm}
           >
             {p.pending ? (
               <>
@@ -244,11 +358,17 @@ export default function FreezeTable({
     ccaName: string;
   } | null>(null);
   const [reason, setReason] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const preview = api.transcript.freezes.unfreezePreview.useQuery(
+    { academicYear, ccaID: unfreezing?.ccaID ?? 0 },
+    { enabled: unfreezing !== null, retry: false },
+  );
 
   const unfreeze = api.transcript.freezes.unfreeze.useMutation({
     onSuccess: async () => {
       setUnfreezing(null);
       setReason("");
+      setConfirmed(false);
       await Promise.all([
         utils.transcript.freezes.list.invalidate(),
         utils.transcript.periods.unfrozenCount.invalidate(),
@@ -266,6 +386,7 @@ export default function FreezeTable({
     frozenAt: r.frozenAt,
     frozenByName: r.frozenByName,
     memberCount: r.memberCount,
+    unresolvedCount: r.unresolvedCount,
   }));
   const unfrozenCount = list.data?.unfrozen ?? 0;
   const warn = showUnfrozenWarning(
@@ -288,6 +409,7 @@ export default function FreezeTable({
       onUnfreezing={(c) => {
         unfreeze.reset();
         setReason("");
+        setConfirmed(false);
         setUnfreezing(c);
       }}
       reason={reason}
@@ -302,6 +424,10 @@ export default function FreezeTable({
       }
       pending={unfreeze.isPending}
       unfreezeError={unfreeze.error ? errorText(unfreeze.error.message) : null}
+      preview={unfreezing && preview.data ? preview.data : null}
+      previewError={preview.error ? errorText(preview.error.message) : null}
+      confirmed={confirmed}
+      onConfirmed={setConfirmed}
     />
   );
 }

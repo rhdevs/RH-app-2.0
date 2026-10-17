@@ -54,7 +54,11 @@ import {
   assertCanEditCcaYear,
   editRefusalFor,
 } from "~/server/api/services/transcript/editRights";
-import { freezeCca, termYearOf } from "~/server/api/services/transcript/freeze";
+import {
+  freezeCca,
+  headChangeFreezeTarget,
+  termYearOf,
+} from "~/server/api/services/transcript/freeze";
 import {
   awardImportCommit,
   awardImportPreview,
@@ -348,9 +352,17 @@ export const transcriptManageRouter = createTRPCRouter({
         await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
         await requireCca(ctx.db, input.ccaID);
         const now = new Date();
+        const [term, onHandover] = await Promise.all([
+          termYearOf(ctx.db, input.ccaID, now),
+          headChangeFreezeTarget(ctx.db, input.ccaID, now),
+        ]);
         return {
-          termAcademicYear: await termYearOf(ctx.db, input.ccaID, now),
+          termAcademicYear: term,
           currentAcademicYear: currentAcademicYear(now),
+          // Whether a handover now would freeze a member list, and which year's.
+          willFreezeOnHandover: onHandover.kind === "freeze",
+          handoverFreezeYear:
+            onHandover.kind === "freeze" ? onHandover.academicYear : null,
         };
       }),
 
@@ -360,11 +372,17 @@ export const transcriptManageRouter = createTRPCRouter({
       .mutation(async ({ ctx, input }) => {
         await requireCcaAccess(ctx.db, ctx.session.user.userID, input.ccaID);
         await requireCca(ctx.db, input.ccaID);
-        return freezeCca(ctx.db, {
+        const result = await freezeCca(ctx.db, {
           ccaID: input.ccaID,
           reason: "lock",
           actorUserID: ctx.session.user.userID,
         });
+        // Nothing to lock (the working year is a future one): say so rather
+        // than report a success that froze nothing.
+        if (result.kind === "skipped") {
+          throw new TRPCError({ code: "CONFLICT", message: "NOTHING_TO_LOCK" });
+        }
+        return result;
       }),
 
     upsert: identifiedProcedure

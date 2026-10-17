@@ -129,6 +129,27 @@ export function LockRoster({
 }
 
 /**
+ * Show "Lock member list" only for the year a lock would actually freeze: the
+ * CCA's working year, live and editable, and not a year later than today's (a
+ * future year has nothing to lock yet).
+ */
+export function showLock(p: {
+  mode: string;
+  readOnly: boolean;
+  year: string;
+  termAcademicYear: string;
+  currentAcademicYear: string | null;
+}): boolean {
+  return (
+    p.mode === "live" &&
+    !p.readOnly &&
+    p.year === p.termAcademicYear &&
+    p.currentAcademicYear !== null &&
+    p.termAcademicYear <= p.currentAcademicYear
+  );
+}
+
+/**
  * The Transcript tab of the CCA dashboard: a member roster editor and, for a
  * volunteering CCA only, the volunteer hours section. Every call is checked on
  * the server (head of THIS CCA, or a manager); this page only draws. The year
@@ -185,8 +206,13 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
     freezeReason: data.freeze?.reason ?? null,
     frozenOn: data.freeze ? formatSgDate(data.freeze.frozenAt) : null,
   });
-  const canLock =
-    data.mode === "live" && !readOnly && year === data.termAcademicYear;
+  const canLock = showLock({
+    mode: data.mode,
+    readOnly,
+    year,
+    termAcademicYear: data.termAcademicYear,
+    currentAcademicYear: term.data?.currentAcademicYear ?? null,
+  });
 
   return (
     <div className="space-y-6">
