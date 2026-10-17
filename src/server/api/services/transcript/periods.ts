@@ -221,6 +221,19 @@ export interface CloseResult {
   /** CCAs whose freeze failed; run Close year again to finish them. */
   failed: number;
   failedNames: string[];
+  /** Each failed CCA with a short code for why (an error code, or UNKNOWN). */
+  failures: Array<{ name: string; code: string }>;
+  /** Members, across the CCAs frozen now, the roster resolver could not match. */
+  unresolved: number;
+}
+
+/** A short, loggable reason a freeze failed: the API code, else the Prisma one. */
+function failureCode(error: unknown): string {
+  const e = error as { message?: unknown; code?: unknown };
+  if (error instanceof TRPCError) return error.message;
+  if (typeof e?.code === "string") return e.code;
+  const message = typeof e?.message === "string" ? e.message : "";
+  return /^[A-Z][A-Z0-9_]+/.exec(message)?.[0] ?? "UNKNOWN";
 }
 
 /** The names of the CCAs with no active freeze for a year, A to Z. */
@@ -276,7 +289,8 @@ async function freezeUnfrozen(
 
   let frozenNow = 0;
   let skipped = 0;
-  const failedNames: string[] = [];
+  let unresolved = 0;
+  const failures: Array<{ name: string; code: string }> = [];
   // One CCA at a time: each freeze is its own transaction, and a slow or failing
   // one never races the others.
   for (const cca of todo) {
@@ -288,10 +302,23 @@ async function freezeUnfrozen(
         now,
         academicYear,
       });
-      if (result.kind === "frozen") frozenNow += 1;
-      else skipped += 1;
-    } catch {
-      failedNames.push(cca.ccaName);
+      if (result.kind === "frozen") {
+        frozenNow += 1;
+        unresolved += result.unresolvedCount;
+      } else skipped += 1;
+    } catch (error) {
+      // Counted and reported; the others still go on.
+      const code = failureCode(error);
+      console.error(
+        JSON.stringify({
+          evt: "transcript_freeze_failed",
+          ccaID: cca.ccaID,
+          academicYear,
+          code,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      failures.push({ name: cca.ccaName, code });
     }
   }
   return {
@@ -299,8 +326,10 @@ async function freezeUnfrozen(
     frozenNow,
     alreadyFrozen: ccas.length - todo.length,
     skipped,
-    failed: failedNames.length,
-    failedNames,
+    failed: failures.length,
+    failedNames: failures.map((f) => f.name),
+    failures,
+    unresolved,
   };
 }
 

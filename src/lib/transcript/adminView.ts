@@ -64,6 +64,36 @@ const plural = (n: number, one: string, many: string) =>
   `${n} ${n === 1 ? one : many}`;
 
 /** "Closed AY2026/27. 12 CCAs frozen, 77 were frozen already." */
+/** "3 members could not be matched", for a freeze's unresolved roster rows. */
+export const unresolvedNote = (count: number) =>
+  `${plural(count, "member", "members")} could not be matched`;
+
+/** A few words for why one CCA's freeze failed, from its error code. */
+const FREEZE_FAILURE_TEXT: Record<string, string> = {
+  PERIOD_PUBLISHED: "year published",
+  FREEZE_RACE: "list changed while freezing",
+  P2034: "busy, try again",
+};
+export const freezeFailureText = (code: string) =>
+  FREEZE_FAILURE_TEXT[code] ?? code;
+
+/** "Soccer (year published), Chess Club (UNKNOWN)": names with a short reason. */
+function failedList(result: {
+  failedNames?: readonly string[];
+  failures?: ReadonlyArray<{ name: string; code: string }>;
+}): string {
+  if (result.failures?.length) {
+    return result.failures
+      .map((f) => `${f.name} (${freezeFailureText(f.code)})`)
+      .join(", ");
+  }
+  return (result.failedNames ?? []).join(", ");
+}
+
+/** " 2 members could not be matched." after a summary, or nothing. */
+const unresolvedTail = (unresolved: number | undefined) =>
+  unresolved ? ` ${unresolvedNote(unresolved)}.` : "";
+
 export function closeSummary(
   academicYear: string,
   result: {
@@ -72,17 +102,18 @@ export function closeSummary(
     skipped?: number;
     failed?: number;
     failedNames?: readonly string[];
+    failures?: ReadonlyArray<{ name: string; code: string }>;
+    unresolved?: number;
     closed?: boolean;
   },
 ): string {
   if (result.closed === false) {
-    const names = result.failedNames?.length
-      ? `: ${result.failedNames.join(", ")}`
-      : "";
-    return `${academicYear} is not closed yet. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen, ${plural(result.failed ?? 0, "CCA", "CCAs")} could not be frozen${names}. Press Close year again to finish them.`;
+    const list = failedList(result);
+    const names = list ? `: ${list}` : "";
+    return `${academicYear} is not closed yet. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen, ${plural(result.failed ?? 0, "CCA", "CCAs")} could not be frozen${names}. Press Close year again to finish them.${unresolvedTail(result.unresolved)}`;
   }
   const skipped = result.skipped ? `, ${result.skipped} left as they were` : "";
-  return `${academicYear} closed. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen${skipped}.`;
+  return `${academicYear} closed. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen${skipped}.${unresolvedTail(result.unresolved)}`;
 }
 
 /** The sentence for CCAs that block Publish: also shown inline on the panel. */
@@ -116,12 +147,14 @@ export function freezeRemainingSummary(result: {
   skipped?: number;
   failed?: number;
   failedNames?: readonly string[];
+  failures?: ReadonlyArray<{ name: string; code: string }>;
+  unresolved?: number;
 }): string {
   const base = `${result.frozenNow} ${result.frozenNow === 1 ? "CCA" : "CCAs"} frozen`;
   if (result.failed) {
-    return `${base}, ${result.failed} could not be frozen: ${(result.failedNames ?? []).join(", ")}. Press Freeze remaining CCAs again to finish them.`;
+    return `${base}, ${result.failed} could not be frozen: ${failedList(result)}. Press Freeze remaining CCAs again to finish them.${unresolvedTail(result.unresolved)}`;
   }
-  return `${base}. You can publish now.`;
+  return `${base}. You can publish now.${unresolvedTail(result.unresolved)}`;
 }
 
 export const CLOSE_CONFIRMATION = (academicYear: string, unfrozen: number) =>
@@ -155,6 +188,8 @@ const ERROR_TEXT: Record<string, string> = {
   CCA_YEAR_FROZEN: "This member list is frozen. Ask the JCRC for changes.",
   NOT_THE_TERM_YEAR:
     "Heads can only change the year their CCA is working on. Ask the JCRC for changes.",
+  NOTHING_TO_LOCK:
+    "There is nothing to lock: this CCA is already working on a later year.",
   TRANSCRIPT_FREEZE_FAILED:
     "The member list could not be frozen, so the head change was not made. Try again.",
   SEM2_START_OUTSIDE_YEAR:
