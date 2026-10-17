@@ -3,9 +3,9 @@ import { yearToParam } from "~/lib/transcript/assemble";
 import { type YearChoice } from "~/lib/transcript/pageState";
 
 /**
- * The academic-year pills above a transcript, the draft or the "not yet
- * available" page. Nothing is drawn without choices. The labels say what each
- * year is ("AY2026/27 (draft)"), not just its name.
+ * The academic-year pills above a transcript or the "not yet available"
+ * page. Nothing is drawn without choices. The labels say what each year is
+ * ("AY2026/27 (not yet available)"), not just its name.
  */
 export function YearSwitcher({
   choices,

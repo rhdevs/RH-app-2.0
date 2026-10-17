@@ -4,11 +4,7 @@
  * no exclamation marks).
  */
 
-import {
-  normaliseYearStatus,
-  type YearAction,
-  type YearStatus,
-} from "./lifecycle";
+import { normaliseYearStatus, type YearStatus } from "./lifecycle";
 
 export type PeriodStatus = YearStatus;
 
@@ -19,33 +15,24 @@ export function normaliseStatus(
   return normaliseYearStatus(status);
 }
 
+/** "Collecting", or "Open" once transcripts are open. */
 export function statusLabel(status: string | null | undefined): string {
-  const s = normaliseStatus(status);
-  return s === "published"
-    ? "Published"
-    : s === "closed"
-      ? "Closed"
-      : "Collecting";
+  return normaliseStatus(status) === "published" ? "Open" : "Collecting";
 }
 
 /**
- * Whether the manager screens (awards, JCRC page) may write. Only a published
- * year is locked; a closed year is where the JCRC fixes data.
+ * Whether the manager screens (awards, JCRC page) may write. Only an open
+ * (published) year is locked; per-resident corrections handle it from then on.
  */
 export function isWritable(status: string | null | undefined): boolean {
   return normaliseStatus(status) !== "published";
 }
 
 export const WRITES_LOCKED_NOTE =
-  "This academic year is published, so changes are locked. Reopen it to make changes.";
+  "Transcripts for this academic year are open, so changes are locked. Fix individual residents under Resident corrections.";
 
-/** The button for each year action. */
-export const ACTION_LABEL: Record<YearAction, string> = {
-  close: "Close year",
-  publish: "Publish",
-  reopen: "Reopen for review",
-  backToCollecting: "Back to collecting",
-};
+/** The one button of the year. */
+export const OPEN_LABEL = "Open transcripts";
 
 /**
  * The years to offer in the picker: every existing period plus the current
@@ -63,139 +50,63 @@ export function yearOptions(
 const plural = (n: number, one: string, many: string) =>
   `${n} ${n === 1 ? one : many}`;
 
-/** "Closed AY2026/27. 12 CCAs frozen, 77 were frozen already." */
-/** "3 members could not be matched", for a freeze's unresolved roster rows. */
+/** "3 members could not be matched", for a lock's unmatched roster rows. */
 export const unresolvedNote = (count: number) =>
   `${plural(count, "member", "members")} could not be matched`;
 
-/** A few words for why one CCA's freeze failed, from its error code. */
-const FREEZE_FAILURE_TEXT: Record<string, string> = {
-  PERIOD_PUBLISHED: "year published",
-  FREEZE_RACE: "list changed while freezing",
+/** A few words for why one CCA's member list could not be saved. */
+const LOCK_FAILURE_TEXT: Record<string, string> = {
+  PERIOD_PUBLISHED: "year already open",
+  FREEZE_RACE: "list changed while saving",
   P2034: "busy, try again",
 };
-export const freezeFailureText = (code: string) =>
-  FREEZE_FAILURE_TEXT[code] ?? code;
+export const lockFailureText = (code: string) =>
+  LOCK_FAILURE_TEXT[code] ?? code;
 
-/** "Soccer (year published), Chess Club (UNKNOWN)": names with a short reason. */
-function failedList(result: {
-  failedNames?: readonly string[];
-  failures?: ReadonlyArray<{ name: string; code: string }>;
-}): string {
-  if (result.failures?.length) {
-    return result.failures
-      .map((f) => `${f.name} (${freezeFailureText(f.code)})`)
-      .join(", ");
-  }
-  return (result.failedNames ?? []).join(", ");
-}
+/** The confirmation of Open transcripts, in plain words. */
+export const OPEN_CONFIRMATION = (academicYear: string) =>
+  `Open transcripts for ${academicYear}? Every CCA's member list will be saved as it is now, all residents will be able to see and download their transcripts, and CCA heads will no longer be able to edit. After this, only JCRC and admin can fix individual residents.`;
 
-/** " 2 members could not be matched." after a summary, or nothing. */
-const unresolvedTail = (unresolved: number | undefined) =>
-  unresolved ? ` ${unresolvedNote(unresolved)}.` : "";
-
-export function closeSummary(
+/** The line after Open transcripts ran: opened, or what to fix first. */
+export function openSummary(
   academicYear: string,
   result: {
-    frozenNow: number;
-    alreadyFrozen: number;
-    skipped?: number;
-    failed?: number;
-    failedNames?: readonly string[];
-    failures?: ReadonlyArray<{ name: string; code: string }>;
-    unresolved?: number;
-    closed?: boolean;
+    opened: boolean;
+    lockedNow: number;
+    alreadyLocked: number;
+    failures: ReadonlyArray<{ name: string; code: string }>;
+    unresolved: number;
   },
 ): string {
-  if (result.closed === false) {
-    const list = failedList(result);
-    const names = list ? `: ${list}` : "";
-    return `${academicYear} is not closed yet. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen, ${plural(result.failed ?? 0, "CCA", "CCAs")} could not be frozen${names}. Press Close year again to finish them.${unresolvedTail(result.unresolved)}`;
+  const unmatched = result.unresolved
+    ? ` ${unresolvedNote(result.unresolved)}.`
+    : "";
+  if (!result.opened) {
+    const list = result.failures
+      .map((f) => `${f.name} (${lockFailureText(f.code)})`)
+      .join(", ");
+    return `Transcripts for ${academicYear} are not open yet. ${plural(result.failures.length, "CCA", "CCAs")} could not be saved: ${list}. Press Open transcripts again to finish.${unmatched}`;
   }
-  const skipped = result.skipped ? `, ${result.skipped} left as they were` : "";
-  return `${academicYear} closed. ${plural(result.frozenNow, "CCA", "CCAs")} frozen now, ${result.alreadyFrozen} already frozen${skipped}.${unresolvedTail(result.unresolved)}`;
+  return `Transcripts for ${academicYear} are open. ${plural(result.lockedNow + result.alreadyLocked, "CCA member list", "CCA member lists")} saved.${unmatched}`;
 }
 
-/** The sentence for CCAs that block Publish: also shown inline on the panel. */
-export const notFrozenText = (academicYear: string, names: readonly string[]) =>
-  `Some CCAs are not frozen for ${academicYear}: ${names.join(", ")}. Use Freeze remaining CCAs, then publish.`;
+/** From 1 April: time to open this year's transcripts. */
+export const OPEN_REMINDER = (academicYear: string) =>
+  `Transcripts for ${academicYear} are not open yet. Open them at the end of the year, before 1 August.`;
 
-/** Names shown in the Freeze remaining confirmation before "and more". */
-export const FREEZE_REMAINING_NAMES_SHOWN = 5;
-
-/** Show "Freeze remaining CCAs (N)": the year is closed and N CCAs are unfrozen. */
-export const showFreezeRemaining = (
-  status: string | null | undefined,
-  unfrozenCount: number,
-): boolean => normaliseStatus(status) === "closed" && unfrozenCount > 0;
-
-export const FREEZE_REMAINING_LABEL = (count: number) =>
-  `Freeze remaining CCAs (${count})`;
-
-export function freezeRemainingConfirmation(
-  academicYear: string,
-  names: readonly string[],
-): string {
-  const shown = names.slice(0, FREEZE_REMAINING_NAMES_SHOWN).join(", ");
-  const more = names.length > FREEZE_REMAINING_NAMES_SHOWN ? ", and more" : "";
-  return `This freezes the member lists of ${names.length} ${names.length === 1 ? "CCA" : "CCAs"} for ${academicYear}: ${shown}${more}. Their current members will be used.`;
-}
-
-/** The inline line after Freeze remaining CCAs ran. */
-export function freezeRemainingSummary(result: {
-  frozenNow: number;
-  skipped?: number;
-  failed?: number;
-  failedNames?: readonly string[];
-  failures?: ReadonlyArray<{ name: string; code: string }>;
-  unresolved?: number;
-}): string {
-  const base = `${result.frozenNow} ${result.frozenNow === 1 ? "CCA" : "CCAs"} frozen`;
-  if (result.failed) {
-    return `${base}, ${result.failed} could not be frozen: ${failedList(result)}. Press Freeze remaining CCAs again to finish them.${unresolvedTail(result.unresolved)}`;
-  }
-  return `${base}. You can publish now.${unresolvedTail(result.unresolved)}`;
-}
-
-export const CLOSE_CONFIRMATION = (academicYear: string, unfrozen: number) =>
-  `This freezes the member list of ${plural(unfrozen, "CCA", "CCAs")} that ${unfrozen === 1 ? "is" : "are"} not frozen yet, and opens ${academicYear} for review. Residents will see a draft.`;
-
-export const PUBLISH_CONFIRMATION = (academicYear: string) =>
-  `This lets residents download their ${academicYear} transcripts. Edits stop until you reopen the year for review.`;
-
-export const REOPEN_CONFIRMATION =
-  "This takes the published transcripts back to review. Residents see a draft again and you can fix data. Frozen member lists stay frozen.";
-
-export const BACK_TO_COLLECTING_CONFIRMATION =
-  "This puts the year back to collecting. Frozen member lists stay frozen.";
-
-export const UNFREEZE_WARNING = (academicYear: string) =>
-  `The CCA's current member list will be used for ${academicYear} until it is frozen again.`;
-
-/** The 1 June warning: "3 CCAs are not frozen for AY2026/27 yet. ..." */
-export const UNFROZEN_BANNER = (count: number, academicYear: string) =>
-  `${count} ${count === 1 ? "CCA is" : "CCAs are"} not frozen for ${academicYear} yet. Close the year before memberships change.`;
+/** From 1 August: the previous year's transcripts were never opened. */
+export const PREVIOUS_YEAR_WARNING = (academicYear: string) =>
+  `Transcripts for ${academicYear} are still not open. Open them now, before CCAs change their member lists in the August application period.`;
 
 /** The API's error codes, in plain words for an inline message. */
 const ERROR_TEXT: Record<string, string> = {
-  SEM2_START_REQUIRED: "Set the semester 2 start date before closing the year.",
   YEAR_NOT_STARTED:
-    "This academic year has not started yet, so it cannot be closed.",
-  NOT_COLLECTING: "This academic year is not collecting.",
-  NOT_CLOSED: "This academic year is not closed.",
-  NOT_FROZEN: "That member list is not frozen.",
-  YEAR_CLOSED: "This year is closed. Ask the JCRC for changes.",
-  CCA_YEAR_FROZEN: "This member list is frozen. Ask the JCRC for changes.",
+    "This academic year has not started yet, so its transcripts cannot be opened.",
   NOT_THE_TERM_YEAR:
-    "Heads can only change the year their CCA is working on. Ask the JCRC for changes.",
-  NOTHING_TO_LOCK:
-    "There is nothing to lock: this CCA is already working on a later year.",
-  TRANSCRIPT_FREEZE_FAILED:
-    "The member list could not be frozen, so the head change was not made. Try again.",
+    "Heads can only change the current academic year. Other years are read-only; ask the JCRC for changes.",
   SEM2_START_OUTSIDE_YEAR:
     "The semester 2 start date must fall inside the academic year.",
-  ALREADY_PUBLISHED: "This academic year is already published.",
-  NOT_PUBLISHED: "This academic year is not published.",
+  ALREADY_PUBLISHED: "Transcripts for this academic year are already open.",
   PERIOD_NOT_FOUND:
     "Save a semester 2 start date first to set up this academic year.",
   PERIOD_PUBLISHED: WRITES_LOCKED_NOTE,
@@ -291,11 +202,6 @@ export function errorText(message: string | null | undefined): string {
   if (code === "UPLOAD_PARTIAL") {
     // "UPLOAD_PARTIAL:<rows written>", from an import that stopped part way.
     return `The upload stopped part way: ${message.split(":")[1] ?? "0"} imported. Undo it from History, fix the file, and upload again.`;
-  }
-  if (code === "CCAS_NOT_FROZEN") {
-    // "CCAS_NOT_FROZEN:<academic year>:<names>", from Publish.
-    const [, year = "", ...names] = message.split(":");
-    return notFrozenText(year, [names.join(":")]);
   }
   const known = ERROR_TEXT[message] ?? ERROR_TEXT[code];
   if (known) return known;

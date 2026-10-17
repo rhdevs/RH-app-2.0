@@ -23,9 +23,9 @@ export function parseAyParam(
 /** One entry in the year switcher. */
 export interface YearChoice {
   academicYear: string;
-  /** published: the transcript; draft: the closed-year draft; unavailable: not yet. */
-  kind: "published" | "draft" | "unavailable";
-  /** "AY2026/27", "AY2026/27 (draft)" or "AY2026/27 (not yet available)". */
+  /** published: the transcript; unavailable: not open yet. */
+  kind: "published" | "unavailable";
+  /** "AY2026/27" or "AY2026/27 (not yet available)". */
   label: string;
 }
 
@@ -46,47 +46,42 @@ export const choiceLabel = (
   academicYear: string,
   kind: YearChoice["kind"],
 ): string =>
-  kind === "draft"
-    ? `${academicYear} (draft)`
-    : kind === "unavailable"
-      ? `${academicYear} (not yet available)`
-      : academicYear;
+  kind === "unavailable" ? `${academicYear} (not yet available)` : academicYear;
 
 /**
  * What /transcript should do.
  *
- * The switcher offers every published year (and any closed year, as a draft),
- * sorted, plus the current academic year when it is neither (it reads "not yet
- * available"). It shows whenever the resident has a published year, or the
- * current year is closed; with nothing published and the current year still
- * collecting there is only the calm "not available" page.
+ * The switcher offers every published (open) year, sorted, plus the current
+ * academic year when it is not open yet (it reads "not yet available"). It
+ * shows whenever the resident has a published year; with nothing published
+ * there is only the calm "not available" page.
  *
  * A requested year is honoured when it is one of the choices (so the current
  * year is shown as it is, never swapped for another). Anything else falls back
- * to the latest published year, else the current year's draft, never an error.
+ * to the latest published year, never an error.
  */
 export function selectTranscriptState(input: {
   authenticated: boolean;
-  /** Years the resident can open: published ones, and closed ones as drafts. */
-  viewable: ReadonlyArray<{ academicYear: string; draft: boolean }>;
+  /** The published (open) years. */
+  published: readonly string[];
   requested: string | null;
   currentAcademicYear: string;
 }): TranscriptPageState {
   if (!input.authenticated) return { kind: "unauthenticated" };
-  const choices: YearChoice[] = [...input.viewable]
-    .sort((a, b) => a.academicYear.localeCompare(b.academicYear))
-    .map((y) => {
-      const kind = y.draft ? ("draft" as const) : ("published" as const);
-      return {
-        academicYear: y.academicYear,
-        kind,
-        label: choiceLabel(y.academicYear, kind),
-      };
-    });
-  const current = choices.find(
-    (c) => c.academicYear === input.currentAcademicYear,
-  );
-  if (!current) {
+  const choices: YearChoice[] = [...input.published]
+    .sort((a, b) => a.localeCompare(b))
+    .map((academicYear) => ({
+      academicYear,
+      kind: "published" as const,
+      label: choiceLabel(academicYear, "published"),
+    }));
+  if (choices.length === 0) {
+    return {
+      kind: "none_published",
+      currentAcademicYear: input.currentAcademicYear,
+    };
+  }
+  if (!choices.some((c) => c.academicYear === input.currentAcademicYear)) {
     choices.push({
       academicYear: input.currentAcademicYear,
       kind: "unavailable",
@@ -94,20 +89,11 @@ export function selectTranscriptState(input: {
     });
   }
   const published = choices.filter((c) => c.kind === "published");
-  const currentIsDraft = current?.kind === "draft";
-
-  if (published.length === 0 && !currentIsDraft) {
-    return {
-      kind: "none_published",
-      currentAcademicYear: input.currentAcademicYear,
-    };
-  }
   const requested =
     input.requested === null
       ? undefined
       : choices.find((c) => c.academicYear === input.requested);
-  const chosen =
-    requested ?? published[published.length - 1] ?? current ?? choices[0]!;
+  const chosen = requested ?? published[published.length - 1]!;
   return {
     kind: "show",
     academicYear: chosen.academicYear,

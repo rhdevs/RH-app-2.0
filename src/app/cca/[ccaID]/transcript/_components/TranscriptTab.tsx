@@ -8,25 +8,12 @@ import {
   SectionCard,
   YearSelect,
 } from "~/app/admin/transcripts/_components/Bits";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "~/components/ui/alert-dialog";
-import { Button } from "~/components/ui/button";
 import { currentAcademicYear } from "~/lib/transcript/academicYear";
 import { errorText } from "~/lib/transcript/adminView";
 import {
   DEFAULTS_NOTE,
-  LOCK_CONFIRMATION,
   NO_DESCRIPTION_NOTE,
   ROSTER_HELPER,
-  lockButtonLabel,
   rosterNotice,
 } from "~/lib/transcript/headView";
 import {
@@ -39,7 +26,6 @@ import { api } from "~/trpc/react";
 import ActivitiesSection from "./ActivitiesSection";
 import { RosterEditor, type RosterRowData } from "./RosterEditor";
 import VolunteerSection from "./VolunteerSection";
-import { useReturnFocus } from "~/lib/transcript/useReturnFocus";
 
 export interface TranscriptNotesProps {
   /** Why the roster is read-only or empty, or null. */
@@ -80,92 +66,24 @@ export function TranscriptNotes(p: TranscriptNotesProps) {
   );
 }
 
-/** "Lock member list for AY2026/27", with the confirmation the head must accept. */
-export function LockRoster({
-  academicYear,
-  ccaID,
-  onLocked,
-}: {
-  academicYear: string;
-  ccaID: number;
-  onLocked: () => void;
-}) {
-  const returnFocus = useReturnFocus();
-  const lock = api.transcriptManage.roster.lock.useMutation({
-    onSuccess: () => onLocked(),
-  });
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button type="button" variant="outline" size="sm">
-          {lockButtonLabel(academicYear)}
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent {...returnFocus}>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{lockButtonLabel(academicYear)}?</AlertDialogTitle>
-          <AlertDialogDescription>
-            {LOCK_CONFIRMATION(academicYear)}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <ErrorLine
-          message={lock.error ? errorText(lock.error.message) : null}
-        />
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={lock.isPending}>
-            Cancel
-          </AlertDialogCancel>
-          <Button
-            type="button"
-            disabled={lock.isPending}
-            onClick={() => lock.mutate({ ccaID })}
-          >
-            {lock.isPending ? "Locking" : "Lock member list"}
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
-/**
- * Show "Lock member list" only for the year a lock would actually freeze: the
- * CCA's working year, live and editable, and not a year later than today's (a
- * future year has nothing to lock yet).
- */
-export function showLock(p: {
-  mode: string;
-  readOnly: boolean;
-  year: string;
-  termAcademicYear: string;
-  currentAcademicYear: string | null;
-}): boolean {
-  return (
-    p.mode === "live" &&
-    !p.readOnly &&
-    p.year === p.termAcademicYear &&
-    p.currentAcademicYear !== null &&
-    p.termAcademicYear <= p.currentAcademicYear
-  );
-}
+/** The deadline line on the tab: heads finish the year before it opens. */
+export const OPEN_DEADLINE_NOTE =
+  "Finish this year's records before the JCRC opens transcripts at the end of the year.";
 
 /**
  * The Transcript tab of the CCA dashboard: a member roster editor and, for a
  * volunteering CCA only, the volunteer hours section. Every call is checked on
  * the server (head of THIS CCA, or a manager); this page only draws. The year
- * defaults to the one this CCA is working on (its oldest unfrozen year).
+ * defaults to the current academic year; other years are read-only for heads.
  */
 export default function TranscriptTab({ ccaID }: { ccaID: number }) {
-  const utils = api.useUtils();
-  const term = api.transcriptManage.roster.term.useQuery(
-    { ccaID },
-    { retry: false },
-  );
   const [picked, setPicked] = useState<string | null>(null);
   // Unsaved roster edits: warned about on reload, and before the year changes.
   const [rosterUnsaved, setRosterUnsaved] = useState(0);
   const confirmLeave = useUnsavedChangesGuard(rosterUnsaved > 0);
-  const year = picked ?? term.data?.termAcademicYear ?? "";
+  // The current academic year by default: the one heads can edit. Other
+  // years can be picked and are read-only for heads.
+  const year = picked ?? currentAcademicYear(new Date());
   const years = [
     ...academicYearsUpTo(nextAcademicYear(currentAcademicYear(new Date()))),
   ].reverse();
@@ -176,14 +94,14 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
   );
   const profile = api.cca.getProfile.useQuery({ ccaID }, { retry: false });
 
-  if (term.error || roster.error) {
+  if (roster.error) {
     return (
       <SectionCard title="Transcript">
-        <ErrorLine message={errorText((term.error ?? roster.error)?.message)} />
+        <ErrorLine message={errorText(roster.error.message)} />
       </SectionCard>
     );
   }
-  if (term.isPending || roster.isPending || !roster.data) {
+  if (roster.isPending || !roster.data) {
     return (
       <div
         className="h-64 animate-pulse rounded-xl bg-gray-200"
@@ -203,15 +121,9 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
     academicYear: year,
     mode: data.mode,
     refusal: data.editRefusal,
-    freezeReason: data.freeze?.reason ?? null,
+    // Locks only come from Open transcripts, which the refusal already says.
+    freezeReason: null,
     frozenOn: data.freeze ? formatSgDate(data.freeze.frozenAt) : null,
-  });
-  const canLock = showLock({
-    mode: data.mode,
-    readOnly,
-    year,
-    termAcademicYear: data.termAcademicYear,
-    currentAcademicYear: term.data?.currentAcademicYear ?? null,
   });
 
   return (
@@ -230,17 +142,8 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
               if (next !== year && confirmLeave()) setPicked(next);
             }}
           />
-          {canLock && (
-            <LockRoster
-              academicYear={year}
-              ccaID={ccaID}
-              onLocked={() => {
-                void utils.transcriptManage.roster.list.invalidate();
-                void utils.transcriptManage.roster.term.invalidate();
-              }}
-            />
-          )}
         </div>
+        <p className="mb-2 text-sm text-gray-700">{OPEN_DEADLINE_NOTE}</p>
         <TranscriptNotes
           stateNote={stateNote}
           showDefaultsNote={

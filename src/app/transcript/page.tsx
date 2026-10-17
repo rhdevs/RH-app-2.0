@@ -43,10 +43,10 @@ export default async function TranscriptPage({
   const session = await auth();
   const now = currentAcademicYear(new Date());
 
-  let viewable: Array<{ academicYear: string; draft: boolean }> = [];
+  let published: string[] = [];
   if (session?.user) {
     try {
-      viewable = await api.transcript.mine.years();
+      published = await api.transcript.mine.years();
     } catch (error) {
       if (error instanceof TRPCError && error.code === "UNAUTHORIZED") {
         redirect("/login");
@@ -62,7 +62,7 @@ export default async function TranscriptPage({
 
   const state = selectTranscriptState({
     authenticated: Boolean(session?.user),
-    viewable,
+    published,
     requested: parseAyParam(searchParams.ay),
     currentAcademicYear: now,
   });
@@ -86,7 +86,7 @@ export default async function TranscriptPage({
     );
   }
 
-  // The year can be reopened between listing it and fetching it.
+  // Defensive: the year could change between listing it and fetching it.
   const result = await api.transcript.mine
     .get({ academicYear: state.academicYear })
     .catch((error: unknown) => {
@@ -105,14 +105,11 @@ export default async function TranscriptPage({
     );
   }
 
-  // A draft (the year is closed for review) carries no download-by banner.
-  const banner = result.draft
-    ? null
-    : downloadByBanner({
-        academicYear: state.academicYear,
-        downloadBy: result.downloadBy,
-        todaySg: instantToSgDate(new Date()),
-      });
+  const banner = downloadByBanner({
+    academicYear: state.academicYear,
+    downloadBy: result.downloadBy,
+    todaySg: instantToSgDate(new Date()),
+  });
 
   return (
     <TranscriptFrame

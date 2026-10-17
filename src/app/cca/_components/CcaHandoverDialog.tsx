@@ -29,37 +29,16 @@ import type { RosterEntry } from "~/server/api/services/ccaRoster";
  * from here (only an admin/JCRC can re-grant).
  */
 
-export type HandoverWarningState =
-  | { kind: "loading" }
-  | { kind: "none" }
-  | { kind: "unknown" }
-  | { kind: "freezes"; year: string };
-
 /**
- * The transcript note in the handover dialog. It names a year only when the
- * handover will really freeze that year's member list; when that cannot be
- * worked out, it still asks the head to finish the records first.
+ * The transcript reminder in the handover dialog: the outgoing heads bring this
+ * year's records up to date; the new heads can carry on until transcripts open.
  */
-export function HandoverTranscriptWarning({
-  ccaID,
-  state,
-}: {
-  ccaID: number;
-  state: HandoverWarningState;
-}) {
-  if (state.kind === "loading" || state.kind === "none") return null;
+export function HandoverTranscriptReminder({ ccaID }: { ccaID: number }) {
   return (
     <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-      {state.kind === "freezes" ? (
-        <>
-          Before you hand over, finish this year&apos;s transcript records for
-          your members (roles, contributions, volunteer hours). Handing over
-          freezes the member list for {state.year}, and after that only the JCRC
-          can change it.
-        </>
-      ) : (
-        <>Finish this year&apos;s transcript records before handing over.</>
-      )}{" "}
+      Before you hand over, make sure this year&apos;s transcript records (roles,
+      activities, contributions and volunteer hours) are up to date. The new
+      heads can continue them until the JCRC opens transcripts.{" "}
       <Link href={`/cca/${ccaID}/transcript`} className="font-medium underline">
         Open transcript records
       </Link>
@@ -94,11 +73,6 @@ export default function CcaHandoverDialog({
   const utils = api.useUtils();
 
   const [selected, setSelected] = useState<ResolvedHead[]>([]);
-  // Which transcript year a handover freezes (the year this CCA is working on).
-  const term = api.transcriptManage.roster.term.useQuery(
-    { ccaID },
-    { enabled: open, retry: false },
-  );
 
   const handover = api.cca.handoverHeads.useMutation({
     onSuccess: async (res) => {
@@ -157,19 +131,7 @@ export default function CcaHandoverDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          <HandoverTranscriptWarning
-            ccaID={ccaID}
-            state={
-              term.error
-                ? { kind: "unknown" }
-                : term.data
-                  ? term.data.willFreezeOnHandover &&
-                    term.data.handoverFreezeYear
-                    ? { kind: "freezes", year: term.data.handoverFreezeYear }
-                    : { kind: "none" }
-                  : { kind: "loading" }
-            }
-          />
+          <HandoverTranscriptReminder ccaID={ccaID} />
           <HeadCandidateInput
             ccaID={ccaID}
             confirmLabel="Add"
@@ -241,9 +203,9 @@ export default function CcaHandoverDialog({
 
           {myUserID && selected.length > 0 && !iAmKept && (
             <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              You&rsquo;re not on the new list, so you&rsquo;ll stop being a
-              head and lose access to this page. Only an admin or the JCRC can
-              add you back.
+              You&rsquo;re not on the new list, so you&rsquo;ll stop being a head
+              and lose access to this page. Only an admin or the JCRC can add you
+              back.
             </p>
           )}
 
