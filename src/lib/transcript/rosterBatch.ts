@@ -68,7 +68,7 @@ export function applyEdit(
   const next = { ...current.draft, ...patch };
   const fitted =
     patch.duration !== undefined
-      ? fitRolePeriod(next, row.defaultDuration)
+      ? fitRolePeriod(next)
       : { draft: next, note: null };
   return put(state, row, {
     ...current,

@@ -50,6 +50,23 @@ describe("yearOptions", () => {
   it("offers the current year when there are no periods", () => {
     expect(yearOptions([], "AY2026/27")).toEqual(["AY2026/27"]);
   });
+
+  it("lists a previous year that has no period row yet, so it can be opened (F27)", () => {
+    // October 2027: AY2026/27 was never touched (no row) but must be offered.
+    expect(yearOptions([], "AY2027/28")).toEqual(["AY2027/28", "AY2026/27"]);
+    expect(yearOptions([{ academicYear: "AY2027/28" }], "AY2028/29")).toEqual([
+      "AY2028/29",
+      "AY2027/28",
+      "AY2026/27",
+    ]);
+  });
+
+  it("starts at the first year and keeps an older existing period", () => {
+    expect(yearOptions([{ academicYear: "AY2025/26" }], "AY2026/27")).toEqual([
+      "AY2026/27",
+      "AY2025/26",
+    ]);
+  });
 });
 
 describe("wording", () => {
@@ -156,6 +173,18 @@ describe("errorText", () => {
     ]) {
       expect(errorText(gone)).toBe("Something went wrong. Try again.");
     }
+  });
+
+  it("explains the year-range refusals", () => {
+    expect(errorText("YEAR_BEFORE_START")).toMatch(
+      /Transcripts start at AY2026\/27/,
+    );
+    expect(errorText("YEAR_NOT_OPEN")).toBe(
+      "Transcripts for this year are not open yet.",
+    );
+    expect(errorText("YEAR_NOT_IN_REVIEW")).toBe(
+      "Something went wrong. Try again.",
+    );
   });
 
   it("never shows a bare code or a long dump", () => {

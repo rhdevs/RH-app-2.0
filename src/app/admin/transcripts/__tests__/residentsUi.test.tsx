@@ -116,9 +116,7 @@ const form = (over: Partial<MembershipFormViewProps> = {}) => {
         title="Soccer (MALE)"
         draft={saved}
         saved={saved}
-        defaultDuration="full"
         defaultRoleLabel={null}
-        defaultRoleDuration={null}
         canReset
         editable
         onDraft={noop}

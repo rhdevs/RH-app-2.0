@@ -29,7 +29,6 @@ import {
   listPublishedYears,
   openTranscripts,
   upsertDownloadBy,
-  upsertSem2Start,
 } from "~/server/api/services/transcript/periods";
 import {
   createTRPCRouter,
@@ -87,16 +86,6 @@ export const transcriptRouter = createTRPCRouter({
         })),
       };
     }),
-
-    setSem2Start: managerProcedure
-      .input(z.object({ academicYear, sem2Start: isoDate.nullable() }))
-      .mutation(({ ctx, input }) =>
-        upsertSem2Start(
-          ctx.db,
-          input.academicYear,
-          input.sem2Start ? sgDateToInstant(input.sem2Start) : null,
-        ),
-      ),
 
     setDownloadBy: managerProcedure
       .input(z.object({ academicYear, downloadBy: isoDate.nullable() }))

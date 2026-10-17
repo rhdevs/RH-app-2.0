@@ -18,7 +18,6 @@ const row = (over: Partial<RosterRowData> = {}): RosterRowData => ({
   duration: null,
   defaultRoleLabel: "Head",
   roleLabel: null,
-  defaultRoleDuration: "full",
   roleDuration: null,
   extraContribution: null,
   ...over,
@@ -51,29 +50,29 @@ const roleOptions = (html: string) => {
 };
 
 describe("role period select in a roster row", () => {
-  it("offers all options for a full-year member", () => {
+  it("offers all options for a full-year member, with no Default entry", () => {
     const options = roleOptions(render(row()));
 
-    expect(options).toContain("Default (Full year)");
+    expect(options).not.toContain("Default (");
     expect(options).toContain(">Full year<");
     expect(options).toContain("Semester 1 only");
     expect(options).toContain("Semester 2 only");
   });
 
-  it("offers only the semester 2 equivalents for a semester 2 member", () => {
+  it("offers only that semester for a semester 2 member", () => {
     const sem2 = row({ duration: "sem2" });
     const options = roleOptions(render(sem2));
 
-    expect(options).toContain("Default (Semester 2 only)");
     expect(options).toContain(">Semester 2 only<");
+    expect(options).toContain('value="sem2"');
     expect(options).not.toContain("Semester 1 only");
     expect(options).not.toContain(">Full year<");
   });
 
-  it("follows the default membership when no override is chosen", () => {
-    const options = roleOptions(render(row({ defaultDuration: "sem1" })));
+  it("offers only that semester for a semester 1 member", () => {
+    const options = roleOptions(render(row({ duration: "sem1" })));
 
-    expect(options).toContain("Default (Semester 1 only)");
+    expect(options).toContain(">Semester 1 only<");
     expect(options).not.toContain("Semester 2 only");
   });
 

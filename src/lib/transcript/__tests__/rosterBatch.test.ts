@@ -62,7 +62,7 @@ describe("roster batch state", () => {
   });
 
   it("pulls a role period back inside a narrower membership and says so", () => {
-    const r = row("a", { roleLabel: "Head", roleDuration: "full" });
+    const r = row("a", { roleLabel: "Head", roleDuration: "sem1" });
     const s = applyEdit(EMPTY_BATCH, r, { duration: "sem2" });
 
     expect(draftFor(s, r).roleDuration).toBe("sem2");

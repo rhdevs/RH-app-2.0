@@ -29,7 +29,6 @@ const member = (over: Partial<RosterRowData> = {}): RosterRowData => ({
   duration: null,
   defaultRoleLabel: null,
   roleLabel: null,
-  defaultRoleDuration: null,
   roleDuration: null,
   extraContribution: null,
   ...over,
@@ -71,11 +70,14 @@ const disabledTags = (html: string, tag: string) =>
 /* ---- roster editor ------------------------------------------------------ */
 
 describe("roster row", () => {
-  it("shows the name, the computed default and the blank-role placeholder", () => {
-    const html = renderRow({}, member({ defaultDuration: "sem2" }));
+  it("shows the name, a full-year default with no Default entry, and the blank-role placeholder", () => {
+    const html = renderRow({}, member());
 
     expect(html).toContain("Seed Twelve");
-    expect(html).toContain("Default (Semester 2 only)");
+    expect(html).toContain(">Full year<");
+    expect(html).toContain("Semester 1 only");
+    expect(html).toContain("Semester 2 only");
+    expect(html).not.toContain("Default (");
     expect(html).toContain("Leave blank for member");
   });
 
@@ -86,16 +88,15 @@ describe("roster row", () => {
     expect(renderRow({}, typed)).toContain("Role period for");
   });
 
-  it("shows the role period, with its default, for a current head", () => {
+  it("shows the role period, with the full-year choice first, for a current head", () => {
     const head = member({
       isHead: true,
       defaultRoleLabel: "Head",
-      defaultRoleDuration: "sem2",
     });
     const html = renderRow({}, head);
 
     expect(html).toContain("Role period for");
-    expect(html).toContain("Default (Semester 2 only)");
+    expect(html).not.toContain("Default (");
     expect(html).toContain("Default: Head");
   });
 
@@ -195,7 +196,6 @@ describe("notes above the roster", () => {
     renderToStaticMarkup(
       <TranscriptNotes
         stateNote={null}
-        showDefaultsNote={false}
         descriptionEmpty={false}
         detailsHref="/cca/9005/details"
         {...over}
@@ -205,6 +205,7 @@ describe("notes above the roster", () => {
   it("says nothing when the year is collecting and set up", () => {
     expect(notes()).not.toContain("published");
     expect(notes()).not.toContain("Default durations");
+    expect(notes()).not.toContain("semester 2 start");
     expect(notes()).not.toContain("no description");
   });
 
@@ -214,13 +215,7 @@ describe("notes above the roster", () => {
         stateNote: rosterNotice({ ...NOTICE, refusal: "PERIOD_PUBLISHED" }),
       }),
     ).toContain(
-      "Transcripts for AY2026/27 are published. Editing is closed. Ask the JCRC to reopen it.",
-    );
-  });
-
-  it("explains default durations while semester 2 start is unset", () => {
-    expect(notes({ showDefaultsNote: true })).toContain(
-      "Default durations assume the full year until the JCRC sets the semester 2 start date.",
+      "Transcripts for AY2026/27 are open. Editing is closed. Ask the JCRC to fix individual residents.",
     );
   });
 
@@ -237,7 +232,6 @@ describe("notes above the roster", () => {
   it("has no exclamation marks and no 'successfully'", () => {
     const all = notes({
       stateNote: rosterNotice({ ...NOTICE, refusal: "PERIOD_PUBLISHED" }),
-      showDefaultsNote: true,
       descriptionEmpty: true,
     });
     expect(all).not.toContain("!");

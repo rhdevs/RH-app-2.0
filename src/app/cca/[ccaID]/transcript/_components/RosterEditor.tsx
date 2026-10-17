@@ -17,6 +17,7 @@ import {
   durationOptions,
   effectiveMembership,
   roleDurationOptions,
+  roleDurationValue,
   type DurationOption,
   isDirty,
   rowProblem,
@@ -55,7 +56,6 @@ export interface RosterRowData {
   duration: string | null;
   defaultRoleLabel: string | null;
   roleLabel: string | null;
-  defaultRoleDuration: Duration | null;
   roleDuration: string | null;
   extraContribution: string | null;
 }
@@ -195,7 +195,7 @@ export function RosterRowView(p: RosterRowViewProps) {
             id={`duration-${key}`}
             label={`Duration for ${name}`}
             value={draft.duration}
-            options={durationOptions(row.defaultDuration)}
+            options={durationOptions()}
             disabled={p.readOnly}
             onChange={(v) => p.onDraft({ duration: v })}
           />
@@ -231,11 +231,11 @@ export function RosterRowView(p: RosterRowViewProps) {
             <DurationSelect
               id={`roleDuration-${key}`}
               label={`Role period for ${name}`}
-              value={draft.roleDuration}
-              options={roleDurationOptions(
-                effectiveMembership(draft.duration, row.defaultDuration),
-                row.defaultRoleDuration,
+              value={roleDurationValue(
+                effectiveMembership(draft.duration),
+                draft.roleDuration,
               )}
+              options={roleDurationOptions(effectiveMembership(draft.duration))}
               disabled={p.readOnly}
               onChange={(v) => p.onDraft({ roleDuration: v })}
             />
@@ -355,7 +355,7 @@ export function RosterCardView(p: RosterRowViewProps) {
           }
           className={SELECT}
         >
-          {durationOptions(row.defaultDuration).map((o) => (
+          {durationOptions().map((o) => (
             <option key={o.value || "default"} value={o.value}>
               {o.label}
             </option>
@@ -395,21 +395,23 @@ export function RosterCardView(p: RosterRowViewProps) {
           </label>
           <select
             id={`roleDuration-${key}`}
-            value={draft.roleDuration}
+            value={roleDurationValue(
+              effectiveMembership(draft.duration),
+              draft.roleDuration,
+            )}
             disabled={p.readOnly}
             onChange={(e) =>
               p.onDraft({ roleDuration: e.target.value as DurationChoice })
             }
             className={SELECT}
           >
-            {roleDurationOptions(
-              effectiveMembership(draft.duration, row.defaultDuration),
-              row.defaultRoleDuration,
-            ).map((o) => (
-              <option key={o.value || "default"} value={o.value}>
-                {o.label}
-              </option>
-            ))}
+            {roleDurationOptions(effectiveMembership(draft.duration)).map(
+              (o) => (
+                <option key={o.value || "default"} value={o.value}>
+                  {o.label}
+                </option>
+              ),
+            )}
           </select>
         </div>
       )}

@@ -29,9 +29,6 @@ const facts = (over: Partial<PanelFacts> = {}): PanelFacts => ({
 describe("the status line", () => {
   it("names the state in words", () => {
     expect(statusLine(facts())).toBe("Published");
-    expect(statusLine(facts({ status: "closed", state: "draft" }))).toBe(
-      "Draft",
-    );
     expect(
       statusLine(facts({ status: "collecting", state: "collecting" })),
     ).toBe("Collecting");
@@ -42,8 +39,10 @@ describe("the status line", () => {
       "Published, withheld from the resident",
     );
     expect(
-      statusLine(facts({ status: "closed", state: "draft", withheld: true })),
-    ).toBe("Draft, withheld from the resident");
+      statusLine(
+        facts({ status: "collecting", state: "collecting", withheld: true }),
+      ),
+    ).toBe("Collecting, withheld from the resident");
   });
 });
 
@@ -59,14 +58,13 @@ describe("what the screen offers", () => {
   it("is editable once unlocked, and in a year that is not published", () => {
     expect(canEditResident(facts({ unlocked: true }))).toBe(true);
     expect(readOnlyNote(facts({ unlocked: true }))).toBeNull();
-    for (const status of ["collecting", "closed"] as const) {
-      expect(canEditResident(facts({ status }))).toBe(true);
-    }
+    expect(
+      canEditResident(facts({ status: "collecting", state: "collecting" })),
+    ).toBe(true);
   });
 
-  it("offers Unlock only in review or published, and only when not already unlocked", () => {
+  it("offers Unlock only once the year is open, and only when not already unlocked", () => {
     expect(canUnlock(facts())).toBe(true);
-    expect(canUnlock(facts({ status: "closed", state: "draft" }))).toBe(true);
     expect(
       canUnlock(facts({ status: "collecting", state: "collecting" })),
     ).toBe(false);

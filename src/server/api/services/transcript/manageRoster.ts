@@ -2,8 +2,6 @@ import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import {
   clampRoleDuration,
-  defaultMembershipDuration,
-  defaultRoleDuration,
   isDuration,
   resolveEntry,
   roleFits,
@@ -11,7 +9,6 @@ import {
 } from "~/lib/transcript/duration";
 import type { rosterUpsertInput } from "~/lib/transcript/manageInput";
 import type { z } from "zod";
-import { instantToSgDate } from "~/lib/transcript/sgDate";
 import { lookupResidents } from "./residents";
 import {
   normaliseYearStatus,
@@ -44,12 +41,12 @@ export interface RosterRow {
   userID: string;
   displayName: string | null;
   isHead: boolean;
+  /** "full" on a live list (the default a row goes back to); null on a locked one. */
   defaultDuration: Duration | null;
-  /** The stored override, or null for "use the default". */
+  /** The stored choice, or null for the default (a full year). */
   duration: Duration | null;
   defaultRoleLabel: string | null;
   roleLabel: string | null;
-  defaultRoleDuration: Duration | null;
   roleDuration: Duration | null;
   extraContribution: string | null;
   /** What the transcript will actually say. */
@@ -63,7 +60,6 @@ export interface RosterRow {
 
 export interface RosterList {
   status: YearStatus;
-  sem2Start: string | null;
   /** Roster rows that could not be resolved to one person (never guessed at). */
   unresolved: number;
   rows: RosterRow[];
@@ -109,7 +105,6 @@ function frozenRow(e: StoredEntry, displayName: string | null): RosterRow {
     duration,
     defaultRoleLabel: null,
     roleLabel: blankToNull(e.roleLabel),
-    defaultRoleDuration: null,
     roleDuration,
     extraContribution: blankToNull(e.extraContribution),
     effective: {
@@ -121,48 +116,25 @@ function frozenRow(e: StoredEntry, displayName: string | null): RosterRow {
   };
 }
 
-/** The earliest accepted application among a person's keys. */
-function earliestDecision(
-  apps: ReadonlyArray<{ userID: string; decidedAt: Date | null }>,
-  keys: readonly string[],
-): Date | null {
-  let decidedAt: Date | null = null;
-  for (const a of apps) {
-    if (!keys.includes(a.userID) || !a.decidedAt) continue;
-    if (!decidedAt || a.decidedAt < decidedAt) decidedAt = a.decidedAt;
-  }
-  return decidedAt;
-}
-
-/** A current member: stored overrides beside the derived defaults. */
+/** A current member: stored choices beside the defaults (a full year, "Head"). */
 function liveRow(m: {
   key: string;
   displayName: string | null;
   isHead: boolean;
-  grantedAt: Date | null;
   own: StoredEntry | null;
-  decidedAt: Date | null;
-  sem2Start: Date | null;
 }): RosterRow {
-  const { own, decidedAt, sem2Start } = m;
+  const { own } = m;
   return {
     userID: m.key,
     displayName: m.displayName,
     isHead: m.isHead,
-    defaultDuration: defaultMembershipDuration(decidedAt, sem2Start),
+    defaultDuration: "full",
     duration: asDuration(own?.duration),
     defaultRoleLabel: m.isHead ? "Head" : null,
     roleLabel: blankToNull(own?.roleLabel),
-    defaultRoleDuration: m.isHead
-      ? defaultRoleDuration(m.grantedAt, sem2Start)
-      : null,
     roleDuration: asDuration(own?.roleDuration),
     extraContribution: blankToNull(own?.extraContribution),
-    effective: resolveEntry(
-      own,
-      { decidedAt, isHead: m.isHead, grantedAt: m.grantedAt },
-      sem2Start,
-    ),
+    effective: resolveEntry(own, { isHead: m.isHead }),
   };
 }
 
@@ -191,7 +163,6 @@ export async function rosterRowsFor(
     }),
     lookupResidents(db, [key]),
   ]);
-  const sem2Start = period?.sem2Start ?? null;
   const displayName = names.get(key)?.displayName ?? null;
   // An open (published) year reads the locked lists; otherwise the live ones.
   const published = normaliseYearStatus(period?.status) === "published";
@@ -205,20 +176,10 @@ export async function rosterRowsFor(
     }
   }
   if (live.length === 0) return out;
-  const [heads, apps] = await Promise.all([
-    db.ccaHead.findMany({
-      where: { userID: { in: [...keys] }, ccaID: { in: live } },
-      select: { ccaID: true, grantedAt: true },
-    }),
-    db.ccaApplication.findMany({
-      where: {
-        ccaID: { in: live },
-        status: "accepted",
-        userID: { in: [...keys] },
-      },
-      select: { ccaID: true, userID: true, decidedAt: true },
-    }),
-  ]);
+  const heads = await db.ccaHead.findMany({
+    where: { userID: { in: [...keys] }, ccaID: { in: live } },
+    select: { ccaID: true },
+  });
   for (const ccaID of live) {
     const head = heads.find((h) => h.ccaID === ccaID) ?? null;
     out.set(ccaID, {
@@ -227,13 +188,7 @@ export async function rosterRowsFor(
         key,
         displayName,
         isHead: head !== null,
-        grantedAt: head?.grantedAt ?? null,
         own: entries.find((x) => x.ccaID === ccaID) ?? null,
-        decidedAt: earliestDecision(
-          apps.filter((a) => a.ccaID === ccaID),
-          keys,
-        ),
-        sem2Start,
       }),
     });
   }
@@ -248,7 +203,6 @@ export async function rosterList(
   _now: Date = new Date(),
 ): Promise<RosterList> {
   const period = await getPeriod(db, academicYear);
-  const sem2Start = period?.sem2Start ?? null;
   const published = normaliseYearStatus(period?.status) === "published";
   // An open (published) year shows the list as it was locked; a collecting
   // year shows the live list.
@@ -260,7 +214,6 @@ export async function rosterList(
   const label = frozen ? await actorLabels(db, [frozen.frozenBy]) : null;
   const base = {
     status: normaliseYearStatus(period?.status),
-    sem2Start: sem2Start ? instantToSgDate(sem2Start) : null,
     freeze:
       frozen && label
         ? {
@@ -293,25 +246,18 @@ export async function rosterList(
 
   const { members, unresolved } = await liveMembers(db, ccaID);
   const allKeys = [...new Set(members.flatMap((m) => m.keys))];
-  const [stored, apps, names] = await Promise.all([
+  const [stored, names] = await Promise.all([
     db.transcriptRosterEntry.findMany({ where: { academicYear, ccaID } }),
-    db.ccaApplication.findMany({
-      where: { ccaID, status: "accepted", userID: { in: allKeys } },
-      select: { userID: true, decidedAt: true },
-    }),
     lookupResidents(db, allKeys),
   ]);
   const storedBy = new Map(stored.map((s) => [s.userID, s]));
 
-  const rows = members.map(({ entry, key, keys }) =>
+  const rows = members.map(({ entry, key }) =>
     liveRow({
       key,
       displayName: entry.displayName ?? names.get(key)?.displayName ?? null,
       isHead: entry.isHead,
-      grantedAt: entry.grantedAt,
       own: storedBy.get(key) ?? null,
-      decidedAt: earliestDecision(apps, keys),
-      sem2Start,
     }),
   );
   return { ...base, unresolved, rows: sortRows(rows), mode: "live" };
@@ -370,34 +316,17 @@ async function findTarget(
 async function assertRoleFitsMembership(
   db: PrismaClient,
   input: UpsertInput,
-  target: { key: string; keys: string[]; frozen: boolean },
+  target: { key: string },
 ) {
-  const [existing, period, apps] = await Promise.all([
-    db.transcriptRosterEntry.findUnique({
-      where: {
-        academicYear_userID_ccaID: {
-          academicYear: input.academicYear,
-          userID: target.key,
-          ccaID: input.ccaID,
-        },
-      },
-    }),
-    getPeriod(db, input.academicYear),
-    db.ccaApplication.findMany({
-      where: {
+  const existing = await db.transcriptRosterEntry.findUnique({
+    where: {
+      academicYear_userID_ccaID: {
+        academicYear: input.academicYear,
+        userID: target.key,
         ccaID: input.ccaID,
-        status: "accepted",
-        userID: { in: target.keys },
       },
-      select: { decidedAt: true },
-    }),
-  ]);
-  let decidedAt: Date | null = null;
-  for (const a of apps) {
-    if (a.decidedAt && (!decidedAt || a.decidedAt < decidedAt)) {
-      decidedAt = a.decidedAt;
-    }
-  }
+    },
+  });
   const duration =
     input.duration !== undefined
       ? input.duration
@@ -406,11 +335,8 @@ async function assertRoleFitsMembership(
     input.roleDuration !== undefined
       ? input.roleDuration
       : asDuration(existing?.roleDuration);
-  // A frozen entry already holds the resolved membership period.
-  const membership = target.frozen
-    ? (duration ?? "full")
-    : (duration ??
-      defaultMembershipDuration(decidedAt, period?.sem2Start ?? null));
+  // No stored choice means a full year.
+  const membership = duration ?? "full";
 
   if (roleDuration && !roleFits(membership, roleDuration)) {
     throw new TRPCError({

@@ -81,9 +81,9 @@ export interface ResidentPanel {
   userID: string;
   displayName: string | null;
   academicYear: string;
-  status: "collecting" | "closed" | "published";
-  /** What the resident would see: draft, published, or nothing yet. */
-  state: "collecting" | "draft" | "published";
+  status: "collecting" | "published";
+  /** What the resident would see: the transcript, or nothing yet. */
+  state: "collecting" | "published";
   withheld: boolean;
   unlocked: boolean;
   isJcrcMember: boolean;
@@ -159,8 +159,8 @@ const endedKeyOf = (academicYear: string, userID: string, id: string) =>
   `${academicYear}|${userID}|ended|${id}`;
 
 /**
- * Unlock ONE resident's records so a manager can correct them while the year is
- * in review or published. Needs a reason. At most one unlock is active at a
+ * Unlock ONE resident's records so a manager can correct them once the year is
+ * open. Needs a reason. At most one unlock is active at a
  * time, kept by a unique key, so asking again (or twice at once) leaves the one
  * unlock and one history line.
  */
@@ -172,8 +172,8 @@ export async function unlockResident(
 ) {
   const resident = await requireResident(db, input.userID);
   const period = await getPeriod(db, input.academicYear);
-  if (normaliseYearStatus(period?.status) === "collecting") {
-    throw fail("PRECONDITION_FAILED", "YEAR_NOT_IN_REVIEW");
+  if (normaliseYearStatus(period?.status) !== "published") {
+    throw fail("PRECONDITION_FAILED", "YEAR_NOT_OPEN");
   }
   // Each try re-reads first: a call that lost a write conflict to another
   // unlock at the same moment finds that unlock and stops there.

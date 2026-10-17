@@ -4,7 +4,12 @@
  * no exclamation marks).
  */
 
-import { normaliseYearStatus, type YearStatus } from "./lifecycle";
+import {
+  FIRST_ACADEMIC_YEAR,
+  academicYearsUpTo,
+  normaliseYearStatus,
+  type YearStatus,
+} from "./lifecycle";
 
 export type PeriodStatus = YearStatus;
 
@@ -35,15 +40,21 @@ export const WRITES_LOCKED_NOTE =
 export const OPEN_LABEL = "Open transcripts";
 
 /**
- * The years to offer in the picker: every existing period plus the current
- * academic year, newest first, each once.
+ * The years to offer in every admin picker: each year from the first one to the
+ * current academic year (whether or not it has a period row yet, so a previous
+ * year that was never opened can still be opened or corrected) plus any
+ * existing period, newest first, each once.
  */
 export function yearOptions(
   periods: ReadonlyArray<{ academicYear: string }>,
   currentAcademicYear: string,
 ): string[] {
   return [
-    ...new Set([currentAcademicYear, ...periods.map((p) => p.academicYear)]),
+    ...new Set([
+      ...academicYearsUpTo(currentAcademicYear),
+      currentAcademicYear,
+      ...periods.map((p) => p.academicYear),
+    ]),
   ].sort((a, b) => b.localeCompare(a));
 }
 
@@ -104,11 +115,9 @@ const ERROR_TEXT: Record<string, string> = {
     "This academic year has not started yet, so its transcripts cannot be opened.",
   NOT_THE_TERM_YEAR:
     "Heads can only change the current academic year. Other years are read-only; ask the JCRC for changes.",
-  SEM2_START_OUTSIDE_YEAR:
-    "The semester 2 start date must fall inside the academic year.",
+  YEAR_BEFORE_START: `Transcripts start at ${FIRST_ACADEMIC_YEAR}. Earlier years cannot be opened.`,
+  YEAR_NOT_OPEN: "Transcripts for this year are not open yet.",
   ALREADY_PUBLISHED: "Transcripts for this academic year are already open.",
-  PERIOD_NOT_FOUND:
-    "Save a semester 2 start date first to set up this academic year.",
   PERIOD_PUBLISHED: WRITES_LOCKED_NOTE,
   PERIOD_CHANGING:
     "Someone else is changing this academic year. Reload and try again.",

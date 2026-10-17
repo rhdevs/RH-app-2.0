@@ -19,9 +19,15 @@ export interface FreezeRowView {
   unresolvedCount?: number | null;
 }
 
+/** Shown while the year is still collecting but some lists are already saved. */
+export const PARTLY_SAVED_NOTE =
+  "Some CCAs are saved; press Open transcripts again to finish.";
+
 export interface FreezeTableViewProps {
   rows: FreezeRowView[];
   loadError: string | null;
+  /** The year is not open yet, but Open transcripts saved some lists. */
+  partlySaved?: boolean;
 }
 
 /**
@@ -37,6 +43,11 @@ export function FreezeTableView(p: FreezeTableViewProps) {
         Each CCA&rsquo;s member list was saved when transcripts opened, so later
         recruitment does not change the transcripts.
       </p>
+      {p.partlySaved && (
+        <p className="mt-2 text-sm text-amber-800" role="status">
+          {PARTLY_SAVED_NOTE}
+        </p>
+      )}
       <ErrorLine message={p.loadError} />
 
       {p.rows.length === 0 ? (
@@ -95,8 +106,11 @@ export function FreezeTableView(p: FreezeTableViewProps) {
 
 export default function FreezeTable({
   academicYear,
+  published,
 }: {
   academicYear: string;
+  /** The year is open. While collecting, the table shows only if some list is saved. */
+  published: boolean;
 }) {
   const list = api.transcript.freezes.list.useQuery(
     { academicYear },
@@ -113,10 +127,12 @@ export default function FreezeTable({
     memberCount: r.memberCount,
     unresolvedCount: r.unresolvedCount,
   }));
+  if (!published && !rows.some((r) => r.locked)) return null;
   return (
     <FreezeTableView
       rows={rows}
       loadError={list.error ? errorText(list.error.message) : null}
+      partlySaved={!published}
     />
   );
 }

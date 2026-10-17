@@ -11,7 +11,6 @@ import {
 import { currentAcademicYear } from "~/lib/transcript/academicYear";
 import { errorText } from "~/lib/transcript/adminView";
 import {
-  DEFAULTS_NOTE,
   NO_DESCRIPTION_NOTE,
   ROSTER_HELPER,
   rosterNotice,
@@ -20,7 +19,6 @@ import {
   academicYearsUpTo,
   nextAcademicYear,
 } from "~/lib/transcript/lifecycle";
-import { formatSgDate } from "~/lib/transcript/sgDate";
 import { useUnsavedChangesGuard } from "~/lib/transcript/useUnsavedChangesGuard";
 import { api } from "~/trpc/react";
 import ActivitiesSection from "./ActivitiesSection";
@@ -30,8 +28,6 @@ import VolunteerSection from "./VolunteerSection";
 export interface TranscriptNotesProps {
   /** Why the roster is read-only or empty, or null. */
   stateNote: string | null;
-  /** Default durations assume the full year: no semester 2 start date saved. */
-  showDefaultsNote: boolean;
   /** Null while the profile is still loading or could not be read. */
   descriptionEmpty: boolean | null;
   detailsHref: string;
@@ -44,11 +40,6 @@ export function TranscriptNotes(p: TranscriptNotesProps) {
       {p.stateNote && (
         <p className="text-amber-800" role="status">
           {p.stateNote}
-        </p>
-      )}
-      {p.showDefaultsNote && (
-        <p className="text-gray-600" role="status">
-          {DEFAULTS_NOTE}
         </p>
       )}
       {p.descriptionEmpty === true && (
@@ -121,9 +112,6 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
     academicYear: year,
     mode: data.mode,
     refusal: data.editRefusal,
-    // Locks only come from Open transcripts, which the refusal already says.
-    freezeReason: null,
-    frozenOn: data.freeze ? formatSgDate(data.freeze.frozenAt) : null,
   });
 
   return (
@@ -146,9 +134,6 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
         <p className="mb-2 text-sm text-gray-700">{OPEN_DEADLINE_NOTE}</p>
         <TranscriptNotes
           stateNote={stateNote}
-          showDefaultsNote={
-            data.status !== "published" && data.sem2Start === null
-          }
           descriptionEmpty={
             profile.data ? profile.data.description.trim() === "" : null
           }

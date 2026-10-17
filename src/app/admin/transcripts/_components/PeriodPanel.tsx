@@ -53,13 +53,6 @@ export interface PeriodPanelViewProps {
   canOpen: boolean;
   /** "Opened on 15 Apr 2027 by ..." or null. */
   publishedLine: string | null;
-  sem2Value: string;
-  onSem2Change: (value: string) => void;
-  /** True when the field differs from what is saved. */
-  sem2Dirty: boolean;
-  onSaveSem2: () => void;
-  saving: boolean;
-  saveError: string | null;
   /** The Open transcripts confirmation is showing. */
   confirming: boolean;
   onConfirming: (open: boolean) => void;
@@ -79,7 +72,11 @@ export interface PeriodPanelViewProps {
   downloadByError: string | null;
   /** The reminders at the top of the panel (1 April, 1 August), if any. */
   reminders?: { openReminder: string | null; previousYear: string | null };
-  /** The member-list results for the selected year (shown once it is open). */
+  /**
+   * The member-list results for the selected year: shown once it is open, and
+   * while collecting if some lists are already saved (Open transcripts stopped
+   * part way).
+   */
   freezeTable?: ReactNode;
 }
 
@@ -136,47 +133,6 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
         {p.publishedLine && (
           <p className="mt-3 text-xs text-gray-500">{p.publishedLine}</p>
         )}
-
-        <form
-          className="mt-5 flex flex-wrap items-end gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            p.onSaveSem2();
-          }}
-        >
-          <div>
-            <label htmlFor="transcripts-sem2" className={FIELD_LABEL}>
-              Semester 2 start date
-            </label>
-            <Input
-              id="transcripts-sem2"
-              type="date"
-              value={p.sem2Value}
-              disabled={published || p.saving}
-              onChange={(e) => p.onSem2Change(e.target.value)}
-              className="w-44"
-            />
-          </div>
-          <Button
-            type="submit"
-            variant="outline"
-            disabled={published || p.saving || !p.sem2Dirty}
-          >
-            {p.saving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Saving
-              </>
-            ) : (
-              "Save"
-            )}
-          </Button>
-        </form>
-        <p className="mt-2 max-w-2xl text-xs text-gray-500">
-          Semester 2 starts at midnight Singapore time on this date. A member
-          accepted on or after it defaults to semester 2.
-        </p>
-        <ErrorLine message={p.saveError} />
 
         <form
           className="mt-5 flex flex-wrap items-end gap-3"
@@ -239,7 +195,7 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
         )}
         {!p.confirming && <ErrorLine message={p.actionError} />}
 
-        {published && p.freezeTable}
+        {p.freezeTable}
       </SectionCard>
 
       <AlertDialogContent {...returnFocus}>
@@ -306,7 +262,6 @@ export default function PeriodPanel() {
     retry: false,
   });
   const [selected, setSelected] = useState<string | null>(null);
-  const [sem2, setSem2] = useState("");
   const [downloadBy, setDownloadBy] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [resultLine, setResultLine] = useState<string | null>(null);
@@ -315,25 +270,17 @@ export default function PeriodPanel() {
   const year = selected ?? current;
   const period =
     list.data?.periods.find((x) => x.academicYear === year) ?? null;
-  const saved = period?.sem2Start
-    ? instantToSgDate(new Date(period.sem2Start))
-    : "";
   const savedDownloadBy = period?.downloadBy
     ? instantToSgDate(new Date(period.downloadBy))
     : "";
 
   // Show what is saved whenever the year, or the saved value, changes.
   useEffect(() => {
-    setSem2(saved);
-  }, [year, saved]);
-  useEffect(() => {
     setDownloadBy(savedDownloadBy);
   }, [year, savedDownloadBy]);
 
-  // Unsaved dates: warned about on reload, and before the year changes.
-  const confirmLeave = useUnsavedChangesGuard(
-    sem2 !== saved || downloadBy !== savedDownloadBy,
-  );
+  // An unsaved date: warned about on reload, and before the year changes.
+  const confirmLeave = useUnsavedChangesGuard(downloadBy !== savedDownloadBy);
 
   const refresh = async () => {
     await Promise.all([
@@ -342,12 +289,6 @@ export default function PeriodPanel() {
     ]);
   };
 
-  const setSem2Start = api.transcript.periods.setSem2Start.useMutation({
-    onSuccess: async () => {
-      setResultLine(null);
-      await refresh();
-    },
-  });
   const saveDownloadBy = api.transcript.periods.setDownloadBy.useMutation({
     onSuccess: async () => {
       await refresh();
@@ -387,7 +328,6 @@ export default function PeriodPanel() {
         if (y !== year && !confirmLeave()) return;
         setSelected(y);
         setResultLine(null);
-        setSem2Start.reset();
         open.reset();
       }}
       status={period?.status ?? null}
@@ -396,22 +336,6 @@ export default function PeriodPanel() {
         published && period?.publishedAt
           ? `Opened on ${when(period.publishedAt)}${period.publishedByName ? ` by ${period.publishedByName}` : ""}.`
           : null
-      }
-      sem2Value={sem2}
-      onSem2Change={(v) => {
-        setSem2(v);
-        setSem2Start.reset();
-      }}
-      sem2Dirty={sem2 !== saved}
-      onSaveSem2={() =>
-        setSem2Start.mutate({
-          academicYear: year,
-          sem2Start: sem2 === "" ? null : sem2,
-        })
-      }
-      saving={setSem2Start.isPending}
-      saveError={
-        setSem2Start.error ? errorText(setSem2Start.error.message) : null
       }
       confirming={confirming}
       onConfirming={(c) => {
@@ -439,7 +363,7 @@ export default function PeriodPanel() {
         saveDownloadBy.error ? errorText(saveDownloadBy.error.message) : null
       }
       reminders={panelReminders(list.data.periods, current, new Date())}
-      freezeTable={<FreezeTable academicYear={year} />}
+      freezeTable={<FreezeTable academicYear={year} published={published} />}
     />
   );
 }

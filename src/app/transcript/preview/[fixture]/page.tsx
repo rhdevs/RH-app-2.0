@@ -17,7 +17,7 @@ export default function TranscriptPreviewPage({
   searchParams,
 }: {
   params: { fixture: string };
-  searchParams: { ay?: string | string[]; draft?: string | string[] };
+  searchParams: { ay?: string | string[] };
 }) {
   if (process.env.NODE_ENV === "production") notFound();
   const fixture = getFixtureBySlug(params.fixture);
@@ -30,7 +30,6 @@ export default function TranscriptPreviewPage({
       fixture={fixture}
       ay={ay}
       basePath={`/transcript/preview/${fixture.slug}`}
-      draft={searchParams.draft === "1"}
     />
   );
 }

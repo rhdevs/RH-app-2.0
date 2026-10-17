@@ -5,7 +5,6 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
-import type { Duration } from "~/lib/transcript/duration";
 import {
   EXTRA_MAX,
   ROLE_MAX,
@@ -16,6 +15,7 @@ import {
   fitRolePeriod,
   isDirty,
   roleDurationOptions,
+  roleDurationValue,
   rowProblem,
   upsertFields,
   type DurationChoice,
@@ -62,9 +62,7 @@ export interface MembershipFormViewProps {
   note?: ReactNode;
   draft: RowDraft;
   saved: RowDraft;
-  defaultDuration: Duration | null;
   defaultRoleLabel: string | null;
-  defaultRoleDuration: Duration | null;
   /** True where there is a default to go back to (a live list). */
   canReset: boolean;
   editable: boolean;
@@ -106,7 +104,7 @@ export function MembershipFormView(p: MembershipFormViewProps) {
             }
             className={SELECT_CLASS}
           >
-            {durationOptions(p.defaultDuration).map((o) => (
+            {durationOptions().map((o) => (
               <option key={o.value || "default"} value={o.value}>
                 {o.label}
               </option>
@@ -147,21 +145,23 @@ export function MembershipFormView(p: MembershipFormViewProps) {
             </label>
             <select
               id={`roleDuration-${p.idKey}`}
-              value={draft.roleDuration}
+              value={roleDurationValue(
+                effectiveMembership(draft.duration),
+                draft.roleDuration,
+              )}
               disabled={off}
               onChange={(e) =>
                 p.onDraft({ roleDuration: e.target.value as DurationChoice })
               }
               className={SELECT_CLASS}
             >
-              {roleDurationOptions(
-                effectiveMembership(draft.duration, p.defaultDuration),
-                p.defaultRoleDuration,
-              ).map((o) => (
-                <option key={o.value || "default"} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
+              {roleDurationOptions(effectiveMembership(draft.duration)).map(
+                (o) => (
+                  <option key={o.value || "default"} value={o.value}>
+                    {o.label}
+                  </option>
+                ),
+              )}
             </select>
           </div>
         )}
@@ -253,9 +253,7 @@ export interface MembershipFormProps {
   tags?: ReactNode;
   note?: ReactNode;
   saved: StoredMembership;
-  defaultDuration: Duration | null;
   defaultRoleLabel: string | null;
-  defaultRoleDuration: Duration | null;
   canReset: boolean;
   editable: boolean;
   /** Store the fields; rejects with the server's error. */
@@ -292,7 +290,7 @@ export function MembershipForm(p: MembershipFormProps) {
     setDraft((d) => {
       const next = { ...d, ...patch };
       if (patch.duration === undefined) return next;
-      const fitted = fitRolePeriod(next, p.defaultDuration);
+      const fitted = fitRolePeriod(next);
       setRoleNote(fitted.note);
       return fitted.draft;
     });
@@ -319,9 +317,7 @@ export function MembershipForm(p: MembershipFormProps) {
       note={p.note}
       draft={draft}
       saved={savedDraft}
-      defaultDuration={p.defaultDuration}
       defaultRoleLabel={p.defaultRoleLabel}
-      defaultRoleDuration={p.defaultRoleDuration}
       canReset={p.canReset}
       editable={p.editable}
       onDraft={onDraft}

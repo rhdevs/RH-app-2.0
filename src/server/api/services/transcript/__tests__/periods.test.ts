@@ -1,11 +1,15 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { describe, expect, it, vi } from "vitest";
-import { assertCollecting, openTranscripts, upsertSem2Start } from "../periods";
+import * as periods from "../periods";
+import {
+  assertCollecting,
+  openTranscripts,
+  upsertDownloadBy,
+} from "../periods";
 
-const SEM2 = new Date("2027-01-11T00:00:00Z");
-const collecting = { status: "collecting", sem2Start: SEM2 };
-const published = { status: "published", sem2Start: SEM2 };
+const collecting = { status: "collecting" };
+const published = { status: "published" };
 /** A moment inside AY2026/27, so the year has begun. */
 const NOW = new Date("2027-03-01T00:00:00Z");
 
@@ -63,41 +67,41 @@ describe("assertCollecting", () => {
   });
 });
 
-describe("upsertSem2Start", () => {
-  it("refuses a date outside the academic year", async () => {
+describe("no semester 2 start date", () => {
+  it("has no function to set one", () => {
+    expect(periods).not.toHaveProperty("upsertSem2Start");
+  });
+});
+
+describe("upsertDownloadBy", () => {
+  const DAY = new Date("2027-12-30T16:00:00Z");
+
+  it("writes the date for a valid year", async () => {
     const { db, upsert } = dbWith(collecting);
 
-    expect(
-      await codeOf(
-        upsertSem2Start(db, "AY2026/27", new Date("2028-01-11T00:00:00Z")),
-      ),
-    ).toBe("BAD_REQUEST:SEM2_START_OUTSIDE_YEAR");
-    expect(upsert).not.toHaveBeenCalled();
-  });
-
-  it("refuses to change a published year", async () => {
-    const { db, upsert } = dbWith(published);
-
-    expect(await codeOf(upsertSem2Start(db, "AY2026/27", SEM2))).toBe(
-      "FORBIDDEN:PERIOD_PUBLISHED",
-    );
-    expect(upsert).not.toHaveBeenCalled();
-  });
-
-  it("writes a valid date for a collecting year", async () => {
-    const { db, upsert } = dbWith(collecting);
-
-    await upsertSem2Start(db, "AY2026/27", SEM2);
+    await upsertDownloadBy(db, "AY2026/27", DAY);
 
     expect(upsert).toHaveBeenCalledWith({
       where: { academicYear: "AY2026/27" },
       create: {
         academicYear: "AY2026/27",
-        sem2Start: SEM2,
+        downloadBy: DAY,
         status: "collecting",
       },
-      update: { sem2Start: SEM2 },
+      update: { downloadBy: DAY },
     });
+  });
+
+  it("refuses a year before transcripts began, and a malformed one", async () => {
+    const { db, upsert } = dbWith(null);
+
+    expect(await codeOf(upsertDownloadBy(db, "AY2025/26", DAY))).toBe(
+      "BAD_REQUEST:YEAR_BEFORE_START",
+    );
+    expect(await codeOf(upsertDownloadBy(db, "2026", DAY))).toBe(
+      "BAD_REQUEST:INVALID_ACADEMIC_YEAR",
+    );
+    expect(upsert).not.toHaveBeenCalled();
   });
 });
 
@@ -118,6 +122,15 @@ describe("Open transcripts is checked before any write", () => {
   it("refuses a malformed academic year", async () => {
     expect(await open(collecting, "2026")).toBe(
       "BAD_REQUEST:INVALID_ACADEMIC_YEAR",
+    );
+  });
+
+  it("refuses a year before transcripts began (F32)", async () => {
+    expect(await open(collecting, "AY2025/26")).toBe(
+      "BAD_REQUEST:YEAR_BEFORE_START",
+    );
+    expect(await open(published, "AY2024/25")).toBe(
+      "BAD_REQUEST:YEAR_BEFORE_START",
     );
   });
 });

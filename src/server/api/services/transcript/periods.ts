@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { parseAcademicYear } from "~/lib/transcript/academicYear";
 import {
+  isBeforeFirstYear,
   normaliseYearStatus,
   openBlocker,
   type OpenBlocker,
@@ -26,7 +27,11 @@ import { NOT_UNFROZEN } from "./loader";
 export const STATUS_COLLECTING = "collecting";
 export const STATUS_PUBLISHED = "published";
 
-const BLOCKER_CODE: Record<OpenBlocker, "CONFLICT" | "PRECONDITION_FAILED"> = {
+const BLOCKER_CODE: Record<
+  OpenBlocker,
+  "CONFLICT" | "PRECONDITION_FAILED" | "BAD_REQUEST"
+> = {
+  YEAR_BEFORE_START: "BAD_REQUEST",
   ALREADY_PUBLISHED: "CONFLICT",
   YEAR_NOT_STARTED: "PRECONDITION_FAILED",
 };
@@ -37,6 +42,18 @@ function requireValidYear(academicYear: string) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "INVALID_ACADEMIC_YEAR",
+    });
+  }
+  return ay;
+}
+
+/** A year that is valid AND not before transcripts began (for writes to a period). */
+function requireSupportedYear(academicYear: string) {
+  const ay = requireValidYear(academicYear);
+  if (isBeforeFirstYear(academicYear)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "YEAR_BEFORE_START",
     });
   }
   return ay;
@@ -80,27 +97,6 @@ export async function assertCollecting(
   }
 }
 
-/** Set (or clear) the date semester 2 begins; creates the period if needed. */
-export async function upsertSem2Start(
-  db: PrismaClient,
-  academicYear: string,
-  sem2Start: Date | null,
-) {
-  const ay = requireValidYear(academicYear);
-  if (sem2Start && !(sem2Start >= ay.start && sem2Start < ay.endExclusive)) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "SEM2_START_OUTSIDE_YEAR",
-    });
-  }
-  await assertCollecting(db, academicYear);
-  return db.transcriptPeriod.upsert({
-    where: { academicYear },
-    create: { academicYear, sem2Start, status: STATUS_COLLECTING },
-    update: { sem2Start },
-  });
-}
-
 /**
  * The day residents are asked to download by (a Singapore calendar date stored
  * as midnight there). Informational: it only drives a banner. It can be set or
@@ -111,7 +107,7 @@ export async function upsertDownloadBy(
   academicYear: string,
   downloadBy: Date | null,
 ) {
-  requireValidYear(academicYear);
+  requireSupportedYear(academicYear);
   return db.transcriptPeriod.upsert({
     where: { academicYear },
     create: { academicYear, downloadBy, status: STATUS_COLLECTING },
@@ -159,7 +155,7 @@ export async function openTranscripts(
   actorUserID: string,
   now: Date = new Date(),
 ): Promise<OpenResult> {
-  requireValidYear(academicYear);
+  requireSupportedYear(academicYear);
   const period = await getPeriod(db, academicYear);
   const blocker = openBlocker(
     academicYear,
@@ -170,86 +166,132 @@ export async function openTranscripts(
     throw new TRPCError({ code: BLOCKER_CODE[blocker], message: blocker });
   }
 
-  const [ccas, locked] = await Promise.all([
-    db.cCA.findMany({ select: { ccaID: true, ccaName: true } }),
-    db.ccaYearFreeze.findMany({
-      where: { academicYear, ...NOT_UNFROZEN },
-      select: { ccaID: true },
-    }),
-  ]);
-  const done = new Set(locked.map((f) => f.ccaID));
-  const todo = ccas.filter((c) => !done.has(c.ccaID));
-
+  let alreadyLocked = 0;
   let lockedNow = 0;
   let unresolved = 0;
   const failures: Array<{ name: string; code: string }> = [];
-  for (const cca of todo) {
-    try {
-      const result = await freezeCca(db, {
-        ccaID: cca.ccaID,
-        academicYear,
-        actorUserID,
-        now,
-      });
-      if (result.kind === "frozen") {
-        lockedNow += 1;
-        unresolved += result.unresolvedCount;
-      }
-    } catch (error) {
-      // Counted and reported; the others still go on. Logged without the
-      // error's message, which can carry member ids.
-      const code = failureCode(error);
-      console.error(
-        JSON.stringify({
-          evt: "transcript_lock_failed",
+
+  // Lock the CCAs not locked yet. Run twice: the second pass, right before the
+  // year is claimed, catches a CCA created while the first pass was running.
+  for (const pass of [1, 2]) {
+    const [ccas, locked] = await Promise.all([
+      db.cCA.findMany({ select: { ccaID: true, ccaName: true } }),
+      db.ccaYearFreeze.findMany({
+        where: { academicYear, ...NOT_UNFROZEN },
+        select: { ccaID: true },
+      }),
+    ]);
+    const done = new Set(locked.map((f) => f.ccaID));
+    const todo = ccas.filter((c) => !done.has(c.ccaID));
+    if (pass === 1) alreadyLocked = ccas.length - todo.length;
+    failures.length = 0;
+    for (const cca of todo) {
+      try {
+        const result = await freezeCca(db, {
           ccaID: cca.ccaID,
           academicYear,
-          code,
-          name: error instanceof Error ? error.name : typeof error,
-        }),
-      );
-      failures.push({ name: cca.ccaName, code });
+          actorUserID,
+          now,
+        });
+        if (result.kind === "frozen") {
+          lockedNow += 1;
+          unresolved += result.unresolvedCount;
+        }
+      } catch (error) {
+        // Counted and reported; the others still go on. Logged without the
+        // error's message, which can carry member ids.
+        const code = failureCode(error);
+        // Someone else opened the year while this run was locking: they locked
+        // every CCA first, so there is nothing left to do.
+        if (
+          code === "PERIOD_PUBLISHED" &&
+          normaliseYearStatus((await getPeriod(db, academicYear))?.status) ===
+            "published"
+        ) {
+          return {
+            academicYear,
+            lockedNow,
+            alreadyLocked,
+            failures: [],
+            unresolved,
+            opened: true,
+          };
+        }
+        console.error(
+          JSON.stringify({
+            evt: "transcript_lock_failed",
+            ccaID: cca.ccaID,
+            academicYear,
+            code,
+            name: error instanceof Error ? error.name : typeof error,
+          }),
+        );
+        failures.push({ name: cca.ccaName, code });
+      }
     }
+    // Some CCA could not be locked: stop here, the year stays collecting.
+    if (failures.length > 0) break;
   }
   const counts = {
     academicYear,
     lockedNow,
-    alreadyLocked: ccas.length - todo.length,
-    failures,
+    alreadyLocked,
+    failures: [...failures],
     unresolved,
   };
   // Some CCA is still not locked: the year stays collecting, so running it
   // again finishes the rest and a year is never half open.
   if (failures.length > 0) return { ...counts, opened: false };
 
-  const claimed = await db.transcriptPeriod.updateMany({
-    where: {
-      academicYear,
-      OR: [{ status: STATUS_COLLECTING }, { status: { isSet: false } }],
-    },
-    data: {
-      status: STATUS_PUBLISHED,
-      publishedAt: now,
-      publishedBy: actorUserID,
-    },
-  });
-  if (claimed.count !== 1) {
-    // No period row yet (a year opened without any dates set), or someone else
-    // opened it at the same moment.
+  await claimYear(db, academicYear, actorUserID, now);
+  return { ...counts, opened: true };
+}
+
+/**
+ * Mark the year open. Any status but "published" is claimed (collecting, unset,
+ * or a legacy "closed"), once. With no period row yet it is created; if two
+ * runs race, the loser finds the winner's open year and is done.
+ */
+async function claimYear(
+  db: PrismaClient,
+  academicYear: string,
+  actorUserID: string,
+  now: Date,
+): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const claimed = await db.transcriptPeriod.updateMany({
+      where: {
+        academicYear,
+        OR: [
+          { status: { not: STATUS_PUBLISHED } },
+          { status: { isSet: false } },
+        ],
+      },
+      data: {
+        status: STATUS_PUBLISHED,
+        publishedAt: now,
+        publishedBy: actorUserID,
+      },
+    });
+    if (claimed.count === 1) return;
     const again = await getPeriod(db, academicYear);
-    if (normaliseYearStatus(again?.status) !== "published") {
-      if (again) {
-        throw new TRPCError({ code: "CONFLICT", message: "PERIOD_CHANGING" });
+    if (again && normaliseYearStatus(again.status) === "published") return;
+    if (!again) {
+      try {
+        await db.transcriptPeriod.create({
+          data: {
+            academicYear,
+            status: STATUS_PUBLISHED,
+            publishedAt: now,
+            publishedBy: actorUserID,
+          },
+        });
+        return;
+      } catch (error) {
+        // A duplicate: someone created the row at the same moment. Look again.
+        if ((error as { code?: unknown }).code !== "P2002") throw error;
       }
-      await db.transcriptPeriod.create({
-        data: {
-          academicYear,
-          status: STATUS_PUBLISHED,
-          publishedAt: now,
-          publishedBy: actorUserID,
-        },
-      });
     }
   }
-  return { ...counts, opened: true };
+  throw new TRPCError({ code: "CONFLICT", message: "PERIOD_CHANGING" });
 }

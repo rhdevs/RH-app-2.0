@@ -520,9 +520,181 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(open.status).toBe("ready");
         expect(open).not.toHaveProperty("draft");
         if (open.status === "ready") {
-          expect(open.transcript.isDraft).toBe(false);
+          expect(open.transcript).not.toHaveProperty("isDraft");
         }
         expect(await as(R12).transcript.mine.years()).toEqual([AY]);
+      });
+    });
+
+    /* ---- Open transcripts: races, odd rows and dates ------------------- */
+    describe("Open transcripts: edge cases", () => {
+      const NEW_CCA = 99001;
+
+      it("two opens at once with no period row both succeed, and the year is opened once (F28)", async () => {
+        await db.transcriptPeriod.deleteMany({ where: { academicYear: AY } });
+
+        const results = await Promise.all([
+          periods.openTranscripts(db, AY, JCRC.id, APR_2027),
+          periods.openTranscripts(db, AY, ADMIN.id, APR_2027),
+        ]);
+
+        expect(results.map((r) => r.opened)).toEqual([true, true]);
+        const rows = await db.transcriptPeriod.findMany({
+          where: { academicYear: AY },
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ status: "published" });
+        expect(rows[0]!.publishedAt).not.toBeNull();
+        expect([JCRC.id, ADMIN.id]).toContain(rows[0]!.publishedBy);
+        expect(await lockCount()).toBe(await db.cCA.count());
+      });
+
+      it("locks a CCA created while the first pass was running before it opens (F29)", async () => {
+        let created = false;
+        const racing = new Proxy(db, {
+          get(target, prop) {
+            const value: unknown = Reflect.get(target, prop, target);
+            if (prop !== "cCA") {
+              return typeof value === "function"
+                ? (value as (...a: unknown[]) => unknown).bind(target)
+                : value;
+            }
+            return new Proxy(value as object, {
+              get(model, modelProp) {
+                const real: unknown = Reflect.get(model, modelProp, model);
+                if (modelProp !== "findMany") {
+                  return typeof real === "function"
+                    ? (real as (...a: unknown[]) => unknown).bind(model)
+                    : real;
+                }
+                return async (...args: unknown[]) => {
+                  const rows = await (
+                    real as (...a: unknown[]) => Promise<unknown>
+                  ).apply(model, args);
+                  if (!created) {
+                    // A new CCA appears just after the first list was read.
+                    created = true;
+                    await target.cCA.create({
+                      data: {
+                        ccaID: NEW_CCA,
+                        ccaName: "Late CCA",
+                        category: "Test",
+                      },
+                    });
+                  }
+                  return rows;
+                };
+              },
+            });
+          },
+        }) as PrismaClient;
+
+        try {
+          const result = await periods.openTranscripts(
+            racing,
+            AY,
+            JCRC.id,
+            APR_2027,
+          );
+
+          expect(result.opened).toBe(true);
+          const late = await db.ccaYearFreeze.findFirst({
+            where: { academicYear: AY, ccaID: NEW_CCA },
+          });
+          expect(late).not.toBeNull();
+          expect(result.lockedNow).toBe(await db.cCA.count());
+          expect(await statusOf()).toBe("published");
+        } finally {
+          await db.ccaYearFreeze.deleteMany({ where: { ccaID: NEW_CCA } });
+          await db.transcriptRosterEntry.deleteMany({
+            where: { ccaID: NEW_CCA },
+          });
+          await db.cCA.deleteMany({ where: { ccaID: NEW_CCA } });
+        }
+      });
+
+      it("opens a year whose row still says 'closed' (F31)", async () => {
+        await db.transcriptPeriod.update({
+          where: { academicYear: AY },
+          data: { status: "closed" },
+        });
+
+        const result = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+
+        expect(result.opened).toBe(true);
+        expect(await statusOf()).toBe("published");
+        // Residents see it now.
+        expect(
+          (await as(R12).transcript.mine.get({ academicYear: AY })).status,
+        ).toBe("ready");
+      });
+
+      it("refuses a year before transcripts began, to open it or to set its download-by date (F32)", async () => {
+        expect(
+          await errorOf(
+            as(JCRC).transcript.periods.open({ academicYear: "AY2025/26" }),
+          ),
+        ).toBe("BAD_REQUEST:YEAR_BEFORE_START");
+        expect(
+          await errorOf(
+            as(JCRC).transcript.periods.setDownloadBy({
+              academicYear: "AY2025/26",
+              downloadBy: "2026-06-01",
+            }),
+          ),
+        ).toBe("BAD_REQUEST:YEAR_BEFORE_START");
+        expect(
+          await db.transcriptPeriod.count({
+            where: { academicYear: "AY2025/26" },
+          }),
+        ).toBe(0);
+      });
+
+      it("saves everyone as a full year unless a semester was chosen by hand, with no dates set (S)", async () => {
+        await db.transcriptPeriod.update({
+          where: { academicYear: AY },
+          data: { downloadBy: null },
+        });
+        // A late join and a late head grant must not matter.
+        await db.ccaApplication.updateMany({
+          where: { userID: { startsWith: "SEED-" } },
+          data: { decidedAt: new Date("2027-03-20T00:00:00Z") },
+        });
+        await db.ccaHead.updateMany({
+          where: { userID: { startsWith: "SEED-" } },
+          data: { grantedAt: new Date("2027-03-20T00:00:00Z") },
+        });
+        const before = await db.transcriptRosterEntry.findMany({
+          where: { academicYear: AY },
+        });
+        const chosen = before.filter(
+          (e) => e.duration === "sem1" || e.duration === "sem2",
+        );
+        expect(chosen.length).toBeGreaterThan(0);
+
+        await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+
+        const locked = await db.transcriptRosterEntry.findMany({
+          where: { academicYear: AY, frozen: true },
+        });
+        const notFull = locked.filter((e) => e.duration !== "full");
+        expect(
+          notFull.map((e) => `${e.userID}|${e.ccaID}|${e.duration}`).sort(),
+        ).toEqual(
+          chosen.map((e) => `${e.userID}|${e.ccaID}|${e.duration}`).sort(),
+        );
+        // A head whose role period nobody chose holds the role for the full year.
+        const chosenRole = new Map(
+          before
+            .filter((e) => e.roleDuration)
+            .map((e) => [`${e.userID}|${e.ccaID}`, e.roleDuration]),
+        );
+        const heads = locked.filter((e) => e.roleLabel === "Head");
+        expect(heads.length).toBeGreaterThan(0);
+        for (const h of heads) {
+          const picked = chosenRole.get(`${h.userID}|${h.ccaID}`);
+          expect(h.roleDuration).toBe(picked ?? "full");
+        }
       });
     });
 
@@ -568,7 +740,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           data: {
             academicYear: OLD,
             status: "published",
-            sem2Start: new Date("2026-01-10T16:00:00Z"),
           },
         });
         await db.transcriptRosterEntry.createMany({

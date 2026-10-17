@@ -54,11 +54,10 @@ export function decideWrite(input: {
 }
 
 /** What a resident's year can be in, for the status line. */
-export type ResidentYearState = "draft" | "published" | "collecting";
+export type ResidentYearState = "published" | "collecting";
 
 export function residentStateOf(status: YearStatus): ResidentYearState {
-  if (status === "published") return "published";
-  return status === "closed" ? "draft" : "collecting";
+  return status === "published" ? "published" : "collecting";
 }
 
 /** The kinds of line in a resident's history. */
@@ -186,16 +185,16 @@ export function participantSummaries(
 
 /* ---- what the resident sees ------------------------------------------------- */
 
-export type ResidentView = "not_open" | "on_hold" | "draft" | "published";
+export type ResidentView = "not_open" | "on_hold" | "published";
 
-/** What /transcript shows for a year: a hold wins over a draft or the real thing. */
+/** What /transcript shows for a year: nothing until it is open, then a hold wins. */
 export function residentViewOf(
   status: YearStatus,
   withheld: boolean,
 ): ResidentView {
   if (status === "collecting") return "not_open";
   if (withheld) return "on_hold";
-  return status === "closed" ? "draft" : "published";
+  return "published";
 }
 
 /** The one sentence a resident on hold sees. */

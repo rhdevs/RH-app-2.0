@@ -31,8 +31,8 @@ export function canManageExtraContribution(
 }
 
 /**
- * May set the semester-2 start date and publish or reopen an academic year:
- * `jcrc` or `admin` only. Not `cca_head` (heads edit their own CCA's roster
+ * May set an academic year's dates and open its transcripts: `jcrc` or
+ * `admin` only. Not `cca_head` (heads edit their own CCA's roster
  * while a year is collecting, they do not control the year) and not `scrc`.
  */
 export function canManageTranscriptPeriods(roles: readonly string[]): boolean {

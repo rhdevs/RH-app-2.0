@@ -21,7 +21,6 @@ export interface PanelFacts {
 
 export const STATE_LABEL: Record<ResidentYearState, string> = {
   collecting: "Collecting",
-  draft: "Draft",
   published: "Published",
 };
 
@@ -47,9 +46,9 @@ export function readOnlyNote(p: PanelFacts): string | null {
   return canEditResident(p) ? null : PUBLISHED_READONLY_NOTE;
 }
 
-/** Unlock needs the year to be in review or published. */
+/** Unlock needs the year to be open. */
 export const canUnlock = (p: PanelFacts) =>
-  p.status !== "collecting" && !p.unlocked;
+  p.status === "published" && !p.unlocked;
 
 export const UNLOCK_DIALOG = {
   title: "Unlock this resident?",

@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { currentAcademicYear } from "../academicYear";
 import {
-  FIRST_ACADEMIC_YEAR,
   academicYearsUpTo,
   editRefusal,
   formatAcademicYear,
   isLater,
   nextAcademicYear,
   normaliseYearStatus,
+  isBeforeFirstYear,
   openBlocker,
   previousYearNotOpen,
   showOpenReminder,
@@ -48,13 +47,28 @@ describe("the year status: collecting, then open", () => {
   it("opens the current year or a past one still collecting, never a future one", () => {
     const now = at("2027-04-15T00:00:00Z"); // AY2026/27
     expect(openBlocker("AY2026/27", "collecting", now)).toBeNull();
-    expect(openBlocker("AY2025/26", "collecting", now)).toBeNull();
+    expect(
+      openBlocker("AY2026/27", "collecting", at("2027-09-01T00:00:00Z")),
+    ).toBeNull();
     expect(openBlocker("AY2027/28", "collecting", now)).toBe(
       "YEAR_NOT_STARTED",
     );
     expect(openBlocker("AY2026/27", "published", now)).toBe(
       "ALREADY_PUBLISHED",
     );
+  });
+
+  it("refuses a year before transcripts began, before anything else (F32)", () => {
+    const now = at("2027-04-15T00:00:00Z");
+    expect(openBlocker("AY2025/26", "collecting", now)).toBe(
+      "YEAR_BEFORE_START",
+    );
+    expect(openBlocker("AY2025/26", "published", now)).toBe(
+      "YEAR_BEFORE_START",
+    );
+    expect(isBeforeFirstYear("AY2025/26")).toBe(true);
+    expect(isBeforeFirstYear("AY2026/27")).toBe(false);
+    expect(isBeforeFirstYear("not a year")).toBe(false);
   });
 
   it("needs no semester 2 date to open", () => {

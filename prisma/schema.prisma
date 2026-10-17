@@ -1369,11 +1369,9 @@ model Authenticator {
 // TranscriptIssue.snapshot when an academic year is published.
 // ---------------------------------------------------------------------------
 
-/// One academic year's transcript state. The app has no notion of a term,
-/// semester or academic year, so this adds it: `academicYear` ("AY2026/27") is
-/// the key, `sem2Start` is the date the second semester begins (admin-entered;
-/// it decides each member's DEFAULT duration from CcaApplication.decidedAt),
-/// and `status` gates who can do what.
+/// One academic year's transcript state. The app has no notion of an academic
+/// year, so this adds it: `academicYear` ("AY2026/27") is the key and `status`
+/// gates who can do what.
 ///
 /// status: "collecting" (heads/JCRC edit, residents see nothing) ->
 /// "published" (Open transcripts: every CCA's list is locked, residents
@@ -1382,7 +1380,6 @@ model Authenticator {
 model TranscriptPeriod {
   id           String    @id @default(auto()) @map("_id") @db.ObjectId
   academicYear String    @unique(map: "transcript_period_ay")
-  sem2Start    DateTime?
   /// Last day residents are asked to download by (a Singapore calendar date,
   /// stored as midnight Singapore time). Shown as a banner; nothing is enforced.
   downloadBy   DateTime?
@@ -1400,8 +1397,8 @@ model TranscriptPeriod {
 /// publish, never reconstructed from here.
 ///
 /// duration / roleDuration: full | sem1 | sem2. The transcript prints a
-/// duration only when it is NOT a full year. The default comes from
-/// CcaApplication.decidedAt vs TranscriptPeriod.sem2Start; a head may override.
+/// duration only when it is NOT a full year. Everyone is a full year until a
+/// head (or JCRC/admin) chooses a semester label by hand.
 /// `frozen` is set when the year is published so later edits cannot alter it.
 model TranscriptRosterEntry {
   id                String    @id @default(auto()) @map("_id") @db.ObjectId

@@ -22,32 +22,17 @@ const saved = draftOf({
 });
 
 describe("duration option labels", () => {
-  it("shows the computed default inside the first option", () => {
-    expect(durationOptions("sem2")[0]).toEqual({
-      value: "",
-      label: "Default (Semester 2 only)",
-    });
-    expect(durationOptions("full")[0]!.label).toBe("Default (Full year)");
-  });
-
-  it("treats an unknown default as the full year", () => {
-    expect(durationOptions(null)[0]!.label).toBe("Default (Full year)");
-    expect(durationOptions(undefined)[0]!.label).toBe("Default (Full year)");
-  });
-
-  it("offers the three explicit choices after the default", () => {
-    expect(durationOptions("full").map((o) => o.label)).toEqual([
-      "Default (Full year)",
+  it("has no Default entry: a full year is the default", () => {
+    expect(durationOptions().map((o) => o.label)).toEqual([
       "Full year",
       "Semester 1 only",
       "Semester 2 only",
     ]);
-    expect(durationOptions("full").map((o) => o.value)).toEqual([
-      "",
-      "full",
-      "sem1",
-      "sem2",
-    ]);
+    expect(durationOptions().map((o) => o.value)).toEqual(["", "sem1", "sem2"]);
+  });
+
+  it("never shows 'Default (...)'", () => {
+    expect(JSON.stringify(durationOptions())).not.toContain("Default");
   });
 });
 
@@ -176,7 +161,7 @@ describe("limits", () => {
 describe("wording and years", () => {
   it("states the published note in plain words", () => {
     expect(PUBLISHED_NOTE("AY2026/27")).toBe(
-      "Transcripts for AY2026/27 are published. Editing is closed. Ask the JCRC to reopen it.",
+      "Transcripts for AY2026/27 are open. Editing is closed. Ask the JCRC to fix individual residents.",
     );
   });
 

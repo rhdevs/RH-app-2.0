@@ -237,8 +237,6 @@ export interface TranscriptViewModel {
   hasJcrc: boolean;
   /** True when any item is for one semester only (the closing block explains Sem 1 / Sem 2). */
   hasPartYear: boolean;
-  /** True while the year is closed for review: shown as a DRAFT, not a record. */
-  isDraft: boolean;
   /** The main page first; the JCRC page, when there is one, after it. */
   pages: TranscriptPage[];
 }

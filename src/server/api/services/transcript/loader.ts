@@ -80,8 +80,6 @@ export function personKey(
 interface LiveMembership {
   ccaID: number;
   isHead: boolean;
-  grantedAt: Date | null;
-  decidedAt: Date | null;
 }
 
 /** Every CCA this person is in RIGHT NOW, from all three places it can live. */
@@ -92,18 +90,14 @@ async function liveMemberships(
 ): Promise<LiveMembership[]> {
   const keys = [...new Set([userID, ...(user ? membershipKeysFor(user) : [])])];
 
-  const [rows, heads, apps, embedded] = await Promise.all([
+  const [rows, heads, embedded] = await Promise.all([
     db.userCCA.findMany({
       where: { userID: { in: keys } },
       select: { ccaID: true },
     }),
     db.ccaHead.findMany({
       where: { userID: { in: keys } },
-      select: { ccaID: true, grantedAt: true },
-    }),
-    db.ccaApplication.findMany({
-      where: { userID: { in: keys }, status: "accepted" },
-      select: { ccaID: true, decidedAt: true },
+      select: { ccaID: true },
     }),
     user
       ? (db.user.findRaw({
@@ -121,20 +115,8 @@ async function liveMemberships(
     }
   }
 
-  const headBy = new Map(heads.map((h) => [h.ccaID, h.grantedAt]));
-  const decidedBy = new Map<number, Date>();
-  for (const a of apps) {
-    if (!a.decidedAt) continue;
-    const prev = decidedBy.get(a.ccaID);
-    if (!prev || a.decidedAt < prev) decidedBy.set(a.ccaID, a.decidedAt);
-  }
-
-  return [...ids].map((ccaID) => ({
-    ccaID,
-    isHead: headBy.has(ccaID),
-    grantedAt: headBy.get(ccaID) ?? null,
-    decidedAt: decidedBy.get(ccaID) ?? null,
-  }));
+  const headIDs = new Set(heads.map((h) => h.ccaID));
+  return [...ids].map((ccaID) => ({ ccaID, isHead: headIDs.has(ccaID) }));
 }
 
 export async function loadTranscriptInput(
@@ -165,7 +147,6 @@ export async function loadTranscriptInput(
     user,
     academicYear,
     period?.status === "published",
-    period?.sem2Start ?? null,
   );
   const activities = await loadActivities(db, key, academicYear, memberCcaIDs);
 
@@ -347,7 +328,6 @@ async function loadMemberships(
   academicYear: string,
   /** An open (published) year reads the locked lists; otherwise the live ones. */
   published: boolean,
-  sem2Start: Date | null,
 ): Promise<{
   memberships: CcaMembershipInput[];
   /** The CCAs the person counts as a member of for this year. */
@@ -387,7 +367,7 @@ async function loadMemberships(
       for (const m of live) {
         entries.push({
           ccaID: m.ccaID,
-          ...resolveEntry(byCca.get(m.ccaID), m, sem2Start),
+          ...resolveEntry(byCca.get(m.ccaID), m),
         });
       }
     }
@@ -457,7 +437,6 @@ export async function loadResidentCcaIDs(
     user,
     academicYear,
     period?.status === "published",
-    period?.sem2Start ?? null,
   );
   return { key, rosterCcaIDs, memberCcaIDs };
 }

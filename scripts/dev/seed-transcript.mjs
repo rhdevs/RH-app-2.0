@@ -21,7 +21,6 @@ import { PrismaClient } from "@prisma/client";
 
 const REQUIRED_DB = "rhapp_transcript_dev";
 const AY = "AY2026/27";
-const SEM2_START = new Date("2027-01-11T00:00:00Z");
 // "Download by 31 Dec 2027": a Singapore calendar date, stored as midnight there.
 const DOWNLOAD_BY = new Date("2027-12-30T16:00:00Z");
 const PREFIX = "SEED-";
@@ -306,21 +305,19 @@ async function seed() {
     })),
   });
 
-  // Accepted applications: decidedAt before the sem-2 start => default "full",
-  // after it => default "sem2". Heads joined by CcaHead grant, not application.
+  // Accepted applications (existing app data). The transcript does not read
+  // their dates: Semester 1 / Semester 2 labels are chosen by hand (see the
+  // roster entries below). Heads joined by CcaHead grant, not application.
   let applicationID = 9000;
   const apps = [];
   for (const { n, ccaID } of memberships.values()) {
     if (HEADS[ccaID] === n) continue;
-    const late = (n + CCA_IDS.indexOf(ccaID)) % 3 === 0;
     apps.push({
       applicationID: ++applicationID,
       ccaID,
       userID: uid(n),
       status: "accepted",
-      decidedAt: new Date(
-        late ? "2027-01-20T09:00:00Z" : "2026-08-20T09:00:00Z",
-      ),
+      decidedAt: new Date("2026-08-20T09:00:00Z"),
       decidedBy: uid(HEADS[ccaID] ?? 1),
     });
   }
@@ -330,12 +327,10 @@ async function seed() {
     where: { academicYear: AY },
     create: {
       academicYear: AY,
-      sem2Start: SEM2_START,
       downloadBy: DOWNLOAD_BY,
       status: "collecting",
     },
     update: {
-      sem2Start: SEM2_START,
       downloadBy: DOWNLOAD_BY,
       status: "collecting",
       publishedAt: null,
@@ -343,6 +338,8 @@ async function seed() {
     },
   });
 
+  // Everyone is a full year unless a head chose a semester label by hand:
+  // the entries below set a few ("sem1" / "sem2") the way a head would.
   const entry = (n, ccaID, extra) => ({
     academicYear: AY,
     userID: uid(n),
@@ -746,8 +743,6 @@ async function seedPublishedYear() {
   await db.transcriptPeriod.create({
     data: {
       academicYear: PAST_AY,
-      // 12 Jan 2026, midnight in Singapore
-      sem2Start: at("2026-01-11T16:00:00Z"),
       downloadBy: DOWNLOAD_BY,
       status: "published",
       publishedAt: openedAt,

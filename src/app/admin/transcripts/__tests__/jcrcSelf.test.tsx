@@ -217,7 +217,7 @@ describe("JCRC self page", () => {
     });
 
     expect(html).toContain(
-      "Transcripts for AY2026/27 are published. Editing is closed. Ask the JCRC to reopen it.",
+      "Transcripts for AY2026/27 are open. Editing is closed. Ask the JCRC to fix individual residents.",
     );
     expect(html).not.toContain(">Save<");
     expect(html).not.toContain("Add contribution");

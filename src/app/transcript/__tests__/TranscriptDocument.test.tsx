@@ -443,9 +443,7 @@ describe("TranscriptDocument: no draft", () => {
       render("plain-member"),
       renderToStaticMarkup(
         <TranscriptDocument
-          transcript={assembleTranscript(fixture.input, JCRC_AY, {
-            draft: true,
-          })}
+          transcript={assembleTranscript(fixture.input, JCRC_AY)}
         />,
       ),
     ]) {

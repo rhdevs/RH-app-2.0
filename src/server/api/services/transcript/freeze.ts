@@ -147,20 +147,6 @@ async function freezeOnce(
   const members = [...byKey.values()];
   const unresolved = live.unresolved + (live.members.length - members.length);
 
-  const allKeys = [...new Set(members.flatMap((m) => m.keys))];
-  const apps =
-    allKeys.length === 0
-      ? []
-      : await db.ccaApplication.findMany({
-          where: {
-            ccaID: input.ccaID,
-            status: "accepted",
-            userID: { in: allKeys },
-          },
-          select: { userID: true, decidedAt: true },
-        });
-  const sem2Start = period?.sem2Start ?? null;
-
   let memberCount = 0;
   try {
     await db.$transaction(
@@ -176,17 +162,8 @@ async function freezeOnce(
           data: Prisma.TranscriptRosterEntryUpdateInput;
         }> = [];
         for (const m of members) {
-          let decidedAt: Date | null = null;
-          for (const a of apps) {
-            if (!m.keys.includes(a.userID) || !a.decidedAt) continue;
-            if (!decidedAt || a.decidedAt < decidedAt) decidedAt = a.decidedAt;
-          }
           const own = storedBy.get(m.key) ?? null;
-          const r = resolveEntry(
-            own,
-            { decidedAt, isHead: m.entry.isHead, grantedAt: m.entry.grantedAt },
-            sem2Start,
-          );
+          const r = resolveEntry(own, { isHead: m.entry.isHead });
           const data = {
             duration: r.duration,
             roleLabel: r.roleLabel,

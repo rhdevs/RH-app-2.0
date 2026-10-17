@@ -76,7 +76,6 @@ describe("the Save column stays in view", () => {
     duration: null,
     defaultRoleLabel: null,
     roleLabel: null,
-    defaultRoleDuration: null,
     roleDuration: null,
     extraContribution: null,
   };

@@ -93,9 +93,7 @@ export default function MembershipsTab(p: SectionProps) {
                   </>
                 }
                 saved={m.row}
-                defaultDuration={m.row.defaultDuration}
                 defaultRoleLabel={m.row.defaultRoleLabel}
-                defaultRoleDuration={m.row.defaultRoleDuration}
                 canReset={m.row.defaultDuration !== null}
                 editable={p.editable}
                 onDirty={p.onDirty}
@@ -147,9 +145,7 @@ export default function MembershipsTab(p: SectionProps) {
                   m.alsoInRoster && !m.removed ? MANUAL_SHADOWED_NOTE : null
                 }
                 saved={m}
-                defaultDuration={null}
                 defaultRoleLabel={null}
-                defaultRoleDuration={null}
                 canReset={false}
                 editable={p.editable && !m.removed}
                 onDirty={p.onDirty}
@@ -220,9 +216,7 @@ export default function MembershipsTab(p: SectionProps) {
                     roleDuration: null,
                     extraContribution: null,
                   }}
-                  defaultDuration={null}
                   defaultRoleLabel={null}
-                  defaultRoleDuration={null}
                   canReset={false}
                   editable
                   onDirty={p.onDirty}

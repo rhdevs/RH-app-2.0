@@ -1,64 +1,17 @@
 import { describe, expect, it } from "vitest";
+import * as duration from "../duration";
 import {
-  defaultMembershipDuration,
-  defaultRoleDuration,
+  clampRoleDuration,
   durationLabel,
   isDuration,
   resolveEntry,
+  roleFits,
 } from "../duration";
 
-const SEM2 = new Date("2027-01-11T00:00:00Z");
-
-describe("defaultMembershipDuration", () => {
-  it("is full when accepted before semester 2 starts", () => {
-    expect(
-      defaultMembershipDuration(new Date("2026-08-20T00:00:00Z"), SEM2),
-    ).toBe("full");
-  });
-
-  it("is sem2 when accepted after semester 2 starts", () => {
-    expect(
-      defaultMembershipDuration(new Date("2027-01-20T00:00:00Z"), SEM2),
-    ).toBe("sem2");
-  });
-
-  it("counts exactly the sem2 start instant as sem2", () => {
-    expect(defaultMembershipDuration(new Date(SEM2), SEM2)).toBe("sem2");
-  });
-
-  it("counts one millisecond before the sem2 start as full", () => {
-    expect(defaultMembershipDuration(new Date(SEM2.getTime() - 1), SEM2)).toBe(
-      "full",
-    );
-  });
-
-  it.each([
-    [null, SEM2],
-    [undefined, SEM2],
-    [new Date("2027-02-01T00:00:00Z"), null],
-    [new Date("2027-02-01T00:00:00Z"), undefined],
-    [null, null],
-  ])("is full when a date is missing (%j, %j)", (decidedAt, sem2Start) => {
-    expect(defaultMembershipDuration(decidedAt, sem2Start)).toBe("full");
-  });
-});
-
-describe("defaultRoleDuration", () => {
-  it("is sem2 for a head granted on or after the sem2 start", () => {
-    expect(defaultRoleDuration(new Date(SEM2), SEM2)).toBe("sem2");
-    expect(defaultRoleDuration(new Date("2027-03-01T00:00:00Z"), SEM2)).toBe(
-      "sem2",
-    );
-  });
-
-  it("is full for a head granted earlier or with no dates", () => {
-    expect(defaultRoleDuration(new Date("2026-08-01T00:00:00Z"), SEM2)).toBe(
-      "full",
-    );
-    expect(defaultRoleDuration(null, SEM2)).toBe("full");
-    expect(defaultRoleDuration(new Date("2027-03-01T00:00:00Z"), null)).toBe(
-      "full",
-    );
+describe("no date ever decides a semester", () => {
+  it("has no date-based default functions any more", () => {
+    expect(duration).not.toHaveProperty("defaultMembershipDuration");
+    expect(duration).not.toHaveProperty("defaultRoleDuration");
   });
 });
 
@@ -78,11 +31,33 @@ describe("durationLabel / isDuration", () => {
   });
 });
 
-describe("resolveEntry", () => {
-  const member = { decidedAt: null, isHead: false, grantedAt: null };
+describe("role period must fit the membership", () => {
+  it("lets a full-year member hold a role for any period", () => {
+    expect(roleFits("full", "sem1")).toBe(true);
+    expect(roleFits("full", "sem2")).toBe(true);
+    expect(roleFits("full", "full")).toBe(true);
+  });
 
-  it("gives a plain member with no annotations a full year and no role", () => {
-    expect(resolveEntry(null, member, SEM2)).toEqual({
+  it("lets a semester member hold a role only for that semester", () => {
+    expect(roleFits("sem2", "sem2")).toBe(true);
+    expect(roleFits("sem2", "full")).toBe(false);
+    expect(roleFits("sem2", "sem1")).toBe(false);
+  });
+
+  it("narrows a role that sticks out of the membership", () => {
+    expect(clampRoleDuration("sem2", "full")).toBe("sem2");
+    expect(clampRoleDuration("sem2", null)).toBe("sem2");
+    expect(clampRoleDuration("sem1", "sem2")).toBe("sem1");
+    expect(clampRoleDuration("full", "sem2")).toBe("sem2");
+    expect(clampRoleDuration("full", null)).toBe("full");
+  });
+});
+
+describe("resolveEntry", () => {
+  const member = { isHead: false };
+
+  it("gives a plain member with no choices a full year and no role", () => {
+    expect(resolveEntry(null, member)).toEqual({
       duration: "full",
       roleLabel: null,
       roleDuration: null,
@@ -90,60 +65,61 @@ describe("resolveEntry", () => {
     });
   });
 
-  it("defaults a late-accepted member to sem2", () => {
-    const late = { ...member, decidedAt: new Date("2027-01-20T00:00:00Z") };
-
-    expect(resolveEntry(null, late, SEM2).duration).toBe("sem2");
+  it("is a full year whatever the join or grant dates were", () => {
+    // The caller no longer passes any date, so none can change the result.
+    expect(resolveEntry(undefined, member).duration).toBe("full");
+    expect(resolveEntry({}, { isHead: true }).duration).toBe("full");
+    expect(resolveEntry({}, { isHead: true }).roleDuration).toBe("full");
   });
 
-  it("lets a stored override beat the default", () => {
-    const late = { ...member, decidedAt: new Date("2027-01-20T00:00:00Z") };
-
-    expect(resolveEntry({ duration: "full" }, late, SEM2).duration).toBe(
-      "full",
-    );
+  it("uses the semester a head chose by hand", () => {
+    expect(resolveEntry({ duration: "sem2" }, member).duration).toBe("sem2");
+    expect(resolveEntry({ duration: "sem1" }, member).duration).toBe("sem1");
   });
 
-  it("makes a head 'Head' with a derived role duration", () => {
-    const head = {
-      decidedAt: null,
-      isHead: true,
-      grantedAt: new Date("2027-02-01T00:00:00Z"),
-    };
-
-    expect(resolveEntry(null, head, SEM2)).toMatchObject({
+  it("makes a head 'Head' for the full year by default", () => {
+    expect(resolveEntry(null, { isHead: true })).toMatchObject({
       roleLabel: "Head",
-      roleDuration: "sem2",
+      roleDuration: "full",
       duration: "full",
     });
   });
 
-  it("lets a stored role label and duration beat the derived ones", () => {
-    const head = {
-      decidedAt: null,
-      isHead: true,
-      grantedAt: new Date("2027-02-01T00:00:00Z"),
-    };
-
+  it("lets a stored role label and period win", () => {
     expect(
-      resolveEntry({ roleLabel: "Captain", roleDuration: "full" }, head, SEM2),
-    ).toMatchObject({ roleLabel: "Captain", roleDuration: "full" });
+      resolveEntry(
+        { roleLabel: "Captain", roleDuration: "sem2" },
+        { isHead: true },
+      ),
+    ).toMatchObject({
+      duration: "full",
+      roleLabel: "Captain",
+      roleDuration: "sem2",
+    });
+  });
+
+  it("pulls a role period inside a semester membership", () => {
+    expect(
+      resolveEntry(
+        { duration: "sem2", roleLabel: "Head", roleDuration: "full" },
+        { isHead: true },
+      ),
+    ).toMatchObject({ duration: "sem2", roleDuration: "sem2" });
+    expect(
+      resolveEntry({ duration: "sem2" }, { isHead: true }).roleDuration,
+    ).toBe("sem2");
   });
 
   it("ignores an unrecognised stored duration instead of trusting it", () => {
-    expect(resolveEntry({ duration: "sem9" }, member, SEM2).duration).toBe(
-      "full",
-    );
+    expect(resolveEntry({ duration: "sem9" }, member).duration).toBe("full");
   });
 
   it("trims and drops a blank contribution", () => {
     expect(
-      resolveEntry({ extraContribution: "   " }, member, SEM2)
-        .extraContribution,
+      resolveEntry({ extraContribution: "   " }, member).extraContribution,
     ).toBeNull();
     expect(
-      resolveEntry({ extraContribution: " did X " }, member, SEM2)
-        .extraContribution,
+      resolveEntry({ extraContribution: " did X " }, member).extraContribution,
     ).toBe("did X");
   });
 
@@ -156,7 +132,7 @@ describe("resolveEntry", () => {
     };
     const before = structuredClone(stored);
 
-    resolveEntry(stored, member, SEM2);
+    resolveEntry(stored, member);
 
     expect(stored).toEqual(before);
   });

@@ -36,7 +36,6 @@ function isLocalDevDatabase(url: string | undefined): boolean {
 }
 
 const AY = "AY2026/27";
-const SEM2_START = new Date("2027-01-11T00:00:00Z");
 const MEMBERS_SEEDED = 64; // UserCCA rows written by the seed (heads are members)
 
 const RESIDENT = { id: "SEED-R09", roles: ["resident"] };
@@ -116,11 +115,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         where: { academicYear: AY },
         create: {
           academicYear: AY,
-          sem2Start: SEM2_START,
           status: "collecting",
         },
         update: {
-          sem2Start: SEM2_START,
           status: "collecting",
           publishedAt: null,
           publishedBy: null,
@@ -297,10 +294,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
       }, 120_000);
 
-      it("opens without a semester 2 start date", async () => {
-        await as(JCRC).transcript.periods.setSem2Start({
-          academicYear: AY,
-          sem2Start: null,
+      it("opens with no dates set at all", async () => {
+        await db.transcriptPeriod.update({
+          where: { academicYear: AY },
+          data: { downloadBy: null },
         });
 
         expect(await errorOf(publishAy(JCRC))).toBe("ok");
@@ -313,8 +310,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("published");
       });
 
-      it("opening saves every CCA's list with the right default durations", async () => {
-        // A late-accepted plain member (no seeded override) and an early one.
+      it("opening saves every CCA's list as a full year unless a head chose a semester by hand", async () => {
+        // A plain member (no seeded override) whose application was decided late
+        // in the year: the date must not decide anything.
         const apps = await db.ccaApplication.findMany({
           where: { userID: { startsWith: "SEED-" }, status: "accepted" },
         });
@@ -324,9 +322,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const free = apps.filter(
           (a) => !annotated.has(`${a.userID}|${a.ccaID}`),
         );
-        const late = free.find((a) => a.decidedAt! >= SEM2_START)!;
-        const early = free.find((a) => a.decidedAt! < SEM2_START)!;
+        const late = free[0]!;
+        const early = free[1]!;
         expect(late && early).toBeTruthy();
+        const lateDecision = late.decidedAt;
+        await db.ccaApplication.update({
+          where: { id: late.id },
+          data: { decidedAt: new Date("2027-03-20T00:00:00Z") },
+        });
 
         // A head granted after semester 2 began (R10 heads RVC Pioneers, 9003).
         const head = await db.ccaHead.findFirstOrThrow({
@@ -351,22 +354,22 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }),
           ).toBe(14);
           expect((await entryOf(late.userID, late.ccaID))?.duration).toBe(
-            "sem2",
+            "full",
           );
           expect((await entryOf(early.userID, early.ccaID))?.duration).toBe(
             "full",
           );
+          // A head granted late in the year is still a full-year head.
           expect(await entryOf("SEED-R10", 9003)).toMatchObject({
             roleLabel: "Head",
-            roleDuration: "sem2",
+            roleDuration: "full",
             frozen: true,
           });
-          // A head granted earlier gets a full-year default role...
           expect(await entryOf("SEED-R07", 9001)).toMatchObject({
             roleLabel: "Head",
             roleDuration: "full",
           });
-          // ...and stored overrides win over derived defaults.
+          // Semester labels set by hand are kept as they are.
           expect(await entryOf("SEED-R04", 9005)).toMatchObject({
             roleLabel: "Captain",
             roleDuration: "full",
@@ -387,6 +390,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }),
           ).toBe(MEMBERS_SEEDED);
         } finally {
+          await db.ccaApplication.update({
+            where: { id: late.id },
+            data: { decidedAt: lateDecision },
+          });
           await db.ccaHead.update({
             where: { id: head.id },
             data: { grantedAt: head.grantedAt },
@@ -442,12 +449,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
         expect(
           await errorOf(
-            as(JCRC).transcript.periods.setSem2Start({
+            as(JCRC).transcriptManage.roster.upsert({
+              ccaID: 9005,
               academicYear: AY,
-              sem2Start: "2027-01-12",
+              userID: "SEED-R12",
+              duration: "sem2",
             }),
           ),
-        ).toBe("FORBIDDEN:PERIOD_PUBLISHED");
+        ).toBe("FORBIDDEN:ONLY_UNLOCKED_RESIDENTS");
       });
 
       it("refuses to open a year twice", async () => {

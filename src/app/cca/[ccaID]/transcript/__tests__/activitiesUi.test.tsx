@@ -295,7 +295,6 @@ const rosterRow = (over: Partial<RosterRowData> = {}): RosterRowData => ({
   duration: null,
   defaultRoleLabel: null,
   roleLabel: null,
-  defaultRoleDuration: null,
   roleDuration: null,
   extraContribution: null,
   ...over,
@@ -328,7 +327,8 @@ describe("roster cards (below the md breakpoint)", () => {
     expect(html).toContain('id="duration-m-SEED-R12"');
     expect(html).toContain('id="role-m-SEED-R12"');
     expect(html).toContain('id="extra-m-SEED-R12"');
-    expect(html).toContain("Default (Full year)");
+    expect(html).toContain(">Full year<");
+    expect(html).not.toContain("Default (");
     expect(html).toContain("500 characters left");
     expect(html).not.toContain('id="duration-SEED-R12"');
   });

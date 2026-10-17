@@ -1,9 +1,11 @@
 /**
  * How long a member was in a CCA, or held a role, within one academic year.
  *
- * The app has no notion of a semester, so `TranscriptPeriod.sem2Start` is the
- * date the second semester begins and everything is derived from it. The
- * transcript prints a duration only when it is NOT a full year. PURE.
+ * "Semester 1 only" / "Semester 2 only" is a label a head (or JCRC/admin)
+ * chooses to say roughly how much someone did; it is never derived from join
+ * or grant dates. Every membership and role is a full year until someone sets
+ * otherwise. The transcript prints a duration only when it is NOT a full year.
+ * PURE.
  */
 
 export const DURATIONS = ["full", "sem1", "sem2"] as const;
@@ -14,28 +16,6 @@ export function isDuration(value: unknown): value is Duration {
     typeof value === "string" &&
     (DURATIONS as readonly string[]).includes(value)
   );
-}
-
-/**
- * A member accepted on or after the semester-2 start was only there for
- * semester 2. No accepted application (a legacy member, or one added by a
- * head), no decision date, or no sem2Start all mean a full year.
- */
-export function defaultMembershipDuration(
-  decidedAt: Date | null | undefined,
-  sem2Start: Date | null | undefined,
-): Duration {
-  if (!decidedAt || !sem2Start) return "full";
-  return decidedAt.getTime() >= sem2Start.getTime() ? "sem2" : "full";
-}
-
-/** A head granted on or after the semester-2 start held the role for semester 2. */
-export function defaultRoleDuration(
-  grantedAt: Date | null | undefined,
-  sem2Start: Date | null | undefined,
-): Duration {
-  if (!grantedAt || !sem2Start) return "full";
-  return grantedAt.getTime() >= sem2Start.getTime() ? "sem2" : "full";
 }
 
 /**
@@ -81,18 +61,14 @@ export interface ResolvedEntry {
 }
 
 /**
- * Merge a head's/admin's stored OVERRIDES with the derived defaults. An
- * override always wins; an unrecognised stored value is ignored rather than
- * trusted. A non-head with no stored role has no role and no role duration.
+ * Merge a head's/admin's stored choices with the defaults (a full year; "Head"
+ * for a current head). A stored choice always wins; an unrecognised stored
+ * value is ignored rather than trusted. A non-head with no stored role has no
+ * role and no role duration.
  */
 export function resolveEntry(
   stored: Partial<RosterAnnotation> | null | undefined,
-  live: {
-    decidedAt: Date | null;
-    isHead: boolean;
-    grantedAt: Date | null;
-  },
-  sem2Start: Date | null | undefined,
+  live: { isHead: boolean },
 ): ResolvedEntry {
   const storedDuration = isDuration(stored?.duration) ? stored.duration : null;
   const storedRoleDuration = isDuration(stored?.roleDuration)
@@ -103,11 +79,8 @@ export function resolveEntry(
     : null;
 
   const roleLabel = storedLabel ?? (live.isHead ? "Head" : null);
-  const duration =
-    storedDuration ?? defaultMembershipDuration(live.decidedAt, sem2Start);
-  const roleDuration =
-    storedRoleDuration ??
-    (live.isHead ? defaultRoleDuration(live.grantedAt, sem2Start) : null);
+  const duration = storedDuration ?? "full";
+  const roleDuration = storedRoleDuration ?? (live.isHead ? "full" : null);
 
   return {
     duration,

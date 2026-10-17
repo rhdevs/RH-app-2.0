@@ -90,9 +90,7 @@ export default async function TranscriptPreviewPage({
           <p className="text-xs text-gray-500 print:hidden">
             {result.status === "published"
               ? `Showing ${academicYear} as residents receive it.`
-              : result.status === "closed"
-                ? `Showing ${academicYear} as the draft residents see while it is closed for review.`
-                : `Showing ${academicYear} as it stands now. Member lists that are not frozen use the current members.`}
+              : `Showing ${academicYear} as it stands now. Transcripts are not open yet, so each CCA's current members are used.`}
           </p>
           <TranscriptDocument transcript={result.transcript} />
         </>

@@ -37,12 +37,6 @@ const period = (
   status: "collecting",
   canOpen: true,
   publishedLine: null,
-  sem2Value: "2027-01-11",
-  onSem2Change: noop,
-  sem2Dirty: false,
-  onSaveSem2: noop,
-  saving: false,
-  saveError: null,
   confirming: false,
   onConfirming: noop,
   onConfirm: noop,
@@ -82,10 +76,17 @@ describe("academic year panel", () => {
     ]) {
       expect(html).not.toContain(gone);
     }
-    expect(html).toContain('value="2027-01-11"');
   });
 
-  it("hides the button once the year is open, says so, and locks the semester 2 date", () => {
+  it("has no Semester 2 start date: semester labels are chosen by heads", () => {
+    const html = renderPeriod();
+    expect(html).not.toContain("Semester 2 start");
+    expect(html).not.toContain("transcripts-sem2");
+    expect(html).not.toContain("defaults to semester 2");
+    expect(html).toContain("Download by");
+  });
+
+  it("hides the button once the year is open and says so", () => {
     const html = renderPeriod({
       status: "published",
       canOpen: false,
@@ -96,12 +97,18 @@ describe("academic year panel", () => {
     expect(html).toContain(">Open<");
     expect(buttons(html)).not.toContain("Open transcripts");
     expect(html).toContain("Opened on 15 Apr 2027 by Seed Resident 02.");
-    expect(html).toMatch(/<input[^>]*id="transcripts-sem2"[^>]*\sdisabled=""/);
-    // The member-list results appear only once the year is open.
+    // The member-list results are whatever the container passes in.
     expect(html).toContain("member list results");
-    expect(
-      renderPeriod({ freezeTable: <p>member list results</p> }),
-    ).not.toContain("member list results");
+    expect(renderPeriod()).not.toContain("member list results");
+  });
+
+  it("shows the per-CCA results for a collecting year too, when it is given", () => {
+    const html = renderPeriod({
+      status: "collecting",
+      freezeTable: <p>member list results</p>,
+    });
+    expect(html).toContain("member list results");
+    expect(buttons(html)).toContain("Open transcripts");
   });
 
   it("offers no Open transcripts for a future year", () => {
@@ -110,27 +117,20 @@ describe("academic year panel", () => {
     );
   });
 
-  it("treats a year with no period yet as collecting, with an empty date", () => {
-    const html = renderPeriod({ status: null, sem2Value: "" });
+  it("treats a year with no period yet as collecting", () => {
+    const html = renderPeriod({ status: null });
 
     expect(html).toContain("Collecting");
     expect(buttons(html)).toContain("Open transcripts");
-    expect(html).toMatch(/<input[^>]*id="transcripts-sem2"[^>]*value=""/);
   });
 
-  it("no longer says the semester 2 date is needed to close the year", () => {
-    const html = renderPeriod();
-    expect(html).toContain("midnight Singapore time");
-    expect(html).not.toContain("before the year can be closed");
-  });
-
-  it("disables Save until the date has changed", () => {
-    expect(renderPeriod({ sem2Dirty: false })).toMatch(
+  it("disables Save until the download-by date has changed", () => {
+    expect(renderPeriod({ downloadByDirty: false })).toMatch(
       /<button[^>]*\sdisabled=""[^>]*>Save</,
     );
-    expect(
-      renderPeriod({ sem2Dirty: true, downloadByDirty: true }),
-    ).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Save</);
+    expect(renderPeriod({ downloadByDirty: true })).not.toMatch(
+      /<button[^>]*\sdisabled=""[^>]*>Save</,
+    );
   });
 
   it("shows the result in words, and an error as an alert", () => {

@@ -1,5 +1,5 @@
 import type { Duration } from "./duration";
-import { clampRoleDuration, isDuration, roleFits } from "./duration";
+import { isDuration, roleFits } from "./duration";
 
 /**
  * View-model helpers for the CCA head's Transcript tab and the JCRC page. PURE:
@@ -21,13 +21,10 @@ export const CONTRIBUTIONS_MAX_ITEMS = 200;
 export const TESTIMONIAL_MAX = 1500;
 
 export const PUBLISHED_NOTE = (academicYear: string) =>
-  `Transcripts for ${academicYear} are published. Editing is closed. Ask the JCRC to reopen it.`;
-
-export const DEFAULTS_NOTE =
-  "Default durations assume the full year until the JCRC sets the semester 2 start date.";
+  `Transcripts for ${academicYear} are open. Editing is closed. Ask the JCRC to fix individual residents.`;
 
 export const ROSTER_HELPER =
-  "Members who leave the CCA before the year closes are not listed on the transcript.";
+  "Members who leave the CCA before transcripts open are not listed on them.";
 
 export const NO_DESCRIPTION_NOTE =
   "This CCA has no description yet. Add one so it appears in your members’ transcripts.";
@@ -50,14 +47,13 @@ export interface DurationOption {
   label: string;
 }
 
-/** "Default (Semester 2 only)" first, then the three explicit choices. */
-export function durationOptions(
-  computedDefault: Duration | null | undefined,
-): DurationOption[] {
-  const shown = computedDefault ? DURATION_LABEL[computedDefault] : "Full year";
+/**
+ * "Full year" (the default, no stored choice), then the two semesters. There is
+ * no "Default (...)" entry: a full year IS the default.
+ */
+export function durationOptions(): DurationOption[] {
   return [
-    { value: "", label: `Default (${shown})` },
-    { value: "full", label: DURATION_LABEL.full },
+    { value: "", label: DURATION_LABEL.full },
     { value: "sem1", label: DURATION_LABEL.sem1 },
     { value: "sem2", label: DURATION_LABEL.sem2 },
   ];
@@ -87,7 +83,9 @@ interface RowSource {
   extraContribution: string | null;
 }
 
-const asChoice = (v: string | null): DurationChoice => (isDuration(v) ? v : "");
+/** A stored "full" and no stored choice are the same thing: a full year. */
+const asChoice = (v: string | null): DurationChoice =>
+  isDuration(v) && v !== "full" ? v : "";
 
 /** The editable state of a row, from its stored overrides. */
 export function draftOf(row: RowSource): RowDraft {
@@ -263,40 +261,38 @@ export function contributionsPayload(rows: readonly ContributionDraft[]) {
 
 /* ---- role period inside the membership period ------------------------------ */
 
-/** The membership period in force for a draft: the choice, else the default. */
-export function effectiveMembership(
-  choice: DurationChoice,
-  defaultDuration: Duration | null | undefined,
-): Duration {
-  return choice === "" ? (defaultDuration ?? "full") : choice;
+/** The membership period in force for a draft: the choice, else a full year. */
+export function effectiveMembership(choice: DurationChoice): Duration {
+  return choice === "" ? "full" : choice;
 }
 
 /**
  * The role period choices for a membership. A full-year member may choose any;
- * a semester member only that semester (and the default, which is clamped to
- * it, so a sem2 member's default role period is Semester 2, never Full year).
+ * a semester member only that semester.
  */
-export function roleDurationOptions(
-  membership: Duration,
-  defaultRoleDuration: Duration | null | undefined,
-): DurationOption[] {
-  const all = durationOptions(
-    clampRoleDuration(membership, defaultRoleDuration),
-  );
+export function roleDurationOptions(membership: Duration): DurationOption[] {
   return membership === "full"
-    ? all
-    : all.filter((o) => o.value === "" || o.value === membership);
+    ? durationOptions()
+    : [{ value: membership, label: DURATION_LABEL[membership] }];
+}
+
+/** The value a role period select shows: a semester member has only the one choice. */
+export function roleDurationValue(
+  membership: Duration,
+  roleDuration: DurationChoice,
+): DurationChoice {
+  return membership === "full" ? roleDuration : membership;
 }
 
 /**
  * After a change, make the role period fit the membership. A role period that
  * would stick out is changed to match, with the one line to show for it.
  */
-export function fitRolePeriod(
-  draft: RowDraft,
-  defaultDuration: Duration | null | undefined,
-): { draft: RowDraft; note: string | null } {
-  const membership = effectiveMembership(draft.duration, defaultDuration);
+export function fitRolePeriod(draft: RowDraft): {
+  draft: RowDraft;
+  note: string | null;
+} {
+  const membership = effectiveMembership(draft.duration);
   if (draft.roleDuration === "" || roleFits(membership, draft.roleDuration)) {
     return { draft, note: null };
   }
@@ -310,15 +306,9 @@ export function fitRolePeriod(
 
 export const NO_MEMBER_LIST_NOTE = "No member list was recorded for this year.";
 
-export const lockButtonLabel = (academicYear: string) =>
-  `Lock member list for ${academicYear}`;
-
-export const LOCK_CONFIRMATION = (academicYear: string) =>
-  `This fixes who appears on ${academicYear} transcripts for this CCA. You can still edit roles, contributions and hours until the JCRC closes the year. To undo, ask the JCRC.`;
-
 /**
  * The one line above the roster that explains its state, or null. Plain words:
- * published, closed, frozen (with the date), locked by the head, or no list.
+ * transcripts open, another year than the current one, or no list.
  */
 export function rosterNotice(input: {
   academicYear: string;
@@ -326,33 +316,16 @@ export function rosterNotice(input: {
   /** Why this person cannot edit, or null if they can. */
   refusal:
     | "PERIOD_PUBLISHED"
-    | "YEAR_CLOSED"
-    | "CCA_YEAR_FROZEN"
     | "NOT_THE_TERM_YEAR"
     | "NOT_A_HEAD_OF_THIS_CCA"
     | null;
-  freezeReason: "handover" | "head_removed" | "lock" | "close_year" | null;
-  /** The freeze date as the person reads it, "11 Mar 2027". */
-  frozenOn: string | null;
 }): string | null {
   if (input.refusal === "PERIOD_PUBLISHED") {
     return PUBLISHED_NOTE(input.academicYear);
   }
-  if (
-    input.refusal === "CCA_YEAR_FROZEN" ||
-    (input.refusal === "YEAR_CLOSED" && input.frozenOn)
-  ) {
-    return `Frozen on ${input.frozenOn ?? "an earlier date"}. Ask the JCRC for changes.`;
-  }
-  if (input.refusal === "YEAR_CLOSED") {
-    return "This year is closed for review. Ask the JCRC for changes.";
-  }
   if (input.mode === "none") return NO_MEMBER_LIST_NOTE;
   if (input.refusal === "NOT_THE_TERM_YEAR") {
-    return "This is not the year this CCA is working on. Ask the JCRC for changes.";
-  }
-  if (input.freezeReason === "lock") {
-    return `Member list locked on ${input.frozenOn ?? "an earlier date"}. You can still edit roles, contributions and hours until the JCRC closes the year.`;
+    return "Heads can only change the current academic year. Ask the JCRC for changes to other years.";
   }
   return null;
 }

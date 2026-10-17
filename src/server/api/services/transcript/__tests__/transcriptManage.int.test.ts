@@ -36,7 +36,6 @@ function isLocalDevDatabase(url: string | undefined): boolean {
 }
 
 const AY = "AY2026/27";
-const SEM2_START = new Date("2027-01-11T00:00:00Z");
 const CCA_IDS = Array.from({ length: 14 }, (_, i) => 9001 + i);
 
 const R = (n: number, roles: string[]) => ({
@@ -193,11 +192,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         where: { academicYear: AY },
         create: {
           academicYear: AY,
-          sem2Start: SEM2_START,
           status: "collecting",
         },
         update: {
-          sem2Start: SEM2_START,
           status: "collecting",
           publishedAt: null,
           publishedBy: null,
@@ -683,7 +680,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }),
           ),
         ).toBe("ok");
-
       });
     });
 
@@ -916,50 +912,50 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toMatch(/^BAD_REQUEST:/);
       });
 
-      it("shows the derived defaults: heads, late joiners, and full year when sem2Start is unset", async () => {
+      it("shows the defaults: a full year for everyone, and 'Head' for a head, whatever the dates", async () => {
         const soccerRows = await rosterOf(SOCCER_HEAD, SOCCER);
         const head = soccerRows.find((r) => r.userID === SOCCER_HEAD.id)!;
         expect(head).toMatchObject({
           isHead: true,
+          defaultDuration: "full",
           defaultRoleLabel: "Head",
-          defaultRoleDuration: "full",
           roleLabel: "Captain",
         });
+        expect(head).not.toHaveProperty("defaultRoleDuration");
         const plain = soccerRows.find((r) => r.userID === R12.id)!;
         expect(plain).toMatchObject({
           isHead: false,
+          defaultDuration: "full",
           defaultRoleLabel: null,
-          defaultRoleDuration: null,
         });
         expect("matric" in plain).toBe(false);
         expect(plain.displayName).toBe("Seed Resident 12");
 
-        // A member accepted after semester 2 began defaults to sem2.
+        // A member accepted late in the year is still a full year by default.
         const late = await db.ccaApplication.findFirstOrThrow({
-          where: {
-            userID: { startsWith: "SEED-" },
-            status: "accepted",
-            decidedAt: { gte: SEM2_START },
-          },
+          where: { userID: { startsWith: "SEED-" }, status: "accepted" },
         });
-        const lateRow = (await rosterOf(ADMIN, late.ccaID)).find(
-          (r) => r.userID === late.userID,
-        )!;
-        expect(lateRow.defaultDuration).toBe("sem2");
-
-        // With no semester-2 date everything defaults to a full year.
-        await as(JCRC).transcript.periods.setSem2Start({
-          academicYear: AY,
-          sem2Start: null,
+        const before = late.decidedAt;
+        await db.ccaApplication.update({
+          where: { id: late.id },
+          data: { decidedAt: new Date("2027-03-20T00:00:00Z") },
         });
-        const afterClear = (await rosterOf(ADMIN, late.ccaID)).find(
-          (r) => r.userID === late.userID,
-        )!;
-        expect(afterClear.defaultDuration).toBe("full");
-        expect(
-          afterClear.defaultRoleDuration === null ||
-            afterClear.defaultRoleDuration === "full",
-        ).toBe(true);
+        try {
+          const lateRow = (await rosterOf(ADMIN, late.ccaID)).find(
+            (r) => r.userID === late.userID,
+          );
+          if (lateRow) expect(lateRow.effective.duration).toBe("full");
+          expect(
+            (await rosterOf(ADMIN, late.ccaID)).every(
+              (r) => r.defaultDuration === "full",
+            ),
+          ).toBe(true);
+        } finally {
+          await db.ccaApplication.update({
+            where: { id: late.id },
+            data: { decidedAt: before },
+          });
+        }
       });
 
       it("shows the frozen entries once the year is published", async () => {
@@ -1416,65 +1412,16 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ------------------------------------------------------------------ */
     describe("the admin screens' assumptions", () => {
-      it("stores the semester 2 date as midnight Singapore and shows it back as the same date", async () => {
-        await as(JCRC).transcript.periods.setSem2Start({
-          academicYear: AY,
-          sem2Start: "2027-01-12",
-        });
-
-        const stored = await db.transcriptPeriod.findUniqueOrThrow({
-          where: { academicYear: AY },
-        });
-        expect(stored.sem2Start?.toISOString()).toBe(
-          "2027-01-11T16:00:00.000Z",
-        );
+      it("has no Semester 2 start date on the period or the roster", async () => {
+        const listed = await as(JCRC).transcript.periods.list();
+        for (const p of listed.periods) {
+          expect(p).not.toHaveProperty("sem2Start");
+        }
         const roster = await as(JCRC).transcriptManage.roster.list({
           ccaID: SOCCER,
           academicYear: AY,
         });
-        expect(roster.sem2Start).toBe("2027-01-12");
-      });
-
-      it("accepts a semester 2 date only inside the academic year", async () => {
-        const c = as(JCRC).transcript.periods;
-
-        expect(
-          await errorOf(
-            c.setSem2Start({ academicYear: AY, sem2Start: "2026-08-01" }),
-          ),
-        ).toBe("ok");
-        expect(
-          await errorOf(
-            c.setSem2Start({ academicYear: AY, sem2Start: "2027-07-31" }),
-          ),
-        ).toBe("ok");
-        expect(
-          await errorOf(
-            c.setSem2Start({ academicYear: AY, sem2Start: "2026-07-31" }),
-          ),
-        ).toBe("BAD_REQUEST:SEM2_START_OUTSIDE_YEAR");
-        expect(
-          await errorOf(
-            c.setSem2Start({ academicYear: AY, sem2Start: "2027-08-01" }),
-          ),
-        ).toBe("BAD_REQUEST:SEM2_START_OUTSIDE_YEAR");
-      });
-
-      it("refuses an impossible semester 2 date instead of clearing the saved one", async () => {
-        const c = as(JCRC).transcript.periods;
-        await c.setSem2Start({ academicYear: AY, sem2Start: "2027-01-12" });
-
-        expect(
-          await errorOf(
-            c.setSem2Start({ academicYear: AY, sem2Start: "2027-02-30" }),
-          ),
-        ).toMatch(/^BAD_REQUEST:/);
-        const stored = await db.transcriptPeriod.findUniqueOrThrow({
-          where: { academicYear: AY },
-        });
-        expect(stored.sem2Start?.toISOString()).toBe(
-          "2027-01-11T16:00:00.000Z",
-        );
+        expect(roster).not.toHaveProperty("sem2Start");
       });
 
       it("shows who did it as a name, falling back to the key only when there is no name", async () => {
@@ -1525,10 +1472,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
         expect(records[0]!.createdByName).toBe("Seed Resident 06");
 
-        await as(JCRC).transcript.periods.setSem2Start({
-          academicYear: AY,
-          sem2Start: "2027-01-12",
-        });
         await publishAy(JCRC);
         const listed = await as(ADMIN).transcript.periods.list();
         const period = listed.periods.find((x) => x.academicYear === AY)!;
@@ -1546,7 +1489,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           "2027-12-30T16:00:00.000Z",
         );
 
-        await c.setSem2Start({ academicYear: AY, sem2Start: "2027-01-12" });
         await c.open({ academicYear: AY });
         // still editable once open
         expect(

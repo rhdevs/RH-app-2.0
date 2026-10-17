@@ -19,11 +19,10 @@ import { currentAcademicYear, parseAcademicYear } from "./academicYear";
 export const FIRST_ACADEMIC_YEAR = "AY2026/27";
 
 /**
- * A year is "collecting" or "published" (shown as "Open"). "closed" is a
- * retired value: nothing produces it any more, and a stored one reads as
- * collecting. It stays in the type only for older helpers that still name it.
+ * A year is "collecting" or "published" (shown as "Open"). Any other stored
+ * value (an old "closed" row, or none) reads as collecting.
  */
-export type YearStatus = "collecting" | "closed" | "published";
+export type YearStatus = "collecting" | "published";
 
 /** Why a CCA's member list was locked: Open transcripts is the only one. */
 export type FreezeReason = "open";
@@ -76,18 +75,29 @@ export function academicYearsUpTo(last: string): string[] {
 
 /* ---- opening transcripts --------------------------------------------------- */
 
-export type OpenBlocker = "ALREADY_PUBLISHED" | "YEAR_NOT_STARTED";
+export type OpenBlocker =
+  | "YEAR_BEFORE_START"
+  | "ALREADY_PUBLISHED"
+  | "YEAR_NOT_STARTED";
+
+/** Is this a real academic year that comes before transcripts began? */
+export function isBeforeFirstYear(academicYear: string): boolean {
+  const ay = parseAcademicYear(academicYear);
+  const first = parseAcademicYear(FIRST_ACADEMIC_YEAR);
+  return ay !== null && first !== null && ay.startYear < first.startYear;
+}
 
 /**
  * Why Open transcripts must be refused for a year, or null if it may go ahead:
- * the year must still be collecting, and be the current year or a past one
- * (never a future year).
+ * the year must not be before transcripts began, must still be collecting, and
+ * must be the current year or a past one (never a future year).
  */
 export function openBlocker(
   academicYear: string,
   status: YearStatus,
   now: Date,
 ): OpenBlocker | null {
+  if (isBeforeFirstYear(academicYear)) return "YEAR_BEFORE_START";
   if (status === "published") return "ALREADY_PUBLISHED";
   if (isLater(academicYear, currentAcademicYear(now))) {
     return "YEAR_NOT_STARTED";

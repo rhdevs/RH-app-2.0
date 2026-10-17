@@ -195,7 +195,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
       it("refuses an unlock while the year is collecting, and asking again changes nothing", async () => {
         expect(await errorOf(unlock(R12))).toBe(
-          "PRECONDITION_FAILED:YEAR_NOT_IN_REVIEW",
+          "PRECONDITION_FAILED:YEAR_NOT_OPEN",
         );
         await publishYear();
         expect(await errorOf(unlock(R12))).toBe("ok");

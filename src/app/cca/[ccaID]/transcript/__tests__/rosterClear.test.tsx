@@ -22,7 +22,6 @@ const row = (over: Partial<RosterRowData> = {}): RosterRowData => ({
   duration: "sem2",
   defaultRoleLabel: null,
   roleLabel: "Vice-Captain",
-  defaultRoleDuration: null,
   roleDuration: "sem2",
   extraContribution: "Ran the fixtures.",
   ...over,

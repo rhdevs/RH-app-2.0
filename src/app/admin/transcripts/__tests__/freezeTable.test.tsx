@@ -57,6 +57,15 @@ describe("CCA member lists after transcripts open", () => {
     expect(html.match(/could not be matched/g)).toHaveLength(1);
   });
 
+  it("tells a collecting year with some lists saved to press Open again (F30)", () => {
+    const partly = render({ partlySaved: true });
+    expect(partly).toContain(
+      "Some CCAs are saved; press Open transcripts again to finish.",
+    );
+    expect(partly).toContain("Hall Choir");
+    expect(render()).not.toContain("press Open transcripts again");
+  });
+
   it("is read-only: no Unfreeze, no buttons at all", () => {
     const html = render();
     expect(html).not.toContain("Unfreeze");

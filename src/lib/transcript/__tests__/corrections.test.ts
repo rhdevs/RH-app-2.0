@@ -120,7 +120,7 @@ describe("decideWrite: who may write, by year state, role and unlock", () => {
   });
 
   it("covers every status, role and unlock combination consistently", () => {
-    const statuses: YearStatus[] = ["collecting", "closed", "published"];
+    const statuses: YearStatus[] = ["collecting", "published"];
     const roles = ["manager", "head", "stranger"] as const;
     for (const status of statuses) {
       for (const role of roles) {
@@ -140,7 +140,6 @@ describe("decideWrite: who may write, by year state, role and unlock", () => {
 describe("what a resident's year looks like", () => {
   it("names the state from the year status", () => {
     expect(residentStateOf("collecting")).toBe("collecting");
-    expect(residentStateOf("closed")).toBe("draft");
     expect(residentStateOf("published")).toBe("published");
   });
 });
@@ -207,13 +206,11 @@ describe("what /transcript shows (hold selection)", () => {
     expect(residentViewOf("collecting", true)).toBe("not_open");
   });
 
-  it("shows the draft or the real thing when there is no hold", () => {
-    expect(residentViewOf("closed", false)).toBe("draft");
+  it("shows the transcript when the year is open and there is no hold", () => {
     expect(residentViewOf("published", false)).toBe("published");
   });
 
-  it("puts a hold over both the draft and the published transcript", () => {
-    expect(residentViewOf("closed", true)).toBe("on_hold");
+  it("puts a hold over the published transcript", () => {
     expect(residentViewOf("published", true)).toBe("on_hold");
   });
 

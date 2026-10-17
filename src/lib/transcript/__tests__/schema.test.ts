@@ -183,6 +183,12 @@ describe("schema: new transcript models", () => {
     );
   });
 
+  it("has no Semester 2 start date: semester labels are chosen by hand", () => {
+    const names = current.get("TranscriptPeriod")!.map((f) => f.name);
+    expect(names).not.toContain("sem2Start");
+    expect(names).toContain("downloadBy");
+  });
+
   it("records only who opened a year: no close, reopen or back-to-collecting stamps", () => {
     const names = current.get("TranscriptPeriod")!.map((f) => f.name);
     expect(names).toContain("publishedAt");
