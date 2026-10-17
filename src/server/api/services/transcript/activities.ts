@@ -18,7 +18,7 @@ import type {
 import { participantSummaries } from "~/lib/transcript/corrections";
 import { NOT_REMOVED } from "./loader";
 import { assertCanEditForResidents, logCorrections } from "./residentRecords";
-import { actorLabels, lookupResidents, requireResident } from "./residents";
+import { actorLabels, lookupResidents, requireResidents } from "./residents";
 
 /**
  * A CCA's ACTIVITIES for one academic year, and who took part in each.
@@ -260,11 +260,12 @@ async function resolveDesired(
 ): Promise<DesiredParticipant[]> {
   const typed = firstDuplicate(rows.map((r) => r.userID));
   if (typed) throw fail("BAD_REQUEST", "DUPLICATE_PARTICIPANT");
-  const keys = await Promise.all(
-    rows.map((r) => requireResident(db, r.userID)),
+  const people = await requireResidents(
+    db,
+    rows.map((r) => r.userID),
   );
-  const resolved = rows.map((r, i) => ({
-    userID: keys[i]!.key,
+  const resolved = rows.map((r) => ({
+    userID: people.get(r.userID)!.key,
     role: r.role,
     description: r.description,
   }));

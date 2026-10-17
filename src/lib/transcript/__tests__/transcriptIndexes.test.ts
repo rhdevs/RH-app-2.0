@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The production index script, imported without running it. It is loaded by
 // path so the type checker does not read the plain .mjs file.
@@ -13,8 +13,15 @@ const script = pathToFileURL(
     "create-transcript-indexes.mjs",
   ),
 ).href;
-const { TARGETS, classify } = (await import(/* @vite-ignore */ script)) as {
+const { TARGETS, classify, apply } = (await import(
+  /* @vite-ignore */ script
+)) as {
   TARGETS: Record<string, Index[]>;
+  apply: (
+    db: { $runCommandRaw: (cmd: Record<string, unknown>) => Promise<unknown> },
+    commit: boolean,
+    targets?: Record<string, Index[]>,
+  ) => Promise<{ aborted: boolean; created: string[] }>;
   classify: (
     want: Index,
     existing: Array<Record<string, unknown>>,
@@ -77,13 +84,14 @@ const shape = (list: Index[]) =>
   [...list].map((i) => `${i.name} ${JSON.stringify(i.key)} ${i.unique}`).sort();
 
 describe("create-transcript-indexes.mjs mirrors prisma/schema.prisma", () => {
-  it("finds the transcript models and a plausible number of indexes", () => {
+  it("finds the transcript models, and the script has exactly the indexes the schema declares", () => {
     expect(models.has("TranscriptPeriod")).toBe(true);
     expect(models.has("ResidentEvent")).toBe(true);
     expect(models.has("User")).toBe(false);
-    expect(
-      withIndexes.reduce((n, [, list]) => n + list.length, 0),
-    ).toBeGreaterThan(25);
+    const declared = withIndexes.reduce((n, [, list]) => n + list.length, 0);
+    const scripted = Object.values(TARGETS).reduce((n, l) => n + l.length, 0);
+    expect(declared).toBeGreaterThan(0);
+    expect(scripted).toBe(declared);
   });
 
   it("targets exactly the transcript collections that have indexes, and no other", () => {
@@ -110,6 +118,14 @@ describe("create-transcript-indexes.mjs mirrors prisma/schema.prisma", () => {
     });
     expect(TARGETS.ResidentWithhold).toContainEqual({
       name: "withhold_active_key",
+      key: { activeKey: 1 },
+      unique: true,
+    });
+  });
+
+  it("includes the unique key that stops an award being stored twice", () => {
+    expect(TARGETS.Award).toContainEqual({
+      name: "award_active_key",
       key: { activeKey: 1 },
       unique: true,
     });
@@ -169,5 +185,154 @@ describe("classify", () => {
     expect(
       classify(want, [listed({ name: "other", unique: undefined })]).status,
     ).toBe("conflict");
+  });
+});
+
+/* ---- the run itself, against a fake command runner ----------------------- */
+
+type Listed = Record<string, unknown>;
+interface FakeCollection {
+  absent?: boolean;
+  indexes: Listed[];
+  /** The duplicate pre-check finds rows that already violate uniqueness. */
+  duplicates?: boolean;
+}
+
+function fakeDb(state: Record<string, FakeCollection>) {
+  const writes: Array<Record<string, unknown>> = [];
+  const db = {
+    $runCommandRaw: (cmd: Record<string, unknown>) => {
+      if (typeof cmd.listIndexes === "string") {
+        const c = state[cmd.listIndexes];
+        if (!c || c.absent) {
+          return Promise.resolve({
+            ok: 0,
+            code: 26,
+            errmsg: "ns does not exist",
+          });
+        }
+        return Promise.resolve({
+          ok: 1,
+          cursor: {
+            firstBatch: [{ v: 2, key: { _id: 1 }, name: "_id_" }, ...c.indexes],
+          },
+        });
+      }
+      if (typeof cmd.aggregate === "string") {
+        const c = state[cmd.aggregate];
+        return Promise.resolve({
+          ok: 1,
+          cursor: {
+            id: 0,
+            firstBatch: c?.duplicates ? [{ _id: { x: "dup" }, n: 2 }] : [],
+          },
+        });
+      }
+      if (typeof cmd.create === "string") {
+        writes.push(cmd);
+        state[cmd.create] = {
+          indexes: [],
+          ...state[cmd.create],
+          absent: false,
+        };
+        return Promise.resolve({ ok: 1 });
+      }
+      if (typeof cmd.createIndexes === "string") {
+        writes.push(cmd);
+        const c = (state[cmd.createIndexes] ??= { indexes: [] });
+        c.absent = false;
+        for (const ix of cmd.indexes as Listed[]) {
+          c.indexes.push({ v: 2, ...ix });
+        }
+        return Promise.resolve({ ok: 1 });
+      }
+      return Promise.resolve({ ok: 0, code: 59, errmsg: "no such command" });
+    },
+  };
+  return { db, writes, state };
+}
+
+const SMALL: Record<string, Index[]> = {
+  Thing: [
+    { name: "thing_u", key: { x: 1 }, unique: true },
+    { name: "thing_i", key: { y: 1 }, unique: false },
+  ],
+};
+
+describe("running the index script (against a fake database)", () => {
+  let exitCode: typeof process.exitCode;
+  beforeEach(() => {
+    exitCode = process.exitCode;
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    process.exitCode = exitCode;
+    vi.restoreAllMocks();
+  });
+
+  it("a dry run writes nothing, and says what it would create", async () => {
+    const { db, writes } = fakeDb({ Thing: { absent: true, indexes: [] } });
+
+    const result = await apply(db, false, SMALL);
+
+    expect(result).toEqual({ aborted: false, created: [] });
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses a conflicting index before writing anything, even with --commit", async () => {
+    const { db, writes } = fakeDb({
+      Thing: {
+        indexes: [{ key: { y: 1, z: 1 }, name: "thing_i" }],
+      },
+    });
+
+    const result = await apply(db, true, SMALL);
+
+    expect(result.aborted).toBe(true);
+    expect(process.exitCode).toBe(1);
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses to build a unique index over rows that already break it", async () => {
+    const { db, writes } = fakeDb({ Thing: { indexes: [], duplicates: true } });
+
+    const result = await apply(db, true, SMALL);
+
+    expect(result.aborted).toBe(true);
+    expect(writes).toEqual([]);
+  });
+
+  it("--commit creates only the missing indexes, then verifies, and a second run changes nothing", async () => {
+    const { db, writes, state } = fakeDb({
+      Thing: { indexes: [{ key: { y: 1 }, name: "thing_i" }] },
+    });
+
+    const first = await apply(db, true, SMALL);
+
+    expect(first).toEqual({ aborted: false, created: ["Thing.thing_u"] });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      createIndexes: "Thing",
+      indexes: [{ key: { x: 1 }, name: "thing_u", unique: true }],
+    });
+    expect(state.Thing!.indexes).toHaveLength(2);
+
+    writes.length = 0;
+    const second = await apply(db, true, SMALL);
+    expect(second).toEqual({ aborted: false, created: [] });
+    expect(writes).toEqual([]);
+  });
+
+  it("creates the collection first when it is absent", async () => {
+    const { db, writes } = fakeDb({ Thing: { absent: true, indexes: [] } });
+
+    const result = await apply(db, true, SMALL);
+
+    expect(result.created).toEqual(["Thing.thing_u", "Thing.thing_i"]);
+    expect(writes.map((w) => Object.keys(w)[0])).toEqual([
+      "create",
+      "createIndexes",
+    ]);
   });
 });

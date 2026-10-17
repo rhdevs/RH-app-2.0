@@ -306,6 +306,36 @@ export function applyEdits(live: Cells, edits: GridEdits): Cells {
 }
 
 /**
+ * Drop my edits for a session or person that is no longer in the grid (removed
+ * meanwhile): the server would reject the whole save for them. Null when none
+ * are left.
+ */
+export function restrictEdits(
+  edits: GridEdits | null,
+  sessionIDs: readonly string[],
+  userIDs: readonly string[],
+): GridEdits | null {
+  if (!edits) return null;
+  const live = new Set(
+    sessionIDs.flatMap((s) => userIDs.map((u) => cellKey(s, u))),
+  );
+  const kept = Object.entries(edits).filter(([key]) => live.has(key));
+  if (kept.length === Object.keys(edits).length) return edits;
+  return kept.length === 0 ? null : Object.fromEntries(kept);
+}
+
+/** What a save sends: my edits on cells that still exist, nothing else. */
+export function changesToSave(
+  saved: Cells,
+  edits: GridEdits | null,
+  sessionIDs: readonly string[],
+  userIDs: readonly string[],
+): AttendanceChange[] {
+  const kept = restrictEdits(edits, sessionIDs, userIDs);
+  return gridChanges(saved, kept ? applyEdits(saved, kept) : saved);
+}
+
+/**
  * After a save: drop the edits that were sent and are unchanged since; keep
  * any cell edited (or edited again) while the save was running. Null when
  * nothing is left.

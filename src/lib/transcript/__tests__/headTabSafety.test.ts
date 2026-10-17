@@ -16,9 +16,11 @@ import {
 import {
   applyEdits,
   cellKey,
+  changesToSave,
   editsFrom,
   gridChanges,
   reconcileEdits,
+  restrictEdits,
   type Cells,
 } from "../volunteerGrid";
 
@@ -245,5 +247,36 @@ describe("a role period fit is worked out outside the state updater (F25)", () =
     );
     expect(source).toContain("applyDraftPatch(draft, patch)");
     expect(source).not.toMatch(/setDraft\(\(d\)/);
+  });
+});
+
+describe("edits for a removed session or person are dropped (F40)", () => {
+  const live: Cells = { [cellKey("s1", "A")]: null };
+
+  it("sends only the edits on cells that still exist, so the save is not rejected", () => {
+    const edits = editsFrom(live, {
+      ...live,
+      [cellKey("s1", "B")]: null,
+      [cellKey("gone", "A")]: null,
+      [cellKey("s1", "gone")]: null,
+    });
+
+    const changes = changesToSave(live, edits, ["s1"], ["A", "B"]);
+
+    expect(changes).toEqual([
+      { sessionID: "s1", userID: "B", attended: true, hoursOverride: null },
+    ]);
+  });
+
+  it("prunes the edits state when a session or person disappears", () => {
+    const edits = editsFrom(live, {
+      ...live,
+      [cellKey("gone", "A")]: null,
+    });
+
+    expect(restrictEdits(edits, ["s1"], ["A"])).toBeNull();
+    const kept = editsFrom(live, { ...live, [cellKey("s1", "B")]: null });
+    expect(restrictEdits(kept, ["s1"], ["A", "B"])).toBe(kept);
+    expect(restrictEdits(null, ["s1"], ["A"])).toBeNull();
   });
 });

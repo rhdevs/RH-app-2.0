@@ -26,7 +26,7 @@ import { assertCanEditCcaYear } from "./editRights";
 import { correctionSummary } from "~/lib/transcript/corrections";
 import { assertCanEditForResidents, logCorrections } from "./residentRecords";
 import { NOT_REMOVED } from "./loader";
-import { actorLabels, lookupResidents, requireResident } from "./residents";
+import { actorLabels, lookupResidents, requireResidents } from "./residents";
 
 /**
  * VOLUNTEER ACTIVITIES of a volunteering CCA (one tagged
@@ -644,9 +644,8 @@ export async function volunteerPeopleSet(
   if (firstDuplicate(input.userIDs)) {
     throw fail("BAD_REQUEST", "DUPLICATE_PARTICIPANT");
   }
-  const keys = await Promise.all(
-    input.userIDs.map(async (id) => (await requireResident(db, id)).key),
-  );
+  const resolvedPeople = await requireResidents(db, input.userIDs);
+  const keys = input.userIDs.map((id) => resolvedPeople.get(id)!.key);
   if (firstDuplicate(keys)) throw fail("BAD_REQUEST", "DUPLICATE_PARTICIPANT");
   const wanted = new Set(keys);
 

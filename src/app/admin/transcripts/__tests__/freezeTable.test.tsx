@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   FreezeTableView,
+  showFreezeTable,
   type FreezeRowView,
   type FreezeTableViewProps,
 } from "../_components/FreezeTable";
@@ -77,5 +78,45 @@ describe("CCA member lists after transcripts open", () => {
     expect(render({ loadError: "Something went wrong. Try again." })).toContain(
       'role="alert"',
     );
+  });
+});
+
+describe("when the member-list table is shown (F34)", () => {
+  it("shows a load error even when no CCA is locked yet", () => {
+    expect(
+      showFreezeTable({ published: false, hasError: true, rows: [] }),
+    ).toBe(true);
+    expect(
+      renderToStaticMarkup(
+        <FreezeTableView
+          rows={[]}
+          loadError="Something went wrong. Try again."
+          partlySaved
+        />,
+      ),
+    ).toContain("Something went wrong");
+  });
+
+  it("stays hidden for a collecting year with nothing saved and no error", () => {
+    expect(
+      showFreezeTable({
+        published: false,
+        hasError: false,
+        rows: [{ locked: false }],
+      }),
+    ).toBe(false);
+  });
+
+  it("is shown once any list is saved, and always for an open year", () => {
+    expect(
+      showFreezeTable({
+        published: false,
+        hasError: false,
+        rows: [{ locked: true }],
+      }),
+    ).toBe(true);
+    expect(
+      showFreezeTable({ published: true, hasError: false, rows: [] }),
+    ).toBe(true);
   });
 });

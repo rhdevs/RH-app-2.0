@@ -28,7 +28,6 @@ import {
   copyPrevious,
   defaultPhoneIndex,
   cellsOf,
-  gridChanges,
   gridWindow,
   isTicked,
   liveTotals,
@@ -44,8 +43,10 @@ import {
   unsavedCells,
   windowLine,
   applyEdits,
+  changesToSave,
   editsFrom,
   reconcileEdits,
+  restrictEdits,
   type Cells,
   type GridEdits,
   type GridSession,
@@ -768,6 +769,14 @@ export default function VolunteerAttendance({
     userIDs,
   );
   const count = unsavedCells(saved, cells);
+  // Edits for a session or person removed meanwhile are dropped, so they can
+  // never make the whole save fail.
+  const idsKey = `${sessionIDs.join(",")}|${userIDs.join(",")}`;
+  useEffect(() => {
+    if (!data) return;
+    setEdits((e) => restrictEdits(e, sessionIDs, userIDs));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey, Boolean(data)]);
   // Closing or reloading the tab asks first; the parent hears the count so it
   // can ask before another activity opens.
   useUnsavedChangesGuard(count > 0);
@@ -799,7 +808,7 @@ export default function VolunteerAttendance({
       await save.mutateAsync({
         activityID,
         ccaID,
-        changes: gridChanges(saved, applyEdits(saved, submitted)),
+        changes: changesToSave(saved, submitted, sessionIDs, userIDs),
       });
       await Promise.all([
         utils.transcriptManage.volunteer.activities.get.invalidate(),

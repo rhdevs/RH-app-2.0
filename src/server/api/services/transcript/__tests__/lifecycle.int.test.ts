@@ -700,6 +700,51 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ---- (i) retention --------------------------------------------------- */
     describe("purging a year", () => {
+      it("purges a few thousand rows of one year, leaves other years alone, and is safe to run again (F24)", async () => {
+        const at = new Date("2026-06-01T00:00:00Z");
+        const rows = (academicYear: string, n: number) =>
+          Array.from({ length: n }, (_, i) => ({
+            academicYear,
+            userID: `PURGE-${i}`,
+            action: "correction",
+            summary: "bulk row",
+            actor: JCRC.id,
+            at,
+          }));
+        await db.residentEvent.createMany({ data: rows(OLD, 3000) });
+        await db.residentEvent.createMany({ data: rows("AY2024/25", 50) });
+        await db.transcriptPeriod.create({
+          data: { academicYear: OLD, status: "published" },
+        });
+        const otherBefore = await db.residentEvent.count({
+          where: { academicYear: AY },
+        });
+
+        const started = Date.now();
+        const purged = await retention.purgeAcademicYear(db, OLD);
+
+        expect(Date.now() - started).toBeLessThan(60_000);
+        expect(purged.ResidentEvent).toBe(3000);
+        expect(purged.TranscriptPeriod).toBe(1);
+        expect(
+          await db.residentEvent.count({ where: { academicYear: OLD } }),
+        ).toBe(0);
+        expect(
+          await db.residentEvent.count({
+            where: { academicYear: "AY2024/25" },
+          }),
+        ).toBe(50);
+        expect(
+          await db.residentEvent.count({ where: { academicYear: AY } }),
+        ).toBe(otherBefore);
+        // Run again: nothing left, nothing fails.
+        const again = await retention.purgeAcademicYear(db, OLD);
+        expect(Object.values(again).every((n) => n === 0)).toBe(true);
+        await db.residentEvent.deleteMany({
+          where: { academicYear: "AY2024/25" },
+        });
+      }, 180_000);
+
       const OLD = "AY2025/26";
 
       const counts = async (ay: string) => {

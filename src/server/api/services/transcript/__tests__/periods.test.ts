@@ -134,3 +134,47 @@ describe("Open transcripts is checked before any write", () => {
     );
   });
 });
+
+describe("opening fails with a coded error, not a raw one (F35)", () => {
+  it("logs only the year, code and name, and throws OPEN_FAILED", async () => {
+    const logged = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      const db = {
+        transcriptPeriod: {
+          findUnique: async () => ({ status: "collecting" }),
+          updateMany: () =>
+            Promise.reject(
+              Object.assign(new Error("secret detail SEED-R01"), {
+                code: "P1001",
+              }),
+            ),
+        },
+        cCA: { findMany: async () => [] },
+        ccaYearFreeze: { findMany: async () => [] },
+      } as unknown as PrismaClient;
+
+      const code = await codeOf(
+        openTranscripts(
+          db,
+          "AY2026/27",
+          "SEED-R02",
+          new Date("2027-03-01T00:00:00Z"),
+        ),
+      );
+
+      expect(code).toBe("INTERNAL_SERVER_ERROR:OPEN_FAILED");
+      const line = String(logged.mock.calls[0]?.[0]);
+      expect(JSON.parse(line)).toEqual({
+        evt: "transcript_open_failed",
+        academicYear: "AY2026/27",
+        code: "P1001",
+        name: "Error",
+      });
+      expect(line).not.toContain("secret");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+});

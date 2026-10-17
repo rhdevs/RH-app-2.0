@@ -257,7 +257,10 @@ describe("transcript page route", () => {
 
   it("renders for a real id", async () => {
     const { default: Page } = await import("../page");
-    expect(() => Page({ params: { ccaID: "9005" } })).not.toThrow();
+    const element = Page({ params: { ccaID: "9005" } });
+    // It draws the Transcript tab for exactly the CCA in the address.
+    expect(element.type).toBe(tab.default);
+    expect(element.props).toEqual({ ccaID: 9005 });
   });
 });
 

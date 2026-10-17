@@ -21,7 +21,7 @@ import type {
 import { NOT_VOIDED } from "./loader";
 import { correctionSummary } from "~/lib/transcript/corrections";
 import { assertCanEditForResidents, logCorrections } from "./residentRecords";
-import { actorLabels, lookupResidents, requireResident } from "./residents";
+import { actorLabels, lookupResidents, requireResidents } from "./residents";
 
 /**
  * AWARDS. A catalogue of award types (not year-bound), assigned to residents for
@@ -241,12 +241,14 @@ export async function awardsAssign(
   const type = await requireType(db, input.awardTypeID);
   if (type.archivedAt) throw fail("CONFLICT", "AWARD_TYPE_ARCHIVED");
 
-  const people = await Promise.all(
-    input.recipients.map(async (r) => ({
-      resident: await requireResident(db, r.userID),
-      citation: r.citation,
-    })),
+  const residents = await requireResidents(
+    db,
+    input.recipients.map((r) => r.userID),
   );
+  const people = input.recipients.map((r) => ({
+    resident: residents.get(r.userID)!,
+    citation: r.citation,
+  }));
   const recipients = people.map((p) => ({
     userID: p.resident.key,
     displayName: p.resident.displayName,
@@ -790,23 +792,23 @@ export async function awardBatchesList(
     // An interrupted upload never saved its counts: count what it wrote.
     const interrupted = status === "interrupted";
     return {
-    id: r.id,
-    fileName: r.fileName ?? "",
-    rowCount: r.rowCount,
-    importedCount: interrupted ? (written.get(r.id) ?? 0) : r.importedCount,
-    skippedCount: interrupted
-      ? Math.max(0, r.rowCount - (written.get(r.id) ?? 0))
-      : r.skippedCount,
-    createdByName: label(r.createdBy),
-    createdAt: r.createdAt ?? null,
-    status,
-    /** The uploader is one of the people the upload gave awards to. */
-    selfRecorded: selfUploaded.has(r.id),
-    undone: r.undoneAt != null,
-    undoneAt: r.undoneAt ?? null,
-    undoneByName: label(r.undoneBy),
-    /** Awards of this upload that are still active (what an undo would remove). */
-    activeCount: active.get(r.id) ?? 0,
+      id: r.id,
+      fileName: r.fileName ?? "",
+      rowCount: r.rowCount,
+      importedCount: interrupted ? (written.get(r.id) ?? 0) : r.importedCount,
+      skippedCount: interrupted
+        ? Math.max(0, r.rowCount - (written.get(r.id) ?? 0))
+        : r.skippedCount,
+      createdByName: label(r.createdBy),
+      createdAt: r.createdAt ?? null,
+      status,
+      /** The uploader is one of the people the upload gave awards to. */
+      selfRecorded: selfUploaded.has(r.id),
+      undone: r.undoneAt != null,
+      undoneAt: r.undoneAt ?? null,
+      undoneByName: label(r.undoneBy),
+      /** Awards of this upload that are still active (what an undo would remove). */
+      activeCount: active.get(r.id) ?? 0,
     };
   });
 }
@@ -828,7 +830,9 @@ export async function awardBatchUndo(
   if (!batch) throw fail("NOT_FOUND", "BATCH_NOT_FOUND");
   // Rows written after the undo would escape it, so wait while the upload is
   // still being written. One cut off long ago ("interrupted") can be undone.
-  if (effectiveBatchStatus(batch.status, batch.createdAt, now) === "importing") {
+  if (
+    effectiveBatchStatus(batch.status, batch.createdAt, now) === "importing"
+  ) {
     throw fail("CONFLICT", "BATCH_IN_PROGRESS");
   }
   // Who the undo touches: everyone still holding an active award of the upload.

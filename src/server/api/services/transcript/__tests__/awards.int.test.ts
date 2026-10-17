@@ -322,11 +322,51 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }),
           ),
         ).toBe("CONFLICT:AWARD_REMOVED");
-        const after = await db.award.findUniqueOrThrow({ where: { id: stale.id } });
+        const after = await db.award.findUniqueOrThrow({
+          where: { id: stale.id },
+        });
         expect(after.activeKey).toBe(removedKey);
         expect(after.title).toBe("Old Plaque");
         expect(after.voidedAt).not.toBeNull();
       });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("assigning to a big list (F25b)", () => {
+      it("gives the award to a list of 500 and still reports an unknown person", async () => {
+        const t = await fullColours();
+        const known = Array.from(
+          { length: 20 },
+          (_, i) => `SEED-R${String(i + 1).padStart(2, "0")}`,
+        );
+        const recipients = Array.from({ length: 500 }, (_, i) => ({
+          userID: known[i % known.length]!,
+        }));
+
+        const started = Date.now();
+        const result = await as(JCRC).awards.assign({
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients,
+        });
+
+        expect(Date.now() - started).toBeLessThan(30_000);
+        expect(result.assigned + result.skipped.length).toBe(500);
+        expect(result.assigned).toBeGreaterThan(0);
+
+        expect(
+          await errorOf(
+            as(JCRC).awards.assign({
+              academicYear: AY,
+              awardTypeID: t.id,
+              recipients: [
+                ...recipients.slice(0, 5),
+                { userID: "NO-SUCH-USER" },
+              ],
+            }),
+          ),
+        ).toBe("NOT_FOUND:RESIDENT_NOT_FOUND");
+      }, 120_000);
     });
 
     /* ---------------------------------------------------------------- */

@@ -145,6 +145,51 @@ export async function requireResident(
   };
 }
 
+/**
+ * `requireResident` for many keys at once: ONE query however many there are,
+ * and the same answers (the canonical key and display name per key given). The
+ * first key that names nobody throws RESIDENT_NOT_FOUND, exactly as before.
+ */
+export async function requireResidents(
+  db: PrismaClient,
+  userIDs: readonly string[],
+): Promise<Map<string, { key: string; displayName: string | null }>> {
+  const unique = [...new Set(userIDs)];
+  const out = new Map<string, { key: string; displayName: string | null }>();
+  if (unique.length === 0) return out;
+  const users = await db.user.findMany({
+    where: {
+      OR: [
+        { userID: { in: unique } },
+        {
+          email: {
+            in: unique.map((k) => `${k.toLowerCase()}@u.nus.edu`),
+            mode: "insensitive",
+          },
+        },
+      ],
+    },
+    select: USER_SELECT,
+  });
+  const byStored = new Map<string, UserRow>();
+  const byEmail = new Map<string, UserRow>();
+  for (const u of users) {
+    if (u.userID) byStored.set(u.userID, u);
+    byEmail.set(u.email.toLowerCase(), u);
+  }
+  for (const id of unique) {
+    const u = byStored.get(id) ?? byEmail.get(`${id.toLowerCase()}@u.nus.edu`);
+    if (!u) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "RESIDENT_NOT_FOUND",
+      });
+    }
+    out.set(id, { key: personKey(u, id), displayName: u.displayName ?? null });
+  }
+  return out;
+}
+
 /** Every key that names this resident, for matching their records. */
 export async function keysOf(
   db: PrismaClient,

@@ -583,7 +583,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
         await Promise.all(
           Array.from({ length: 6 }, () =>
-            as(RESIDENT_12).transcript.mine.get({ academicYear: AY }),
+            as(RESIDENT_12).transcript.mine.markOpened({ academicYear: AY }),
           ),
         );
 
@@ -592,7 +592,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
         expect(rows).toHaveLength(1);
         const first = rows[0]!.firstOpenedAt!;
-        await as(RESIDENT_12).transcript.mine.get({ academicYear: AY });
+        await as(RESIDENT_12).transcript.mine.markOpened({ academicYear: AY });
         const after = await db.transcriptAccess.findUniqueOrThrow({
           where: { id: rows[0]!.id },
         });
@@ -600,6 +600,51 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(after.lastOpenedAt!.getTime()).toBeGreaterThanOrEqual(
           first.getTime(),
         );
+      });
+
+      it("only reads on a GET: viewing writes no TranscriptAccess, markOpened does (F25a)", async () => {
+        await publishAy(JCRC);
+        const mine = () =>
+          db.transcriptAccess.count({
+            where: { userID: RESIDENT_12.id, academicYear: AY },
+          });
+
+        await as(RESIDENT_12).transcript.mine.get({ academicYear: AY });
+        await as(RESIDENT_12).transcript.mine.get({ academicYear: AY });
+        expect(await mine()).toBe(0);
+        expect(await as(RESIDENT_12).transcript.mine.readiness()).toEqual({
+          ready: true,
+          academicYear: AY,
+        });
+
+        expect(
+          await as(RESIDENT_12).transcript.mine.markOpened({
+            academicYear: AY,
+          }),
+        ).toEqual({ recorded: true });
+        expect(await mine()).toBe(1);
+        expect(await as(RESIDENT_12).transcript.mine.readiness()).toEqual({
+          ready: false,
+          academicYear: null,
+        });
+      });
+
+      it("markOpened notes nothing for a collecting year, and needs a signed-in resident", async () => {
+        expect(
+          await as(RESIDENT_12).transcript.mine.markOpened({
+            academicYear: AY,
+          }),
+        ).toEqual({ recorded: false });
+        expect(
+          await db.transcriptAccess.count({
+            where: { userID: RESIDENT_12.id },
+          }),
+        ).toBe(0);
+        expect(
+          await errorOf(
+            as(null).transcript.mine.markOpened({ academicYear: AY }),
+          ),
+        ).toBe("UNAUTHORIZED:UNAUTHORIZED");
       });
 
       it("can only ever be the signed-in resident's own", async () => {
@@ -687,7 +732,13 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           ready: true,
           academicYear: AY,
         });
+        // Viewing alone does not clear it; noting the opening does.
         await as(RESIDENT_12).transcript.mine.get({ academicYear: AY });
+        expect(await as(RESIDENT_12).transcript.mine.readiness()).toEqual({
+          ready: true,
+          academicYear: AY,
+        });
+        await as(RESIDENT_12).transcript.mine.markOpened({ academicYear: AY });
         expect(await as(RESIDENT_12).transcript.mine.readiness()).toEqual({
           ready: false,
           academicYear: null,

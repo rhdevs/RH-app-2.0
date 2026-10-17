@@ -17,10 +17,7 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-const FILES = [
-  "src/app/transcript",
-  "src/lib/transcript",
-].flatMap(sourceFiles);
+const FILES = ["src/app/transcript", "src/lib/transcript"].flatMap(sourceFiles);
 
 describe("no hard-coded domain", () => {
   it("scans the transcript and library sources", () => {

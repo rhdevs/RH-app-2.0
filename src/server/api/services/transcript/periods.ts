@@ -258,6 +258,34 @@ async function claimYear(
   actorUserID: string,
   now: Date,
 ): Promise<void> {
+  try {
+    await claimYearOnce(db, academicYear, actorUserID, now);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    // Logged without the error's message (which can carry names), then a coded
+    // error the screen can explain, never a raw database error.
+    const e = error as { code?: unknown; name?: unknown };
+    console.error(
+      JSON.stringify({
+        evt: "transcript_open_failed",
+        academicYear,
+        code: typeof e.code === "string" ? e.code : "UNKNOWN",
+        name: typeof e.name === "string" ? e.name : typeof error,
+      }),
+    );
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "OPEN_FAILED",
+    });
+  }
+}
+
+async function claimYearOnce(
+  db: PrismaClient,
+  academicYear: string,
+  actorUserID: string,
+  now: Date,
+): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const claimed = await db.transcriptPeriod.updateMany({
       where: {

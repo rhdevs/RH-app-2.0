@@ -23,6 +23,19 @@ export interface FreezeRowView {
 export const PARTLY_SAVED_NOTE =
   "Some CCAs are saved; press Open transcripts again to finish.";
 
+/**
+ * Whether the member-list table is drawn at all: an open year always shows it;
+ * a collecting year only once some list is saved, or when loading failed (so
+ * the error is never hidden).
+ */
+export function showFreezeTable(p: {
+  published: boolean;
+  hasError: boolean;
+  rows: ReadonlyArray<{ locked: boolean }>;
+}): boolean {
+  return p.published || p.hasError || p.rows.some((r) => r.locked);
+}
+
 export interface FreezeTableViewProps {
   rows: FreezeRowView[];
   loadError: string | null;
@@ -127,7 +140,9 @@ export default function FreezeTable({
     memberCount: r.memberCount,
     unresolvedCount: r.unresolvedCount,
   }));
-  if (!published && !rows.some((r) => r.locked)) return null;
+  if (!showFreezeTable({ published, hasError: Boolean(list.error), rows })) {
+    return null;
+  }
   return (
     <FreezeTableView
       rows={rows}

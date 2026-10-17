@@ -75,8 +75,13 @@ function delegateOf(db: PrismaClient, name: TranscriptCollection) {
 
 /**
  * Delete (or, with `dryRun`, only count) every document of `academicYear` in
- * every transcript collection. Returns the number per collection. All deletes
- * run in one transaction, so a failure leaves the year whole.
+ * every transcript collection. Returns the number per collection.
+ *
+ * Collection by collection, each `deleteMany` on its own (one transaction over
+ * a real year's data would outrun the default 5 second limit). The period row
+ * goes LAST, so a run that stops part way still shows the year as present, and
+ * running it again finishes the job: a purge is idempotent, and a second run
+ * returns zeros.
  */
 export async function purgeAcademicYear(
   db: PrismaClient,
@@ -99,16 +104,12 @@ export async function purgeAcademicYear(
     return counts;
   }
 
-  await db.$transaction(async (tx) => {
-    for (const name of TRANSCRIPT_COLLECTIONS) {
-      const result = await delegateOf(
-        tx as unknown as PrismaClient,
-        name,
-      ).deleteMany({
-        where,
-      });
-      counts[name] = result.count;
-    }
-  });
+  const order = [
+    ...TRANSCRIPT_COLLECTIONS.filter((n) => n !== "TranscriptPeriod"),
+    "TranscriptPeriod" as const,
+  ];
+  for (const name of order) {
+    counts[name] = (await delegateOf(db, name).deleteMany({ where })).count;
+  }
   return counts;
 }

@@ -150,8 +150,7 @@ export const transcriptRouter = createTRPCRouter({
      * view. The identity comes ONLY from the session (`identifiedProcedure`
      * guarantees a canonical userID); there is no way to ask for anyone else's.
      * A collecting year has nothing to open; a published (open) one is the
-     * transcript, and opening it is noted in TranscriptAccess, which drives the
-     * "Ready" badge.
+     * transcript. This is a read: it writes nothing (see `markOpened`).
      */
     get: identifiedProcedure
       .input(z.object({ academicYear: academicYear.optional() }).optional())
@@ -174,7 +173,7 @@ export const transcriptRouter = createTRPCRouter({
         }
         const data = await loadTranscriptInput(ctx.db, userID, year, {});
         const transcript = assembleTranscript(data, year);
-        await recordAccess(ctx.db, year, userID);
+        // Reading never writes: noting the opening is `markOpened`, a mutation.
         return {
           status: "ready" as const,
           academicYear: year,
@@ -184,6 +183,26 @@ export const transcriptRouter = createTRPCRouter({
             ? instantToSgDate(period.downloadBy)
             : null,
         };
+      }),
+
+    /**
+     * The resident has the transcript on screen: note it in TranscriptAccess,
+     * which drives the "Ready" badge. Identity comes only from the session. Only
+     * an open (published) year that is not on hold is noted.
+     */
+    markOpened: identifiedProcedure
+      .input(z.object({ academicYear }))
+      .mutation(async ({ ctx, input }) => {
+        const userID = ctx.session.user.userID;
+        const period = await getPeriod(ctx.db, input.academicYear);
+        if (normaliseYearStatus(period?.status) !== "published") {
+          return { recorded: false as const };
+        }
+        if (await isWithheld(ctx.db, input.academicYear, userID)) {
+          return { recorded: false as const };
+        }
+        await recordAccess(ctx.db, input.academicYear, userID);
+        return { recorded: true as const };
       }),
 
     /**

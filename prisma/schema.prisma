@@ -1365,8 +1365,11 @@ model Authenticator {
 // on the canonical userID (I-1, the same key UserCCA / CcaHead / UserMatric use)
 // and on the ccaID business key, never on an ObjectId. Key fields are required
 // (they ARE the row); every other scalar is nullable or defaulted (I-2).
-// Membership itself is read LIVE from UserCCA / CcaHead and only FROZEN into
-// TranscriptIssue.snapshot when an academic year is published.
+// Membership itself is read LIVE from UserCCA / CcaHead while a year is
+// collecting, and each CCA's list is saved (CcaYearFreeze + frozen
+// TranscriptRosterEntry rows) only when the JCRC presses Open transcripts.
+// Nothing is stored as a copy of the finished transcript: it is assembled from
+// the data each time it is opened.
 // ---------------------------------------------------------------------------
 
 /// One academic year's transcript state. The app has no notion of an academic
@@ -1393,13 +1396,14 @@ model TranscriptPeriod {
 /// Per member, per CCA, per academic year ANNOTATIONS on top of the live
 /// membership: how long they were in the CCA, their role label and how long
 /// they held it, and the optional "Additional contribution" text. A member who
-/// left simply has no entry that matters — membership is read live and frozen at
-/// publish, never reconstructed from here.
+/// left simply has no entry that matters — membership is read live while the
+/// year is collecting and locked when transcripts open, never rebuilt from here.
 ///
 /// duration / roleDuration: full | sem1 | sem2. The transcript prints a
 /// duration only when it is NOT a full year. Everyone is a full year until a
 /// head (or JCRC/admin) chooses a semester label by hand.
-/// `frozen` is set when the year is published so later edits cannot alter it.
+/// `frozen` is set when the year is opened (Open transcripts), so later changes
+/// to who is in the CCA cannot alter the transcript.
 model TranscriptRosterEntry {
   id                String    @id @default(auto()) @map("_id") @db.ObjectId
   academicYear      String
@@ -1602,12 +1606,12 @@ model JcrcService {
   @@unique([academicYear, userID], map: "jcrc_service_member")
 }
 
-/// A CCA's member list for one academic year, FROZEN. CCAs are cleared and
-/// re-recruited after each handover, so a list is frozen at its own handover (or
-/// when a head is removed, when the head locks it, or when the year is closed).
-/// ACTIVE while `unfrozenAt` is empty. A later freeze of the same year reuses
-/// this document: the unfreeze fields are cleared and the reason and time reset.
-/// `reason`: handover | head_removed | lock | close_year.
+/// A CCA's member list for one academic year, LOCKED when the JCRC presses Open
+/// transcripts (`reason` is always "open"). CCAs are cleared and re-recruited
+/// in the August application period, so the list is saved before that and the
+/// transcript keeps reading it. Nothing else creates one: head changes do not.
+/// `unfrozenAt` / `unfrozenBy` / `unfreezeReason` are no longer written; a row
+/// is active while `unfrozenAt` is empty, which is every row.
 model CcaYearFreeze {
   id             String    @id @default(auto()) @map("_id") @db.ObjectId
   academicYear   String
@@ -1616,14 +1620,14 @@ model CcaYearFreeze {
   frozenAt       DateTime
   frozenBy       String
   memberCount    Int?
-  /// Members the roster resolver could not match when it was frozen (not frozen).
+  /// Members the roster resolver could not match when the list was saved.
   unresolvedCount Int?
   unfrozenAt     DateTime?
   unfrozenBy     String?
   unfreezeReason String?
 
   @@unique([academicYear, ccaID], map: "freeze_year_cca")
-  /// A CCA's freezes across years (its term year, the loader).
+  /// A CCA's saved lists across years.
   @@index([ccaID], map: "freeze_cca")
 }
 
@@ -1671,8 +1675,9 @@ model CcaActivityParticipant {
   @@index([academicYear, userID], map: "participant_year_user")
 }
 
-/// When a resident first and last opened their published transcript. Drives the
-/// "Ready" badge: a published year with no row here is one they have not seen.
+/// When a resident first and last had their open (published) transcript on
+/// screen, written by the `markOpened` mutation (never by viewing). Drives the
+/// "Ready" badge: an open year with no row here is one they have not seen.
 model TranscriptAccess {
   id            String    @id @default(auto()) @map("_id") @db.ObjectId
   academicYear  String
@@ -1683,7 +1688,7 @@ model TranscriptAccess {
   @@unique([academicYear, userID], map: "access_year_user")
 }
 
-/// A manager's unlock of ONE resident's records in a PUBLISHED year, so they can
+/// A manager's unlock of ONE resident's records in an OPEN year, so they can
 /// be corrected. ACTIVE while `relockedAt` is empty; at most one active per
 /// resident and year (kept by the service).
 model ResidentUnlock {

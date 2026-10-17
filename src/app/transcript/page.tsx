@@ -10,6 +10,7 @@ import {
 } from "~/lib/transcript/pageState";
 import { auth } from "~/server/auth";
 import { api } from "~/trpc/server";
+import { MarkOpened } from "./_components/MarkOpened";
 import { NotAvailable } from "./_components/NotAvailable";
 import { OnHold } from "./_components/OnHold";
 import { YearSwitcher } from "./_components/YearSwitcher";
@@ -29,8 +30,9 @@ export const dynamic = "force-dynamic";
  * way to ask for anyone else's.
  *
  * What is shown is ASSEMBLED FROM THE DATA on every view (the year's frozen
- * roster plus the current activity, volunteer, award and JCRC records). Opening
- * a published year is noted, to drive the "Ready" badge.
+ * roster plus the current activity, volunteer, award and JCRC records). Viewing
+ * writes nothing; the client notes the opening with `markOpened`, to drive the
+ * "Ready" badge.
  *
  * `?ay=2026-27` picks a published year; anything else falls back to the latest
  * published year. While nothing is published there is a calm "not available" page.
@@ -112,20 +114,23 @@ export default async function TranscriptPage({
   });
 
   return (
-    <TranscriptFrame
-      transcript={result.transcript}
-      years={state.choices}
-      basePath="/transcript"
-      notice={
-        banner ? (
-          <p
-            role="status"
-            className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
-          >
-            {banner}
-          </p>
-        ) : undefined
-      }
-    />
+    <>
+      <MarkOpened academicYear={state.academicYear} />
+      <TranscriptFrame
+        transcript={result.transcript}
+        years={state.choices}
+        basePath="/transcript"
+        notice={
+          banner ? (
+            <p
+              role="status"
+              className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
+            >
+              {banner}
+            </p>
+          ) : undefined
+        }
+      />
+    </>
   );
 }

@@ -33,7 +33,6 @@ const awardKey = (academicYear, userID, awardTypeID, title, removed) => {
   return removed ? `${base}|removed|seed` : base;
 };
 
-
 /**
  * `--with-published-year` ALSO seeds a past year, AY2025/26, whose transcripts
  * are already open: every seeded CCA's list saved, roster entries, activities, volunteer

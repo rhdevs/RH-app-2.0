@@ -655,6 +655,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           status: "on_hold",
           academicYear: AY,
         });
+        // Even asking to note an opening does nothing for a held resident.
+        expect(
+          await as(R12).transcript.mine.markOpened({ academicYear: AY }),
+        ).toEqual({ recorded: false });
         expect(
           await db.transcriptAccess.count({
             where: { academicYear: AY, userID: R12.id },
@@ -668,6 +672,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await as(R12).transcript.mine.years()).toEqual([AY]);
         // R20 is not held: opening the year records the opening, so no badge.
         expect((await get(R20)).status).toBe("ready");
+        await as(R20).transcript.mine.markOpened({ academicYear: AY });
         expect(await as(R20).transcript.mine.readiness()).toEqual({
           ready: false,
           academicYear: null,
@@ -708,6 +713,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
 
         expect((await get(R12)).status).toBe("ready");
+        await as(R12).transcript.mine.markOpened({ academicYear: AY });
         expect(
           await db.transcriptAccess.count({
             where: { academicYear: AY, userID: R12.id },
