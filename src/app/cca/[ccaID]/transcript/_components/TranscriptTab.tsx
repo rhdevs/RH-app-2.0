@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import {
   ErrorLine,
@@ -12,6 +12,7 @@ import { currentAcademicYear } from "~/lib/transcript/academicYear";
 import { errorText } from "~/lib/transcript/adminView";
 import {
   NO_DESCRIPTION_NOTE,
+  REFRESH_FAILED_NOTE,
   ROSTER_HELPER,
   rosterNotice,
 } from "~/lib/transcript/headView";
@@ -19,7 +20,10 @@ import {
   academicYearsUpTo,
   nextAcademicYear,
 } from "~/lib/transcript/lifecycle";
-import { useUnsavedChangesGuard } from "~/lib/transcript/useUnsavedChangesGuard";
+import {
+  totalUnsaved,
+  useUnsavedChangesGuard,
+} from "~/lib/transcript/useUnsavedChangesGuard";
 import { api } from "~/trpc/react";
 import ActivitiesSection from "./ActivitiesSection";
 import { RosterEditor, type RosterRowData } from "./RosterEditor";
@@ -69,9 +73,27 @@ export const OPEN_DEADLINE_NOTE =
  */
 export default function TranscriptTab({ ccaID }: { ccaID: number }) {
   const [picked, setPicked] = useState<string | null>(null);
-  // Unsaved roster edits: warned about on reload, and before the year changes.
-  const [rosterUnsaved, setRosterUnsaved] = useState(0);
-  const confirmLeave = useUnsavedChangesGuard(rosterUnsaved > 0);
+  // Unsaved work anywhere on the tab (roster rows, attendance ticks, an open
+  // editor): warned about on reload, and before the year changes.
+  const [unsaved, setUnsaved] = useState<Record<string, number>>({});
+  const reportUnsaved = useCallback(
+    (part: string) => (count: number) =>
+      setUnsaved((u) => (u[part] === count ? u : { ...u, [part]: count })),
+    [],
+  );
+  const onRosterUnsaved = useMemo(
+    () => reportUnsaved("roster"),
+    [reportUnsaved],
+  );
+  const onActivitiesUnsaved = useMemo(
+    () => reportUnsaved("activities"),
+    [reportUnsaved],
+  );
+  const onVolunteerUnsaved = useMemo(
+    () => reportUnsaved("volunteer"),
+    [reportUnsaved],
+  );
+  const confirmLeave = useUnsavedChangesGuard(totalUnsaved(unsaved) > 0);
   // The current academic year by default: the one heads can edit. Other
   // years can be picked and are read-only for heads.
   const year = picked ?? currentAcademicYear(new Date());
@@ -85,7 +107,9 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
   );
   const profile = api.cca.getProfile.useQuery({ ccaID }, { retry: false });
 
-  if (roster.error) {
+  // The blocking error is only for when there is no data to show: a failed
+  // refresh behind data already on screen must not throw unsaved edits away.
+  if (roster.error && !roster.data) {
     return (
       <SectionCard title="Transcript">
         <ErrorLine message={errorText(roster.error.message)} />
@@ -132,6 +156,11 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
           />
         </div>
         <p className="mb-2 text-sm text-gray-700">{OPEN_DEADLINE_NOTE}</p>
+        {roster.error && (
+          <p className="mb-2 text-sm text-amber-800" role="status">
+            {REFRESH_FAILED_NOTE}
+          </p>
+        )}
         <TranscriptNotes
           stateNote={stateNote}
           descriptionEmpty={
@@ -147,6 +176,7 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
         members={members}
         readOnly={readOnly}
         readOnlyNote={readOnly ? stateNote : null}
+        onUnsavedChange={onActivitiesUnsaved}
       />
 
       <SectionCard
@@ -159,7 +189,7 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
           academicYear={year}
           rows={rows}
           readOnly={readOnly}
-          onUnsavedChange={setRosterUnsaved}
+          onUnsavedChange={onRosterUnsaved}
         />
       </SectionCard>
 
@@ -170,6 +200,7 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
           members={members}
           readOnly={readOnly}
           readOnlyNote={readOnly ? stateNote : null}
+          onUnsavedChange={onVolunteerUnsaved}
         />
       )}
     </div>

@@ -74,7 +74,7 @@ describe("TranscriptDocument: pages", () => {
 
     expect(jcrc).toContain("Hall leadership record");
     expect(plain).not.toContain("Hall leadership record");
-    expect(plain).not.toContain("Testimonial from the Hall Master");
+    expect(plain).not.toContain("Testimonial");
     expect(jcrc.indexOf("Student Development Transcript")).toBeLessThan(
       jcrc.indexOf("Hall leadership record"),
     );
@@ -126,7 +126,15 @@ describe("TranscriptDocument: pages", () => {
     const html = render("jcrc-only");
 
     expect(html).toContain("Junior Common Room Committee (JCRC), Welfare");
-    expect(html).toContain("Testimonial from the Hall Master");
+    expect(html).toContain(">Testimonial<");
+    expect(html).not.toContain("from the Hall Master");
+    expect(html).not.toContain("Hall Master</");
+    // Placeholders stay, and a note that prints says the signatures are pending.
+    expect(html).toContain("Master signature");
+    expect(html).toContain("President signature");
+    const pending = /<p[^>]*>Signatures pending\.<\/p>/.exec(html);
+    expect(pending).not.toBeNull();
+    expect(pending![0]).not.toContain("print:hidden");
   });
 
   it("shows the empty-year message instead of a broken page", () => {

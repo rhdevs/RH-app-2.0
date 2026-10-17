@@ -148,7 +148,6 @@ const SPORTS_SECRETARY: JcrcServiceInput = {
   ],
   testimonial: {
     text: "This member approached the sports portfolio with care and consistency. They built a calendar that residents could rely on, and kept every CCA captain informed throughout the year. I am glad to recommend them.",
-    author: "Hall Master",
   },
   isPlaceholder: true,
 };

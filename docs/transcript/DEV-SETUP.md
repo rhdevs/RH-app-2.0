@@ -297,4 +297,4 @@ node scripts/remediation/index-census.mjs > census-after.txt
 diff census-before.txt census-after.txt
 ```
 
-The script creates the 29 transcript indexes (same names, keys and uniqueness as `prisma/schema.prisma`, including the `activeKey` uniques), never drops or changes an index, refuses to continue on a conflicting one, and touches no other collection. A second run reports "all present". A test fails if the script and the schema ever differ. Try it locally against a scratch database first (a fresh database name on localhost), never against a remote URL from this checkout.
+The script creates the 30 transcript indexes (same names, keys and uniqueness as `prisma/schema.prisma`, including the `activeKey` uniques), never drops or changes an index, refuses to continue on a conflicting one, and touches no other collection. A second run reports "all present". A test fails if the script and the schema ever differ. Try it locally against a scratch database first (a fresh database name on localhost), never against a remote URL from this checkout.

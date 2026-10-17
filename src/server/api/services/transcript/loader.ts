@@ -178,7 +178,7 @@ export async function loadTranscriptInput(
             role: c.role ?? "",
             description: c.description ?? "",
           })),
-          testimonial: { text: jcrc.testimonial ?? "", author: "Hall Master" },
+          testimonial: { text: jcrc.testimonial ?? "" },
           isPlaceholder: jcrc.isPlaceholder ?? true,
         }
       : null;

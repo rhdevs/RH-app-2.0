@@ -274,6 +274,62 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     /* ---------------------------------------------------------------- */
+    describe("an edit that loses a race with a remove (F38)", () => {
+      it("is refused with AWARD_REMOVED and leaves the removed key alone", async () => {
+        const { awardUpdate } = await import("../manageAwards");
+        await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "Old Plaque",
+            activeKey: `${AY}|SEED-R20|title:old plaque`,
+          },
+        });
+        const stale = await db.award.findFirstOrThrow({
+          where: { userID: "SEED-R20", title: "Old Plaque" },
+        });
+        // The remove wins the race...
+        await as(JCRC).awards.remove({ id: stale.id });
+        const removedKey = (
+          await db.award.findUniqueOrThrow({ where: { id: stale.id } })
+        ).activeKey;
+        expect(removedKey).toBe(`${stale.activeKey}|removed|${stale.id}`);
+
+        // ...and the edit, which read the award before it was removed, writes after.
+        const racing = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "award") {
+              return new Proxy(target.award, {
+                get(m, p) {
+                  if (p === "findUnique") return () => Promise.resolve(stale);
+                  const v: unknown = Reflect.get(m, p, m);
+                  return typeof v === "function"
+                    ? (v as (...a: unknown[]) => unknown).bind(m)
+                    : v;
+                },
+              });
+            }
+            return Reflect.get(target, prop, receiver) as unknown;
+          },
+        });
+
+        expect(
+          await errorOf(
+            awardUpdate(racing, JCRC.id, {
+              id: stale.id,
+              title: "New Plaque",
+              citation: null,
+            }),
+          ),
+        ).toBe("CONFLICT:AWARD_REMOVED");
+        const after = await db.award.findUniqueOrThrow({ where: { id: stale.id } });
+        expect(after.activeKey).toBe(removedKey);
+        expect(after.title).toBe("Old Plaque");
+        expect(after.voidedAt).not.toBeNull();
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
     describe("bulk restore (F25)", () => {
       it("restores 300 removed awards quickly, in memory twin checks, and refuses twins", async () => {
         const t = await fullColours();

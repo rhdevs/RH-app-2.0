@@ -12,7 +12,7 @@ import {
   draftOf,
   durationOptions,
   effectiveMembership,
-  fitRolePeriod,
+  applyDraftPatch,
   isDirty,
   roleDurationOptions,
   roleDurationValue,
@@ -286,14 +286,10 @@ export function MembershipForm(p: MembershipFormProps) {
   const onDraft = (patch: Partial<RowDraft>) => {
     setError(null);
     setSavedNow(false);
-    setRoleNote(null);
-    setDraft((d) => {
-      const next = { ...d, ...patch };
-      if (patch.duration === undefined) return next;
-      const fitted = fitRolePeriod(next);
-      setRoleNote(fitted.note);
-      return fitted.draft;
-    });
+    // Worked out here from the current draft, never inside the state updater.
+    const result = applyDraftPatch(draft, patch);
+    setRoleNote(result.note);
+    setDraft(result.draft);
   };
 
   const save = async () => {

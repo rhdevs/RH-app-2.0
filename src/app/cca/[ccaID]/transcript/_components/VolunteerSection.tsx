@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   ErrorLine,
@@ -264,18 +264,29 @@ export default function VolunteerSection({
   members,
   readOnly,
   readOnlyNote,
+  onUnsavedChange,
 }: {
   ccaID: number;
   academicYear: string;
   members: MemberOption[];
   readOnly: boolean;
   readOnlyNote: string | null;
+  /** Unsaved attendance ticks plus 1 for an open editor with changes. */
+  onUnsavedChange?: (count: number) => void;
 }) {
   const utils = api.useUtils();
   const [showRemoved, setShowRemoved] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [openID, setOpenID] = useState<string | null>(null);
   const [unsaved, setUnsaved] = useState(0);
+  const [editorDirty, setEditorDirty] = useState(false);
+  const report = useRef(onUnsavedChange);
+  report.current = onUnsavedChange;
+  const total = unsaved + (editorDirty ? 1 : 0);
+  useEffect(() => {
+    report.current?.(total);
+  }, [total]);
+  useEffect(() => () => report.current?.(0), []);
   const [removing, setRemoving] = useState<{
     id: string;
     title: string;
@@ -353,6 +364,7 @@ export default function VolunteerSection({
           members={members}
           readOnly={readOnly}
           onClose={() => setEditing(null)}
+          onDirtyChange={setEditorDirty}
         />
       )}
     </>

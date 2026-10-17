@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   ErrorLine,
@@ -43,9 +43,14 @@ import {
   toggleCell,
   unsavedCells,
   windowLine,
+  applyEdits,
+  editsFrom,
+  reconcileEdits,
   type Cells,
+  type GridEdits,
   type GridSession,
 } from "~/lib/transcript/volunteerGrid";
+import { REFRESH_FAILED_NOTE } from "~/lib/transcript/headView";
 import {
   hoursText,
   parseVolunteerHours,
@@ -733,7 +738,10 @@ export default function VolunteerAttendance({
     { id: activityID, ccaID },
     { retry: false },
   );
-  const [draft, setDraft] = useState<Cells | null>(null);
+  // Only the cells I changed; the server's cells are laid under them each render.
+  const [edits, setEdits] = useState<GridEdits | null>(null);
+  const editsRef = useRef(edits);
+  editsRef.current = edits;
   const [windowStart, setWindowStart] = useState<number | null>(null);
   const [phoneIndex, setPhoneIndex] = useState<number | null>(null);
   const [editingCell, setEditingCell] = useState<{
@@ -751,11 +759,13 @@ export default function VolunteerAttendance({
     .filter((s) => !s.removed)
     .map((s) => ({ id: s.id, date: s.date, hours: s.hours }));
   const people = data?.people ?? [];
-  const saved = cellsOf(data?.cells ?? []);
+  const sessionIDs = sessions.map((s) => s.id);
+  const userIDs = people.map((x) => x.userID);
+  const saved = restrictCells(cellsOf(data?.cells ?? []), sessionIDs, userIDs);
   const cells = restrictCells(
-    draft ?? saved,
-    sessions.map((s) => s.id),
-    people.map((x) => x.userID),
+    edits ? applyEdits(saved, edits) : saved,
+    sessionIDs,
+    userIDs,
   );
   const count = unsavedCells(saved, cells);
   // Closing or reloading the tab asks first; the parent hears the count so it
@@ -764,7 +774,8 @@ export default function VolunteerAttendance({
   useEffect(() => onUnsavedChange?.(count), [count, onUnsavedChange]);
   useEffect(() => () => onUnsavedChange?.(0), [onUnsavedChange]);
 
-  if (detail.error) {
+  // A failed refresh with data on screen is not a reason to drop the ticks.
+  if (detail.error && !data) {
     return <ErrorLine message={errorText(detail.error.message)} />;
   }
   if (!data) {
@@ -781,17 +792,21 @@ export default function VolunteerAttendance({
 
   const doSave = async () => {
     setSaveError(null);
+    const submitted = editsRef.current;
+    if (!submitted) return;
     try {
+      // Only my edits are sent, so a tick another editor made is never undone.
       await save.mutateAsync({
         activityID,
         ccaID,
-        changes: gridChanges(saved, cells),
+        changes: gridChanges(saved, applyEdits(saved, submitted)),
       });
       await Promise.all([
         utils.transcriptManage.volunteer.activities.get.invalidate(),
         utils.transcriptManage.volunteer.activities.list.invalidate(),
       ]);
-      setDraft(null);
+      // Clear what was sent; anything edited meanwhile stays.
+      setEdits(reconcileEdits(submitted, editsRef.current));
     } catch (e) {
       setSaveError(errorText((e as { message?: string }).message));
     }
@@ -799,6 +814,11 @@ export default function VolunteerAttendance({
 
   return (
     <div>
+      {detail.error && (
+        <p className="mb-2 text-sm text-amber-800" role="status">
+          {REFRESH_FAILED_NOTE}
+        </p>
+      )}
       <AttendanceView
         kind={data.kind}
         sessions={sessions}
@@ -806,9 +826,9 @@ export default function VolunteerAttendance({
         cells={cells}
         onCells={(next) => {
           setSaveError(null);
-          setDraft(next);
+          setEdits(editsFrom(saved, next));
         }}
-        readOnly={readOnly}
+        readOnly={readOnly || save.isPending}
         windowStart={windowStart}
         onWindowStart={setWindowStart}
         phoneIndex={index}
@@ -844,7 +864,7 @@ export default function VolunteerAttendance({
           onDiscard={() => {
             setSaveError(null);
             setEditingCell(null);
-            setDraft(null);
+            setEdits(null);
           }}
         />
       )}

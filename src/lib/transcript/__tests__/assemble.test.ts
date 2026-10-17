@@ -274,7 +274,7 @@ describe("assembleTranscript: durations", () => {
       term: AY,
       description: "",
       contributions: [],
-      testimonial: { text: "", author: "Hall Master" },
+      testimonial: { text: "" },
       isPlaceholder: true,
     };
 
@@ -535,7 +535,7 @@ describe("assembleTranscript: pages and sections", () => {
       term: JCRC_AY,
       about: JCRC_ABOUT_TEXT,
       isPlaceholder: true,
-      testimonial: { author: "Hall Master" },
+      testimonial: {},
     });
     expect(page(vm, "jcrc")?.jcrc.contributions).toHaveLength(4);
   });

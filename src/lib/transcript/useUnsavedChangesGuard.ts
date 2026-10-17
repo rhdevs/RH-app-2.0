@@ -36,3 +36,12 @@ export function useUnsavedChangesGuard(isDirty: boolean): () => boolean {
     [isDirty],
   );
 }
+
+/**
+ * The unsaved work on the Transcript tab, from every part that reports it
+ * (roster rows, attendance ticks, an open editor...). Anything above zero means
+ * switching the year or leaving the page must ask first.
+ */
+export function totalUnsaved(counts: Readonly<Record<string, number>>): number {
+  return Object.values(counts).reduce((n, c) => n + Math.max(0, c), 0);
+}

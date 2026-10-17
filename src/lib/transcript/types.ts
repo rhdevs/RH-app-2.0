@@ -114,7 +114,7 @@ export interface JcrcServiceInput {
   /** What the role covers. */
   description: string;
   contributions: ContributionInput[];
-  testimonial: { text: string; author: "Hall Master" };
+  testimonial: { text: string };
   /** True while the content is stand-in text (shown on screen only). */
   isPlaceholder: boolean;
 }
@@ -210,7 +210,7 @@ export interface JcrcPageModel {
   /** What the role covers. */
   responsibilities: string;
   contributions: ContributionInput[];
-  testimonial: { text: string; author: "Hall Master" };
+  testimonial: { text: string };
   isPlaceholder: boolean;
 }
 

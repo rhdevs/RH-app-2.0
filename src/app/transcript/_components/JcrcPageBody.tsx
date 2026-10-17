@@ -54,9 +54,7 @@ export function JcrcPageBody({ jcrc }: { jcrc: JcrcPageModel }) {
       </section>
 
       <section className="break-inside-avoid">
-        <h2 className={SEC_HEADING}>
-          Testimonial from the {jcrc.testimonial.author}
-        </h2>
+        <h2 className={SEC_HEADING}>Testimonial</h2>
         <blockquote className="my-1 border-l-4 border-black py-1 pl-2.5 text-[12.5px]">
           {jcrc.testimonial.text}
         </blockquote>
@@ -71,6 +69,10 @@ export function JcrcPageBody({ jcrc }: { jcrc: JcrcPageModel }) {
             office="President, JCRC"
           />
         </div>
+        {/* Unlike the screen-only placeholder note, this line prints. */}
+        <p className="mt-1 text-[10.5px] italic text-neutral-600">
+          Signatures pending.
+        </p>
       </section>
     </>
   );

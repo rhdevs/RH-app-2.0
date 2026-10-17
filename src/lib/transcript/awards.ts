@@ -67,8 +67,29 @@ export const removedAwardKey = (activeKey: string, id: string) =>
 /** The small tag on an award a manager recorded or edited for themselves. */
 export const SELF_RECORDED_TAG = "Self-recorded";
 
-/** What an upload's status reads as in History. Undo works for all three. */
+/** An upload still "importing" this long after it began has been cut off. */
+export const BATCH_INTERRUPTED_AFTER_MS = 15 * 60 * 1000;
+
+/**
+ * The status to show: a batch still "importing" more than 15 minutes after it
+ * began is "interrupted" (the server stopped before it could say how it ended).
+ */
+export function effectiveBatchStatus(
+  status: string | null | undefined,
+  createdAt: Date | string | null | undefined,
+  now: Date,
+): string {
+  const s = status ?? "complete";
+  if (s !== "importing" || !createdAt) return s;
+  return now.getTime() - new Date(createdAt).getTime() >
+    BATCH_INTERRUPTED_AFTER_MS
+    ? "interrupted"
+    : s;
+}
+
+/** What an upload's status reads as in History. Undo works for all four. */
 export function batchStatusLabel(status: string | null | undefined): string {
+  if (status === "interrupted") return "Interrupted";
   if (status === "importing") return "Importing";
   if (status === "partial") return "Partly imported";
   return "Imported";

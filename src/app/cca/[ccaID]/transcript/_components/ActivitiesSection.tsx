@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import {
   ErrorLine,
@@ -224,14 +224,23 @@ export default function ActivitiesSection({
   members,
   readOnly,
   readOnlyNote,
+  onUnsavedChange,
 }: {
   ccaID: number;
   academicYear: string;
   members: MemberOption[];
   readOnly: boolean;
   readOnlyNote: string | null;
+  /** 1 while an open editor holds unsaved changes, else 0. */
+  onUnsavedChange?: (count: number) => void;
 }) {
   const utils = api.useUtils();
+  const report = useRef(onUnsavedChange);
+  report.current = onUnsavedChange;
+  const reportDirty = useCallback(
+    (dirty: boolean) => report.current?.(dirty ? 1 : 0),
+    [],
+  );
   const [showRemoved, setShowRemoved] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [removing, setRemoving] = useState<{
@@ -293,6 +302,7 @@ export default function ActivitiesSection({
           members={members}
           readOnly={readOnly}
           onClose={() => setEditing(null)}
+          onDirtyChange={reportDirty}
         />
       )}
     </>

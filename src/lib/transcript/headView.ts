@@ -302,6 +302,25 @@ export function fitRolePeriod(draft: RowDraft): {
   };
 }
 
+/** Shown when a background refresh failed but the screen still has its data. */
+export const REFRESH_FAILED_NOTE =
+  "Couldn't refresh. Your changes are still here.";
+
+/**
+ * Change a roster row's draft. A change of membership pulls the role period
+ * back inside it, with the one line to show for that. PURE: the screen sets
+ * both results; nothing is computed inside a state updater.
+ */
+export function applyDraftPatch(
+  draft: RowDraft,
+  patch: Partial<RowDraft>,
+): { draft: RowDraft; note: string | null } {
+  const next = { ...draft, ...patch };
+  return patch.duration === undefined
+    ? { draft: next, note: null }
+    : fitRolePeriod(next);
+}
+
 /* ---- the year lifecycle on the head's tab --------------------------------- */
 
 export const NO_MEMBER_LIST_NOTE = "No member list was recorded for this year.";

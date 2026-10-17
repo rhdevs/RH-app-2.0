@@ -153,6 +153,8 @@ const ERROR_TEXT: Record<string, string> = {
     "That award is archived. Restore it in the catalogue first.",
   AWARD_REMOVED: "That award has been removed. Restore it to edit it.",
   AWARD_DUPLICATE: "That person already has this award for the year.",
+  BATCH_IN_PROGRESS:
+    "This upload is still being imported. Try again in a moment.",
   ALREADY_HAS_AWARD:
     "That person already has this award for the year, so the removed one cannot be restored.",
   BATCH_NOT_FOUND: "That upload no longer exists.",

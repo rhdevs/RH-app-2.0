@@ -713,7 +713,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(listed?.status).toBe("complete");
       });
 
-      it("shows 'importing' while it is being written, and Undo works on it", async () => {
+      it("shows an upload cut off long ago as interrupted, and Undo works on it", async () => {
         const batch = await db.awardImportBatch.create({
           data: {
             academicYear: AY,
@@ -723,6 +723,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             skippedCount: 0,
             status: "importing",
             createdBy: JCRC.id,
+            createdAt: new Date(Date.now() - 20 * 60 * 1000),
           },
         });
         const t = await db.awardType.findUniqueOrThrow({
@@ -742,7 +743,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const listed = (
           await as(JCRC).awardBatches.list({ academicYear: AY })
         ).find((b) => b.id === batch.id);
-        expect(listed).toMatchObject({ status: "importing", activeCount: 1 });
+        expect(listed).toMatchObject({ status: "interrupted", activeCount: 1 });
         const undone = await as(JCRC).awardBatches.undo({ batchId: batch.id });
         expect(undone.removed).toBe(1);
         expect(
@@ -841,6 +842,135 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           logged.mockRestore();
         }
       }, 300_000);
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("a batch that never says how it ended (F36, F37)", () => {
+      const rows = (): ImportRow[] =>
+        [1, 2, 3, 4].map((n) => ({
+          identifier: `seed-r${String(n).padStart(2, "0")}@u.nus.edu`,
+          award: "Full Colours",
+          citation: "",
+        }));
+      const sixteenMinutesAfter = (d: Date | null) =>
+        new Date((d ?? new Date()).getTime() + 16 * 60 * 1000);
+
+      it("returns success when the final 'complete' marker cannot be saved, and History shows it as interrupted with the computed count", async () => {
+        const service = await import("../awardImport");
+        const logged = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        try {
+          const failing = new Proxy(db, {
+            get(target, prop, receiver) {
+              if (prop === "awardImportBatch") {
+                return new Proxy(target.awardImportBatch, {
+                  get(m, p) {
+                    if (p === "update") {
+                      return () =>
+                        Promise.reject(
+                          Object.assign(new Error("no marker for SEED-R01"), {
+                            code: "P1001",
+                          }),
+                        );
+                    }
+                    const v: unknown = Reflect.get(m, p, m);
+                    return typeof v === "function"
+                      ? (v as (...a: unknown[]) => unknown).bind(m)
+                      : v;
+                  },
+                });
+              }
+              return Reflect.get(target, prop, receiver) as unknown;
+            },
+          });
+
+          const result = await service.awardImportCommit(failing, JCRC.id, {
+            academicYear: AY,
+            fileName: "marker-end.csv",
+            rows: rows(),
+            decisions: [],
+          } as never);
+
+          expect(result.imported).toBeGreaterThan(0);
+          // Tried twice, each failure logged with code and name only.
+          const lines = logged.mock.calls
+            .map((c) => String(c[0]))
+            .filter((l) => l.includes("award_batch_mark_failed"));
+          expect(lines).toHaveLength(2);
+          expect(lines.join(" ")).not.toContain("SEED-R01");
+
+          const batch = await db.awardImportBatch.findUniqueOrThrow({
+            where: { id: result.batchId },
+          });
+          expect(batch.status).toBe("importing");
+          const { awardBatchesList } = await import("../manageAwards");
+
+          // Young: still importing. Old: interrupted, count computed from the awards.
+          const young = (await awardBatchesList(db, AY, new Date())).find(
+            (b) => b.id === result.batchId,
+          );
+          expect(young?.status).toBe("importing");
+          const old = (
+            await awardBatchesList(db, AY, sixteenMinutesAfter(batch.createdAt))
+          ).find((b) => b.id === result.batchId);
+          expect(old).toMatchObject({
+            status: "interrupted",
+            importedCount: result.imported,
+            activeCount: result.imported,
+          });
+        } finally {
+          logged.mockRestore();
+        }
+      }, 120_000);
+
+      it("refuses to undo an upload that is still importing, and allows it once it is interrupted", async () => {
+        const { awardBatchUndo } = await import("../manageAwards");
+        const t = await db.awardType.findUniqueOrThrow({
+          where: { normalizedName: "full colours" },
+        });
+        const batch = await db.awardImportBatch.create({
+          data: {
+            academicYear: AY,
+            fileName: "busy.csv",
+            rowCount: 1,
+            importedCount: 0,
+            skippedCount: 0,
+            status: "importing",
+            createdBy: JCRC.id,
+            createdAt: new Date(),
+          },
+        });
+        await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "Full Colours",
+            awardTypeID: t.id,
+            importBatchID: batch.id,
+            activeKey: `${AY}|SEED-R20|${t.id}`,
+          },
+        });
+
+        expect(
+          await errorOf(as(JCRC).awardBatches.undo({ batchId: batch.id })),
+        ).toBe("CONFLICT:BATCH_IN_PROGRESS");
+        expect(
+          await db.award.count({ where: { importBatchID: batch.id, ...live } }),
+        ).toBe(1);
+        const { errorText } = await import("~/lib/transcript/adminView");
+        expect(errorText("BATCH_IN_PROGRESS")).toBe(
+          "This upload is still being imported. Try again in a moment.",
+        );
+
+        const undone = await awardBatchUndo(
+          db,
+          JCRC.id,
+          batch.id,
+          sixteenMinutesAfter(batch.createdAt),
+        );
+        expect(undone.removed).toBe(1);
+      });
     });
 
     /* ---------------------------------------------------------------- */

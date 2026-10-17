@@ -275,3 +275,52 @@ export function restrictCells(
     Object.entries(cells).filter(([key]) => live.has(key)),
   );
 }
+
+/* ---- my edits, apart from what the server has ----------------------------- */
+
+/** One cell I changed: ticked (with its override), or unticked. */
+export type GridEdit = { attended: boolean; hoursOverride: number | null };
+export type GridEdits = Readonly<Record<string, GridEdit>>;
+
+/**
+ * Only the cells where `next` differs from `live`: these are MY edits. Cells
+ * somebody else ticked, which are in `live` and untouched by me, never appear.
+ */
+export function editsFrom(live: Cells, next: Cells): GridEdits {
+  return Object.fromEntries(
+    gridChanges(live, next).map((c) => [
+      cellKey(c.sessionID, c.userID),
+      { attended: c.attended, hoursOverride: c.hoursOverride ?? null },
+    ]),
+  );
+}
+
+/** What the grid shows: the server's cells with my edits laid over them. */
+export function applyEdits(live: Cells, edits: GridEdits): Cells {
+  const out: Record<string, number | null> = { ...live };
+  for (const [key, e] of Object.entries(edits)) {
+    if (e.attended) out[key] = e.hoursOverride;
+    else delete out[key];
+  }
+  return out;
+}
+
+/**
+ * After a save: drop the edits that were sent and are unchanged since; keep
+ * any cell edited (or edited again) while the save was running. Null when
+ * nothing is left.
+ */
+export function reconcileEdits(
+  submitted: GridEdits,
+  now: GridEdits | null,
+): GridEdits | null {
+  const left = Object.entries(now ?? {}).filter(([key, e]) => {
+    const sent = submitted[key];
+    return (
+      !sent ||
+      sent.attended !== e.attended ||
+      sent.hoursOverride !== e.hoursOverride
+    );
+  });
+  return left.length === 0 ? null : Object.fromEntries(left);
+}

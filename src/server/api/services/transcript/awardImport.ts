@@ -413,11 +413,21 @@ export async function awardImportCommit(
       cause: error,
     });
   }
-  await markBatch(db, batch.id, input.academicYear, {
+  // Every award is written: a status that cannot be saved must not turn this
+  // into an error. Try twice (each failure is logged); then report success, and
+  // History will show the batch as interrupted with the count of what it wrote.
+  const complete = {
     status: "complete",
     importedCount: imported,
     skippedCount: rows.length - imported,
-  });
+  };
+  try {
+    await markBatch(db, batch.id, input.academicYear, complete);
+  } catch {
+    await markBatch(db, batch.id, input.academicYear, complete).catch(
+      () => undefined,
+    );
+  }
 
   return {
     batchId: batch.id,

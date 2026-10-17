@@ -2,7 +2,7 @@
 
 import { Loader2, X } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   ErrorLine,
@@ -24,10 +24,11 @@ import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import {
   filterMembers,
+  saveThenPeople,
   type MemberOption,
 } from "~/lib/transcript/activityEditor";
 import { errorText, fieldError } from "~/lib/transcript/adminView";
-import { counterText } from "~/lib/transcript/headView";
+import { REFRESH_FAILED_NOTE, counterText } from "~/lib/transcript/headView";
 import { useUnsavedChangesGuard } from "~/lib/transcript/useUnsavedChangesGuard";
 import {
   KIND_LABEL,
@@ -74,6 +75,8 @@ export interface VolunteerEditorViewProps {
   saving: boolean;
   dirty: boolean;
   error: string | null;
+  /** A non-blocking line: the latest refresh failed but nothing was lost. */
+  refreshNote?: string | null;
   onSave: () => void;
   onCancel: () => void;
 }
@@ -287,6 +290,11 @@ export function VolunteerEditorView(p: VolunteerEditorViewProps) {
       </p>
 
       <ErrorLine message={problem && p.dirty ? problem : p.error} />
+      {p.refreshNote && (
+        <p className="text-sm text-amber-800" role="status">
+          {p.refreshNote}
+        </p>
+      )}
 
       <div className="flex flex-wrap justify-end gap-2">
         <Button
@@ -358,6 +366,8 @@ function EditorDialogBody({
   members,
   readOnly,
   onClose,
+  onDirtyChange,
+  refreshFailed,
 }: {
   ccaID: number;
   academicYear: string;
@@ -366,6 +376,9 @@ function EditorDialogBody({
   members: MemberOption[];
   readOnly: boolean;
   onClose: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  /** A background refresh failed; the editor keeps its data and says so. */
+  refreshFailed?: boolean;
 }) {
   const utils = api.useUtils();
   const roles: readonly string[] = useSession().data?.user.roles ?? [];
@@ -381,6 +394,14 @@ function EditorDialogBody({
   const setPeople = api.transcriptManage.volunteer.people.set.useMutation();
 
   const dirty = isVolunteerDirty(draft, initial);
+
+  // Tell the page while this editor holds unsaved changes (cleared on unmount).
+  const dirtyRef = useRef(onDirtyChange);
+  dirtyRef.current = onDirtyChange;
+  useEffect(() => {
+    dirtyRef.current?.(dirty);
+  }, [dirty]);
+  useEffect(() => () => dirtyRef.current?.(false), []);
   const confirmLeave = useUnsavedChangesGuard(dirty);
   const close = () => {
     if (confirmLeave()) onClose();
@@ -390,33 +411,39 @@ function EditorDialogBody({
     setSaving(true);
     setError(null);
     try {
-      let id = activityID ?? createdID;
       const oneoff = draft.kind === "oneoff";
       const session = oneoff
         ? { date: draft.date, hours: parseVolunteerHours(draft.hours)! }
         : {};
-      if (id) {
-        await update.mutateAsync({
-          id,
-          ccaID,
-          ...volunteerFields(draft),
-          ...session,
-        });
-      } else {
-        const made = await create.mutateAsync({
-          ccaID,
-          academicYear,
-          kind: draft.kind,
-          ...volunteerFields(draft),
-          ...session,
-        });
-        id = made.id;
-        setCreatedID(made.id);
-      }
-      await setPeople.mutateAsync({
-        activityID: id,
-        ccaID,
-        userIDs: draft.people.map((p) => p.userID),
+      await saveThenPeople({
+        existingID: activityID ?? createdID,
+        update: (existing) =>
+          update.mutateAsync({
+            id: existing,
+            ccaID,
+            ...volunteerFields(draft),
+            ...session,
+          }),
+        create: () =>
+          create.mutateAsync({
+            ccaID,
+            academicYear,
+            kind: draft.kind,
+            ...volunteerFields(draft),
+            ...session,
+          }),
+        // The activity exists from here on: show it in the list and make the
+        // editor an editor of that id, so a retry cannot create a copy.
+        onCreated: async (made) => {
+          setCreatedID(made);
+          await utils.transcriptManage.volunteer.activities.list.invalidate();
+        },
+        setPeople: (made) =>
+          setPeople.mutateAsync({
+            activityID: made,
+            ccaID,
+            userIDs: draft.people.map((p) => p.userID),
+          }),
       });
       await Promise.all([
         utils.transcriptManage.volunteer.activities.list.invalidate(),
@@ -483,6 +510,7 @@ function EditorDialogBody({
         saving={saving}
         dirty={dirty}
         error={error}
+        refreshNote={refreshFailed ? REFRESH_FAILED_NOTE : null}
         onSave={() => void save()}
         onCancel={close}
       />
@@ -502,6 +530,7 @@ export default function VolunteerEditorDialog({
   members,
   readOnly,
   onClose,
+  onDirtyChange,
 }: {
   ccaID: number;
   academicYear: string;
@@ -510,6 +539,8 @@ export default function VolunteerEditorDialog({
   members: MemberOption[];
   readOnly: boolean;
   onClose: () => void;
+  /** Called with true while the editor holds unsaved changes. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const detail = api.transcriptManage.volunteer.activities.get.useQuery(
     { id: activityID ?? "", ccaID },
@@ -526,10 +557,13 @@ export default function VolunteerEditorDialog({
         members={members}
         readOnly={readOnly}
         onClose={onClose}
+        onDirtyChange={onDirtyChange}
       />
     );
   }
-  if (detail.error || !detail.data) {
+  // The blocking error is only for when there is nothing to show. A refresh
+  // that failed behind data already on screen must not throw the edits away.
+  if (!detail.data) {
     return (
       <EditorShell editing onClose={onClose}>
         {detail.error ? (
@@ -561,6 +595,8 @@ export default function VolunteerEditorDialog({
       members={members}
       readOnly={readOnly}
       onClose={onClose}
+      onDirtyChange={onDirtyChange}
+      refreshFailed={detail.error != null}
     />
   );
 }

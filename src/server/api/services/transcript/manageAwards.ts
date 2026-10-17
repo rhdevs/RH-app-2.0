@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
 import {
   awardActiveKey,
+  effectiveBatchStatus,
   cleanCitation,
   matchesSearch,
   normalizeAwardName,
@@ -433,8 +434,10 @@ export async function awardUpdate(
       });
   try {
     await db.$transaction(async (tx) => {
-      await tx.award.update({
-        where: { id: award.id },
+      // The check and the write are one step: an edit that lost a race with a
+      // remove changes nothing, so it cannot put the active key back.
+      const written = await tx.award.updateMany({
+        where: { id: award.id, ...NOT_VOIDED },
         data: {
           title: input.title,
           citation: input.citation,
@@ -443,6 +446,7 @@ export async function awardUpdate(
           updatedAt: now,
         },
       });
+      if (written.count !== 1) throw fail("CONFLICT", "AWARD_REMOVED");
       await logCorrections(
         tx,
         guard,
@@ -746,7 +750,11 @@ export async function awardsBulkRestore(
 
 /* ---- upload history ------------------------------------------------------------------------ */
 
-export async function awardBatchesList(db: PrismaClient, academicYear: string) {
+export async function awardBatchesList(
+  db: PrismaClient,
+  academicYear: string,
+  now: Date = new Date(),
+) {
   const rows = await db.awardImportBatch.findMany({
     where: { academicYear },
     orderBy: { createdAt: "desc" },
@@ -771,15 +779,27 @@ export async function awardBatchesList(db: PrismaClient, academicYear: string) {
     const batch = rows.find((r) => r.id === a.importBatchID);
     if (batch && batch.createdBy === a.userID) selfUploaded.add(batch.id);
   }
-  return rows.map((r) => ({
+  const written = new Map<string, number>();
+  for (const a of live) {
+    if (a.importBatchID) {
+      written.set(a.importBatchID, (written.get(a.importBatchID) ?? 0) + 1);
+    }
+  }
+  return rows.map((r) => {
+    const status = effectiveBatchStatus(r.status, r.createdAt, now);
+    // An interrupted upload never saved its counts: count what it wrote.
+    const interrupted = status === "interrupted";
+    return {
     id: r.id,
     fileName: r.fileName ?? "",
     rowCount: r.rowCount,
-    importedCount: r.importedCount,
-    skippedCount: r.skippedCount,
+    importedCount: interrupted ? (written.get(r.id) ?? 0) : r.importedCount,
+    skippedCount: interrupted
+      ? Math.max(0, r.rowCount - (written.get(r.id) ?? 0))
+      : r.skippedCount,
     createdByName: label(r.createdBy),
     createdAt: r.createdAt ?? null,
-    status: r.status ?? "complete",
+    status,
     /** The uploader is one of the people the upload gave awards to. */
     selfRecorded: selfUploaded.has(r.id),
     undone: r.undoneAt != null,
@@ -787,7 +807,8 @@ export async function awardBatchesList(db: PrismaClient, academicYear: string) {
     undoneByName: label(r.undoneBy),
     /** Awards of this upload that are still active (what an undo would remove). */
     activeCount: active.get(r.id) ?? 0,
-  }));
+    };
+  });
 }
 
 /**
@@ -805,6 +826,11 @@ export async function awardBatchUndo(
     where: { id: batchId },
   });
   if (!batch) throw fail("NOT_FOUND", "BATCH_NOT_FOUND");
+  // Rows written after the undo would escape it, so wait while the upload is
+  // still being written. One cut off long ago ("interrupted") can be undone.
+  if (effectiveBatchStatus(batch.status, batch.createdAt, now) === "importing") {
+    throw fail("CONFLICT", "BATCH_IN_PROGRESS");
+  }
   // Who the undo touches: everyone still holding an active award of the upload.
   const active = await db.award.findMany({
     where: { importBatchID: batchId, ...NOT_VOIDED },

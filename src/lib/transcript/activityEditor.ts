@@ -233,3 +233,27 @@ export function outsiders(
 
 export const peopleCountLine = (n: number) =>
   `${n} ${n === 1 ? "person" : "people"} selected`;
+
+/**
+ * Save an activity and then its people. If the activity is created and the
+ * second step fails, `onCreated` has already told the screen the new id, so a
+ * retry (`existingID` now set) updates and re-sends the people instead of
+ * creating a second activity.
+ */
+export async function saveThenPeople(steps: {
+  existingID: string | null;
+  create: () => Promise<{ id: string }>;
+  update: (id: string) => Promise<unknown>;
+  setPeople: (id: string) => Promise<unknown>;
+  onCreated: (id: string) => void | Promise<void>;
+}): Promise<string> {
+  let id = steps.existingID;
+  if (id) {
+    await steps.update(id);
+  } else {
+    id = (await steps.create()).id;
+    await steps.onCreated(id);
+  }
+  await steps.setPeople(id);
+  return id;
+}

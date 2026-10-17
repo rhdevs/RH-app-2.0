@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   ErrorLine,
@@ -46,6 +46,7 @@ import {
   patchPerson,
   peopleCountLine,
   removePerson,
+  saveThenPeople,
   selectAll,
   togglePerson,
   type EditorState,
@@ -389,6 +390,7 @@ export default function ActivityEditorDialog({
   members,
   readOnly,
   onClose,
+  onDirtyChange,
 }: {
   ccaID: number;
   academicYear: string;
@@ -397,6 +399,8 @@ export default function ActivityEditorDialog({
   members: MemberOption[];
   readOnly: boolean;
   onClose: () => void;
+  /** Called with true while the editor holds unsaved changes. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const returnFocus = useReturnFocus();
   const utils = api.useUtils();
@@ -415,6 +419,14 @@ export default function ActivityEditorDialog({
   const setParticipants = api.transcriptManage.participants.set.useMutation();
 
   const dirty = isEditorDirty(state, saved);
+
+  // Tell the page while this editor holds unsaved changes (cleared on unmount).
+  const dirtyRef = useRef(onDirtyChange);
+  dirtyRef.current = onDirtyChange;
+  useEffect(() => {
+    dirtyRef.current?.(dirty);
+  }, [dirty]);
+  useEffect(() => () => dirtyRef.current?.(false), []);
   const confirmLeave = useUnsavedChangesGuard(dirty);
   const close = () => {
     if (confirmLeave()) onClose();
@@ -424,26 +436,32 @@ export default function ActivityEditorDialog({
     setSaving(true);
     setError(null);
     try {
-      let id = activity?.id ?? createdID;
-      if (id) {
-        await update.mutateAsync({
-          id,
-          ccaID,
-          ...activityFields(state.activity),
-        });
-      } else {
-        const made = await create.mutateAsync({
-          ccaID,
-          academicYear,
-          ...activityFields(state.activity),
-        });
-        id = made.id;
-        setCreatedID(made.id);
-      }
-      await setParticipants.mutateAsync({
-        id,
-        ccaID,
-        participants: participantsPayload(state),
+      await saveThenPeople({
+        existingID: activity?.id ?? createdID,
+        update: (id) =>
+          update.mutateAsync({
+            id,
+            ccaID,
+            ...activityFields(state.activity),
+          }),
+        create: () =>
+          create.mutateAsync({
+            ccaID,
+            academicYear,
+            ...activityFields(state.activity),
+          }),
+        // The activity exists from here on: show it in the list and make the
+        // editor an editor of that id, so a retry cannot create a copy.
+        onCreated: async (id) => {
+          setCreatedID(id);
+          await utils.transcriptManage.activities.list.invalidate();
+        },
+        setPeople: (id) =>
+          setParticipants.mutateAsync({
+            id,
+            ccaID,
+            participants: participantsPayload(state),
+          }),
       });
       setSaved(state);
       await utils.transcriptManage.activities.list.invalidate();
