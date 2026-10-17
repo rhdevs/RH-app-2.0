@@ -11,6 +11,7 @@ import {
   Users,
   LayoutGrid,
   ClipboardList,
+  FileText,
   LogOut,
   UserCircle,
   ShieldCheck,
@@ -21,6 +22,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { signOut } from "next-auth/react";
+import { api } from "~/trpc/react";
 
 interface HeaderProps {
   currentPage: string;
@@ -34,6 +36,14 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
   const router = useRouter();
   const pathname = usePathname();
   const { data: session } = useSession();
+  // A published transcript the resident has not opened yet: a badge and a dot.
+  // Only asked for a signed-in user, and a failure just means no badge.
+  const transcriptReady =
+    api.transcript.mine.readiness.useQuery(undefined, {
+      enabled: Boolean(session),
+      retry: false,
+      staleTime: 60_000,
+    }).data?.ready === true;
 
   /**
    * COSMETIC ONLY. The real gate is the server-side guard in
@@ -134,6 +144,12 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     setIsProfileDropdownOpen(false);
   };
 
+  const handleMyTranscript = () => {
+    router.push("/transcript");
+    setIsProfileDropdownOpen(false);
+    setIsMobileMenuOpen(false);
+  };
+
   const handleMyCcas = () => {
     router.push("/ccas/my");
     setIsProfileDropdownOpen(false);
@@ -220,14 +236,25 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                     onClick={() =>
                       setIsProfileDropdownOpen(!isProfileDropdownOpen)
                     }
-                    className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 transition-colors duration-200 hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2"
+                    className="relative flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 transition-colors duration-200 hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2"
                   >
                     <User size={20} className="text-white" />
+                    {transcriptReady && (
+                      <>
+                        <span
+                          aria-hidden="true"
+                          className="absolute right-0 top-0 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-emerald-800"
+                        />
+                        <span className="sr-only">
+                          Your transcript is ready
+                        </span>
+                      </>
+                    )}
                   </button>
 
                   {/* Desktop Profile Dropdown */}
                   {isProfileDropdownOpen && (
-                    <div className="absolute right-0 z-50 mt-2 w-48 rounded-lg bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                    <div className="absolute right-0 z-50 mt-2 w-56 rounded-lg bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
                       <div className="py-1">
                         <button
                           onClick={handleProfile}
@@ -265,6 +292,24 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                             className="mr-3 text-gray-400"
                           />
                           My applications
+                        </button>
+
+                        <button
+                          onClick={handleMyTranscript}
+                          className="flex w-full items-center px-4 py-2 text-left text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
+                        >
+                          <FileText
+                            size={16}
+                            className="mr-3 shrink-0 text-gray-400"
+                          />
+                          <span className="whitespace-nowrap text-left">
+                            My transcript
+                          </span>
+                          {transcriptReady && (
+                            <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                              Ready
+                            </span>
+                          )}
                         </button>
 
                         <hr className="border-gray-100" />
@@ -351,6 +396,18 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                     >
                       <ClipboardList size={18} />
                       <span>My applications</span>
+                    </button>
+                    <button
+                      onClick={handleMyTranscript}
+                      className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
+                    >
+                      <FileText size={18} />
+                      <span className="whitespace-nowrap">My transcript</span>
+                      {transcriptReady && (
+                        <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900">
+                          Ready
+                        </span>
+                      )}
                     </button>
                     <button
                       onClick={handleLogout}

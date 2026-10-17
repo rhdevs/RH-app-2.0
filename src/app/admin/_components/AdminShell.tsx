@@ -12,6 +12,7 @@ import {
   Settings2,
   CalendarCheck,
   KeyRound,
+  FileText,
 } from "lucide-react";
 
 import Header from "~/app/_components/header";
@@ -61,6 +62,14 @@ const ADMIN_TABS = [
     label: "Events",
     icon: CalendarCheck,
     requires: "reviewEvents",
+  },
+  {
+    href: "/admin/transcripts",
+    label: "Transcripts",
+    icon: FileText,
+    // manageCcaHeads is held by exactly admin and jcrc, the two roles that run
+    // transcripts. The segment layout re-checks the role itself.
+    requires: "manageCcaHeads",
   },
   {
     href: "/admin/facilities",

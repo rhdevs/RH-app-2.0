@@ -527,7 +527,7 @@ function resolveIdentifier(
  * against, and widening it there would let a stray cell queue a grant redeemable
  * at a stranger's first login. That path keeps the bare shape test.
  */
-async function bulkResolver(
+export async function bulkResolver(
   db: PrismaClient,
   rows: readonly { identifier: string }[],
 ): Promise<

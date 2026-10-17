@@ -8,15 +8,12 @@ import { useSession } from "next-auth/react";
 // otherwise a matric-less user would be redirected in an infinite loop. Any
 // path equal to, or nested under, one of these is exempt. `/whats-new` is a
 // public, read-only showcase page and is exempt so anyone can reach it.
-// `/verify` is where people OUTSIDE the hall check a CCA transcript's code —
-// they have no account, so gating it would make the feature pointless.
 const ALLOW_LIST = [
   "/onboarding",
   "/login",
   "/signup",
   "/reset-password",
   "/whats-new",
-  "/verify",
 ];
 
 function isAllowed(pathname: string) {
