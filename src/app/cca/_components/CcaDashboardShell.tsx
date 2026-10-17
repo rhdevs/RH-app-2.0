@@ -14,6 +14,7 @@ import {
 
 import { api } from "~/trpc/react";
 import CcaSwitcher from "./CcaSwitcher";
+import { headsThisCca, visibleSections } from "./visibleSections";
 
 /**
  * The dashboard chrome: CCA switcher pinned above a section nav, content to the
@@ -30,6 +31,7 @@ const SECTIONS = [
   { slug: "members", label: "View member list", icon: Users },
   { slug: "details", label: "CCA details", icon: Pencil },
   { slug: "events", label: "Events", icon: CalendarDays },
+  { slug: "points", label: "Points", icon: ClipboardList },
 ] as const;
 
 /**
@@ -55,6 +57,7 @@ export default function CcaDashboardShell({
 
   const ccas = data?.ccas ?? [];
   const current = ccas.find((c) => c.ccaID === ccaID) ?? null;
+  const sections = visibleSections(SECTIONS, headsThisCca(data?.ccas, ccaID));
 
   const isActive = (slug: string) => {
     const base = `/cca/${ccaID}`;
@@ -72,7 +75,7 @@ export default function CcaDashboardShell({
           <CcaSwitcher ccas={ccas} currentCcaID={ccaID} />
 
           <nav className="space-y-1">
-            {SECTIONS.map((s) => {
+            {sections.map((s) => {
               const href = s.slug ? `/cca/${ccaID}/${s.slug}` : `/cca/${ccaID}`;
               const active = isActive(s.slug);
               return (
