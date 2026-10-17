@@ -51,7 +51,7 @@ const NEW_MODELS: Record<string, string[]> = {
   // model -> its KEY fields: the columns that identify the row, so required.
   TranscriptPeriod: ["academicYear"],
   TranscriptRosterEntry: ["academicYear", "userID", "ccaID"],
-  Award: ["academicYear", "userID"],
+  Award: ["academicYear", "userID", "activeKey"],
   JcrcService: ["academicYear", "userID"],
   TranscriptAccess: ["academicYear", "userID"],
 };

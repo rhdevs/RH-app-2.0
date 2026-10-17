@@ -73,11 +73,9 @@ export default function AwardsAdmin() {
     periods.data.periods.find((x) => x.academicYear === year)?.status ?? null;
   const readOnly = !isWritable(status);
 
-  const leave = () => {
-    if (!confirmLeave()) return false;
-    setDirty({});
-    return true;
-  };
+  // Leaving remounts the parts keyed by year (or unmounts the tab), and each
+  // part clears its own dirty flag as it goes: nothing is wiped from here.
+  const leave = () => confirmLeave();
 
   return (
     <div className="space-y-6">
@@ -124,6 +122,7 @@ export default function AwardsAdmin() {
                 Assign an award
               </h3>
               <AssignAward
+                key={year}
                 academicYear={year}
                 readOnly={readOnly}
                 onDirty={onAssignDirty}
@@ -137,6 +136,7 @@ export default function AwardsAdmin() {
                 Awards for {year}
               </h3>
               <AwardsList
+                key={year}
                 academicYear={year}
                 readOnly={readOnly}
                 onDirty={onListDirty}
@@ -155,13 +155,11 @@ export default function AwardsAdmin() {
               </p>
             ) : null}
             <AwardImport
+              key={year}
               academicYear={year}
               readOnly={readOnly}
               onDirty={onImportDirty}
-              onOpenHistory={() => {
-                setDirty({});
-                setTab("history");
-              }}
+              onOpenHistory={() => setTab("history")}
             />
           </TabsContent>
 

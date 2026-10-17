@@ -2,11 +2,14 @@ import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
 import {
+  awardActiveKey,
   cleanCitation,
   matchesSearch,
   normalizeAwardName,
   planAssignment,
+  removedAwardKey,
 } from "~/lib/transcript/awards";
+import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import type {
   awardTypeCreateInput,
   awardTypeUpdateInput,
@@ -90,8 +93,40 @@ async function assertNameFree(
   }
 }
 
-const isUniqueViolation = (e: unknown) =>
+export const isUniqueViolation = (e: unknown) =>
   (e as { code?: string }).code === "P2002";
+
+/** A big bulk write is a few awards at a time, so no transaction runs long. */
+const ROW_CHUNK = 50;
+const BULK_TX = { timeout: 60_000, maxWait: 10_000 } as const;
+
+async function inChunks<T>(
+  items: readonly T[],
+  write: (item: T) => Promise<unknown>,
+) {
+  for (let i = 0; i < items.length; i += ROW_CHUNK) {
+    await Promise.all(items.slice(i, i + ROW_CHUNK).map(write));
+  }
+}
+
+/** Soft-remove awards, freeing each one's unique key in the same write. */
+async function voidAwards(
+  tx: Pick<PrismaClient, "award">,
+  rows: ReadonlyArray<{ id: string; activeKey: string }>,
+  actorUserID: string,
+  now: Date,
+) {
+  await inChunks(rows, (r) =>
+    tx.award.update({
+      where: { id: r.id },
+      data: {
+        voidedAt: now,
+        voidedBy: actorUserID,
+        activeKey: removedAwardKey(r.activeKey, r.id),
+      },
+    }),
+  );
+}
 
 export async function awardTypeCreate(
   db: PrismaClient,
@@ -225,8 +260,28 @@ export async function awardsAssign(
     },
   );
 
-  const result = await db.$transaction(async (tx) => {
-    const existing = await tx.award.findMany({
+  const rowFor = (r: (typeof recipients)[number]) => ({
+    academicYear: input.academicYear,
+    userID: r.userID,
+    title: type.name,
+    citation: cleanCitation(r.citation) ?? type.defaultCitation ?? null,
+    awardTypeID: type.id,
+    recordedBy: actorUserID,
+    recordedAt: now,
+    activeKey: awardActiveKey({
+      academicYear: input.academicYear,
+      userID: r.userID,
+      awardTypeID: type.id,
+      title: type.name,
+    }),
+  });
+  const lineFor = (r: (typeof recipients)[number]) => ({
+    userID: r.userID,
+    summary: correctionSummary("Awards", type.name, "assigned"),
+  });
+
+  const attempt = async () => {
+    const existing = await db.award.findMany({
       where: {
         academicYear: input.academicYear,
         userID: { in: recipients.map((r) => r.userID) },
@@ -243,43 +298,61 @@ export async function awardsAssign(
       { id: type.id, name: type.name },
       recipients,
     );
-    if (plan.create.length > 0) {
-      await tx.award.createMany({
-        data: plan.create.map((r) => ({
-          academicYear: input.academicYear,
-          userID: r.userID,
-          title: type.name,
-          citation: cleanCitation(r.citation) ?? type.defaultCitation ?? null,
-          awardTypeID: type.id,
-          recordedBy: actorUserID,
-          recordedAt: now,
-        })),
+    let created = plan.create;
+    const raced: typeof recipients = [];
+    try {
+      await db.$transaction(async (tx) => {
+        if (plan.create.length > 0) {
+          await tx.award.createMany({ data: plan.create.map(rowFor) });
+        }
+        await logCorrections(
+          tx,
+          guard,
+          actorUserID,
+          input.academicYear,
+          plan.create.map(lineFor),
+          now,
+        );
       });
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+      // Someone gave one of these awards at the same moment (a double-submit,
+      // or another manager). A duplicate aborts the whole write, so go person by
+      // person: the ones who already have it are skipped, the rest are given it.
+      created = [];
+      for (const r of plan.create) {
+        try {
+          await retryWriteConflicts(() =>
+            db.$transaction(async (tx) => {
+              await tx.award.create({ data: rowFor(r) });
+              await logCorrections(
+                tx,
+                guard,
+                actorUserID,
+                input.academicYear,
+                [lineFor(r)],
+                now,
+              );
+            }),
+          );
+          created.push(r);
+        } catch (e2) {
+          if (!isUniqueViolation(e2)) throw e2;
+          raced.push(r);
+        }
+      }
     }
-    await logCorrections(
-      tx,
-      guard,
-      actorUserID,
-      input.academicYear,
-      plan.create.map((r) => ({
-        userID: r.userID,
-        summary: correctionSummary("Awards", type.name, "assigned"),
-      })),
-      now,
-    );
-    return {
-      assigned: plan.create.length,
-      assignedNames: plan.create.map((r) => r.displayName ?? r.userID),
-      skipped: plan.skipped.map((r) => ({
-        userID: r.userID,
-        displayName: r.displayName,
-      })),
-    };
-  });
+    return { created, skipped: [...plan.skipped, ...raced] };
+  };
+
+  const result = await retryWriteConflicts(attempt);
   return {
-    assigned: result.assigned,
-    assignedNames: result.assignedNames,
-    skipped: result.skipped,
+    assigned: result.created.length,
+    assignedNames: result.created.map((r) => r.displayName ?? r.userID),
+    skipped: result.skipped.map((r) => ({
+      userID: r.userID,
+      displayName: r.displayName,
+    })),
   };
 }
 
@@ -317,6 +390,8 @@ export async function awardsList(
       awardTypeID: r.awardTypeID ?? null,
       importBatchID: r.importBatchID ?? null,
       removed: r.voidedAt != null,
+      /** The manager recorded or edited their own award (shown, never blocked). */
+      selfRecorded: r.recordedBy === r.userID || r.updatedBy === r.userID,
       recordedByName: label(r.recordedBy),
       recordedAt: r.recordedAt ?? null,
       updatedByName: label(r.updatedBy),
@@ -346,30 +421,46 @@ export async function awardUpdate(
     { academicYear: award.academicYear, affectedUserIDs: [award.userID] },
   );
   if (award.voidedAt) throw fail("CONFLICT", "AWARD_REMOVED");
-  await db.$transaction(async (tx) => {
-    await tx.award.update({
-      where: { id: award.id },
-      data: {
+  // An award with no catalogue entry is unique by its title, so renaming it
+  // moves its key; one with an entry keeps its key whatever the title says.
+  const activeKey = award.awardTypeID
+    ? award.activeKey
+    : awardActiveKey({
+        academicYear: award.academicYear,
+        userID: award.userID,
+        awardTypeID: null,
         title: input.title,
-        citation: input.citation,
-        updatedBy: actorUserID,
-        updatedAt: now,
-      },
-    });
-    await logCorrections(
-      tx,
-      guard,
-      actorUserID,
-      award.academicYear,
-      [
-        {
-          userID: award.userID,
-          summary: correctionSummary("Awards", input.title, "edited"),
+      });
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.award.update({
+        where: { id: award.id },
+        data: {
+          title: input.title,
+          citation: input.citation,
+          activeKey,
+          updatedBy: actorUserID,
+          updatedAt: now,
         },
-      ],
-      now,
-    );
-  });
+      });
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        award.academicYear,
+        [
+          {
+            userID: award.userID,
+            summary: correctionSummary("Awards", input.title, "edited"),
+          },
+        ],
+        now,
+      );
+    });
+  } catch (e) {
+    if (isUniqueViolation(e)) throw fail("CONFLICT", "AWARD_DUPLICATE");
+    throw e;
+  }
   return { id: award.id };
 }
 
@@ -387,10 +478,7 @@ export async function awardRemove(
   );
   if (!award.voidedAt) {
     await db.$transaction(async (tx) => {
-      await tx.award.update({
-        where: { id },
-        data: { voidedAt: now, voidedBy: actorUserID },
-      });
+      await voidAwards(tx, [award], actorUserID, now);
       await logCorrections(
         tx,
         guard,
@@ -413,35 +501,24 @@ export async function awardRemove(
   return { id };
 }
 
-/** Does this person already hold an ACTIVE award that makes `award` a duplicate? */
-async function activeTwin(
-  db: Pick<PrismaClient, "award">,
-  award: {
-    id: string;
-    academicYear: string;
-    userID: string;
-    awardTypeID: string | null;
-    title: string | null;
-  },
-) {
-  const others = await db.award.findMany({
-    where: {
-      academicYear: award.academicYear,
-      userID: award.userID,
-      id: { not: award.id },
-      ...NOT_VOIDED,
-    },
-    select: { awardTypeID: true, title: true },
+/** The unique key an award takes back when it is restored. */
+const keyOf = (r: {
+  academicYear: string;
+  userID: string;
+  awardTypeID: string | null;
+  title: string | null;
+}) =>
+  awardActiveKey({
+    academicYear: r.academicYear,
+    userID: r.userID,
+    awardTypeID: r.awardTypeID ?? null,
+    title: r.title ?? null,
   });
-  const key = normalizeAwardName(award.title ?? "");
-  return others.some((o) =>
-    award.awardTypeID
-      ? o.awardTypeID === award.awardTypeID
-      : o.awardTypeID === null && normalizeAwardName(o.title ?? "") === key,
-  );
-}
 
-/** Undo a removal, unless the person now has the same award from another row. */
+/**
+ * Undo a removal, unless the person now has the same award from another row:
+ * the unique key refuses, whoever got there first.
+ */
 export async function awardRestore(
   db: PrismaClient,
   actorUserID: string,
@@ -455,35 +532,42 @@ export async function awardRestore(
     { academicYear: award.academicYear, affectedUserIDs: [award.userID] },
   );
   if (!award.voidedAt) return { id };
-  if (await activeTwin(db, award)) throw fail("CONFLICT", "AWARD_DUPLICATE");
-  await db.$transaction(async (tx) => {
-    await tx.award.update({
-      where: { id },
-      data: {
-        voidedAt: null,
-        voidedBy: null,
-        updatedBy: actorUserID,
-        updatedAt: now,
-      },
-    });
-    await logCorrections(
-      tx,
-      guard,
-      actorUserID,
-      award.academicYear,
-      [
-        {
-          userID: award.userID,
-          summary: correctionSummary(
-            "Awards",
-            award.title ?? "Award",
-            "restored",
-          ),
-        },
-      ],
-      now,
+  try {
+    await retryWriteConflicts(() =>
+      db.$transaction(async (tx) => {
+        await tx.award.update({
+          where: { id },
+          data: {
+            voidedAt: null,
+            voidedBy: null,
+            activeKey: keyOf(award),
+            updatedBy: actorUserID,
+            updatedAt: now,
+          },
+        });
+        await logCorrections(
+          tx,
+          guard,
+          actorUserID,
+          award.academicYear,
+          [
+            {
+              userID: award.userID,
+              summary: correctionSummary(
+                "Awards",
+                award.title ?? "Award",
+                "restored",
+              ),
+            },
+          ],
+          now,
+        );
+      }),
     );
-  });
+  } catch (e) {
+    if (isUniqueViolation(e)) throw fail("CONFLICT", "ALREADY_HAS_AWARD");
+    throw e;
+  }
   return { id };
 }
 
@@ -561,17 +645,18 @@ export async function awardsBulkRemove(
   const live = rows.filter((r) => !r.voidedAt);
   if (live.length > 0) {
     await db.$transaction(async (tx) => {
-      await tx.award.updateMany({
-        where: { id: { in: live.map((r) => r.id) } },
-        data: { voidedAt: now, voidedBy: actorUserID },
-      });
+      await voidAwards(tx, live, actorUserID, now);
       await logBulk(tx, actorUserID, guards, live, "removed", now);
-    });
+    }, BULK_TX);
   }
   return { removed: live.length };
 }
 
-/** Restore each removed award that would not duplicate an active one; name the rest. */
+/**
+ * Restore each removed award that would not duplicate an active one; name the
+ * rest. The people's active awards are read ONCE and compared in memory; the
+ * unique key still settles a race, and then that award alone is skipped.
+ */
 export async function awardsBulkRestore(
   db: PrismaClient,
   actorUserID: string,
@@ -580,55 +665,83 @@ export async function awardsBulkRestore(
 ) {
   const { rows, guards } = await bulkTargets(db, actorUserID, ids);
   const removed = rows.filter((r) => r.voidedAt);
-  const restorable: string[] = [];
   const skipped: string[] = [];
   const names = await lookupResidents(
     db,
     removed.map((r) => r.userID),
   );
-  const claimed: Array<(typeof rows)[number]> = [];
+  const heldNow =
+    removed.length === 0
+      ? []
+      : await db.award.findMany({
+          where: {
+            academicYear: {
+              in: [...new Set(removed.map((r) => r.academicYear))],
+            },
+            userID: { in: [...new Set(removed.map((r) => r.userID))] },
+            ...NOT_VOIDED,
+          },
+          select: {
+            academicYear: true,
+            userID: true,
+            awardTypeID: true,
+            title: true,
+          },
+        });
+  const taken = new Set(heldNow.map(keyOf));
+  const label = (r: (typeof removed)[number]) =>
+    `${names.get(r.userID)?.displayName ?? r.userID} (${r.title ?? "Award"})`;
+  const restorable: typeof removed = [];
   for (const r of removed) {
-    const twinInDb = await activeTwin(db, r);
-    const twinInBatch = claimed.some(
-      (c) =>
-        c.academicYear === r.academicYear &&
-        c.userID === r.userID &&
-        (r.awardTypeID
-          ? c.awardTypeID === r.awardTypeID
-          : normalizeAwardName(c.title ?? "") ===
-            normalizeAwardName(r.title ?? "")),
-    );
-    if (twinInDb || twinInBatch) {
-      skipped.push(
-        `${names.get(r.userID)?.displayName ?? r.userID} (${r.title ?? "Award"})`,
-      );
+    const key = keyOf(r);
+    if (taken.has(key)) {
+      skipped.push(label(r));
     } else {
-      restorable.push(r.id);
-      claimed.push(r);
+      taken.add(key);
+      restorable.push(r);
     }
   }
+
+  const restoreData = (r: (typeof removed)[number]) => ({
+    voidedAt: null,
+    voidedBy: null,
+    activeKey: keyOf(r),
+    updatedBy: actorUserID,
+    updatedAt: now,
+  });
+  let restored = restorable.length;
   if (restorable.length > 0) {
-    await db.$transaction(async (tx) => {
-      await tx.award.updateMany({
-        where: { id: { in: restorable } },
-        data: {
-          voidedAt: null,
-          voidedBy: null,
-          updatedBy: actorUserID,
-          updatedAt: now,
-        },
-      });
-      await logBulk(
-        tx,
-        actorUserID,
-        guards,
-        removed.filter((r) => restorable.includes(r.id)),
-        "restored",
-        now,
-      );
-    });
+    try {
+      await db.$transaction(async (tx) => {
+        await inChunks(restorable, (r) =>
+          tx.award.update({ where: { id: r.id }, data: restoreData(r) }),
+        );
+        await logBulk(tx, actorUserID, guards, restorable, "restored", now);
+      }, BULK_TX);
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+      // Someone restored or gave one of them meanwhile: go one by one.
+      restored = 0;
+      for (const r of restorable) {
+        try {
+          await retryWriteConflicts(() =>
+            db.$transaction(async (tx) => {
+              await tx.award.update({
+                where: { id: r.id },
+                data: restoreData(r),
+              });
+              await logBulk(tx, actorUserID, guards, [r], "restored", now);
+            }),
+          );
+          restored += 1;
+        } catch (e2) {
+          if (!isUniqueViolation(e2)) throw e2;
+          skipped.push(label(r));
+        }
+      }
+    }
   }
-  return { restored: restorable.length, skipped };
+  return { restored, skipped };
 }
 
 /* ---- upload history ------------------------------------------------------------------------ */
@@ -644,18 +757,19 @@ export async function awardBatchesList(db: PrismaClient, academicYear: string) {
       rows.flatMap((r) => [r.createdBy, r.undoneBy]),
     ),
     db.award.findMany({
-      where: {
-        importBatchID: { in: rows.map((r) => r.id) },
-        ...NOT_VOIDED,
-      },
-      select: { importBatchID: true },
+      where: { importBatchID: { in: rows.map((r) => r.id) } },
+      select: { importBatchID: true, userID: true, voidedAt: true },
     }),
   ]);
   const active = new Map<string, number>();
+  const selfUploaded = new Set<string>();
   for (const a of live) {
-    if (a.importBatchID) {
+    if (!a.importBatchID) continue;
+    if (!a.voidedAt) {
       active.set(a.importBatchID, (active.get(a.importBatchID) ?? 0) + 1);
     }
+    const batch = rows.find((r) => r.id === a.importBatchID);
+    if (batch && batch.createdBy === a.userID) selfUploaded.add(batch.id);
   }
   return rows.map((r) => ({
     id: r.id,
@@ -666,6 +780,8 @@ export async function awardBatchesList(db: PrismaClient, academicYear: string) {
     createdByName: label(r.createdBy),
     createdAt: r.createdAt ?? null,
     status: r.status ?? "complete",
+    /** The uploader is one of the people the upload gave awards to. */
+    selfRecorded: selfUploaded.has(r.id),
     undone: r.undoneAt != null,
     undoneAt: r.undoneAt ?? null,
     undoneByName: label(r.undoneBy),
@@ -692,7 +808,7 @@ export async function awardBatchUndo(
   // Who the undo touches: everyone still holding an active award of the upload.
   const active = await db.award.findMany({
     where: { importBatchID: batchId, ...NOT_VOIDED },
-    select: { userID: true, title: true },
+    select: { id: true, activeKey: true, userID: true, title: true },
   });
   const guard = await assertCanEditForResidents(
     db,
@@ -711,10 +827,8 @@ export async function awardBatchUndo(
       data: { undoneAt: now, undoneBy: actorUserID },
     });
     if (claimed.count !== 1) throw fail("CONFLICT", "BATCH_ALREADY_UNDONE");
-    const result = await tx.award.updateMany({
-      where: { importBatchID: batchId, ...NOT_VOIDED },
-      data: { voidedAt: now, voidedBy: actorUserID },
-    });
+    // Each award gives back its unique key as it is removed.
+    await voidAwards(tx, active, actorUserID, now);
     await logCorrections(
       tx,
       guard,
@@ -730,7 +844,7 @@ export async function awardBatchUndo(
       })),
       now,
     );
-    return { id: batchId, removed: result.count };
-  });
+    return { id: batchId, removed: active.length };
+  }, BULK_TX);
   return undone;
 }

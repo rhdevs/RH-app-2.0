@@ -810,6 +810,31 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ---------------------------------------------------------------- */
     describe("history", () => {
+      it("marks a change the resident made on their own records as a self-made change (F25a)", async () => {
+        await publishYear();
+        const colours = await db.awardType.findUniqueOrThrow({
+          where: { normalizedName: "full colours" },
+        });
+        const give = (userID: string) =>
+          as(JCRC).transcriptManage.awards.assign({
+            academicYear: AY,
+            awardTypeID: colours.id,
+            recipients: [{ userID }],
+          });
+        await unlock({ id: JCRC.id });
+        await give(JCRC.id);
+        await unlock({ id: "SEED-R20" });
+        await give("SEED-R20");
+
+        const mine = await history(JCRC);
+        const theirs = await history({ id: "SEED-R20" });
+
+        // JCRC unlocked and corrected their own records; R20's were done by JCRC.
+        expect(mine.some((l) => l.selfMade)).toBe(true);
+        expect(mine.filter((l) => l.selfMade).length).toBe(mine.length);
+        expect(theirs.some((l) => l.selfMade)).toBe(false);
+      });
+
       it("lists every event for the resident and year, newest first, with names", async () => {
         await publishYear();
         await unlock(R12, "Role was wrong");

@@ -1520,6 +1520,11 @@ model Award {
   importBatchID String?   @db.ObjectId
   updatedBy     String?
   updatedAt     DateTime?
+  /// One ACTIVE award per year, person and award: "<academicYear>|<userID>|<awardTypeID>"
+  /// (or "...|title:<normalised title>" with no catalogue entry) while active,
+  /// rewritten to "<that>|removed|<award id>" when removed. A duplicate-key error
+  /// on create therefore means "already has it", even under a double-submit.
+  activeKey     String    @unique(map: "award_active_key")
 
   @@index([academicYear, userID], map: "award_year_user")
   @@index([academicYear, awardTypeID], map: "award_year_type")
@@ -1559,7 +1564,8 @@ model AwardImportBatch {
   createdAt     DateTime? @default(now())
   undoneAt      DateTime?
   undoneBy      String?
-  /// complete | partial (a chunk failed after earlier ones were written).
+  /// importing (being written) | complete | partial (a chunk failed after
+  /// earlier ones were written).
   status        String    @default("complete")
 
   @@index([academicYear], map: "award_batch_year")

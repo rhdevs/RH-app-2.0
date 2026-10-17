@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { awardActiveKey } from "~/lib/transcript/awards";
 
 /**
  * INTEGRATION TESTS of awards (catalogue, assignment, bulk edits, upload
@@ -142,6 +143,216 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         awardTypeID: (await type(name.toLowerCase())).id,
         recipients,
       });
+
+    /* ---------------------------------------------------------------- */
+    describe("one active award per year, person and award (F20)", () => {
+      it("gives the award once when it is submitted five times at once", async () => {
+        const t = await fullColours();
+        const results = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            as(JCRC).awards.assign({
+              academicYear: AY,
+              awardTypeID: t.id,
+              recipients: [{ userID: "SEED-R20" }],
+            }),
+          ),
+        );
+
+        expect(await awardsOf("SEED-R20", "Full Colours")).toHaveLength(1);
+        expect(results.reduce((n, r) => n + r.assigned, 0)).toBe(1);
+        expect(results.filter((r) => r.assigned === 0)).toHaveLength(4);
+        for (const r of results.filter((x) => x.assigned === 0)) {
+          expect(r.skipped.map((s) => s.userID)).toEqual(["SEED-R20"]);
+        }
+      });
+
+      it("frees the key on remove and takes it back on restore", async () => {
+        const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        const key = a.activeKey;
+        expect(key).toBe(`${AY}|SEED-R13|${a.awardTypeID}`);
+
+        await as(JCRC).awards.remove({ id: a.id });
+        const removed = await db.award.findUniqueOrThrow({
+          where: { id: a.id },
+        });
+        expect(removed.activeKey).toBe(`${key}|removed|${a.id}`);
+
+        await as(JCRC).awards.restore({ id: a.id });
+        const back = await db.award.findUniqueOrThrow({ where: { id: a.id } });
+        expect(back.activeKey).toBe(key);
+        expect(back.voidedAt ?? null).toBeNull();
+      });
+
+      it("lets someone be given the award again after a removal", async () => {
+        const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await as(JCRC).awards.remove({ id: a.id });
+
+        const again = await assign(JCRC, "Full Colours", [
+          { userID: "SEED-R13" },
+        ]);
+
+        expect(again.assigned).toBe(1);
+        expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(1);
+      });
+
+      it("refuses to restore when an active twin exists: ALREADY_HAS_AWARD", async () => {
+        const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await as(JCRC).awards.remove({ id: a.id });
+        await assign(JCRC, "Full Colours", [{ userID: "SEED-R13" }]);
+
+        expect(await errorOf(as(JCRC).awards.restore({ id: a.id }))).toBe(
+          "CONFLICT:ALREADY_HAS_AWARD",
+        );
+        expect(
+          (await db.award.findUniqueOrThrow({ where: { id: a.id } })).voidedAt,
+        ).not.toBeNull();
+        const { errorText } = await import("~/lib/transcript/adminView");
+        expect(errorText("ALREADY_HAS_AWARD")).toMatch(
+          /already has this award/,
+        );
+      });
+
+      it("refuses a second active copy at the database, whatever the code does", async () => {
+        const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await expect(
+          db.award.create({
+            data: {
+              academicYear: AY,
+              userID: a.userID,
+              title: a.title,
+              awardTypeID: a.awardTypeID,
+              activeKey: a.activeKey,
+            },
+          }),
+        ).rejects.toMatchObject({ code: "P2002" });
+      });
+
+      it("renaming an award with no catalogue entry moves its key, and refuses a clash", async () => {
+        await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "Old Plaque",
+            activeKey: `${AY}|SEED-R20|title:old plaque`,
+          },
+        });
+        await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "New Plaque",
+            activeKey: `${AY}|SEED-R20|title:new plaque`,
+          },
+        });
+        const old = await db.award.findFirstOrThrow({
+          where: { userID: "SEED-R20", title: "Old Plaque" },
+        });
+
+        expect(
+          await errorOf(
+            as(JCRC).awards.update({
+              id: old.id,
+              title: "New  Plaque",
+              citation: null,
+            }),
+          ),
+        ).toBe("CONFLICT:AWARD_DUPLICATE");
+        expect(
+          await errorOf(
+            as(JCRC).awards.update({
+              id: old.id,
+              title: "Third Plaque",
+              citation: null,
+            }),
+          ),
+        ).toBe("ok");
+        expect(
+          (await db.award.findUniqueOrThrow({ where: { id: old.id } }))
+            .activeKey,
+        ).toBe(`${AY}|SEED-R20|title:third plaque`);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("bulk restore (F25)", () => {
+      it("restores 300 removed awards quickly, in memory twin checks, and refuses twins", async () => {
+        const t = await fullColours();
+        const year = AY;
+        // 300 removed awards for 300 made-up people, plus one active twin.
+        const people = Array.from({ length: 300 }, (_, i) => `BULK-${i}`);
+        const now = new Date();
+        await db.award.createMany({
+          data: people.map((userID, i) => ({
+            academicYear: year,
+            userID,
+            title: "Full Colours",
+            awardTypeID: t.id,
+            voidedAt: now,
+            voidedBy: ADMIN.id,
+            activeKey: `${year}|${userID}|${t.id}|removed|bulk${i}`,
+          })),
+        });
+        await db.award.create({
+          data: {
+            academicYear: year,
+            userID: "BULK-0",
+            title: "Full Colours",
+            awardTypeID: t.id,
+            activeKey: `${year}|BULK-0|${t.id}`,
+          },
+        });
+        try {
+          const ids = (
+            await db.award.findMany({
+              where: {
+                userID: { startsWith: "BULK-" },
+                voidedAt: { not: null },
+              },
+              select: { id: true },
+            })
+          ).map((a) => a.id);
+          expect(ids).toHaveLength(300);
+
+          const started = Date.now();
+          const result = await as(JCRC).awards.bulkRestore({ ids });
+          const seconds = (Date.now() - started) / 1000;
+
+          expect(result.restored).toBe(299);
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain("Full Colours");
+          expect(seconds).toBeLessThan(30);
+          expect(
+            await db.award.count({
+              where: { userID: { startsWith: "BULK-" }, ...live },
+            }),
+          ).toBe(300);
+        } finally {
+          await db.award.deleteMany({
+            where: { userID: { startsWith: "BULK-" } },
+          });
+        }
+      }, 120_000);
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("self-recorded awards (F25a)", () => {
+      it("flags an award a manager recorded for themselves, and only that", async () => {
+        const t = await fullColours();
+        await as(JCRC).awards.assign({
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: [{ userID: JCRC.id }, { userID: "SEED-R20" }],
+        });
+
+        const list = await as(JCRC).awards.list({ academicYear: AY });
+        const mine = list.find(
+          (a) => a.userID === JCRC.id && a.title === "Full Colours",
+        );
+        const theirs = list.find((a) => a.userID === "SEED-R20");
+        expect(mine?.selfRecorded).toBe(true);
+        expect(theirs?.selfRecorded).toBe(false);
+      });
+    });
 
     /* ---------------------------------------------------------------- */
     describe("who may manage awards", () => {
@@ -384,6 +595,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             userID: "SEED-R20",
             title: "  full   COLOURS ",
             recordedBy: JCRC.id,
+            activeKey: awardActiveKey({
+              academicYear: AY,
+              userID: "SEED-R20",
+              awardTypeID: null,
+              title: "  full   COLOURS ",
+            }),
           },
         });
         const result = await assign(JCRC, "Full Colours", [
@@ -403,6 +620,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             userID: "SEED-R20",
             title: "Full Colours",
             awardTypeID: (await fullColours()).id,
+            activeKey: `${OLD}|SEED-R20|${(await fullColours()).id}`,
           },
         });
 
@@ -565,7 +783,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await as(JCRC).awards.remove({ id: a.id });
         await assign(JCRC, "Full Colours", [{ userID: "SEED-R13" }]);
         expect(await errorOf(as(JCRC).awards.restore({ id: a.id }))).toBe(
-          "CONFLICT:AWARD_DUPLICATE",
+          "CONFLICT:ALREADY_HAS_AWARD",
         );
       });
 
@@ -819,6 +1037,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             title: "Full Colours",
             awardTypeID: t.id,
             importBatchID: oldBatch.id,
+            activeKey: `${OLD}|SEED-R12|${t.id}`,
           },
         });
         const current = {

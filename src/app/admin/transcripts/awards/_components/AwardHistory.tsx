@@ -14,7 +14,11 @@ import {
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
 import { errorText } from "~/lib/transcript/adminView";
-import { UNDO_BATCH_CONFIRMATION } from "~/lib/transcript/awards";
+import {
+  SELF_RECORDED_TAG,
+  UNDO_BATCH_CONFIRMATION,
+  batchStatusLabel,
+} from "~/lib/transcript/awards";
 import { formatSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
 import { ErrorLine } from "../../_components/Bits";
@@ -29,8 +33,10 @@ export interface BatchItem {
   createdByName: string | null;
   createdAt: Date | string | null;
   undone: boolean;
-  /** complete | partial (stopped part way). */
+  /** importing | complete | partial (stopped part way). */
   status?: string;
+  /** The uploader is one of the people the upload gave awards to. */
+  selfRecorded?: boolean;
   undoneAt: Date | string | null;
   undoneByName: string | null;
   activeCount: number;
@@ -106,6 +112,11 @@ export function AwardHistoryView(p: AwardHistoryViewProps) {
                   <tr key={b.id} className="align-top">
                     <td className="px-3 py-2 font-medium text-gray-900">
                       {b.fileName || "Pasted rows"}
+                      {b.selfRecorded && (
+                        <span className="ml-2 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
+                          {SELF_RECORDED_TAG}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-gray-700">
                       {b.createdByName ?? ""}
@@ -116,7 +127,7 @@ export function AwardHistoryView(p: AwardHistoryViewProps) {
                     <td className="px-3 py-2 text-gray-700">
                       {b.undone
                         ? `Undone${b.undoneByName ? ` by ${b.undoneByName}` : ""}${b.undoneAt ? ` on ${formatSgDate(b.undoneAt)}` : ""}`
-                        : `${b.status === "partial" ? "Partly imported, " : ""}${b.activeCount} active`}
+                        : `${batchStatusLabel(b.status)}, ${b.activeCount} active`}
                     </td>
                     <td className="px-3 py-2 text-right">
                       {!b.undone && !p.readOnly && (

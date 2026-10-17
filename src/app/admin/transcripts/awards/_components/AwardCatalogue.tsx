@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -314,6 +314,9 @@ export default function AwardCatalogue({
   useEffect(() => {
     onDirty(dirty);
   }, [dirty, onDirty]);
+  const onDirtyRef = useRef(onDirty);
+  onDirtyRef.current = onDirty;
+  useEffect(() => () => onDirtyRef.current(false), []);
 
   const createZod = create.error?.data?.zodError ?? null;
   const updateZod = update.error?.data?.zodError ?? null;

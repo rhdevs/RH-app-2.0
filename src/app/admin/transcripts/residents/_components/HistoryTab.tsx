@@ -1,7 +1,11 @@
 "use client";
 
 import { errorText } from "~/lib/transcript/adminView";
-import { eventDetail, eventLabel } from "~/lib/transcript/residentView";
+import {
+  SELF_MADE_TAG,
+  eventDetail,
+  eventLabel,
+} from "~/lib/transcript/residentView";
 import { formatSgDate, instantToSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
 import { ErrorLine } from "../../_components/Bits";
@@ -13,6 +17,8 @@ export interface HistoryItem {
   reason: string | null;
   summary: string | null;
   byName: string | null;
+  /** The change was made by the resident themself (shown, never blocked). */
+  selfMade?: boolean;
   at: Date | string | null;
 }
 
@@ -63,6 +69,11 @@ export function HistoryView({ items }: { items: HistoryItem[] }) {
                     {eventTime(e.at)}
                     {e.byName ? ` by ${e.byName}` : ""}
                   </span>
+                  {e.selfMade && (
+                    <span className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
+                      {SELF_MADE_TAG}
+                    </span>
+                  )}
                 </div>
                 {detail && (
                   <p className="mt-1 text-sm text-gray-800">{detail}</p>

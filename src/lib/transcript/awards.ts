@@ -45,6 +45,35 @@ export function isDuplicateAward(
   );
 }
 
+/**
+ * The key that makes an ACTIVE award unique per year, person and award (the
+ * catalogue entry, or the normalised title when there is none). A removed award
+ * carries `removedAwardKey` instead, which frees this one.
+ */
+export function awardActiveKey(a: {
+  academicYear: string;
+  userID: string;
+  awardTypeID: string | null;
+  title: string | null;
+}): string {
+  const what = a.awardTypeID ?? `title:${normalizeAwardName(a.title ?? "")}`;
+  return `${a.academicYear}|${a.userID}|${what}`;
+}
+
+/** The key a removed award is rewritten to, so a new active one can take its place. */
+export const removedAwardKey = (activeKey: string, id: string) =>
+  `${activeKey}|removed|${id}`;
+
+/** The small tag on an award a manager recorded or edited for themselves. */
+export const SELF_RECORDED_TAG = "Self-recorded";
+
+/** What an upload's status reads as in History. Undo works for all three. */
+export function batchStatusLabel(status: string | null | undefined): string {
+  if (status === "importing") return "Importing";
+  if (status === "partial") return "Partly imported";
+  return "Imported";
+}
+
 export interface Recipient {
   userID: string;
   citation?: string | null;

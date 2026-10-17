@@ -787,7 +787,11 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           });
         }
         await db.award.createMany({
-          data: strip(await db.award.findMany({ where })) as never,
+          data: strip(await db.award.findMany({ where })).map((a) => ({
+            ...a,
+            // The unique key carries the year: file the copy under the old one.
+            activeKey: a.activeKey.replace(AY, OLD),
+          })) as never,
         });
         await db.awardImportBatch.createMany({
           data: strip(await db.awardImportBatch.findMany({ where })) as never,

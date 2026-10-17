@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   AlertDialog,
@@ -27,6 +27,7 @@ import {
   toggleMany,
   toggleSelected,
   type Selection,
+  SELF_RECORDED_TAG,
 } from "~/lib/transcript/awards";
 import { counterText } from "~/lib/transcript/headView";
 import { formatSgDate } from "~/lib/transcript/sgDate";
@@ -42,6 +43,8 @@ export interface AwardItem {
   citation: string;
   awardTypeID: string | null;
   removed: boolean;
+  /** The manager recorded or edited their own award. */
+  selfRecorded?: boolean;
   recordedByName: string | null;
   recordedAt: Date | string | null;
   updatedByName: string | null;
@@ -324,6 +327,11 @@ function AwardRow({
               {item.citation}
             </p>
           )}
+          {item.selfRecorded && (
+            <span className="mt-0.5 inline-block rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
+              {SELF_RECORDED_TAG}
+            </span>
+          )}
           <p className="mt-0.5 text-xs text-gray-500">
             {item.removed
               ? `Removed${item.removedByName ? ` by ${item.removedByName}` : ""}${item.removedAt ? ` on ${when(item.removedAt)}` : ""}`
@@ -493,6 +501,9 @@ export default function AwardsList({
   useEffect(() => {
     onDirty(dirty);
   }, [dirty, onDirty]);
+  const onDirtyRef = useRef(onDirty);
+  onDirtyRef.current = onDirty;
+  useEffect(() => () => onDirtyRef.current(false), []);
 
   const refresh = async () => {
     await Promise.all([

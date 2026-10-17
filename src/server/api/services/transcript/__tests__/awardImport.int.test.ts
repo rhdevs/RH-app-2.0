@@ -2,7 +2,15 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { parseCsv } from "~/app/admin/_lib/csv";
 import {
   guessMapping,
@@ -633,6 +641,209 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     /* ---------------------------------------------------------------- */
+    describe("two uploads at once, and batch statuses (F20, F16)", () => {
+      const tinyRows = (names: string[]): ImportRow[] =>
+        names.flatMap((award) =>
+          [1, 2, 3, 4, 5, 6].map((n) => ({
+            identifier: `seed-r${String(n).padStart(2, "0")}@u.nus.edu`,
+            award,
+            citation: "",
+          })),
+        );
+
+      it("never stores the same award twice when two managers import together", async () => {
+        const rows = tinyRows(["Full Colours"]);
+        const go = (who: typeof JCRC, fileName: string) =>
+          as(who).awardImport.commit({
+            academicYear: AY,
+            fileName,
+            rows,
+            decisions: [],
+          });
+
+        const [a, b] = await Promise.all([
+          go(JCRC, "a.csv"),
+          go(ADMIN, "b.csv"),
+        ]);
+
+        expect(a.imported + b.imported).toBe(
+          await db.award.count({
+            where: {
+              academicYear: AY,
+              importBatchID: { not: null },
+              userID: {
+                in: rows.map((r) => r.identifier.split("@")[0]!.toUpperCase()),
+              },
+              ...live,
+              title: "Full Colours",
+            },
+          }),
+        );
+        const dupes = await db.award.groupBy({
+          by: ["userID"],
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          _count: { _all: true },
+        });
+        for (const d of dupes) expect(d._count._all).toBe(1);
+        // Whatever the other upload had already written is skipped, not failed.
+        const skippedReasons = [...a.skipped, ...b.skipped].map(
+          (s) => s.reason,
+        );
+        expect(
+          skippedReasons.every((r) => r.includes("Already has this award")),
+        ).toBe(true);
+        for (const id of [a.batchId, b.batchId]) {
+          expect(
+            (await db.awardImportBatch.findUniqueOrThrow({ where: { id } }))
+              .status,
+          ).toBe("complete");
+        }
+      }, 120_000);
+
+      it("marks a finished upload complete, with its counts", async () => {
+        const r = await commit();
+        const batch = await db.awardImportBatch.findUniqueOrThrow({
+          where: { id: r.batchId },
+        });
+        expect(batch.status).toBe("complete");
+        expect(batch.importedCount).toBe(r.imported);
+        const listed = (
+          await as(JCRC).awardBatches.list({ academicYear: AY })
+        ).find((b) => b.id === r.batchId);
+        expect(listed?.status).toBe("complete");
+      });
+
+      it("shows 'importing' while it is being written, and Undo works on it", async () => {
+        const batch = await db.awardImportBatch.create({
+          data: {
+            academicYear: AY,
+            fileName: "mid.csv",
+            rowCount: 3,
+            importedCount: 0,
+            skippedCount: 0,
+            status: "importing",
+            createdBy: JCRC.id,
+          },
+        });
+        const t = await db.awardType.findUniqueOrThrow({
+          where: { normalizedName: "full colours" },
+        });
+        await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "Full Colours",
+            awardTypeID: t.id,
+            importBatchID: batch.id,
+            activeKey: `${AY}|SEED-R20|${t.id}`,
+          },
+        });
+
+        const listed = (
+          await as(JCRC).awardBatches.list({ academicYear: AY })
+        ).find((b) => b.id === batch.id);
+        expect(listed).toMatchObject({ status: "importing", activeCount: 1 });
+        const undone = await as(JCRC).awardBatches.undo({ batchId: batch.id });
+        expect(undone.removed).toBe(1);
+        expect(
+          (
+            await db.award.findFirstOrThrow({
+              where: { importBatchID: batch.id },
+            })
+          ).activeKey,
+        ).toMatch(/\|removed\|/);
+      });
+
+      it("when the partial marker cannot be saved, logs code and name only and still says the upload stopped", async () => {
+        const service = await import("../awardImport");
+        const logged = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        try {
+          let transactions = 0;
+          const failing = new Proxy(db, {
+            get(target, prop, receiver) {
+              if (prop === "$transaction") {
+                return (...args: unknown[]) => {
+                  transactions += 1;
+                  if (transactions === 2) {
+                    return Promise.reject(new Error("secret detail"));
+                  }
+                  return (
+                    target.$transaction as unknown as (
+                      ...a: unknown[]
+                    ) => Promise<unknown>
+                  )(...args);
+                };
+              }
+              if (prop === "awardImportBatch") {
+                return new Proxy(target.awardImportBatch, {
+                  get(m, p) {
+                    if (p === "update") {
+                      return () =>
+                        Promise.reject(
+                          Object.assign(
+                            new Error("marker failed for SEED-R01"),
+                            {
+                              code: "P1001",
+                            },
+                          ),
+                        );
+                    }
+                    const v: unknown = Reflect.get(m, p, m);
+                    return typeof v === "function"
+                      ? (v as (...a: unknown[]) => unknown).bind(m)
+                      : v;
+                  },
+                });
+              }
+              return Reflect.get(target, prop, receiver) as unknown;
+            },
+          });
+          const rows: ImportRow[] = [];
+          const keys: Decision[] = [];
+          for (let a = 0; a < 25; a += 1) {
+            const name = `Marker Award ${String(a).padStart(2, "0")}`;
+            keys.push({ nameKey: name.toLowerCase(), action: "create" });
+            for (let n = 1; n <= 20; n += 1) {
+              rows.push({
+                identifier: `seed-r${String(n).padStart(2, "0")}@u.nus.edu`,
+                award: name,
+                citation: "",
+              });
+            }
+          }
+
+          const message = await errorOf(
+            service.awardImportCommit(failing, JCRC.id, {
+              academicYear: AY,
+              fileName: "marker.csv",
+              rows,
+              decisions: keys,
+            } as never),
+          );
+
+          expect(message).toBe("CONFLICT:UPLOAD_PARTIAL:200");
+          const line = logged.mock.calls
+            .map((c) => String(c[0]))
+            .find((l) => l.includes("award_batch_mark_failed"))!;
+          const parsed = JSON.parse(line) as Record<string, string>;
+          expect(Object.keys(parsed).sort()).toEqual([
+            "academicYear",
+            "batchId",
+            "code",
+            "evt",
+            "name",
+          ]);
+          expect(parsed.code).toBe("P1001");
+          expect(line).not.toContain("SEED-R01");
+        } finally {
+          logged.mockRestore();
+        }
+      }, 300_000);
+    });
+
+    /* ---------------------------------------------------------------- */
     describe("an upload that stops part way", () => {
       it("keeps what was written as a partial batch, says so, and Undo removes exactly it", async () => {
         const service = await import("../awardImport");
@@ -680,7 +891,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             decisions: keys,
           } as never),
         );
-        expect(message).toBe("INTERNAL_SERVER_ERROR:UPLOAD_PARTIAL:200");
+        expect(message).toBe("CONFLICT:UPLOAD_PARTIAL:200");
 
         const batch = await db.awardImportBatch.findFirstOrThrow({
           where: { fileName: "partial.csv" },

@@ -85,6 +85,7 @@ export const TARGETS = {
     { name: "award_year_type", key: { academicYear: 1, awardTypeID: 1 }, unique: false },
     { name: "award_batch", key: { importBatchID: 1 }, unique: false },
     { name: "award_type", key: { awardTypeID: 1 }, unique: false },
+    { name: "award_active_key", key: { activeKey: 1 }, unique: true },
   ],
   AwardType: [
     { name: "award_type_name", key: { normalizedName: 1 }, unique: true },

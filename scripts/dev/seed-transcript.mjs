@@ -25,6 +25,15 @@ const AY = "AY2026/27";
 const DOWNLOAD_BY = new Date("2027-12-30T16:00:00Z");
 const PREFIX = "SEED-";
 
+// The unique key of an active award; a removed one gets the removed form.
+const awardKey = (academicYear, userID, awardTypeID, title, removed) => {
+  const what =
+    awardTypeID ?? `title:${title.trim().replace(/\s+/g, " ").toLowerCase()}`;
+  const base = `${academicYear}|${userID}|${what}`;
+  return removed ? `${base}|removed|seed` : base;
+};
+
+
 /**
  * `--with-published-year` ALSO seeds a past year, AY2025/26, whose transcripts
  * are already open: every seeded CCA's list saved, roster entries, activities, volunteer
@@ -616,6 +625,13 @@ async function seed() {
     citation,
     awardTypeID: typeOf[title]?.id ?? null,
     recordedBy: uid(2),
+    activeKey: awardKey(
+      AY,
+      uid(n),
+      typeOf[title]?.id ?? null,
+      title,
+      Boolean(extra?.voidedAt),
+    ),
     ...extra,
   });
   // One upload of awards (3 of its 4 rows imported), so History has an entry.
@@ -873,6 +889,7 @@ async function seedPublishedYear() {
       citation,
       recordedBy: uid(2),
       recordedAt: at("2026-06-01T04:00:00Z"),
+      activeKey: awardKey(PAST_AY, uid(n), null, title, false),
     })),
   });
   await db.jcrcService.create({

@@ -328,6 +328,8 @@ export interface ResidentHistoryEntry {
   reason: string | null;
   summary: string | null;
   byName: string | null;
+  /** The actor is the resident themself: a manager correcting their own records. */
+  selfMade: boolean;
   at: Date | null;
 }
 
@@ -353,6 +355,7 @@ export async function residentHistory(
     byName: r.actor
       ? (names.get(r.actor)?.displayName?.trim() ?? r.actor)
       : null,
+    selfMade: r.actor != null && r.actor === resident.key,
     at: r.at ?? null,
   }));
 }

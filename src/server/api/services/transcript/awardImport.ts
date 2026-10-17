@@ -22,7 +22,9 @@ import type {
 } from "~/lib/transcript/awardImport";
 // The admin bulk wizard's own identifier resolvers, imported, not copied.
 import { bulkResolver } from "~/server/api/routers/admin";
-import { awardTypeCreate } from "./manageAwards";
+import { awardTypeCreate, isUniqueViolation } from "./manageAwards";
+import { awardActiveKey } from "~/lib/transcript/awards";
+import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import { NOT_VOIDED } from "./loader";
 import { assertWritable } from "./manageAccess";
 import { correctionSummary } from "~/lib/transcript/corrections";
@@ -153,6 +155,36 @@ export interface SkippedRow {
 /** 200 rows and their history lines in one transaction. */
 const CHUNK_TX = { timeout: 30_000, maxWait: 10_000 } as const;
 
+const ALREADY_HAS = "Already has this award for the year.";
+
+/**
+ * Set a batch's status and counts. If this write fails it is logged (batch,
+ * year, error code and name only, never a message that could carry names) and
+ * thrown, so the caller decides what the manager sees.
+ */
+async function markBatch(
+  db: PrismaClient,
+  batchId: string,
+  academicYear: string,
+  data: { status: string; importedCount: number; skippedCount: number },
+) {
+  try {
+    await db.awardImportBatch.update({ where: { id: batchId }, data });
+  } catch (error) {
+    const e = error as { code?: unknown; name?: unknown };
+    console.error(
+      JSON.stringify({
+        evt: "award_batch_mark_failed",
+        batchId,
+        academicYear,
+        code: typeof e.code === "string" ? e.code : "UNKNOWN",
+        name: typeof e.name === "string" ? e.name : typeof error,
+      }),
+    );
+    throw error;
+  }
+}
+
 export async function awardImportCommit(
   db: PrismaClient,
   actorUserID: string,
@@ -238,6 +270,7 @@ export async function awardImportCommit(
     title: string;
     citation: string | null;
     awardTypeID: string;
+    source: ClassifiedRow;
   }> = [];
   const seen = new Set<string>();
   const skip = (r: ClassifiedRow, reason: string) =>
@@ -264,7 +297,7 @@ export async function awardImportCommit(
       held.has(heldTypeKey(userID, type.id)) ||
       held.has(heldNameKey(userID, type.name));
     if (dup) {
-      skip(r, "Already has this award for the year.");
+      skip(r, ALREADY_HAS);
       continue;
     }
     const once = `${userID}|${type.id}`;
@@ -278,6 +311,7 @@ export async function awardImportCommit(
       title: type.name,
       citation: effectiveCitation(r.citation, type.defaultCitation),
       awardTypeID: type.id,
+      source: r,
     });
   }
 
@@ -288,6 +322,8 @@ export async function awardImportCommit(
       rowCount: rows.length,
       importedCount: 0,
       skippedCount: skipped.length,
+      // "importing" until the last chunk is written (then complete or partial).
+      status: "importing",
       createdBy: actorUserID,
       createdAt: now,
     },
@@ -296,55 +332,91 @@ export async function awardImportCommit(
   // Chunk by chunk, each with its own history lines in the same transaction. A
   // chunk that fails after earlier ones were written leaves a PARTIAL batch that
   // says what was written, so History can show it and Undo removes exactly it.
+  const rowFor = (a: (typeof toWrite)[number]) => ({
+    academicYear: input.academicYear,
+    userID: a.userID,
+    title: a.title,
+    citation: a.citation,
+    awardTypeID: a.awardTypeID,
+    importBatchID: batch.id,
+    recordedBy: actorUserID,
+    recordedAt: now,
+    activeKey: awardActiveKey({
+      academicYear: input.academicYear,
+      userID: a.userID,
+      awardTypeID: a.awardTypeID,
+      title: a.title,
+    }),
+  });
+  const lineFor = (a: (typeof toWrite)[number]) => ({
+    userID: a.userID,
+    summary: correctionSummary("Awards", a.title, "assigned (upload)"),
+  });
   let imported = 0;
   try {
     for (let i = 0; i < toWrite.length; i += IMPORT_CHUNK_SIZE) {
       const chunk = toWrite.slice(i, i + IMPORT_CHUNK_SIZE);
-      await db.$transaction(async (tx) => {
-        await tx.award.createMany({
-          data: chunk.map((a) => ({
-            academicYear: input.academicYear,
-            userID: a.userID,
-            title: a.title,
-            citation: a.citation,
-            awardTypeID: a.awardTypeID,
-            importBatchID: batch.id,
-            recordedBy: actorUserID,
-            recordedAt: now,
-          })),
-        });
-        await logCorrections(
-          tx,
-          guard,
-          actorUserID,
-          input.academicYear,
-          chunk.map((a) => ({
-            userID: a.userID,
-            summary: correctionSummary("Awards", a.title, "assigned (upload)"),
-          })),
-          now,
+      try {
+        await retryWriteConflicts(() =>
+          db.$transaction(async (tx) => {
+            await tx.award.createMany({ data: chunk.map(rowFor) });
+            await logCorrections(
+              tx,
+              guard,
+              actorUserID,
+              input.academicYear,
+              chunk.map(lineFor),
+              now,
+            );
+          }, CHUNK_TX),
         );
-      }, CHUNK_TX);
-      imported += chunk.length;
+        imported += chunk.length;
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+        // Someone gave one of these awards at the same moment (another upload,
+        // or a double-submit). One duplicate aborts the whole chunk, so write it
+        // row by row: that row is skipped, the others are imported.
+        for (const a of chunk) {
+          try {
+            await retryWriteConflicts(() =>
+              db.$transaction(async (tx) => {
+                await tx.award.create({ data: rowFor(a) });
+                await logCorrections(
+                  tx,
+                  guard,
+                  actorUserID,
+                  input.academicYear,
+                  [lineFor(a)],
+                  now,
+                );
+              }, CHUNK_TX),
+            );
+            imported += 1;
+          } catch (error2) {
+            if (!isUniqueViolation(error2)) throw error2;
+            skip(a.source, ALREADY_HAS);
+          }
+        }
+      }
     }
   } catch (error) {
-    await db.awardImportBatch.update({
-      where: { id: batch.id },
-      data: {
-        status: "partial",
-        importedCount: imported,
-        skippedCount: rows.length - imported,
-      },
-    });
+    // Say what was written. If even that cannot be saved the failure is logged,
+    // and the manager still sees the partial-upload message, never a bare error.
+    await markBatch(db, batch.id, input.academicYear, {
+      status: "partial",
+      importedCount: imported,
+      skippedCount: rows.length - imported,
+    }).catch(() => undefined);
     throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
+      code: "CONFLICT",
       message: `UPLOAD_PARTIAL:${imported}`,
       cause: error,
     });
   }
-  await db.awardImportBatch.update({
-    where: { id: batch.id },
-    data: { importedCount: imported, skippedCount: rows.length - imported },
+  await markBatch(db, batch.id, input.academicYear, {
+    status: "complete",
+    importedCount: imported,
+    skippedCount: rows.length - imported,
   });
 
   return {

@@ -21,6 +21,7 @@ import {
   guessMapping,
   importButtonLabel,
   importSummaryLine,
+  latestOnly,
   looksLikeHeader,
   mappingProblem,
   previewSummaryLine,
@@ -734,6 +735,7 @@ export default function AwardImport({
   useEffect(() => {
     onDirty(dirty);
   }, [dirty, onDirty]);
+  const picks = useRef(latestOnly());
   const onDirtyRef = useRef(onDirty);
   onDirtyRef.current = onDirty;
   useEffect(() => () => onDirtyRef.current(false), []);
@@ -877,10 +879,20 @@ export default function AwardImport({
       fileName={fileName}
       onFile={(file) => {
         setError(null);
-        void file.text().then((t) => {
-          setText(t);
-          setFileName(file.name);
-        });
+        const token = picks.current.start();
+        void (async () => {
+          try {
+            const content = await file.text();
+            // A newer pick (or none) wins over a slow earlier read.
+            if (!picks.current.isCurrent(token)) return;
+            setText(content);
+            setFileName(file.name);
+          } catch {
+            if (picks.current.isCurrent(token)) {
+              setError("This file could not be read.");
+            }
+          }
+        })();
       }}
       onDownloadTemplate={downloadTemplate}
       onContinue={() => {

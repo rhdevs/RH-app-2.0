@@ -205,3 +205,6 @@ export function draftTotal(
   }
   return Math.round(total * 100) / 100;
 }
+
+/** The small tag on a history line the resident made themself. */
+export const SELF_MADE_TAG = "Self-made change";

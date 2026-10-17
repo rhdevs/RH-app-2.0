@@ -430,3 +430,16 @@ export const awardImportCommitInput = z.object({
     .max(MAX_IMPORT_ROWS)
     .optional(),
 });
+
+/**
+ * Picking a second file while the first is still being read must not let the
+ * first one's text land afterwards. `start()` marks a new pick; a read is
+ * applied only while `isCurrent` still holds for its token.
+ */
+export function latestOnly() {
+  let latest = 0;
+  return {
+    start: () => (latest += 1),
+    isCurrent: (token: number) => token === latest,
+  };
+}

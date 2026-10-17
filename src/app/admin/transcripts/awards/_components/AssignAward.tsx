@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -228,6 +228,9 @@ export default function AssignAward({
   useEffect(() => {
     onDirty(dirty);
   }, [dirty, onDirty]);
+  const onDirtyRef = useRef(onDirty);
+  onDirtyRef.current = onDirty;
+  useEffect(() => () => onDirtyRef.current(false), []);
 
   // A year with no such award chosen yet keeps the picker usable; a published
   // year disables everything.
