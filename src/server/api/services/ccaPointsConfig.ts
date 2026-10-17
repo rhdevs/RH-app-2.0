@@ -1,4 +1,4 @@
-import type { CcaPointsConfig, PrismaClient } from "@prisma/client";
+import type { CcaPointsConfig, Prisma, PrismaClient } from "@prisma/client";
 
 import { DEFAULT_RANGE, type Range } from "~/lib/points/constants";
 import {
@@ -85,6 +85,52 @@ export const hasWaiver = (row: ConfigRowLike | null): boolean =>
 /** Rows that are waivers; a row that only marks a CCA flat is not one. */
 export function waiverRows<T extends ConfigRowLike>(rows: readonly T[]): T[] {
   return rows.filter(hasWaiver);
+}
+
+export type BrokenWaiver = { ccaID: number; problem: string };
+
+/**
+ * Waivers that a NEW default would make impossible. A waiver only sets some
+ * fields and the rest follow the default, so changing the default can leave
+ * "average 13–12" for a CCA no head could ever meet. Flat CCAs' waivers are
+ * checked too (they are kept, and may be used again once the CCA is not flat).
+ * `problem` names the broken part(s) in plain words.
+ */
+export function waiversBrokenByDefault(
+  rows: readonly (ConfigRowLike & { ccaID: number | null })[],
+  newDefault: Readonly<Range>,
+): BrokenWaiver[] {
+  const broken: BrokenWaiver[] = [];
+  for (const row of waiverRows(rows)) {
+    if (row.ccaID === null) continue;
+    const r = fillRange(row, newDefault);
+    const parts: string[] = [];
+    if (r.meanMin > r.meanMax) parts.push(`average ${r.meanMin}–${r.meanMax}`);
+    if (r.sdMin > r.sdMax) parts.push(`spread ${r.sdMin}–${r.sdMax}`);
+    if (parts.length > 0)
+      broken.push({ ccaID: row.ccaID, problem: parts.join(" and ") });
+  }
+  return broken;
+}
+
+/** The error shown to JCRC when a new default would break waivers. */
+export function brokenWaiversMessage(
+  broken: readonly { ccaName: string; problem: string }[],
+): string {
+  const [only] = broken;
+  if (broken.length === 1 && only) {
+    return `This would make ${only.ccaName}'s waiver impossible (${only.problem}). Edit that waiver first.`;
+  }
+  const list = broken.map((b) => `${b.ccaName} (${b.problem})`).join(", ");
+  return `This would make these waivers impossible: ${list}. Edit those waivers first.`;
+}
+
+/** Audit reason for a flat-points export: counts only, never a matric or a name. */
+export function flatExportReason(
+  ccaCount: number,
+  memberCount: number,
+): string {
+  return `${ccaCount} CCA(s), ${memberCount} member(s)`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -180,6 +226,25 @@ export async function writeOverride(
 }
 
 /**
+ * Prisma + MongoDB tell an explicit null from an unset field, so "blank" has to
+ * test for both. The two halves of a per-CCA row (waiver fields, flat marking)
+ * are each removed WITHOUT reading the row first: a read-then-delete could wipe
+ * the other half if it were written in between. Instead the delete itself says
+ * "only when the other half is blank", and if it matched nothing the one half is
+ * nulled in place.
+ */
+const blank = (field: string): Prisma.CcaPointsConfigWhereInput => ({
+  OR: [{ [field]: null }, { [field]: { isSet: false } }],
+});
+const filled = (field: string): Prisma.CcaPointsConfigWhereInput => ({
+  [field]: { not: null },
+});
+const WAIVER_FIELDS = ["meanMin", "meanMax", "sdMin", "sdMax", "note"] as const;
+const anyWaiverField: Prisma.CcaPointsConfigWhereInput = {
+  OR: WAIVER_FIELDS.map(filled),
+};
+
+/**
  * Removes the WAIVER, returning whether there was one. A CCA that is also flat
  * keeps its row (only the waiver fields are cleared); otherwise the row goes.
  */
@@ -187,17 +252,22 @@ export async function removeOverride(
   db: PrismaClient,
   ccaID: number,
 ): Promise<boolean> {
-  const row = await readOverrideRow(db, ccaID);
-  if (!row || !hasWaiver(row)) return false;
-  if (isFlatRow(row)) {
-    await db.ccaPointsConfig.update({
-      where: { scope: ccaScope(ccaID) },
-      data: { meanMin: null, meanMax: null, sdMin: null, sdMax: null, note: null },
-    });
-  } else {
-    await db.ccaPointsConfig.deleteMany({ where: { scope: ccaScope(ccaID) } });
-  }
-  return true;
+  const scope = ccaScope(ccaID);
+  const deleted = await db.ccaPointsConfig.deleteMany({
+    where: { scope, AND: [blank("flatPoints"), anyWaiverField] },
+  });
+  if (deleted.count > 0) return true;
+  const cleared = await db.ccaPointsConfig.updateMany({
+    where: { scope, ...anyWaiverField },
+    data: {
+      meanMin: null,
+      meanMax: null,
+      sdMin: null,
+      sdMax: null,
+      note: null,
+    },
+  });
+  return cleared.count > 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -241,15 +311,14 @@ export async function clearFlat(
   db: PrismaClient,
   ccaID: number,
 ): Promise<boolean> {
-  const row = await readOverrideRow(db, ccaID);
-  if (!row || !isFlatRow(row)) return false;
-  if (hasWaiver(row)) {
-    await db.ccaPointsConfig.update({
-      where: { scope: ccaScope(ccaID) },
-      data: { flatPoints: null },
-    });
-  } else {
-    await db.ccaPointsConfig.deleteMany({ where: { scope: ccaScope(ccaID) } });
-  }
-  return true;
+  const scope = ccaScope(ccaID);
+  const deleted = await db.ccaPointsConfig.deleteMany({
+    where: { scope, ...filled("flatPoints"), AND: WAIVER_FIELDS.map(blank) },
+  });
+  if (deleted.count > 0) return true;
+  const cleared = await db.ccaPointsConfig.updateMany({
+    where: { scope, ...filled("flatPoints") },
+    data: { flatPoints: null },
+  });
+  return cleared.count > 0;
 }

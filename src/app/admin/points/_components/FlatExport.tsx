@@ -49,11 +49,15 @@ type Stage =
  * file is built in the browser and saved to this device; nothing is uploaded.
  */
 export default function FlatExport({ flatCount }: { flatCount: number }) {
-  const utils = api.useUtils();
+  // A mutation, not a query: each export is audited on the server and the roster
+  // (matrics) is never kept in the query cache. reset() drops it on close.
+  const exportData = api.ccaPoints.flatExportData.useMutation();
+  const { reset: resetExport } = exportData;
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const close = () => {
     setDownloadError(null);
+    resetExport();
     setStage({ kind: "idle" });
   };
 
@@ -61,9 +65,7 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
     setDownloadError(null);
     setStage({ kind: "loading" });
     try {
-      const data = await utils.ccaPoints.flatExportData.fetch(undefined, {
-        staleTime: 0,
-      });
+      const data = await exportData.mutateAsync();
       const check = flatExportBlockers(data);
       if (check.blockers.length > 0) {
         setStage({

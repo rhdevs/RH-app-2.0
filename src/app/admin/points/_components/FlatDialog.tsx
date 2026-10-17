@@ -48,19 +48,23 @@ export default function FlatDialog({
   const [text, setText] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    setSubmitted(false);
-    setCca(null);
-    setText(editing ? formatFlatPoints(editing.flatPoints) : "");
-  }, [open, editing]);
-
   const save = api.ccaPoints.setFlat.useMutation({
     onSuccess: async () => {
       await onSaved();
       onOpenChange(false);
     },
   });
+  const { reset: resetSave } = save;
+
+  // Fresh state each time the dialog opens, including no stale error from a
+  // previous failed save.
+  useEffect(() => {
+    if (!open) return;
+    setSubmitted(false);
+    setCca(null);
+    setText(editing ? formatFlatPoints(editing.flatPoints) : "");
+    resetSave();
+  }, [open, editing, resetSave]);
 
   const ccaID = editing?.ccaID ?? cca?.ccaID ?? null;
   const parsed = parseFlatPointsText(text);

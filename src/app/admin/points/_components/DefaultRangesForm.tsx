@@ -9,6 +9,7 @@ import type { Range } from "~/lib/points/constants";
 import { pointsErrorCopy } from "./errorCopy";
 import RangeInputs from "./RangeInputs";
 import { parseRangeForm, toFormValues, type FormValues } from "./rangeForm";
+import { saveStatus, statusClass, type SaveStatus } from "./saveStatus";
 
 /**
  * The hall-wide default allowed ranges. All four fields are required here; a
@@ -26,12 +27,12 @@ export default function DefaultRangesForm({
   /** False until JCRC has saved a default row of their own. */
   hasRow: boolean;
   builtIn: Range;
-  onChanged: () => Promise<void>;
+  onChanged: () => Promise<boolean>;
 }) {
   const current = effective;
   const [values, setValues] = useState<FormValues>(() => toFormValues(current));
   const [submitted, setSubmitted] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<SaveStatus | null>(null);
 
   // Re-sync when the server value changes (after a save, or a refetch).
   const key = JSON.stringify(current);
@@ -48,9 +49,14 @@ export default function DefaultRangesForm({
 
   const save = api.ccaPoints.setDefault.useMutation({
     onSuccess: async () => {
-      setSaved(true);
       setSubmitted(false);
-      await onChanged();
+      const reloaded = await onChanged();
+      setSaved(
+        saveStatus(
+          "Saved. Heads see the new ranges the next time they open their page.",
+          reloaded,
+        ),
+      );
     },
   });
 
@@ -75,7 +81,7 @@ export default function DefaultRangesForm({
         onSubmit={(e) => {
           e.preventDefault();
           setSubmitted(true);
-          setSaved(false);
+          setSaved(null);
           if (!parsed.ok) return;
           save.mutate({
             meanMin: parsed.values.meanMin ?? builtIn.meanMin,
@@ -92,7 +98,7 @@ export default function DefaultRangesForm({
           disabled={save.isPending}
           onChange={(next) => {
             setValues(next);
-            setSaved(false);
+            setSaved(null);
             save.reset();
           }}
         />
@@ -118,9 +124,8 @@ export default function DefaultRangesForm({
             )}
           </Button>
           {saved && !dirty && (
-            <p className="text-sm text-emerald-700" role="status">
-              Saved. Heads see the new ranges the next time they open their
-              page.
+            <p className={`text-sm ${statusClass(saved)}`} role="status">
+              {saved.text}
             </p>
           )}
         </div>

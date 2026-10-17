@@ -26,7 +26,10 @@ import {
   readOverrideRow,
   removeOverride,
   resolveRange,
+  brokenWaiversMessage,
+  flatExportReason,
   waiverRows,
+  waiversBrokenByDefault,
   writeDefaultRange,
   writeEntryOpen,
   writeFlat,
@@ -48,13 +51,18 @@ import { fillRange } from "~/lib/points/meanSd";
 /**
  * JCRC's points-entry configuration, and the one read a CCA head needs.
  *
- * CONFIDENTIAL BY CONSTRUCTION: NO PROCEDURE HERE ACCEPTS OR RETURNS POINTS.
- * The server only knows the allowed ranges and whether entry is open. Leaders
- * score their members, check mean/SD and build the CSV in their own browser
- * (src/lib/points), and the audit rows below carry config values only. Do not
- * add a procedure that takes a score, a matric or a roster of either — the
- * confidentiality rule for this feature is that points are never persisted or
- * transmitted to the server.
+ * CONFIDENTIAL BY CONSTRUCTION: NO PROCEDURE HERE ACCEPTS OR RETURNS
+ * LEADER-ENTERED POINTS. The server only knows the allowed ranges, whether entry
+ * is open and which CCAs are flat. Leaders score their members, check mean/SD and
+ * build the CSV in their own browser (src/lib/points), and the audit rows below
+ * carry config values and counts only. Do not add a procedure that takes a score
+ * or a roster of scores — the confidentiality rule for this feature is that
+ * leader-entered points are never persisted or transmitted to the server.
+ *
+ * ONE EXCEPTION IN WHAT IS RETURNED: `flatExportData` returns, to JCRC only (live
+ * capability re-check), the rosters of the flat CCAs with matrics and names. That
+ * is membership plus JCRC's own flat value, never a leader's score, and every call
+ * is audited (`ccaPoints.flat.export`, counts only).
  *
  * The five JCRC procedures are `roleManagerProcedure` (admin + jcrc) and
  * ADDITIONALLY assert `manageCcaPointsRanges` against a LIVE role read (I-5), the
@@ -266,6 +274,30 @@ export const ccaPointsRouter = createTRPCRouter({
       const actorUserID = ctx.session.user.userID;
       const roles = await requirePointsCapability(ctx.db, actorUserID);
       assertSound(input);
+
+      // A waiver only sets some fields; the rest follow the default. Refuse a new
+      // default that would leave any waiver impossible, and save nothing.
+      const broken = waiversBrokenByDefault(
+        await listOverrideRows(ctx.db),
+        input,
+      );
+      if (broken.length > 0) {
+        const named = await ctx.db.cCA.findMany({
+          where: { ccaID: { in: broken.map((b) => b.ccaID) } },
+          select: { ccaID: true, ccaName: true },
+        });
+        const nameById = new Map(named.map((c) => [c.ccaID, c.ccaName]));
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: brokenWaiversMessage(
+            broken.map((b) => ({
+              ccaName: nameById.get(b.ccaID) ?? `CCA ${b.ccaID}`,
+              problem: b.problem,
+            })),
+          ),
+        });
+      }
+
       const now = new Date();
       await writeDefaultRange(ctx.db, input, actorUserID, now);
       await audit(ctx.db, {
@@ -413,9 +445,14 @@ export const ccaPointsRouter = createTRPCRouter({
    * leader-judged scores, so JCRC (and only a caller who passes the live
    * capability re-check) may receive matrics here. The file itself is built in
    * the browser.
+   *
+   * A MUTATION, like event.exportAttendees: this is a bulk read of matrics and
+   * names, so each call writes one `ccaPoints.flat.export` audit row (counts only)
+   * and the result is not kept in the client's query cache.
    */
-  flatExportData: roleManagerProcedure.query(async ({ ctx }) => {
-    await requirePointsCapability(ctx.db, ctx.session.user.userID);
+  flatExportData: roleManagerProcedure.mutation(async ({ ctx }) => {
+    const actorUserID = ctx.session.user.userID;
+    const roles = await requirePointsCapability(ctx.db, actorUserID);
     const flatRows = (await listOverrideRows(ctx.db)).filter(isFlatRow);
     const ids = flatRows.flatMap((r) => (r.ccaID === null ? [] : [r.ccaID]));
     const named =
@@ -426,7 +463,7 @@ export const ccaPointsRouter = createTRPCRouter({
             select: { ccaID: true, ccaName: true },
           });
     const nameById = new Map(named.map((c) => [c.ccaID, c.ccaName]));
-    return Promise.all(
+    const payload = await Promise.all(
       flatRows.flatMap((r) =>
         r.ccaID === null || r.flatPoints === null
           ? []
@@ -451,5 +488,17 @@ export const ccaPointsRouter = createTRPCRouter({
             ],
       ),
     );
+    // Audited before anything is returned: if the row cannot be written, nothing
+    // leaves the server. The reason holds counts only.
+    await audit(ctx.db, {
+      actorUserID,
+      actorRoles: roles,
+      action: "ccaPoints.flat.export",
+      reason: flatExportReason(
+        payload.length,
+        payload.reduce((n, c) => n + c.members.length, 0),
+      ),
+    });
+    return payload;
   }),
 });

@@ -16,6 +16,7 @@ import {
   AlertDialogTrigger,
 } from "~/components/ui/alert-dialog";
 import { pointsErrorCopy } from "./errorCopy";
+import { saveStatus, statusClass, type SaveStatus } from "./saveStatus";
 
 /**
  * THE HALL-WIDE POINTS ENTRY SWITCH.
@@ -35,22 +36,25 @@ export default function EntrySwitchPanel({
   onChanged,
 }: {
   entryOpen: boolean;
-  onChanged: () => Promise<void>;
+  onChanged: () => Promise<boolean>;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState("");
-  const [saved, setSaved] = useState<string | null>(null);
+  const [saved, setSaved] = useState<SaveStatus | null>(null);
 
   const setOpen = api.ccaPoints.setEntryOpen.useMutation({
     onSuccess: async (result) => {
       setConfirming(false);
       setReason("");
+      const reloaded = await onChanged();
       setSaved(
-        result.entryOpen
-          ? "Saved. Points entry is now open."
-          : "Saved. Points entry is now closed.",
+        saveStatus(
+          result.entryOpen
+            ? "Saved. Points entry is now open."
+            : "Saved. Points entry is now closed.",
+          reloaded,
+        ),
       );
-      await onChanged();
     },
   });
 
@@ -117,8 +121,8 @@ export default function EntrySwitchPanel({
         </div>
 
         {saved && !confirming && (
-          <p className="mt-4 text-sm text-emerald-700" role="status">
-            {saved}
+          <p className={`mt-4 text-sm ${statusClass(saved)}`} role="status">
+            {saved.text}
           </p>
         )}
 

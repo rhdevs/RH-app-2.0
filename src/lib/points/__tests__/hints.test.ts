@@ -122,3 +122,10 @@ describe("formatStat", () => {
     );
   });
 });
+
+describe("formatStat tolerance", () => {
+  it("shows 2 dp for a value that passes the check only through the tolerance", () => {
+    expect(formatStat(5 + 1e-15, 2, 5)).toBe("5.00");
+    expect(formatStat(2 - 1e-15, 2, 5)).toBe("2.00");
+  });
+});

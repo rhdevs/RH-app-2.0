@@ -53,21 +53,24 @@ export default function WaiverDialog({
   const [note, setNote] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
-  // Fresh state each time the dialog opens, seeded from the waiver being edited.
-  useEffect(() => {
-    if (!open) return;
-    setSubmitted(false);
-    setCca(null);
-    setValues(editing ? toFormValues(editing) : EMPTY);
-    setNote(editing?.note ?? "");
-  }, [open, editing]);
-
   const save = api.ccaPoints.setOverride.useMutation({
     onSuccess: async () => {
       await onSaved();
       onOpenChange(false);
     },
   });
+  const { reset: resetSave } = save;
+
+  // Fresh state each time the dialog opens, seeded from the waiver being edited,
+  // with no stale error from a previous failed save.
+  useEffect(() => {
+    if (!open) return;
+    setSubmitted(false);
+    setCca(null);
+    setValues(editing ? toFormValues(editing) : EMPTY);
+    setNote(editing?.note ?? "");
+    resetSave();
+  }, [open, editing, resetSave]);
 
   const ccaID = editing?.ccaID ?? cca?.ccaID ?? null;
   const parsed = parseRangeForm(values, {

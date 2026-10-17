@@ -24,6 +24,7 @@ import {
 } from "~/components/ui/table";
 import { formatFlatPoints } from "~/lib/points/flat";
 import { pointsErrorCopy } from "./errorCopy";
+import { saveStatus, statusClass, type SaveStatus } from "./saveStatus";
 import FlatDialog, { type FlatCca } from "./FlatDialog";
 import FlatExport from "./FlatExport";
 
@@ -81,20 +82,19 @@ export default function FlatCcasPanel({
   onChanged,
 }: {
   flatCcas: FlatCca[];
-  onChanged: () => Promise<void>;
+  onChanged: () => Promise<boolean>;
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<FlatCca | null>(null);
   const [removing, setRemoving] = useState<FlatCca | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
+  const [saved, setSaved] = useState<SaveStatus | null>(null);
 
   const clear = api.ccaPoints.clearFlat.useMutation({
     onSuccess: async () => {
-      setSaved(
-        `${removing?.ccaName ?? "That CCA"} is no longer a flat-points CCA.`,
-      );
+      const name = removing?.ccaName ?? "That CCA";
       setRemoving(null);
-      await onChanged();
+      const reloaded = await onChanged();
+      setSaved(saveStatus(`${name} is no longer a flat-points CCA.`, reloaded));
     },
   });
 
@@ -131,8 +131,8 @@ export default function FlatCcasPanel({
       </p>
 
       {saved && (
-        <p className="mb-3 text-sm text-emerald-700" role="status">
-          {saved}
+        <p className={`mb-3 text-sm ${statusClass(saved)}`} role="status">
+          {saved.text}
         </p>
       )}
 
@@ -224,8 +224,8 @@ export default function FlatCcasPanel({
         onOpenChange={setDialogOpen}
         editing={editing}
         onSaved={async () => {
-          setSaved("Saved the flat points.");
-          await onChanged();
+          const reloaded = await onChanged();
+          setSaved(saveStatus("Saved the flat points.", reloaded));
         }}
       />
 

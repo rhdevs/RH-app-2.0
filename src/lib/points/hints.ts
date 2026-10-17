@@ -12,7 +12,7 @@ const fixed = (n: number): string => n.toFixed(2);
  */
 export function formatStat(value: number, min: number, max: number): string {
   const base = fixed(value);
-  if (!Number.isFinite(value) || (value >= min && value <= max)) return base;
+  if (!Number.isFinite(value) || withinRange(value, min, max)) return base;
   const outside = (s: string): boolean => Number(s) < min || Number(s) > max;
   if (outside(base)) return base;
   for (const places of [3, 4]) {

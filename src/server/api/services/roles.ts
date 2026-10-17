@@ -247,9 +247,9 @@ export const AUDIT_ACTIONS = [
   // `action: z.string().max(32)` filter imposes.
   "ccaRecruitment.set",
   // JCRC's CCA POINTS ENTRY CONFIG (/admin/points; routers/ccaPoints.ts). All
-  // four are written by admin or jcrc through the manageCcaPointsRanges
-  // capability, and every one is a CONFIG change: the audit rows never carry a
-  // score, a matric or any resident data (the server never sees them).
+  // are written by admin or jcrc through the manageCcaPointsRanges capability.
+  // The audit rows never carry a score, a matric or a name (leader-entered
+  // scores never reach the server).
   //
   // `ccaPoints.entry.set` is the hall-wide open/closed switch — `rolesAfter`
   // carries the new state ("open" | "closed"), the same squeeze
@@ -268,6 +268,10 @@ export const AUDIT_ACTIONS = [
   // both stamp `targetCcaID`. Config only, like the rest.
   "ccaPoints.flat.set",
   "ccaPoints.flat.clear",
+  // `ccaPoints.flat.export` is one row per flat-points CSV export (a bulk read of
+  // the flat CCAs' rosters with matrics, like event.attendees.export). `reason`
+  // carries counts only ("3 CCA(s), 41 member(s)"), never a matric or a name.
+  "ccaPoints.flat.export",
   // Events feature. THE RULE, applied without exception: STATE-MACHINE
   // TRANSITIONS ARE AUDITED, FIELD SAVES ARE NOT. `event.create` and
   // `event.update` therefore write nothing — `update` fires on every save, and a
@@ -1278,8 +1282,11 @@ export type Capabilities = {
   manageCcaRecruitment: boolean;
   /**
    * May configure CCA points entry (/admin/points): the hall-wide open/closed
-   * switch, the default allowed mean/SD ranges and per-CCA waivers. Config only —
-   * nothing reachable through it carries points.
+   * switch, the default allowed mean/SD ranges, per-CCA waivers and flat-points
+   * CCAs. Nothing reachable through it carries leader-entered points. The one
+   * procedure that returns matrics is ccaPoints.flatExportData: the rosters of the
+   * flat CCAs (membership plus JCRC's own flat value) for JCRC's CSV export, behind
+   * a live capability re-check and audited as ccaPoints.flat.export.
    *
    * Manager-tier (admin + jcrc): setting the ranges is JCRC work. `scrc` is
    * absent, same argument as manageCcaRecruitment. A SEPARATE FIELD rather than
@@ -1287,7 +1294,7 @@ export type Capabilities = {
    * widening one later must not silently widen the other.
    *
    * Heads do NOT need it — they read only their own CCA's resolved range via
-   * ccaPoints.getEntryContext, which is guarded per-ccaID by assertHeadsCca.
+   * ccaPoints.getEntryContext, which is guarded per-ccaID by assertIsHeadOfCca.
    */
   manageCcaPointsRanges: boolean;
   /**

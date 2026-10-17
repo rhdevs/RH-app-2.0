@@ -24,6 +24,7 @@ import {
 } from "~/components/ui/table";
 import type { Range } from "~/lib/points/constants";
 import { pointsErrorCopy } from "./errorCopy";
+import { saveStatus, statusClass, type SaveStatus } from "./saveStatus";
 import WaiverDialog, { type Waiver } from "./WaiverDialog";
 
 /** "14–17", or "default" when the waiver leaves that pair to the default. */
@@ -78,18 +79,19 @@ export default function WaiversPanel({
 }: {
   overrides: Waiver[];
   effectiveDefault: Range;
-  onChanged: () => Promise<void>;
+  onChanged: () => Promise<boolean>;
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Waiver | null>(null);
   const [removing, setRemoving] = useState<Waiver | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
+  const [saved, setSaved] = useState<SaveStatus | null>(null);
 
   const clear = api.ccaPoints.clearOverride.useMutation({
     onSuccess: async () => {
-      setSaved(`Removed the waiver for ${removing?.ccaName ?? "that CCA"}.`);
+      const name = removing?.ccaName ?? "that CCA";
       setRemoving(null);
-      await onChanged();
+      const reloaded = await onChanged();
+      setSaved(saveStatus(`Removed the waiver for ${name}.`, reloaded));
     },
   });
 
@@ -119,8 +121,8 @@ export default function WaiversPanel({
       </p>
 
       {saved && (
-        <p className="mb-3 text-sm text-emerald-700" role="status">
-          {saved}
+        <p className={`mb-3 text-sm ${statusClass(saved)}`} role="status">
+          {saved.text}
         </p>
       )}
 
@@ -214,8 +216,8 @@ export default function WaiversPanel({
         editing={editing}
         effectiveDefault={effectiveDefault}
         onSaved={async () => {
-          setSaved("Saved the waiver.");
-          await onChanged();
+          const reloaded = await onChanged();
+          setSaved(saveStatus("Saved the waiver.", reloaded));
         }}
       />
 

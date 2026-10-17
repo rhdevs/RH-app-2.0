@@ -20,14 +20,19 @@ import WaiversPanel from "./_components/WaiversPanel";
  */
 export default function AdminPointsPage() {
   const cap = useCapabilities();
-  const { data, isLoading, refetch } = api.ccaPoints.getConfig.useQuery(
-    undefined,
-    { enabled: cap.manageCcaPointsRanges },
-  );
-  const utils = api.useUtils();
+  const { data, isLoading, isError, refetch } =
+    api.ccaPoints.getConfig.useQuery(undefined, {
+      enabled: cap.manageCcaPointsRanges,
+    });
   // Re-read from the server after every write; nothing renders optimistically.
-  const refresh = async () => {
-    await utils.ccaPoints.getConfig.invalidate();
+  // Resolves false when the re-read failed, so a panel can say its data is stale.
+  const refresh = async (): Promise<boolean> => {
+    try {
+      await refetch({ throwOnError: true });
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   return (
@@ -71,6 +76,24 @@ export default function AdminPointsPage() {
         </div>
       ) : (
         <>
+          {isError && (
+            <div
+              className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3"
+              role="alert"
+            >
+              <p className="text-sm text-amber-900">
+                Couldn&rsquo;t reload the latest settings, so what is shown may
+                be out of date.{" "}
+                <button
+                  type="button"
+                  onClick={() => void refetch()}
+                  className="rounded font-medium underline underline-offset-2 hover:text-amber-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                >
+                  Retry
+                </button>
+              </p>
+            </div>
+          )}
           <EntrySwitchPanel entryOpen={data.entryOpen} onChanged={refresh} />
           <DefaultRangesForm
             effective={data.effectiveDefault}
