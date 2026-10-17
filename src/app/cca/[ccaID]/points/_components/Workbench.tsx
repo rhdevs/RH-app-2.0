@@ -149,8 +149,9 @@ export default function Workbench({
         >
           <CheckCircle2 className="h-4 w-4" />
           <span>
-            Saved <span className="font-mono">{exported}</span> to this device.
-            Email it only to your portfolio head.
+            Download started: <span className="font-mono">{exported}</span>.
+            Check your Downloads folder before clearing the draft. Email it only
+            to your portfolio head.
           </span>
           {state.draftsEnabled && state.savedAt && (
             <button
@@ -206,6 +207,7 @@ export default function Workbench({
 
       <MobileBar
         state={state}
+        range={range}
         entryOpen={entryOpen}
         summary={summary}
         sheetOpen={sheetOpen}
@@ -221,6 +223,7 @@ export default function Workbench({
         entries={state.entries}
         mean={state.stats.mean}
         sd={state.stats.sd}
+        context={context}
         refreshContext={refreshContext}
         onExported={setExported}
       />

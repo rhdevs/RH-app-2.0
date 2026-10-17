@@ -25,6 +25,7 @@ export type ExportBlockerCode =
   | "BAD_SCORE"
   | "MISSING_MATRIC"
   | "BAD_MATRIC"
+  | "DUPLICATE_MATRIC"
   | "UNRESOLVED_MEMBER"
   | "MEAN_OUT_OF_RANGE"
   | "SD_OUT_OF_RANGE";
@@ -74,6 +75,19 @@ function scoreBlockers(entries: readonly PointsEntry[]): ExportBlocker[] {
   return blockers;
 }
 
+/** Resolved members whose matric (trimmed, upper-cased) another member also has. */
+function duplicateMatricMembers(
+  entries: readonly PointsEntry[],
+): PointsEntry[] {
+  const groups = new Map<string, PointsEntry[]>();
+  for (const e of entries) {
+    const key = e.resolved && e.matric ? e.matric.trim().toUpperCase() : "";
+    if (key === "") continue;
+    groups.set(key, [...(groups.get(key) ?? []), e]);
+  }
+  return [...groups.values()].filter((g) => g.length > 1).flat();
+}
+
 function identityBlockers(entries: readonly PointsEntry[]): ExportBlocker[] {
   const noMatric = entries.filter((e) => e.resolved && e.matric === null);
   const badMatric = entries.filter(
@@ -95,6 +109,15 @@ function identityBlockers(entries: readonly PointsEntry[]): ExportBlocker[] {
       code: "BAD_MATRIC",
       message: `${n} ${plural(n, "member's matric is", "members' matrics are")} not in the A1234567X format — ask JCRC to fix the roster`,
       rowKeys: keysOf(badMatric),
+    });
+  }
+  const duplicates = duplicateMatricMembers(entries);
+  if (duplicates.length > 0) {
+    const names = duplicates.map((e) => e.name ?? "Unknown member").join(", ");
+    blockers.push({
+      code: "DUPLICATE_MATRIC",
+      message: `These members share one matric number: ${names}. Ask JCRC to fix the roster.`,
+      rowKeys: keysOf(duplicates),
     });
   }
   if (unresolved.length > 0) {

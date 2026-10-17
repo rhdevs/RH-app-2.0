@@ -9,6 +9,7 @@ import {
   mergeRosterOverEntries,
   parseDraft,
   prefillEntry,
+  readDraftItem,
   removeDraftItem,
   type Draft,
   type RosterMember,
@@ -407,5 +408,42 @@ describe("removeDraftItem", () => {
         "k",
       ),
     ).toBe(false);
+  });
+});
+
+describe("readDraftItem", () => {
+  const stored = JSON.stringify(
+    draft({
+      "u:1": {
+        basePoints: 5,
+        semesterOnly: false,
+        outgoingRole: "none",
+        incomingRole: "none",
+      },
+    }),
+  );
+
+  it("reads a stored draft", () => {
+    expect(readDraftItem({ getItem: () => stored }, "k", 12).status).toBe("ok");
+  });
+
+  it("reports none when nothing is stored", () => {
+    expect(readDraftItem({ getItem: () => null }, "k", 12)).toEqual({
+      status: "none",
+    });
+  });
+
+  it("reports unreadable, not none, when getItem throws", () => {
+    expect(
+      readDraftItem(
+        {
+          getItem: () => {
+            throw new Error("denied");
+          },
+        },
+        "k",
+        12,
+      ),
+    ).toEqual({ status: "unreadable" });
   });
 });

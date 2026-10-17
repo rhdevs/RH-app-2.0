@@ -1,9 +1,11 @@
 "use client";
 
+import { formatStat } from "~/lib/points/hints";
+
 /**
  * A horizontal bar on a fixed scale with the allowed band shaded and a marker
  * at the current value. Green inside the band, red outside, and the value is
- * always written out (2 dp) so colour is never the only signal.
+ * always written out (2 dp, more only when needed to show it is outside) so colour is never the only signal.
  */
 export function RangeMeter({
   label,
@@ -21,6 +23,7 @@ export function RangeMeter({
   ok: boolean;
 }) {
   const has = Number.isFinite(value);
+  const shown = formatStat(value, min, max);
   const pct = (n: number) =>
     `${Math.min(100, Math.max(0, (n / scaleMax) * 100))}%`;
   const tone = !has
@@ -33,7 +36,7 @@ export function RangeMeter({
       <div className="flex items-baseline justify-between text-sm">
         <span className="font-medium text-gray-700">{label}</span>
         <span className={`font-semibold tabular-nums ${tone}`}>
-          {has ? value.toFixed(2) : "—"}
+          {has ? shown : "—"}
           <span className="ml-1.5 text-xs font-normal text-gray-500">
             target {min}–{max}
           </span>
@@ -47,7 +50,7 @@ export function RangeMeter({
         aria-valuenow={has ? Number(value.toFixed(2)) : undefined}
         aria-valuetext={
           has
-            ? `${value.toFixed(2)}, target ${min} to ${max}, ${ok ? "inside" : "outside"} the range`
+            ? `${shown}, target ${min} to ${max}, ${ok ? "inside" : "outside"} the range`
             : "no scores yet"
         }
         className="relative mt-1.5 h-3 rounded-full bg-gray-100"

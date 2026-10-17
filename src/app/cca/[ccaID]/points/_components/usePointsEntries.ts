@@ -9,7 +9,7 @@ import {
   draftKey,
   mergeDraftWithRoster,
   mergeRosterOverEntries,
-  parseDraft,
+  readDraftItem,
   removeDraftItem,
   type ParsedDraft,
   type RosterMember,
@@ -35,11 +35,12 @@ export function parseScoreText(text: string): number | null {
 const scoreText = (n: number | null): string =>
   n === null || Number.isNaN(n) ? "" : String(n);
 
-function readStorage(key: string): string | null {
+/** The stored draft; storage that cannot be read at all counts as unreadable. */
+function readStored(key: string, ccaID: number): ParsedDraft {
   try {
-    return window.localStorage.getItem(key);
+    return readDraftItem(window.localStorage, key, ccaID);
   } catch {
-    return null;
+    return { status: "unreadable" };
   }
 }
 
@@ -119,7 +120,7 @@ export function usePointsEntries(args: {
     }
     loadedFor.current = id;
     const parsed: ParsedDraft = storageKey
-      ? parseDraft(readStorage(storageKey), ccaID)
+      ? readStored(storageKey, ccaID)
       : { status: "none" };
     const draft = parsed.status === "ok" ? parsed.draft : null;
     const merged = mergeDraftWithRoster(roster, draft);

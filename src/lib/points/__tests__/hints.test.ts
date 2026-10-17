@@ -4,6 +4,7 @@ import { DEFAULT_RANGE } from "~/lib/points/constants";
 import {
   adjustmentHint,
   advisoryHints,
+  formatStat,
   meanHint,
   sdHint,
 } from "~/lib/points/hints";
@@ -84,6 +85,40 @@ describe("advisoryHints", () => {
   it("is empty when every hint is a blocker", () => {
     expect(advisoryHints(hints, [...hints, "5 members need a score"])).toEqual(
       [],
+    );
+  });
+});
+
+describe("formatStat", () => {
+  it("rounds to 2 dp when the value is inside the range", () => {
+    expect(formatStat(12.857, 10, 14)).toBe("12.86");
+  });
+
+  it("shows 3 dp for a value just above the maximum that 2 dp would hide", () => {
+    expect(formatStat(5.003, 2, 5)).toBe("5.003");
+  });
+
+  it("shows 3 dp for a value just below the minimum that 2 dp would hide", () => {
+    expect(formatStat(4.996, 5, 8)).toBe("4.996");
+  });
+
+  it("uses 2 dp when the rounding already shows the value is outside", () => {
+    expect(formatStat(5.2, 2, 5)).toBe("5.20");
+    expect(formatStat(1.5, 2, 5)).toBe("1.50");
+  });
+
+  it("goes to 4 dp when 3 dp still lands on the boundary", () => {
+    expect(formatStat(5.0004, 2, 5)).toBe("5.0004");
+  });
+
+  it("shows a value exactly on the boundary as 2 dp", () => {
+    expect(formatStat(5, 2, 5)).toBe("5.00");
+    expect(formatStat(2, 2, 5)).toBe("2.00");
+  });
+
+  it("is used in the hints so the number never contradicts the target", () => {
+    expect(sdHint(5.003, { ...DEFAULT_RANGE, sdMin: 2, sdMax: 5 })).toContain(
+      "5.003",
     );
   });
 });

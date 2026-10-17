@@ -7,6 +7,7 @@ import { api } from "~/trpc/react";
 import { TooltipProvider } from "~/components/ui/tooltip";
 import type { RosterMember } from "~/lib/points/draft";
 import { flatNotice } from "~/lib/points/flat";
+import { loadErrorInfo } from "./loadError";
 import Workbench from "./Workbench";
 
 /**
@@ -132,18 +133,20 @@ export default function PointsWorkbench({ ccaID }: { ccaID: number }) {
       : null;
   const failed = contextProblem ?? directory.error;
   if (failed) {
-    if (failed.data?.code === "FORBIDDEN") {
-      return <Problem message="Only this CCA's heads can enter points." />;
-    }
+    const info = loadErrorInfo(failed);
     return (
       <Problem
-        message="Couldn't load points entry."
-        onRetry={() => {
-          // Retry only what failed: the roster must never be fetched before the
-          // head check has passed.
-          if (context.error) void context.refetch();
-          else void directory.refetch();
-        }}
+        message={info.message}
+        onRetry={
+          info.canRetry
+            ? () => {
+                // Retry only what failed: the roster must never be fetched before
+                // the head check has passed.
+                if (context.error) void context.refetch();
+                else void directory.refetch();
+              }
+            : undefined
+        }
       />
     );
   }

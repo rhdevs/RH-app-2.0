@@ -202,3 +202,39 @@ describe("exportBlockers", () => {
     expect(() => exportBlockers(roster, DEFAULT_RANGE, true)).not.toThrow();
   });
 });
+
+describe("exportBlockers: duplicate matric", () => {
+  const range = DEFAULT_RANGE;
+  const scores = [10, 12, 14, 16, 12, 14];
+  const roster = (patches: Record<number, Partial<PointsEntry>> = {}) =>
+    scores.map((s, i) => entry(i + 1, { basePoints: s, ...patches[i + 1] }));
+
+  it("detects members sharing a matric regardless of case and whitespace", () => {
+    const entries = roster({
+      2: { matric: "A9900001Z" },
+      1: { matric: " a9900001z " },
+    });
+    const dup = exportBlockers(entries, range, true).find(
+      (b) => b.code === "DUPLICATE_MATRIC",
+    );
+    expect(dup?.rowKeys).toEqual(["u:1", "u:2"]);
+    expect(dup?.message).toBe(
+      "These members share one matric number: Test Member 1, Test Member 2. Ask JCRC to fix the roster.",
+    );
+  });
+
+  it("does not flag distinct matrics", () => {
+    expect(
+      exportBlockers(roster(), range, true).some(
+        (b) => b.code === "DUPLICATE_MATRIC",
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores members who have no matric (that is a different blocker)", () => {
+    const entries = roster({ 1: { matric: null }, 2: { matric: null } });
+    const codes = exportBlockers(entries, range, true).map((b) => b.code);
+    expect(codes).toContain("MISSING_MATRIC");
+    expect(codes).not.toContain("DUPLICATE_MATRIC");
+  });
+});

@@ -20,9 +20,9 @@ export const FLAT_EXPORT_HEADER = [
 
 const CRLF = "\r\n";
 
-/** One RFC 4180 cell; `guard` neutralises a leading = + - or @ (same as exportCsv.ts). */
+/** One RFC 4180 cell; `guard` neutralises a leading = + - @ tab or CR (same as exportCsv.ts). */
 function cell(value: string, guard: boolean): string {
-  const safe = guard && /^[=+\-@]/.test(value) ? `'${value}` : value;
+  const safe = guard && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
   return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 

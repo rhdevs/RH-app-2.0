@@ -12,14 +12,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
-import { downloadTextFile } from "~/app/events/_lib/format";
 import type { Range } from "~/lib/points/constants";
-import {
-  exportAllowedNow,
-  type ExportBlocker,
-  type PointsEntry,
-} from "~/lib/points/entries";
+import { downloadCsvFile } from "~/lib/points/download";
+import type { PointsEntry } from "~/lib/points/entries";
 import { buildPointsCsv, pointsCsvFilename } from "~/lib/points/exportCsv";
+import { formatStat } from "~/lib/points/hints";
+import {
+  checkAfterOpenChange,
+  downloadVerdict,
+  type ExportCheck,
+} from "./exportDecision";
 
 /**
  * The last step: a reminder that the file is confidential, a summary to check,
@@ -34,6 +36,7 @@ export default function ExportDialog({
   entries,
   mean,
   sd,
+  context,
   refreshContext,
   onExported,
 }: {
@@ -44,6 +47,8 @@ export default function ExportDialog({
   entries: readonly PointsEntry[];
   mean: number;
   sd: number;
+  /** JCRC's settings as the page holds them right now (they refresh in the background). */
+  context: { entryOpen: boolean; range: Range };
   /** Re-reads JCRC's settings; null when the read failed. */
   refreshContext: () => Promise<{
     entryOpen: boolean;
@@ -53,26 +58,16 @@ export default function ExportDialog({
 }) {
   // Each time the dialog opens, JCRC's CURRENT settings are fetched and the export
   // is re-judged against them before a download is offered.
-  const [check, setCheck] = useState<
-    | { status: "checking" }
-    | { status: "failed" }
-    | { status: "done"; blockers: ExportBlocker[] }
-  >({ status: "checking" });
+  const [check, setCheck] = useState<ExportCheck>({ status: "checking" });
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    setCheck((c) => checkAfterOpenChange(c, open));
+    setError(null);
     if (!open) return;
     let current = true;
-    setCheck({ status: "checking" });
     void refreshContext()
       .then((fresh) => {
-        if (!current) return;
-        setCheck(
-          fresh
-            ? {
-                status: "done",
-                blockers: exportAllowedNow(entries, fresh).blockers,
-              }
-            : { status: "failed" },
-        );
+        if (current) setCheck({ status: fresh ? "done" : "failed" });
       })
       .catch(() => current && setCheck({ status: "failed" }));
     return () => {
@@ -81,14 +76,21 @@ export default function ExportDialog({
     // Only on opening: the dialog is modal, so entries cannot change under it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-  const blocked = check.status === "done" && check.blockers.length > 0;
+  // Judged against the LIVE settings on every render, so a change while the
+  // dialog is open shows here at once; judged again just before the file is built.
+  const verdict = downloadVerdict(check, entries, context);
   const download = () => {
-    const now = new Date();
-    const fileName = pointsCsvFilename(ccaID, now);
-    const csv = buildPointsCsv({ ccaID, ccaName, entries, exportedAt: now });
-    downloadTextFile(fileName, csv, "text/csv;charset=utf-8");
-    onOpenChange(false);
-    onExported(fileName);
+    if (!downloadVerdict(check, entries, context).allowed) return;
+    try {
+      const now = new Date();
+      const fileName = pointsCsvFilename(ccaID, now);
+      const csv = buildPointsCsv({ ccaID, ccaName, entries, exportedAt: now });
+      downloadCsvFile(fileName, csv);
+      onOpenChange(false);
+      onExported(fileName);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    }
   };
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -113,13 +115,17 @@ export default function ExportDialog({
                 <div>
                   <dt className="text-xs text-gray-500">Average</dt>
                   <dd className="text-lg font-semibold tabular-nums text-gray-900">
-                    {mean.toFixed(2)}
+                    {formatStat(
+                      mean,
+                      context.range.meanMin,
+                      context.range.meanMax,
+                    )}
                   </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-gray-500">Spread (SD)</dt>
                   <dd className="text-lg font-semibold tabular-nums text-gray-900">
-                    {sd.toFixed(2)}
+                    {formatStat(sd, context.range.sdMin, context.range.sdMax)}
                   </dd>
                 </div>
               </dl>
@@ -139,15 +145,20 @@ export default function ExportDialog({
                   can&rsquo;t be downloaded right now. Close this and try again.
                 </p>
               )}
-              {check.status === "done" && check.blockers.length > 0 && (
+              {!verdict.allowed && verdict.reason === "blocked" && (
                 <ul
                   className="list-disc space-y-1 pl-5 text-red-700"
                   role="alert"
                 >
-                  {check.blockers.map((b) => (
+                  {verdict.blockers.map((b) => (
                     <li key={b.code}>{b.message}</li>
                   ))}
                 </ul>
+              )}
+              {error && (
+                <p className="text-red-700" role="alert">
+                  Couldn&rsquo;t create the file: {error}
+                </p>
               )}
             </div>
           </AlertDialogDescription>
@@ -157,7 +168,7 @@ export default function ExportDialog({
           <button
             type="button"
             onClick={download}
-            disabled={check.status !== "done" || blocked}
+            disabled={!verdict.allowed}
             className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:pointer-events-none disabled:opacity-50"
           >
             Download CSV

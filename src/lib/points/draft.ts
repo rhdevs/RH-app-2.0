@@ -159,6 +159,24 @@ export function mergeDraftWithRoster(
 }
 
 /**
+ * Read and judge the stored draft. A getItem that throws means a draft may be there
+ * but cannot be read, so it is "unreadable" (autosave pauses), never "none".
+ */
+export function readDraftItem(
+  storage: Pick<Storage, "getItem">,
+  key: string,
+  ccaID: number,
+): ParsedDraft {
+  let raw: string | null;
+  try {
+    raw = storage.getItem(key);
+  } catch {
+    return { status: "unreadable" };
+  }
+  return parseDraft(raw, ccaID);
+}
+
+/**
  * A changed roster laid over what is on screen NOW (not over the stored draft, which
  * lags by the autosave delay). Members still present keep their current values;
  * new members start from the prefill; anyone gone is dropped and counted. Identity

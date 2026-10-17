@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 
 import { api } from "~/trpc/react";
-import { downloadTextFile } from "~/app/events/_lib/format";
+import { downloadCsvFile } from "~/lib/points/download";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -51,9 +51,14 @@ type Stage =
 export default function FlatExport({ flatCount }: { flatCount: number }) {
   const utils = api.useUtils();
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
-  const close = () => setStage({ kind: "idle" });
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const close = () => {
+    setDownloadError(null);
+    setStage({ kind: "idle" });
+  };
 
   const start = async () => {
+    setDownloadError(null);
     setStage({ kind: "loading" });
     try {
       const data = await utils.ccaPoints.flatExportData.fetch(undefined, {
@@ -85,13 +90,18 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
   };
 
   const download = (ccas: FlatExportCca[]) => {
-    const now = new Date();
-    downloadTextFile(
-      flatPointsCsvFilename(now),
-      buildFlatPointsCsv({ ccas: flatCsvCcas(ccas), exportedAt: now }),
-      "text/csv;charset=utf-8",
-    );
-    close();
+    try {
+      const now = new Date();
+      downloadCsvFile(
+        flatPointsCsvFilename(now),
+        buildFlatPointsCsv({ ccas: flatCsvCcas(ccas), exportedAt: now }),
+      );
+      close();
+    } catch (e) {
+      setDownloadError(
+        e instanceof Error ? e.message : "Something went wrong.",
+      );
+    }
   };
 
   const loading = stage.kind === "loading";
@@ -168,6 +178,11 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
                   This file lists matric numbers. Send it only to the JCRC
                   member running the points sandbox.
                 </p>
+                {downloadError && (
+                  <p className="text-red-700" role="alert">
+                    Couldn&rsquo;t create the file: {downloadError}
+                  </p>
+                )}
                 {stage.kind === "confirm" && (
                   <>
                     <p>

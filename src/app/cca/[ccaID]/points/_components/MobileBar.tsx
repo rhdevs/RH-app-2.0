@@ -4,6 +4,8 @@ import { ChevronUp } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
+import type { Range } from "~/lib/points/constants";
+import { formatStat } from "~/lib/points/hints";
 import {
   Sheet,
   SheetContent,
@@ -29,6 +31,7 @@ function Dot({ ok, has }: { ok: boolean; has: boolean }) {
  */
 export default function MobileBar({
   state,
+  range,
   entryOpen,
   summary,
   sheetOpen,
@@ -36,6 +39,7 @@ export default function MobileBar({
   onExport,
 }: {
   state: PointsState;
+  range: Readonly<Range>;
   entryOpen: boolean;
   summary: ReactNode;
   sheetOpen: boolean;
@@ -60,11 +64,17 @@ export default function MobileBar({
               </span>
               <span className="flex items-center gap-1 tabular-nums">
                 <Dot ok={state.meanOk} has={has} />
-                Avg {has ? state.stats.mean.toFixed(2) : "—"}
+                Avg{" "}
+                {has
+                  ? formatStat(state.stats.mean, range.meanMin, range.meanMax)
+                  : "—"}
               </span>
               <span className="flex items-center gap-1 tabular-nums">
                 <Dot ok={state.sdOk} has={has} />
-                SD {has ? state.stats.sd.toFixed(2) : "—"}
+                SD{" "}
+                {has
+                  ? formatStat(state.stats.sd, range.sdMin, range.sdMax)
+                  : "—"}
               </span>
               <ChevronUp className="ml-auto h-4 w-4 shrink-0 text-gray-400" />
             </button>
