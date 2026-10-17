@@ -73,33 +73,46 @@ export function academicYearsUpTo(last: string): string[] {
 
 /**
  * The year a CCA is working on: the earliest year, from AY2026/27 up to the
- * year after the current one, that it has not frozen. A handover in March
- * freezes this year, so new members after it count toward next year even
- * before 1 August. If every year in that span is frozen, the span's end.
+ * year after the current one, that it has not frozen and that is not already
+ * published. A handover in March freezes this year, so new members after it
+ * count toward next year even before 1 August. A CCA with no freeze for a
+ * published year (one created after it was published) starts in the next
+ * unpublished year: a published year is never its working year. If every year
+ * in that span is taken, the span's end.
  */
 export function termAcademicYear(
   activelyFrozenYears: ReadonlySet<string>,
   now: Date,
+  publishedYears: ReadonlySet<string> = new Set(),
 ): string {
   const ceiling = nextAcademicYear(currentAcademicYear(now));
   const years = academicYearsUpTo(ceiling);
-  return years.find((y) => !activelyFrozenYears.has(y)) ?? ceiling;
+  return (
+    years.find((y) => !activelyFrozenYears.has(y) && !publishedYears.has(y)) ??
+    ceiling
+  );
 }
+
+export type FreezeSkipReason =
+  | "already_frozen_for_current_year"
+  /** Closed with the year, and no head change since: last year is recorded. */
+  | "late_handover_after_close_year";
 
 export type FreezeTarget =
   | { kind: "freeze"; academicYear: string }
-  | { kind: "skipped"; reason: "already_frozen_for_current_year" };
+  | { kind: "skipped"; reason: FreezeSkipReason };
 
 /**
  * Which year a handover, head removal or head lock freezes: the CCA's term
- * year, but never a future one. If the term year is already ahead of today's
+ * year, but never a future one and never a published one. If the term year is already ahead of today's
  * year, the current year is frozen and there is nothing to do.
  */
 export function freezeTarget(
   activelyFrozenYears: ReadonlySet<string>,
   now: Date,
+  publishedYears: ReadonlySet<string> = new Set(),
 ): FreezeTarget {
-  const term = termAcademicYear(activelyFrozenYears, now);
+  const term = termAcademicYear(activelyFrozenYears, now, publishedYears);
   if (isLater(term, currentAcademicYear(now))) {
     return { kind: "skipped", reason: "already_frozen_for_current_year" };
   }

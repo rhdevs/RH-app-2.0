@@ -1619,6 +1619,8 @@ model CcaYearFreeze {
   frozenAt       DateTime
   frozenBy       String
   memberCount    Int?
+  /// Members the roster resolver could not match when it was frozen (not frozen).
+  unresolvedCount Int?
   unfrozenAt     DateTime?
   unfrozenBy     String?
   unfreezeReason String?

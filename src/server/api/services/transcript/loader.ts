@@ -382,7 +382,7 @@ async function loadMemberships(
     (m) => !frozenIDs.has(m.ccaID),
   );
   if (live.length > 0) {
-    const [freezes, stored] = await Promise.all([
+    const [freezes, stored, published] = await Promise.all([
       db.ccaYearFreeze.findMany({
         where: { ccaID: { in: live.map((m) => m.ccaID) }, ...NOT_UNFROZEN },
         select: { ccaID: true, academicYear: true },
@@ -390,7 +390,14 @@ async function loadMemberships(
       db.transcriptRosterEntry.findMany({
         where: { academicYear, userID: key },
       }),
+      // A published year is never a CCA's working year: a CCA with no freeze
+      // for it has no members for it.
+      db.transcriptPeriod.findMany({
+        where: { status: "published" },
+        select: { academicYear: true },
+      }),
     ]);
+    const publishedYears = new Set(published.map((p) => p.academicYear));
     const frozenYears = new Map<number, Set<string>>();
     for (const f of freezes) {
       const set = frozenYears.get(f.ccaID) ?? new Set<string>();
@@ -399,7 +406,11 @@ async function loadMemberships(
     }
     const byCca = new Map(stored.map((r) => [r.ccaID, r]));
     for (const m of live) {
-      const term = termAcademicYear(frozenYears.get(m.ccaID) ?? new Set(), now);
+      const term = termAcademicYear(
+        frozenYears.get(m.ccaID) ?? new Set(),
+        now,
+        publishedYears,
+      );
       if (term !== academicYear) continue;
       entries.push({
         ccaID: m.ccaID,

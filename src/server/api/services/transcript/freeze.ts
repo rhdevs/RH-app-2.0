@@ -9,6 +9,8 @@ import {
   normaliseYearStatus,
   termAcademicYear,
   type FreezeReason,
+  type FreezeSkipReason,
+  type FreezeTarget,
 } from "~/lib/transcript/lifecycle";
 import { liveMembers } from "./liveRoster";
 import { NOT_UNFROZEN } from "./loader";
@@ -74,13 +76,71 @@ export async function activeFrozenYears(
   return new Set(rows.map((r) => r.academicYear));
 }
 
+/** The years whose transcripts are published: never a CCA's working year. */
+export async function publishedYears(db: PrismaClient): Promise<Set<string>> {
+  const rows = await db.transcriptPeriod.findMany({
+    where: { status: "published" },
+    select: { academicYear: true },
+  });
+  return new Set(rows.map((r) => r.academicYear));
+}
+
 /** The year a CCA is working on (see termAcademicYear). */
 export async function termYearOf(
   db: PrismaClient,
   ccaID: number,
   now: Date = new Date(),
 ): Promise<string> {
-  return termAcademicYear(await activeFrozenYears(db, ccaID), now);
+  const [frozen, published] = await Promise.all([
+    activeFrozenYears(db, ccaID),
+    publishedYears(db),
+  ]);
+  return termAcademicYear(frozen, now, published);
+}
+
+/**
+ * The LATE-HANDOVER rule: when a CCA's most recent active freeze was made by
+ * Close year and no head has been appointed since, a handover or head removal
+ * does not freeze again. Last year's members are already recorded; the new
+ * recruits fill the new year. A head appointed after that freeze (a handover
+ * that installed new heads) means the next head change freezes as usual.
+ */
+async function lateHandoverAfterClose(
+  db: PrismaClient,
+  ccaID: number,
+): Promise<boolean> {
+  const latest = await db.ccaYearFreeze.findFirst({
+    where: { ccaID, ...NOT_UNFROZEN },
+    orderBy: { frozenAt: "desc" },
+    select: { reason: true, frozenAt: true },
+  });
+  if (latest?.reason !== "close_year") return false;
+  const newer = await db.ccaHead.count({
+    where: { ccaID, grantedAt: { gt: latest.frozenAt } },
+  });
+  return newer === 0;
+}
+
+/**
+ * The year a head change (handover or head removal) would freeze, or why it
+ * would not. Shared by the freeze itself and the handover dialog's warning,
+ * so the warning never names a year the freeze would not touch.
+ */
+export async function headChangeFreezeTarget(
+  db: PrismaClient,
+  ccaID: number,
+  now: Date = new Date(),
+): Promise<FreezeTarget> {
+  const [frozen, published] = await Promise.all([
+    activeFrozenYears(db, ccaID),
+    publishedYears(db),
+  ]);
+  const target = freezeTarget(frozen, now, published);
+  if (target.kind === "skipped") return target;
+  if (await lateHandoverAfterClose(db, ccaID)) {
+    return { kind: "skipped", reason: "late_handover_after_close_year" };
+  }
+  return target;
 }
 
 /** The ACTIVE freeze of a CCA for a year, or null. */
@@ -99,10 +159,25 @@ export type FreezeResult =
       kind: "frozen";
       academicYear: string;
       memberCount: number;
+      /** Members the roster resolver could not match to a person (not frozen). */
+      unresolvedCount: number;
       reason: FreezeReason;
     }
   | { kind: "unchanged"; academicYear: string }
-  | { kind: "skipped"; reason: "already_frozen_for_current_year" };
+  | { kind: "skipped"; reason: FreezeSkipReason };
+
+/**
+ * A freeze that lost a race: a unique key collided but no active freeze exists,
+ * so the CCA is NOT frozen. Labelled as a transient transaction error, so
+ * retryWriteConflicts runs the freeze again from a fresh read; after the bound
+ * it is thrown, and the caller refuses (a head change) or reports it.
+ */
+function freezeRaceError(cause: unknown): Error {
+  return Object.assign(
+    new Error("FREEZE_RACE: the member list changed while it was being frozen"),
+    { errorLabels: ["TransientTransactionError"], cause },
+  );
+}
 
 export interface FreezeInput {
   ccaID: number;
@@ -134,14 +209,22 @@ async function freezeOnce(
   input: FreezeInput,
 ): Promise<FreezeResult> {
   const now = input.now ?? new Date();
-  const frozen = await activeFrozenYears(db, input.ccaID);
 
   let academicYear: string;
   if (input.academicYear) {
     academicYear = input.academicYear;
+    const frozen = await activeFrozenYears(db, input.ccaID);
     if (frozen.has(academicYear)) return { kind: "unchanged", academicYear };
   } else {
-    const target = freezeTarget(frozen, now);
+    // A head change follows the late-handover rule; a head's lock does not.
+    const target =
+      input.reason === "handover" || input.reason === "head_removed"
+        ? await headChangeFreezeTarget(db, input.ccaID, now)
+        : freezeTarget(
+            await activeFrozenYears(db, input.ccaID),
+            now,
+            await publishedYears(db),
+          );
     if (target.kind === "skipped") return target;
     academicYear = target.academicYear;
   }
@@ -153,66 +236,69 @@ async function freezeOnce(
     throw new TRPCError({ code: "FORBIDDEN", message: "PERIOD_PUBLISHED" });
   }
 
-  // Read everything first, then write in one transaction.
-  const { members } = await liveMembers(db, input.ccaID);
+  // Who is in the CCA (upstream data), read first; the transcript entries are
+  // read INSIDE the transaction, so the diff below and the writes come from one
+  // consistent view and a head's save in between cannot slip past.
+  const { members, unresolved } = await liveMembers(db, input.ccaID);
   const allKeys = [...new Set(members.flatMap((m) => m.keys))];
-  const [apps, stored] = await Promise.all([
+  const apps =
     allKeys.length === 0
-      ? Promise.resolve([])
-      : db.ccaApplication.findMany({
+      ? []
+      : await db.ccaApplication.findMany({
           where: {
             ccaID: input.ccaID,
             status: "accepted",
             userID: { in: allKeys },
           },
           select: { userID: true, decidedAt: true },
-        }),
-    db.transcriptRosterEntry.findMany({
-      where: { academicYear, ccaID: input.ccaID },
-    }),
-  ]);
-  const storedBy = new Map(stored.map((s) => [s.userID, s]));
+        });
   const sem2Start = period?.sem2Start ?? null;
 
-  const toCreate: Prisma.TranscriptRosterEntryCreateManyInput[] = [];
-  const toUpdate: Array<{
-    id: string;
-    data: Prisma.TranscriptRosterEntryUpdateInput;
-  }> = [];
-  for (const m of members) {
-    let decidedAt: Date | null = null;
-    for (const a of apps) {
-      if (!m.keys.includes(a.userID) || !a.decidedAt) continue;
-      if (!decidedAt || a.decidedAt < decidedAt) decidedAt = a.decidedAt;
-    }
-    const own = storedBy.get(m.key) ?? null;
-    const r = resolveEntry(
-      own,
-      { decidedAt, isHead: m.entry.isHead, grantedAt: m.entry.grantedAt },
-      sem2Start,
-    );
-    const data = {
-      duration: r.duration,
-      roleLabel: r.roleLabel,
-      roleDuration: r.roleDuration,
-      extraContribution: r.extraContribution,
-      frozen: true,
-      updatedBy: input.actorUserID,
-      updatedAt: now,
-    };
-    if (own) toUpdate.push({ id: own.id, data });
-    else
-      toCreate.push({
-        academicYear,
-        userID: m.key,
-        ccaID: input.ccaID,
-        ...data,
-      });
-  }
-
+  let memberCount = 0;
   try {
     await db.$transaction(
       async (tx) => {
+        const stored = await tx.transcriptRosterEntry.findMany({
+          where: { academicYear, ccaID: input.ccaID },
+        });
+        const storedBy = new Map(stored.map((e) => [e.userID, e]));
+
+        const toCreate: Prisma.TranscriptRosterEntryCreateManyInput[] = [];
+        const toUpdate: Array<{
+          id: string;
+          data: Prisma.TranscriptRosterEntryUpdateInput;
+        }> = [];
+        for (const m of members) {
+          let decidedAt: Date | null = null;
+          for (const a of apps) {
+            if (!m.keys.includes(a.userID) || !a.decidedAt) continue;
+            if (!decidedAt || a.decidedAt < decidedAt) decidedAt = a.decidedAt;
+          }
+          const own = storedBy.get(m.key) ?? null;
+          const r = resolveEntry(
+            own,
+            { decidedAt, isHead: m.entry.isHead, grantedAt: m.entry.grantedAt },
+            sem2Start,
+          );
+          const data = {
+            duration: r.duration,
+            roleLabel: r.roleLabel,
+            roleDuration: r.roleDuration,
+            extraContribution: r.extraContribution,
+            frozen: true,
+            updatedBy: input.actorUserID,
+            updatedAt: now,
+          };
+          if (own) toUpdate.push({ id: own.id, data });
+          else
+            toCreate.push({
+              academicYear,
+              userID: m.key,
+              ccaID: input.ccaID,
+              ...data,
+            });
+        }
+
         // The frozen list is exactly today's: clear every older freeze flag
         // for this CCA and year first (people who have left drop out).
         await tx.transcriptRosterEntry.updateMany({
@@ -229,12 +315,13 @@ async function freezeOnce(
           await tx.transcriptRosterEntry.createMany({ data: chunk });
         }
         // One document per year and CCA: a later freeze reuses it.
-        const memberCount = toCreate.length + toUpdate.length;
+        memberCount = toCreate.length + toUpdate.length;
         const record = {
           reason: input.reason,
           frozenAt: now,
           frozenBy: input.actorUserID,
           memberCount,
+          unresolvedCount: unresolved,
           unfrozenAt: null,
           unfrozenBy: null,
           unfreezeReason: null,
@@ -250,15 +337,22 @@ async function freezeOnce(
       { maxWait: 10_000, timeout: 60_000 },
     );
   } catch (error) {
-    // Someone froze the same CCA and year at the same moment: it is frozen.
-    if (isDuplicateKey(error)) return { kind: "unchanged", academicYear };
-    throw error;
+    if (!isDuplicateKey(error)) throw error;
+    // A unique key collided. "Already frozen" ONLY if someone else's freeze
+    // of this CCA and year now stands; otherwise the collision was a roster
+    // entry written meanwhile, the transaction rolled back and NOTHING is
+    // frozen: run it again from a fresh read.
+    if (await activeFreeze(db, input.ccaID, academicYear)) {
+      return { kind: "unchanged", academicYear };
+    }
+    throw freezeRaceError(error);
   }
 
   return {
     kind: "frozen",
     academicYear,
-    memberCount: toCreate.length + toUpdate.length,
+    memberCount,
+    unresolvedCount: unresolved,
     reason: input.reason,
   };
 }
@@ -306,6 +400,49 @@ export async function unfreezeCca(
   return { ccaID: input.ccaID, academicYear: input.academicYear };
 }
 
+export interface UnfreezePreviewPerson {
+  userID: string;
+  name: string;
+}
+
+/**
+ * What an Unfreeze would change: an unfrozen list is rebuilt from TODAY's
+ * members when it is frozen again, so after a handover new recruits would
+ * replace last year's. `dropped`: frozen now, not a live member any more.
+ * `added`: a live member now, not on the frozen list.
+ */
+export async function unfreezePreview(
+  db: PrismaClient,
+  ccaID: number,
+  academicYear: string,
+): Promise<{
+  dropped: UnfreezePreviewPerson[];
+  added: UnfreezePreviewPerson[];
+  unresolvedCount: number;
+}> {
+  const [entries, live] = await Promise.all([
+    db.transcriptRosterEntry.findMany({
+      where: { academicYear, ccaID, frozen: true },
+      select: { userID: true },
+    }),
+    liveMembers(db, ccaID),
+  ]);
+  const frozenIDs = new Set(entries.map((e) => e.userID));
+  const liveIDs = new Set(live.members.map((m) => m.key));
+  const droppedIDs = [...frozenIDs].filter((id) => !liveIDs.has(id));
+  const addedIDs = [...liveIDs].filter((id) => !frozenIDs.has(id));
+  const label = await actorLabels(db, [...droppedIDs, ...addedIDs]);
+  const people = (ids: string[]) =>
+    ids
+      .map((userID) => ({ userID, name: label(userID) ?? userID }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    dropped: people(droppedIDs),
+    added: people(addedIDs),
+    unresolvedCount: live.unresolved,
+  };
+}
+
 /**
  * Freeze a CCA BEFORE a change that removes one of its heads, so the member list
  * is fixed while the outgoing heads can still be asked. Called from the three
@@ -315,8 +452,8 @@ export async function unfreezeCca(
  * `keepOnly` (handover): the heads that will remain; anyone else is removed.
  * `removing` (revoke, transfer): the heads being removed.
  * Nothing happens when no CURRENT head is being removed, and a "skipped"
- * result (the current year is already frozen) never blocks the change. If the
- * freeze itself fails, the head change is refused.
+ * result (the current year is already frozen, or the late-handover rule) never
+ * blocks the change. If the freeze itself fails, the head change is refused.
  */
 export async function freezeBeforeHeadChange(
   db: PrismaClient,
@@ -367,6 +504,8 @@ export interface FreezeRow {
   frozenAt: Date | null;
   frozenByName: string | null;
   memberCount: number | null;
+  /** Members the resolver could not match when it was frozen. */
+  unresolvedCount: number | null;
 }
 
 /** Every CCA's freeze state for one year, for the admin "CCA member lists" table. */
@@ -395,6 +534,7 @@ export async function listFreezes(
       frozenAt: f?.frozenAt ?? null,
       frozenByName: f ? label(f.frozenBy) : null,
       memberCount: f?.memberCount ?? null,
+      unresolvedCount: f?.unresolvedCount ?? null,
     };
   });
   return { rows, unfrozen: rows.filter((r) => r.reason === null).length };
