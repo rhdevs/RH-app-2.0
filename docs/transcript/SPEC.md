@@ -689,34 +689,33 @@ This section supersedes every earlier mention of verification, issuing, snapshot
 - **Roster header** cells are real table header cells (they had `display: block`).
 - **Left as is.** `qrcode.react` stays in package.json (the events check-in uses it). The 60-second MongoDB transaction limit is no concern at hall scale (2,000 memberships publish in about 2 seconds).
 
-## 23. Year lifecycle and handover freeze
+## 23. Academic year: collecting, then Open transcripts
 
-CCA memberships are cleared and re-recruited after each CCA's handover, so freezing a whole year's member lists at publish time would capture the wrong people. Each CCA's list is frozen at its own handover instead. This section supersedes section 22's description of publish freezing the roster.
+A year has two states: **collecting** and **open** (stored as `published`). There is no Close year, no draft review, no Reopen, no Back to collecting, no Freeze remaining CCAs, no Unfreeze and no head "Lock member list". Head changes (`cca.handoverHeads`, `admin.revokeCcaHead`, `admin.transferCcaHead`) do nothing to transcripts: `cca.ts` is unchanged from upstream and `admin.ts` differs only by `export` on `bulkResolver`. This section supersedes every earlier mention of closing, reopening, drafts and handover freezes (sections 18 to 22 and 31 to 34).
 
-**Term year.** A CCA's term year is the earliest year, from AY2026/27 up to the year after the current one, in which it has no ACTIVE freeze. A CCA's head screen defaults to it, and memberships made after a handover therefore count toward the next year even before 1 August (`termAcademicYear`, pure and tested; every service takes an injectable `now`).
+**Collecting.** Every CCA's transcript uses its LIVE member list: someone removed from the CCA is not on it, someone added is. Heads fill in records during the year.
 
-**Freeze record.** `CcaYearFreeze { academicYear, ccaID, reason, frozenAt, frozenBy, memberCount, unfrozenAt, unfrozenBy, unfreezeReason }`, unique per year and CCA (`freeze_year_cca`). Reasons: `handover`, `head_removed`, `lock`, `close_year`. ACTIVE means `unfrozenAt` is empty. A later freeze of the same year reuses the document (the unfreeze fields are cleared).
+**Open transcripts** (`transcript.periods.open`, admin or jcrc only, live role check; `periods.openTranscripts`). Allowed for the current academic year or a past year still collecting, never a future year (`PRECONDITION_FAILED:YEAR_NOT_STARTED`) and never twice (`CONFLICT:ALREADY_PUBLISHED`). It does not need a semester 2 date. It locks every CCA's list as it is now, one CCA at a time, each in its own transaction:
+- The entries are computed from a read INSIDE the transaction (F1). A duplicate key counts as "already locked" only if an active lock for that CCA and year now exists; otherwise the lock is retried from a fresh read (bounded) and then reported as failed.
+- Each person is counted once by their resolved key (F26); a second account that resolves to the same person is counted as not matched. `CcaYearFreeze.unresolvedCount` stores how many members could not be matched (F19).
+- A CCA that fails is logged as one JSON line with only `evt: "transcript_lock_failed"`, `ccaID`, `academicYear`, the error code and the error name, never a message (F5), and is returned with a short code. If any CCA failed the year stays collecting, nothing is opened, and the result names each failed CCA with a short reason. Running it again keeps the CCAs already locked and finishes the rest.
+- When every CCA is locked the year becomes `published` with `publishedAt` and `publishedBy`.
 
-**`freezeCca`.** The target year is the CCA's term year, never later than the current one: if the term year is already ahead, nothing happens (`skipped`). Refused if the target year is published. In one transaction it re-reads the live roster, writes a frozen `TranscriptRosterEntry` for every live member (overrides, else defaults, with the role inside the membership), clears the freeze flag of anyone who has left, and writes the freeze record, with batched writes. Idempotent.
+The confirmation reads: "Open transcripts for {AY}? Every CCA's member list will be saved as it is now, all residents will be able to see and download their transcripts, and CCA heads will no longer be able to edit. After this, only JCRC and admin can fix individual residents."
 
-**Head-change hooks.** The freeze runs BEFORE the head change, from `cca.handoverHeads` (when it removes a current head), `admin.revokeCcaHead` and `admin.transferCcaHead` (`freezeBeforeHeadChange`). Grant-only paths never freeze. If the freeze fails the change is refused (`TRANSCRIPT_FREEZE_FAILED`); a skipped freeze never blocks it. The handover dialog warns heads to finish their records first and links to the transcript tab.
+**Lock record.** `CcaYearFreeze { academicYear, ccaID, reason ("open"), frozenAt, frozenBy, memberCount, unresolvedCount }`, unique per year and CCA (`freeze_year_cca`), with the frozen `TranscriptRosterEntry` rows. (The old `unfrozenAt/By` fields stay in the schema, always empty.)
 
-**Reading a roster.** For year X and CCA c: an active freeze for X shows the frozen entries; otherwise, if X is c's term year, the live members; otherwise "No member list was recorded for this year". A resident's transcript is assembled the same way, per CCA.
+**Reading a list.** An open year reads the locked entries; any other year reads each CCA's live list. After opening, removing a member from the live CCA (for example in the August application period) does not change the open transcript; the new members count toward the next, collecting year.
 
-**Edit rights** (`editRefusal`, one guard `assertCanEditCcaYear`, used by roster edits and volunteer hours). Nobody edits a published year. Managers (admin, jcrc) edit any CCA while the year is collecting or closed. The head of the CCA edits only while the year is collecting and the CCA has no active freeze, or one made by the head's own lock. After a handover, head removal or close the head sees a read-only view: "Frozen on {date}. Ask the JCRC for changes."
+**Edit rights** (`editRefusal`, one guard `assertCanEditCcaYear`). Once a year is open nobody edits it except through the per-resident corrections. While collecting, admin and jcrc edit any CCA for any collecting year; the CURRENT heads of a CCA edit only the current academic year (Singapore time), so a new head after a handover continues the records and other years are read-only for heads ("Heads can only change the current academic year. Other years are read-only; ask the JCRC for changes.").
 
-**Year status.** `collecting -> closed -> published`.
-- **Close year** (needs semester 2 start, a year that has begun): freezes every CCA with no active freeze (`close_year`), then closes.
-- **Publish** (from closed only): freezes nothing; it refuses while any CCA has no active freeze.
-- **Freeze remaining CCAs** (`periods.freezeRemaining`, admin or jcrc, closed only): freezes every CCA with no active freeze, one at a time, with the same code and reason (`close_year`) as Close year, and stays closed. It returns the frozen, already-frozen, left-alone and failed counts and can be run again after a failure. It writes no `ResidentEvent`; the actor and time are on each freeze. Refused with `CONFLICT:NOT_CLOSED` while collecting or published.
-- **Reopen for review**: published to closed. **Back to collecting**: closed to collecting; frozen lists stay frozen.
-- **Unfreeze** one CCA (manager, reason required, year not published): its entries become annotations again and the current member list is used until it is frozen again.
+**Residents.** A collecting year is "not available yet"; an open year is the transcript, with the Ready badge. There is no draft anywhere: no draft view, no "(draft)" in the year switcher, no draft banner.
 
-**Residents.** While a year is closed, `/transcript` shows a DRAFT: the same assembly, a note "Draft - check your information. If something is wrong, tell your CCA head or the JCRC." on page 1 and a DRAFT watermark on every page (printed too). Nothing is recorded as opened, there is no Ready badge and no download-by banner. Published behaviour is unchanged.
+**Admin screen.** The Academic year section shows the status (Collecting or Open), the semester 2 and download-by dates, and one button, "Open transcripts", hidden once open and not offered for a future year. Once open, a read-only "CCA member lists" table shows each CCA's saved list (date, who, members, members not matched). Reminders:
+- From 1 April while the current year is collecting: "Transcripts for {AY} are not open yet. Open them at the end of the year, before 1 August."
+- From 1 August while the previous year is still collecting: "Transcripts for {prev AY} are still not open. Open them now, before CCAs change their member lists in the August application period."
 
-**Admin screen.** The Academic year section offers only the valid actions, and a "CCA member lists" table (state, date, who, member count, Unfreeze, "Not frozen only"). From 1 June until the year is closed a banner says how many CCAs are not frozen yet.
-
-**Head's tab.** "Lock member list for {year}" (confirmation says edits stay open until the JCRC closes the year). The year selector defaults to the CCA's term year.
+**Head's tab.** The current year is editable and other years read-only, with the note "Finish this year's records before the JCRC opens transcripts at the end of the year." The handover dialog (upstream's file plus one reminder) says: "Before you hand over, make sure this year's transcript records (roles, activities, contributions and volunteer hours) are up to date. The new heads can continue them until the JCRC opens transcripts." with an "Open transcript records" link to `/cca/[ccaID]/transcript`.
 
 ### Data retention
 
@@ -729,7 +728,6 @@ A CCA can record the activities it ran during a year and who took part. They app
 **Data (new collections only).**
 - `CcaActivity { academicYear, ccaID, title, description?, period (full | sem1 | sem2), createdBy/At, updatedBy/At, removedAt/By }`, index `activity_year_cca`.
 - `CcaActivityParticipant { activityID, academicYear, ccaID, userID, role?, description?, addedBy/At, updatedBy/At, removedAt/By }`, unique per activity and person (`participant_activity_user`), index `participant_year_user`.
-- `TranscriptPeriod` also records who closed a year and who put it back to collecting (`closedAt/By`, `backToCollectingAt/By`).
 - Both new collections are in the retention registry, so purging a year removes that year's activities and participants (and only those).
 
 **Limits.** Title 1 to 80 characters, description up to 300, period `full | sem1 | sem2`. No visible count limit on activities or participants (only hidden safety caps, section 31). A participant's role is up to 60 characters and their description up to 300. Text follows the same plain-text rules as the rest of the transcript (control and invisible characters are rejected).
@@ -803,7 +801,7 @@ A published year makes the year-bound tabs read-only with the existing note. The
 **CSV import.** The Import tab (between Catalogue and History) loads awards from a CSV in five steps, for the year chosen at the top. The client parses the file with the admin bulk wizard's `parseCsv` and sends rows `{ identifier, award, citation }`; the procedures are `awardImport.preview` and `awardImport.commit` (manager-only; both refuse a published year).
 - **File.** "Download template" gives `identifier,award,citation` and one made-up example row. Upload a .csv or paste the text. More than 10,000 rows is refused with "This file has more than 10,000 rows. Split it and upload in parts."
 - **Columns.** Headings named identifier, email or nusnet, award, and citation are mapped by themselves and can be changed; exactly one identifier and one award column are needed. The wizard's own `CsvColumnMapper` (fixed to its role-import column kinds) did not fit, so a transcript-local mapper is used.
-- **Identifiers** resolve with the bulk wizard's own `bulkResolver` (`resolveIdentifier` for an email or an E-format NUSNET id; any other NUSNET id only when a real account exists). Both functions were made `export` in `admin.ts` (nothing else in that file changed) and are imported, not copied. The resolver is built once per request, then used for each row, then a resident lookup confirms the account exists.
+- **Identifiers** resolve with the bulk wizard's own `bulkResolver` (`resolveIdentifier` for an email or an E-format NUSNET id; any other NUSNET id only when a real account exists). Only `bulkResolver` is made `export` in `admin.ts` (nothing else in that file changed; it applies `resolveIdentifier` itself) and it is imported, not copied. The resolver is built once per request, then used for each row, then a resident lookup confirms the account exists.
 - **Row status**, with a reason for every row that is not Ready: Invalid (empty or over-long award or citation, control or invisible characters; checked first), Not found (no such resident), Duplicate (the person already holds the award for the year, by catalogue entry or by normalised name; or the same person and award appear earlier in the file), otherwise Ready.
 - **Award names** match NON-archived catalogue entries by normalised name. A name that matches no live entry is "new" and needs a decision, among the rows that would be imported: Create new award (added to the catalogue with no default citation) or Use existing award. A name an archived entry already holds is treated as new; the archived entry is offered as "(archived)" and using it does not unarchive it; Create is not offered for it. A citation is the row's own, else the matched award's default.
 - **Commit** re-does everything on the server and never trusts the preview: resolution, statuses and matching. It refuses while a new name is undecided, creates the chosen catalogue entries first, then writes the Ready rows (less any the user skipped) in chunks of 200 under ONE `AwardImportBatch` (rowCount, importedCount, skippedCount, fileName). A row that became a duplicate since the preview is skipped, not failed. The result lists every skipped row with its reason. A local test imports 2,000 rows in about 1.5 seconds.
@@ -844,23 +842,23 @@ The affected residents are always worked out on the server, from the stored rows
 | `jcrc.saveFor / saveMine / remove / restore` | the member |
 | manual CCA entry writes | the resident |
 
-Still locked on a published year, even with an unlock: every activity-level field (an activity's title, general description, period and sessions), and creating, removing or restoring an activity. Use Reopen for review to change those.
+Still locked on a published year, even with an unlock: every activity-level field (an activity's title, general description, period and sessions), and creating, removing or restoring an activity. They cannot be changed once transcripts are open.
 
-**Unlock and relock** (`corrections.unlock / relock`). Unlock needs a reason (3 to 500 characters) and a year that is closed or published (`YEAR_NOT_IN_REVIEW` while collecting). Relock takes an optional note. Both add an event; relocking closes the unlock (it is never deleted).
+**Unlock and relock** (`corrections.unlock / relock`). Unlock needs a reason (3 to 500 characters) and an open year (`YEAR_NOT_IN_REVIEW` while collecting). Relock takes an optional note. Both add an event; relocking closes the unlock (it is never deleted).
 
 **Manual CCA entries** (`corrections.memberships.saveManual / removeManual / restoreManual`). For a resident missing from the membership data. A manual entry counts as MEMBERSHIP of that CCA wherever the roster rule is used: the CCA row, which activities nest under it (the rest stay under "Other involvement"), and the notes. If the roster also has the CCA for that resident, the roster entry WINS and the manual one is ignored (the admin screen says so). A manual row renders like any other; "Manual" is shown on the admin screens only. The role period must fit inside the membership period (`ROLE_PERIOD_OUTSIDE_MEMBERSHIP`). A removed entry cannot be saved over (`MANUAL_REMOVED`): restore it first. Manual writes always add their own event (`manual_add`, `manual_edit`, `manual_remove`, `manual_restore`); in a published year they also need the unlock.
 
 **History** (`corrections.history`). Every event for the resident and year, newest first, with the person's display name and the time in Singapore.
 
 **Screen** `/admin/transcripts/residents` (linked from `/admin/transcripts`, admin and jcrc only, gated by the segment layout and re-checked by every procedure):
-- A year selector and the resident picker. The resident panel shows the status line (Collecting, Draft or Published, "withheld from the resident" when on hold), an "Unlocked" badge, and the buttons Preview transcript, Unlock (a dialog with a required reason) or Relock (optional note), Withhold (required reason) or Release (optional note).
+- A year selector and the resident picker. The resident panel shows the status line (Collecting or Open, "withheld from the resident" when on hold), an "Unlocked" badge, and the buttons Preview transcript, Unlock (a dialog with a required reason) or Relock (optional note), Withhold (required reason) or Release (optional note).
 - Six sections as tabs: CCA memberships (roster entries edited with the same `roster.upsert` the heads use, and manual entries with "Add manual CCA entry": CCA, duration, role, role period, contribution), Activities (their role and description on each activity of any CCA, Remove and Restore, and "Add to an existing activity"), Volunteer hours (a tick and an optional hours override per session, saved with `attendance.save` for this one resident, with a live total), Awards (inline edit, remove, restore, Show removed, assign from the catalogue), JCRC page (the whole page, Remove page and Restore page), and History.
 - Every section is read-only with "Published. Unlock this resident to make corrections." until the resident is unlocked; the server enforces it either way. The year, the resident and the tab change only after unsaved typing is confirmed away, and a reload asks too. Records are cards whose fields wrap by the card's own width, so there is no sideways scroll at 375px.
 
 ## 28. Withholding a transcript
 
 `corrections.withhold` puts ONE resident's transcript on hold for a year; `corrections.release` lifts it. Needs a reason (withhold) and takes an optional note (release). Both add an event.
-- While a hold is on, `/transcript` shows only "Your transcript is on hold. Contact the hall office." for that year, draft or published (`transcript.mine.get` returns `status: "on_hold"` and loads nothing else). The year is still listed. No `TranscriptAccess` row is written and the "Ready" badge and the dot on the profile button are not shown for it (`readiness` skips a held year). A hold in a collecting year changes nothing the resident can see.
+- While a hold is on, `/transcript` shows only "Your transcript is on hold. Contact the hall office." for that open year (`transcript.mine.get` returns `status: "on_hold"` and loads nothing else). The year is still listed. No `TranscriptAccess` row is written and the "Ready" badge and the dot on the profile button are not shown for it (`readiness` skips a held year). A hold in a collecting year changes nothing the resident can see.
 - A manager's preview still renders the document, with the on-screen note "Withheld from the resident" (hidden in print).
 - Releasing restores the transcript and, if the resident never opened it, the Ready badge.
 - A hold does not affect anyone else's transcript, and it is independent of unlocking.
@@ -872,11 +870,11 @@ Every editable item can be created, viewed, edited, removed (softly) and restore
 | Entity | Create | View | Edit | Remove | Restore | Who | Locked when |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Academic year (period) | first save of the semester 2 date | Academic year panel | semester 2 date; download-by date (any time) | none (purge only) | none | admin, jcrc | semester 2 date: published |
-| Year status | Close, Publish | status and history on the panel | Reopen, Back to collecting | n/a | n/a | admin, jcrc | by the status machine |
-| CCA member list freeze | at handover, head change, Lock roster, Close year | Member lists table | n/a | Unfreeze (reason) | Freeze again | system; head (Lock roster); admin, jcrc (Unfreeze) | Unfreeze: published |
-| Roster entry (duration, role, role period, contribution) | Save a row | head tab; resident panel | Save; Clear role, Clear contribution | Clear, or Reset to default (live list) | type it again | head of that CCA; admin, jcrc | head: after handover or close; everyone: published (admin, jcrc with an unlock) |
+| Year status | Open transcripts | status on the panel | n/a | n/a | n/a | admin, jcrc | once open |
+| CCA member list lock | Open transcripts | Member lists table | n/a | n/a | n/a | admin, jcrc | always (read-only) |
+| Roster entry (duration, role, role period, contribution) | Save a row | head tab; resident panel | Save; Clear role, Clear contribution | Clear, or Reset to default (live list) | type it again | head of that CCA; admin, jcrc | head: years other than the current one; everyone: open (admin, jcrc with an unlock) |
 | Manual CCA entry | Add manual CCA entry | resident panel | Save | Remove | Restore | admin, jcrc | published without an unlock |
-| CCA activity | Add activity | head tab | Edit | Remove | Restore | head of that CCA; admin, jcrc | head: after handover or close; everyone: published (no unlock) |
+| CCA activity | Add activity | head tab | Edit | Remove | Restore | head of that CCA; admin, jcrc | head: years other than the current one; everyone: open (no unlock) |
 | Activity participant | Add (list or "Add to an existing activity") | head tab; resident panel | role, description | Remove | Restore, or list again | head of that CCA; admin, jcrc | published without an unlock |
 | Volunteer activity | Add | head tab | Edit | Remove | Restore | head of that CCA; admin, jcrc | as an activity |
 | Volunteer session | Add session | head tab | Edit | Remove | Restore | as above | as an activity |
@@ -886,13 +884,13 @@ Every editable item can be created, viewed, edited, removed (softly) and restore
 | Award | Assign; CSV import | Awards tab; resident panel | inline edit | Remove; bulk | Restore; bulk | admin, jcrc | published without an unlock |
 | Award upload (batch) | Import | History tab | none | Undo | none (assign again) | admin, jcrc | published without an unlock for each holder |
 | JCRC page | Save (the member, or a manager) | JCRC page; resident panel | Save | Remove page | Restore page | the member (own); admin, jcrc | published without an unlock |
-| Resident unlock | Unlock | resident panel; History | none | Relock | Unlock again | admin, jcrc | year must be closed or published |
+| Resident unlock | Unlock | resident panel; History | none | Relock | Unlock again | admin, jcrc | year must be open |
 | Resident withhold | Withhold | resident panel; History | none | Release | Withhold again | admin, jcrc | never |
 | Resident history | written by each change | History tab | none | none | none | system | never |
 | First-opened record | when a resident opens a published year | drives the Ready badge | none | none | none | system | never |
 | Volunteering tag | switch on | Volunteering CCAs | n/a | switch off | switch on | admin, jcrc | never |
 
-**Gaps this pass closed.** Roster rows now have Clear role, Clear contribution and Reset to default (a live list only: a frozen list has no defaults to go back to; Save applies it). A JCRC page can be removed and restored (soft) by a manager. A manual CCA entry has the whole cycle. A resident's activity participation, volunteer ticks and awards can be edited from one place.
+**Gaps this pass closed.** Roster rows now have Clear role, Clear contribution and Reset to default (a live list only: a locked list has no defaults to go back to; Save applies it). A JCRC page can be removed and restored (soft) by a manager. A manual CCA entry has the whole cycle. A resident's activity participation, volunteer ticks and awards can be edited from one place.
 
 **Gaps left, on purpose.** A volunteer person can only be added or dropped from the CCA's own volunteering screen (the resident panel edits ticks, not who is on the activity). An award upload cannot be redone, only its awards assigned again. An unlock or a hold cannot be edited, only ended and made again. A transcript period and a catalogue entry have no remove (the purge function and archiving cover them). A tick is a state, so unticking deletes the row.
 
@@ -918,7 +916,7 @@ Every requirement in the project brief, where it is implemented, and the tests t
 | Transcript shows total hours per activity, never session counts | `loader.ts` `loadVolunteering`; `TranscriptSections.tsx` | `assemble.test.ts`, `TranscriptDocument.test.tsx`, `volunteer.int.test.ts` | done |
 | Award catalogue (name, default citation, archive, no hard delete) | `services/transcript/manageAwards.ts`; `awards/_components/AwardCatalogue.tsx` | `awards.test.ts`, `awardsUi.test.tsx`, `awards.int.test.ts` | done |
 | One-shot assignment with search chips, per-person citation, duplicates skipped and listed | `manageAwards.ts` `awardsAssign`; `AssignAward.tsx`; `lib/transcript/awards.ts` `planAssignment` | `awards.test.ts`, `awardsUi.test.tsx`, `awards.int.test.ts` | done |
-| CSV import reusing the bulk-import pattern (template, upload/paste, column map, preview with Ready / Not found / Duplicate / Invalid, catalogue matching, import, history with batch undo); identifier NUS email or NUSNET | `services/transcript/awardImport.ts` (reuses `parseCsv`, `resolveIdentifier`, `bulkResolver`); `AwardImport.tsx`; `AwardHistory.tsx` | `awardImport.test.ts`, `awardImportUi.test.tsx`, `awardImport.int.test.ts` | done |
+| CSV import reusing the bulk-import pattern (template, upload/paste, column map, preview with Ready / Not found / Duplicate / Invalid, catalogue matching, import, history with batch undo); identifier NUS email or NUSNET | `services/transcript/awardImport.ts` (reuses `parseCsv`, `bulkResolver`); `AwardImport.tsx`; `AwardHistory.tsx` | `awardImport.test.ts`, `awardImportUi.test.tsx`, `awardImport.int.test.ts` | done |
 | Awards list: group by award, search, filter by AY, inline edit, bulk remove / restore; transcript shows Award / Year with citation beneath | `AwardsList.tsx`; `manageAwards.ts`; `TranscriptSections.tsx` | `awardsUi.test.tsx`, `awards.int.test.ts`, `TranscriptDocument.test.tsx` | done |
 | JCRC page: role, responsibilities, contributions rows with no header row (no row limit, 80/60/300, add/edit/remove/reorder), member's testimonial, Master and President signature placeholders | `manageRecords.ts` `jcrcSave`; `_components/JcrcSelf.tsx`; `JcrcPageBody.tsx`; `headView.ts` contribution helpers | `jcrcSelf.test.tsx`, `headView.test.ts`, `TranscriptDocument.test.tsx`, `transcriptManage.int.test.ts` | done |
 | CRUD everywhere with soft remove, Show removed and Restore, actor and time on every change | each service; matrix in section 29 | `activities.int.test.ts`, `volunteer.int.test.ts`, `awards.int.test.ts`, `corrections.int.test.ts` | done (exceptions listed in section 29: a tick is a state; catalogue archives; periods have no remove) |
@@ -929,22 +927,19 @@ Every requirement in the project brief, where it is implemented, and the tests t
 | "My transcript" under My Applications (desktop and mobile), Ready badge and dot, first-opened record; link under My CCAs removed | `app/_components/header.tsx`; `services/transcript/access.ts`; `app/profile/page.tsx` | `headerEntry.test.tsx`, `transcript.int.test.ts` | done |
 | Per-AY download-by date shown as a banner | `periods.ts` `upsertDownloadBy`; `lib/transcript/pageState.ts` `downloadByBanner`; `app/transcript/page.tsx` | `downloadBanner.test.ts`, `periods.test.ts`, `transcript.int.test.ts` | done |
 
-### Academic years and freezing
+### Academic years and opening transcripts
 
 | Requirement | Where | Tests | Status |
 | --- | --- | --- | --- |
 | AY 1 Aug to 31 Jul, rolls over by date | `lib/transcript/academicYear.ts` | `academicYear.test.ts` | done |
 | Every record keyed by year, never referencing another year; tested, documented per-AY purge, no UI | `services/transcript/retention.ts`; section 23 | `retention.test.ts` (registry parses the schema), `lifecycle.int.test.ts`, `corrections.int.test.ts` | done |
-| Each CCA's roster frozen at its handover for its oldest unfrozen AY, never a future AY | `services/transcript/freeze.ts`; `lib/transcript/lifecycle.ts` `termAcademicYear`, `freezeTarget` | `lifecycle.test.ts`, `lifecycle.int.test.ts` | done |
-| Before handover a removed member is gone; after handover new members count toward the next AY | `loader.ts` (live vs frozen); `liveRoster.ts` | `lifecycle.int.test.ts`, `transcript.int.test.ts` | done |
-| Heads may Lock roster; Close year freezes every CCA not yet frozen | `freeze.ts`; `routers/transcriptManage.ts` `roster.lock`; `periods.ts` `closeYear` | `lifecycle.int.test.ts` | done |
-| After a freeze, the frozen year is editable by JCRC/admin only; the handover dialog warns heads | `editRights.ts`; `lib/transcript/lifecycle.ts` `editRefusal`; `app/cca/_components/CcaHandoverDialog.tsx` | `lifecycle.test.ts`, `lifecycle.int.test.ts` | done |
-| Any head change that removes a current head freezes first (handoverHeads, revokeCcaHead, transferCcaHead); grant-only never; a failed freeze refuses the head change | `freeze.ts` `freezeBeforeHeadChange`; hooks in `routers/cca.ts`, `routers/admin.ts` | `lifecycle.int.test.ts` | done |
-| Admin/JCRC can Unfreeze while the AY is not published | `freeze.ts` `unfreezeCca`; `FreezeTable.tsx` | `freezeTable.test.tsx`, `lifecycle.int.test.ts` | done |
-| Status collecting, closed (draft "Draft - check your information"), published; Reopen for review; Back to collecting (freezes stay); JCRC and admin control it | `periods.ts`; `lib/transcript/lifecycle.ts` `transitionBlocker`; `PeriodPanel.tsx`; `TranscriptDocument.tsx` | `lifecycle.test.ts`, `panels.test.tsx`, `TranscriptDocument.test.tsx`, `lifecycle.int.test.ts` | done |
+| Status collecting or open (stored `published`); one manager-only Open transcripts locks every CCA's list one at a time; a failure keeps the year collecting and a re-run finishes | `periods.ts` `openTranscripts`; `freeze.ts` `freezeCca`; `lib/transcript/lifecycle.ts` `openBlocker`; `PeriodPanel.tsx` | `lifecycle.test.ts`, `panels.test.tsx`, `lifecycle.int.test.ts`, `openDedupe.int.test.ts` | done |
+| Collecting years read the live list; an open year reads the locked list | `loader.ts`; `manageRoster.ts`; `liveRoster.ts` | `lifecycle.int.test.ts`, `transcript.int.test.ts` | done |
+| Head changes never lock anything; `cca.ts` unchanged | upstream `routers/cca.ts`, `routers/admin.ts` | `lifecycle.int.test.ts` | done |
+| Removed: Close year, closed, draft review, Freeze remaining, Back to collecting, Reopen, Unfreeze, Lock member list | `routers/transcript.ts`, `routers/transcriptManage.ts` | `lifecycle.int.test.ts` (router has none of them) | done |
 | Published locks edits except per-resident corrections | `editRights.ts`; `residentRecords.ts` | `corrections.test.ts`, `corrections.int.test.ts`, `transcriptManage.int.test.ts` | done |
-| Heads edit only the CCA's current term AY, or a year they locked, never after a handover or close-year freeze | `lib/transcript/lifecycle.ts` `editRefusal`; `editRights.ts` | `lifecycle.test.ts`, `lifecycle.int.test.ts` | done |
-| Residents keep access to past published transcripts | `periods.ts` `listViewableYears`; `routers/transcript.ts` `mine` | `transcript.int.test.ts` | done |
+| Current heads edit only the current AY while collecting; managers any collecting AY | `lib/transcript/lifecycle.ts` `editRefusal`; `editRights.ts` | `lifecycle.test.ts`, `corrections.test.ts`, `lifecycle.int.test.ts` | done |
+| Residents keep access to past published transcripts | `periods.ts` `listPublishedYears`; `routers/transcript.ts` `mine` | `transcript.int.test.ts` | done |
 
 ### Decisions
 
@@ -960,11 +955,7 @@ Every requirement in the project brief, where it is implemented, and the tests t
 
 ## 31. Final fixes
 
-**Publish needs every CCA frozen.** `periods.publish` refuses with `PRECONDITION_FAILED:CCAS_NOT_FROZEN` while ANY CCA has no active freeze for the year (a freeze undone during review, or a CCA created after Close year). The text is "Some CCAs are not frozen for AY2026/27: Soccer (MALE), Chess Club. Use Freeze remaining CCAs, then publish." The Academic year panel shows the same line inline while the year is closed (`periods.unfrozenNames`), with a "Freeze remaining CCAs (N)" button next to Publish. The button is hidden unless the year is closed and at least one CCA is unfrozen. Its confirmation reads "This freezes the member lists of N CCAs for AY2026/27: <first 5 names>, and more. Their current members will be used." (", and more" only past five), the button is disabled while it runs, and an inline line reports the result. The year stays closed.
-
-**Close year goes one CCA at a time.** Each CCA freezes in its own transaction, in turn (no parallel workers). A CCA whose freeze fails is counted and the rest go on; the year then stays collecting and the result says "not closed yet", with the frozen, already-frozen, left-alone and failed counts and the failed names. Running Close year again finishes the rest.
-
-**More indexes** (our collections only; created in production by `create-transcript-indexes.mjs`, locally by `db push`): `vattend_activity` on `VolunteerAttendance(activityID)` for every read of one activity's ticks; `award_batch` on `Award(importBatchID)` for an upload's awards (History counts, Undo); `award_type` on `Award(awardTypeID)` for how many awards each catalogue entry has given across years; `freeze_cca` on `CcaYearFreeze(ccaID)` for a CCA's freezes across years (its term year, the loader).
+**More indexes** (our collections only; created in production by `create-transcript-indexes.mjs`, locally by `db push`): `vattend_activity` on `VolunteerAttendance(activityID)` for every read of one activity's ticks; `award_batch` on `Award(importBatchID)` for an upload's awards (History counts, Undo); `award_type` on `Award(awardTypeID)` for how many awards each catalogue entry has given across years; `freeze_cca` on `CcaYearFreeze(ccaID)` for a CCA's locks across years.
 
 **One active unlock or hold per resident and year.** `ResidentUnlock.activeKey` and `ResidentWithhold.activeKey` are unique (`unlock_active_key`, `withhold_active_key`): "<year>|<userID>" while active, rewritten to "<year>|<userID>|ended|<id>" in the same write that relocks or releases. Unlocking or withholding again, or five times at once, leaves one record and one history line, and the call succeeds (it is idempotent). The record and its history line are written in one transaction; the confirm button is disabled while the request is in flight.
 
@@ -974,7 +965,7 @@ Every requirement in the project brief, where it is implemented, and the tests t
 
 **No header rows.** The activity rows nested under a CCA row on the transcript, and the JCRC "Contributions during the year" rows, have no "Activity | Role | Description" header row (three aligned columns, the indent, and "Additional contribution" as the last row stay). Other involvement keeps its header row.
 
-**Year switcher.** On `/transcript` the switcher shows whenever the resident has a published year or the current academic year is closed. It lists every published year, sorted, plus the current year when it is not published: "AY2026/27 (not yet available)" while collecting (the calm not-available page, with the switcher) or "AY2026/27 (draft)" while closed (the draft view). A requested `?ay=` that is not a choice falls back to the latest published year; a requested current year is shown as it is. With nothing published and the current year collecting, only the calm page shows, with no switcher. The switcher also appears on the on-hold page, so another year can still be opened.
+**Year switcher.** On `/transcript` the switcher shows whenever the resident has an open year. It lists every open year, sorted, plus the current year when it is not open: "AY2026/27 (not yet available)" (the calm not-available page, with the switcher). There is no draft entry. A requested `?ay=` that is not a choice falls back to the latest published year; a requested current year is shown as it is. With nothing published and the current year collecting, only the calm page shows, with no switcher. The switcher also appears on the on-hold page, so another year can still be opened.
 
 **No visible count limits.** No "N of 20" counters or "limit reached" messages: screens show plain counts ("1 activity", "3 volunteer activities", "2 contributions"). The only count limits are hidden safety caps per request, far above real use: 1,000 activities and 1,000 volunteer activities per CCA and year, 1,000 sessions per activity, 2,000 people or participants per save, 200 JCRC rows, 2,000 award recipients per assign, 2,000 ids per bulk action, 20,000 ticks per save, and 10,000 CSV rows per upload ("This file has more than 10,000 rows. Split it and upload in parts."). Past a cap the server answers "That is more than one save can take. Do it in smaller steps." Text length limits are unchanged.
 
@@ -994,10 +985,4 @@ Every requirement in the project brief, where it is implemented, and the tests t
 
 ## 34. Freeze review fixes
 
-- **Race-free freeze (F1).** The frozen entries are computed from a read INSIDE the freeze transaction. A duplicate key means "already frozen" only if an active freeze of that CCA and year now exists; otherwise the freeze is retried from a fresh read (bounded) and then refused, so a head change never proceeds with nothing frozen.
-- **Never a published year (F2).** `termAcademicYear` / `freezeTarget` skip a published year a CCA has no freeze for, and the loader never attributes live members to it: a CCA created after a year was published starts in the next unpublished year.
-- **Late handover (F18).** When a CCA's most recent active freeze is by Close year and no head has been appointed since (no `CcaHead.grantedAt` after it), a handover or head removal does not freeze again. A head's Lock is not affected.
-- **Unmatched members (F19).** `CcaYearFreeze.unresolvedCount` records members the roster resolver could not match; the member lists table and the Close year / Freeze remaining results report them.
-- **Unfreeze preview (F17).** `transcript.freezes.unfreezePreview` lists who would be dropped (frozen, no longer members) and added (members, not frozen) if the CCA is frozen again; the dialog requires an "I understand" tick.
-- **Failure reasons (F5).** A CCA that fails to freeze is logged (`transcript_freeze_failed`, with ccaID, year and code) and returned with its code; the summaries show a short reason.
-- **Lock (F4) and the handover warning (F15).** Lock is offered only for a working year not later than today's, and a lock that would freeze nothing is refused with `NOTHING_TO_LOCK`. `roster.term` returns `willFreezeOnHandover` / `handoverFreezeYear`; the handover dialog names a year only when a freeze will happen, and shows a general reminder if that cannot be checked.
+Superseded by section 23 (one-step Open transcripts). What remains: the race-free lock (F1), the short failure log (F5, now `transcript_lock_failed` with only ccaID, year, code and error name), the unmatched-member count (F19) and counting each person once (F26). Late handover (F18), Unfreeze preview (F17), Lock (F4) and the handover year warning (F15) were removed with the features they served.

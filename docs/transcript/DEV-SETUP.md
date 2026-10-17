@@ -62,7 +62,7 @@ Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CC
 npm run dev:db:seed -- --with-published-year
 ```
 
-Does everything the plain seed does, and ALSO creates a past year, `AY2025/26`, already closed and published: semester 2 from 12 Jan 2026, every seeded CCA frozen with its members (heads as "Head"), Soccer's "Inter-hall league 2025/26" (with `SEED-R20` as Other involvement), RVC Children's "Reading buddies" (8 hours for `SEED-R12`), two awards, `SEED-R02`'s JCRC page, and a download-by date in the future. Nobody has opened it yet, so `seed-r12` sees the "Ready" badge, the published transcript with a year switcher, and "not available yet" for the collecting `AY2026/27`; as `seed-r01` you can Unlock, correct, Relock, Withhold and Release on it at `/admin/transcripts/residents`. Like the rest of the seed it refuses anything but the local `rhapp_transcript_dev` database. A plain `npm run dev:db:seed` (and every `npm run test:db` run) removes this year again. Transcripts really start at AY2026/27; this year exists only locally.
+Does everything the plain seed does, and ALSO creates a past year, `AY2025/26`, already opened (Open transcripts): semester 2 from 12 Jan 2026, every seeded CCA's member list saved (heads as "Head"), Soccer's "Inter-hall league 2025/26" (with `SEED-R20` as Other involvement), RVC Children's "Reading buddies" (8 hours for `SEED-R12`), two awards, `SEED-R02`'s JCRC page, and a download-by date in the future. Nobody has opened it yet, so `seed-r12` sees the "Ready" badge, the published transcript with a year switcher, and "not available yet" for the collecting `AY2026/27`; as `seed-r01` you can Unlock, correct, Relock, Withhold and Release on it at `/admin/transcripts/residents`. Like the rest of the seed it refuses anything but the local `rhapp_transcript_dev` database. A plain `npm run dev:db:seed` (and every `npm run test:db` run) removes this year again. Transcripts really start at AY2026/27; this year exists only locally.
 
 ## A caveat
 
@@ -114,9 +114,9 @@ Start with `npm run dev:db:up`, `npm run dev:db:seed`, `npm run dev`. Sign in at
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
 | Gate | `seed-r04` (head), then `seed-r15` (plain member) | Open `/admin/transcripts` | Sent back to `/admin` or `/`; no Transcripts tab |
-| Academic year | `seed-r01` (admin) or `seed-r02` (JCRC) | Clear the date, press Publish | Error asking for the semester 2 date. Enter 12 Jan 2027, Save, Publish, confirm: status Published and "N members frozen, 0 rows could not be matched". Reopen, confirm: status Collecting. |
+| Academic year | `seed-r01` (admin) or `seed-r02` (JCRC) | Press Open transcripts | The confirmation "Open transcripts for AY2026/27? Every CCA's member list will be saved as it is now, ...". Confirm: status Open, "Transcripts for AY2026/27 are open. 14 CCA member lists saved.", the button is gone and the CCA member lists table appears. There is no Reopen; reseed to go back. |
 | Volunteering CCAs | same | Flip a switch, reload | Change persists; the four RVC CCAs start on |
-| Awards | same | Add an award for `SEED-R12`, then void it | Appears, then disappears; "Show voided" brings it back. Locked while Published |
+| Awards | same | Add an award for `SEED-R12`, then void it | Appears, then disappears; "Show voided" brings it back. Locked once Open |
 | Preview | same | Pick a resident (3+ letters), open preview | Template C with the Preview bar; JCRC page only for `seed-r02`/`seed-r03`; nothing is recorded |
 
 Re-run `npm run dev:db:seed` afterwards to return the year to Collecting.
@@ -130,7 +130,7 @@ The app's profile gate sends a seeded account to `/profile` until its profile (n
 | Head tab, normal CCA | `seed-r04` (Soccer) | CCA dashboard, "Transcript" | Member roster table, no volunteer hours section. Set a member to "Semester 2 only", type a role and a contribution, press that row's Save: "Saved". The counter under the contribution counts down from 500. |
 | Head tab, another CCA | `seed-r04` | Open `/cca/9002/transcript` | "You do not head this CCA." |
 | Head tab, volunteering CCA | `seed-r06` (RVC Children) | "Transcript" | Roster and a Volunteer hours section. Search "Seed", choose a resident, add a one-off (date inside the year, hours in quarters). It appears in the list and the totals. Void asks first. |
-| Published year | `seed-r01`, then `seed-r04` | Publish at `/admin/transcripts`, then reload the head tab | The published note, every field read-only. Reopen to restore. |
+| Published year | `seed-r01`, then `seed-r04` | Open transcripts at `/admin/transcripts`, then reload the head tab | The open note, every field read-only. Reseed to restore. |
 | JCRC self page | `seed-r02` | `/admin/transcripts`, "Your JCRC page" | Fields, the placeholder note, "Preview my transcript". Save, then preview: the JCRC page shows your text. |
 | JCRC page, admin only | `seed-r01` | `/admin/transcripts/jcrc` | "Only JCRC members have a JCRC page." |
 | Preview print | `seed-r01` | Preview a resident, print or save as PDF | Only the transcript prints: no header or tabs, crest and footer on every page. |
@@ -147,36 +147,30 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 | JCRC contributions | `seed-r02` | `/admin/transcripts/jcrc` | One card per contribution with counters. Move up and down, Remove (shows "Removed. Undo"), Undo, Add contribution (a plain count, "2 contributions", never "of 10"), Save. Preview: the rows in three columns with no header row. |
 | Role period | `seed-r04` | `/cca/9005/transcript`, give a member a role | With a semester 2 membership the role period offers only the default and "Semester 2 only". Narrow a full-year member who has a full-year role: the role period changes with a one-line note. |
 | Picker | `seed-r06` | Volunteer hours, search "Seed" | Placeholder "Name". Arrow keys move, Enter picks, Escape closes. As `seed-r01` the placeholder is "Name, email or matric". |
-| Names | `seed-r01` | Publish, add and void an award | "Published on ... by Seed Resident 01", "Recorded by ... Voided by ..." show names, not SEED- keys. |
+| Names | `seed-r01` | Add and void an award, then Open transcripts | "Opened on ... by Seed Resident 01", "Recorded by ... Voided by ..." show names, not SEED- keys. |
 | Phone | any | `/transcript/preview/many-ccas` at 375 px wide | No horizontal scroll; the Year column stays on one line. |
 
 Run `npm run dev:db:seed` afterwards to restore the seeded state.
 
-## Manual check: year lifecycle and handover freeze
+## Manual check: collecting, then Open transcripts
 
-The seed freezes two CCAs for AY2026/27 so the admin table shows each state: "Raffles Hall Dance" (id 9014) at handover and "Hall Choir" (9013) locked by its head. Everything else is not frozen.
+The seed keeps AY2026/27 collecting with no saved member lists: every CCA's transcript uses its live members.
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
-| Handover warning | `seed-r04` (Soccer head) | CCA dashboard, Overview, Hand over | An amber note: finish this year's transcript records; handing over freezes the member list for AY2026/27; link "Open transcript records". |
-| Handover freezes | `seed-r04` | Hand over to `seed-r09` | `/cca` closes for you. As `seed-r01`, the table shows Soccer "Frozen at handover", dated today, by Seed Resident 04. |
-| Admin removes a head | `seed-r01` | Admin, CCAs: remove or transfer a head | The CCA shows "Head removed" in the table. Adding a head does not freeze. |
-| Lock | a head | Transcript tab, "Lock member list for AY2026/27", confirm | Table: "Locked by head". The head can still edit roles, contributions and hours. |
-| Frozen is read-only | a head of a handover-frozen CCA | Transcript tab | "Frozen on {date}. Ask the JCRC for changes." and every field is read-only. `seed-r02` can still edit. |
-| 1 June warning | `seed-r01` | Academic year section after 1 June | "N CCAs are not frozen for AY2026/27 yet. Close the year before memberships change." |
-| Close year | `seed-r01` | Close year, confirm (it states how many CCAs it will freeze) | Status Closed; every CCA frozen; only Publish and Back to collecting are offered. Without a semester 2 date it refuses. |
-| Draft view | `seed-r12` | `/transcript` while closed | "Draft - check your information..." on page 1, DRAFT across every page, also when printed. No "Ready" badge, no banner. |
-| Publish | `seed-r01` | Publish | Residents get a Ready badge; the draft note is gone. Only "Reopen for review" is offered. |
-| Reopen / back | `seed-r01` | Reopen for review, then Back to collecting | Closed again (residents see a draft), then Collecting. Frozen lists stay frozen. |
-| Unfreeze | `seed-r01` | Unfreeze on a CCA, give a reason | The CCA reads "Not frozen"; its current members are used until it is frozen again. Not offered once published. |
+| Live list | `seed-r01` | Remove `seed-r12` from Soccer in the CCA admin, then preview `seed-r12` | Soccer is gone from the transcript. Add them back. |
+| Handover reminder | `seed-r04` (Soccer head) | CCA dashboard, Overview, Hand over | "Before you hand over, make sure this year's transcript records ... are up to date. The new heads can continue them until the JCRC opens transcripts." and an "Open transcript records" link. |
+| Handover changes nothing | `seed-r04` | Hand over to `seed-r09`, then sign in as `seed-r09` | No member list is saved. `seed-r09` can edit `/cca/9005/transcript` for AY2026/27. |
+| Head's tab | any head | Transcript tab | "Finish this year's records before the JCRC opens transcripts at the end of the year." Other years read-only; no Lock button. |
+| Reminders | `seed-r01` | Academic year section (needs a clock after 1 April or 1 August; covered by tests) | From 1 April: "Transcripts for AY2026/27 are not open yet. Open them at the end of the year, before 1 August." From 1 August with the previous year still collecting: "Transcripts for ... are still not open. Open them now, ...". |
+| Open transcripts | `seed-r01` or `seed-r02` | Open transcripts, confirm | Status Open; the CCA member lists table shows each CCA, "Saved when transcripts opened", members and "members could not be matched" where there are some. `seed-r04` cannot see the button (admin and JCRC only). |
+| After opening | `seed-r12`, `seed-r04` | `/transcript`; the head tab | The resident gets the Ready badge and the transcript (no draft anywhere). The head's tab is read-only. Removing a Soccer member now does not change their transcript. |
 
-Dev only: `/transcript/preview/plain-member?draft=1` shows a specimen as the draft.
-
-Run `npm run dev:db:seed` afterwards to restore the seeded state. After pulling this change, run `prisma db push` against the LOCAL database to add the `CcaYearFreeze` collection and its index.
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
 
 ## Manual check: CCA activities and the roster editor
 
-The seed gives AY2026/27 four activities: Soccer (9005, head `seed-r04`) "Inter-hall league" with `seed-r04` (Captain), `seed-r12` and `seed-r20` (not in Soccer); Hall Choir (9007, head `seed-r05`) "Hall Night preparation" in semester 2; RVC Children (9002, head `seed-r06`) "Exam-period care packs" and a removed "Cancelled workshop". After pulling this change, `prisma db push` (LOCAL database only) adds the `CcaActivity` and `CcaActivityParticipant` collections and the `closedAt`, `closedBy`, `backToCollectingAt` and `backToCollectingBy` fields on the period.
+The seed gives AY2026/27 four activities: Soccer (9005, head `seed-r04`) "Inter-hall league" with `seed-r04` (Captain), `seed-r12` and `seed-r20` (not in Soccer); Hall Choir (9007, head `seed-r05`) "Hall Night preparation" in semester 2; RVC Children (9002, head `seed-r06`) "Exam-period care packs" and a removed "Cancelled workshop". After pulling this change, `prisma db push` (LOCAL database only) adds the `CcaActivity` and `CcaActivityParticipant` collections.
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
@@ -187,7 +181,7 @@ The seed gives AY2026/27 four activities: Soccer (9005, head `seed-r04`) "Inter-
 | Customise | `seed-r04` | "Customise each person" | A Role and Description per person with the two placeholders; empty means the general description. |
 | Remove and restore | `seed-r04` | Remove, confirm; tick Show removed; Restore | It leaves the count and the transcripts; Restore brings it back. At 20 activities Add and Restore are refused. |
 | On a transcript | `seed-r12` and `seed-r20` | Preview as resident (`seed-r01`), AY2026/27 | `seed-r12`: the league nested under Soccer. `seed-r20`: "Other involvement" with the league and "Organised by Soccer (MALE)". |
-| Frozen is read-only | `seed-r04` | After a handover, `/cca/9005/transcript` | The Activities section shows the frozen note and no buttons. `seed-r02` can still edit. |
+| Read-only once open | `seed-r04` | After Open transcripts, `/cca/9005/transcript` | The Activities section shows the open note and no buttons. |
 | Unsaved changes | any head | Edit two roster rows, change the year | A sticky bar says "2 unsaved changes"; Save all saves both; Discard asks first; changing the year asks before leaving. |
 | Phone roster | any head | Roster at 375 px wide | Cards instead of a table, a name filter, and no horizontal scroll. |
 
@@ -248,16 +242,16 @@ Run `npm run dev:db:seed` afterwards to restore the seeded state.
 
 ## Manual check: per-resident corrections
 
-The seed keeps the year COLLECTING and adds one manual CCA entry (`seed-r17` in Dance Crew, semester 2) with its history line. After pulling this change, `prisma db push` (LOCAL database only) adds `ResidentUnlock`, `ResidentWithhold`, `ManualMembership` and `ResidentEvent` and two fields on `JcrcService`. Only admin and JCRC can open `/admin/transcripts/residents`. To get a published year to work on, use the admin buttons yourself: sign in as `seed-r01`, open `/admin/transcripts`, press Close year and then Publish (the seed already has the semester 2 date). Run `npm run dev:db:seed` afterwards to go back to the seeded state.
+The seed keeps the year COLLECTING and adds one manual CCA entry (`seed-r17` in Dance Crew, semester 2) with its history line. After pulling this change, `prisma db push` (LOCAL database only) adds `ResidentUnlock`, `ResidentWithhold`, `ManualMembership` and `ResidentEvent` and two fields on `JcrcService`. Only admin and JCRC can open `/admin/transcripts/residents`. To get a published year to work on, use the admin buttons yourself: sign in as `seed-r01`, open `/admin/transcripts`, press Open transcripts. Run `npm run dev:db:seed` afterwards to go back to the seeded state.
 
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
 | The link | `seed-r01` | `/admin/transcripts` | "Resident corrections" beside "Your JCRC page". `seed-r04` is sent back to `/admin` from the new address. |
-| Published is read-only | `seed-r01` | Close year, Publish, then `/admin/transcripts/residents`, find Seed Resident 12 | Status "Published"; every section read-only with "Published. Unlock this resident to make corrections."; Unlock and Withhold offered. |
+| Published is read-only | `seed-r01` | Open transcripts, then `/admin/transcripts/residents`, find Seed Resident 12 | Status "Open"; every section read-only with "Published. Unlock this resident to make corrections."; Unlock and Withhold offered. |
 | Unlock | `seed-r01` | Unlock, leave the reason empty, then type "Wrong role on file" | The button stays disabled until a reason of 3 or more characters. Then "Unlocked" shows with the reason, and Relock replaces Unlock. |
 | Correct a role | `seed-r01` | CCA memberships, Soccer (MALE), type "Vice-Captain" as the role, Save | "Saved". Preview transcript shows it with no mark of amendment. |
 | Another resident stays locked | `seed-r01` | Open Seed Resident 20, try the same | Read-only. A request made some other way is refused with "This year is published. Unlock the resident first, and change only their records." |
-| Clear and reset | `seed-r04` (collecting year only) | A Soccer member's row on `/cca/9005/transcript` | Clear role, Clear contribution and Reset to default appear under the fields that hold something; Reset blanks every override in the draft and Save applies it. Not offered on a frozen list. |
+| Clear and reset | `seed-r04` (collecting year only) | A Soccer member's row on `/cca/9005/transcript` | Clear role, Clear contribution and Reset to default appear under the fields that hold something; Reset blanks every override in the draft and Save applies it. Not offered once transcripts are open. |
 | Manual entry | `seed-r01` | Seed Resident 20, CCA memberships, "Add manual CCA entry": Soccer (MALE), Full year, Add | The entry shows with a "Manual" tag. In the preview, Soccer is a CCA row and "Inter-hall league" moved from Other involvement to under it; no "Manual" word on the document. Choosing a role period outside a semester 2 membership is refused. |
 | Manual remove and restore | `seed-r01` | Remove, Show removed, Restore | It leaves the transcript while removed and comes back. |
 | Roster wins | `seed-r01` | Seed Resident 12, add a manual Soccer entry | It is flagged as also in the membership data and the roster entry is what renders. |
@@ -281,9 +275,6 @@ Seed with `npm run dev:db:seed -- --with-published-year` (see above) so `seed-r1
 | Screen | Sign in as | What to click | Expect |
 | --- | --- | --- | --- |
 | Year switcher | `seed-r12` | `/transcript` | Pills "AY2025/26" and "AY2026/27 (not yet available)". The second shows the calm "isn't available yet" page, with the pills still there. |
-| Draft entry | `seed-r01`, then `seed-r12` | Close year on `/admin/transcripts` (AY2026/27), then `/transcript` | The pill reads "AY2026/27 (draft)" and opens the draft view. |
-| Publish needs every CCA frozen | `seed-r01` | While AY2026/27 is closed, Unfreeze Soccer (MALE) in the CCA member lists, then Publish | Refused, and the panel lists it: "Some CCAs are not frozen for AY2026/27: Soccer (MALE). Use Freeze remaining CCAs, then publish." A "Freeze remaining CCAs (1)" button sits next to Publish. |
-| Fix it | `seed-r01` | Press "Freeze remaining CCAs (1)", confirm (it names Soccer (MALE)), then Publish | "1 CCA frozen. You can publish now."; the year stays Closed and the button disappears; Publish works. |
 | Menu item | `seed-r12` | Open the profile menu (desktop and phone) | "My transcript" on one line with the "Ready" badge at the right, readable on the dark phone menu. |
 | No header rows | `seed-r01` | Preview `seed-r12` and `seed-r02` for AY2026/27 | Activity rows under a CCA and the JCRC contributions have no heading row; "Other involvement" keeps its headings. |
 | Plain counts | `seed-r04` | `/cca/9005/transcript` | "1 activity", never "1 of 20"; Add activity is never greyed out. |
