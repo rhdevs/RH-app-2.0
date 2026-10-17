@@ -9,7 +9,12 @@ import type { Range } from "~/lib/points/constants";
 import { pointsErrorCopy } from "./errorCopy";
 import RangeInputs from "./RangeInputs";
 import { parseRangeForm, toFormValues, type FormValues } from "./rangeForm";
-import { saveStatus, statusClass, type SaveStatus } from "./saveStatus";
+import {
+  saveStatus,
+  statusClass,
+  statusVisible,
+  type SaveStatus,
+} from "./saveStatus";
 
 /**
  * The hall-wide default allowed ranges. All four fields are required here; a
@@ -123,7 +128,7 @@ export default function DefaultRangesForm({
               "Save default ranges"
             )}
           </Button>
-          {saved && !dirty && (
+          {saved && statusVisible(saved, dirty) && (
             <p className={`text-sm ${statusClass(saved)}`} role="status">
               {saved.text}
             </p>

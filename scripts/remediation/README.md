@@ -31,7 +31,7 @@ with no warning and without `--accept-data-loss`. Do not run it against this
 cluster, here or anywhere else in this file.
 
 Indexes on this cluster are created with `createIndexes` through
-`$runCommandRaw`, never through `db push`. There are exactly two scripts that
+`$runCommandRaw`, never through `db push`. There are exactly three scripts that
 do it, and between them they are how every index added since phase 2 got here:
 
 - **`create-auth-allowlist.mjs`** — the working precedent. It created the
@@ -41,6 +41,13 @@ do it, and between them they are how every index added since phase 2 got here:
   indexes. It takes an **explicit target on the command line and has no
   default**: `EventQuestion` (Part B) or `EventAttendance` (Part C). Named with
   neither, it prints usage and exits 2 rather than guessing or doing both.
+
+- **`create-cca-points-config.mjs`** — the CCA points feature. It creates the
+  `CcaPointsConfig` collection and its unique `scope_unique` index. Dry run by
+  default; `--commit` applies. It must run **before `/admin/points` is used**:
+  without that index, two rows can claim the same scope and which one the app
+  reads becomes undefined. `flatPoints` and the other fields need nothing more
+  (they are nullable fields on this collection); just `npx prisma generate`.
 
 ```bash
 node scripts/remediation/index-census.mjs > census-before.txt          # blocking, exit 0 required
@@ -470,7 +477,8 @@ fails if any event claims a purge its signups did not get.
 ### Order of operations summary
 
 1. new collections/indexes — `create-auth-allowlist.mjs` /
-   `create-event-phase2-indexes.mjs` (**never** `npx prisma db push`; see Step 0)
+   `create-event-phase2-indexes.mjs` / `create-cca-points-config.mjs` (the last
+   before `/admin/points` is used; **never** `npx prisma db push`; see Step 0)
 2. `node scripts/remediation/seed-rbac.mjs`
 3. emailLower backfill → schema `@unique` → generate
 4. money backfill (preview → apply) → schema `Int` → generate

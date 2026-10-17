@@ -13,5 +13,12 @@ export function saveStatus(message: string, reloaded: boolean): SaveStatus {
       };
 }
 
+/**
+ * Whether to show the line. A warning always shows (it says the page may be stale);
+ * a plain "Saved" is hidden once the form has been edited again.
+ */
+export const statusVisible = (s: SaveStatus, dirty: boolean): boolean =>
+  s.tone === "warn" || !dirty;
+
 export const statusClass = (s: SaveStatus): string =>
   s.tone === "ok" ? "text-emerald-700" : "text-amber-700";

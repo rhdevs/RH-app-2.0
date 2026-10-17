@@ -226,6 +226,11 @@ export const ccaRouter = createTRPCRouter({
    *
    * Entries include heads as well as members (with a `role`), so the export is
    * the whole roster; the members and heads tables map back to it by `rowKey`.
+   *
+   * The entry building lives in services/ccaDirectory.ts (buildDirectoryEntries),
+   * which is shared with ccaPoints.flatExportData (JCRC-only, audited). Sharing
+   * it changed nothing here: this procedure's output and its assertHeadsCca
+   * guard are exactly as before.
    */
   memberDirectory: identifiedProcedure
     .input(z.object({ ccaID: z.number().int().positive() }))

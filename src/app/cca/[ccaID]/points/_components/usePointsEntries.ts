@@ -25,6 +25,20 @@ import { checkMeanSd } from "~/lib/points/meanSd";
 
 const AUTOSAVE_MS = 500;
 
+/**
+ * The edit gate: while entry is closed nothing may change, and the SAME list comes
+ * back so the caller can tell nothing happened. Otherwise only the named row changes.
+ */
+export function applyEntryPatch(
+  entries: readonly PointsEntry[],
+  entryOpen: boolean,
+  rowKey: string,
+  patch: Partial<PointsEntry>,
+): PointsEntry[] {
+  if (!entryOpen) return entries as PointsEntry[];
+  return entries.map((e) => (e.rowKey === rowKey ? { ...e, ...patch } : e));
+}
+
 /** The text in a score box → the stored score: blank → null, junk → NaN. */
 export function parseScoreText(text: string): number | null {
   const t = text.trim();
@@ -186,14 +200,16 @@ export function usePointsEntries(args: {
 
   const update = useCallback(
     (rowKey: string, patch: Partial<PointsEntry>) => {
-      if (!entryOpen) return;
+      const next = applyEntryPatch(
+        entriesRef.current,
+        entryOpen,
+        rowKey,
+        patch,
+      );
+      if (next === entriesRef.current) return;
       touched.current = true;
       dirty.current = true;
-      commit(
-        entriesRef.current.map((e) =>
-          e.rowKey === rowKey ? { ...e, ...patch } : e,
-        ),
-      );
+      commit(next);
     },
     [entryOpen, commit],
   );

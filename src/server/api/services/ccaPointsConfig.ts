@@ -245,6 +245,21 @@ const anyWaiverField: Prisma.CcaPointsConfigWhereInput = {
 };
 
 /**
+ * Two removals that run at once can each null their own half of a row that held
+ * both, leaving a row with every config field blank: neither waiver nor flat, and
+ * nothing would ever clean it up. So each removal ends by deleting the row if it
+ * is now entirely blank. Whichever finishes last finds the empty row and removes it.
+ */
+async function deleteIfBlank(db: PrismaClient, scope: string): Promise<void> {
+  await db.ccaPointsConfig.deleteMany({
+    where: {
+      scope,
+      AND: [...WAIVER_FIELDS, "flatPoints"].map(blank),
+    },
+  });
+}
+
+/**
  * Removes the WAIVER, returning whether there was one. A CCA that is also flat
  * keeps its row (only the waiver fields are cleared); otherwise the row goes.
  */
@@ -267,6 +282,7 @@ export async function removeOverride(
       note: null,
     },
   });
+  await deleteIfBlank(db, scope);
   return cleared.count > 0;
 }
 
@@ -320,5 +336,6 @@ export async function clearFlat(
     where: { scope, ...filled("flatPoints") },
     data: { flatPoints: null },
   });
+  await deleteIfBlank(db, scope);
   return cleared.count > 0;
 }

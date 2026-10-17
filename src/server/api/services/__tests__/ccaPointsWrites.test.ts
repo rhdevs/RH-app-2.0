@@ -7,7 +7,10 @@ import {
   clearFlat,
   flatExportReason,
   removeOverride,
+  resolveRange,
   waiversBrokenByDefault,
+  writeFlat,
+  writeOverride,
   type ConfigRowLike,
 } from "~/server/api/services/ccaPointsConfig";
 
@@ -169,6 +172,21 @@ function fakeDb(
   const calls: string[] = [];
   const db = {
     ccaPointsConfig: {
+      upsert: ({
+        where,
+        create,
+        update,
+      }: {
+        where: { scope: string };
+        create: Row;
+        update: Row;
+      }) => {
+        calls.push("upsert");
+        const row = rows.find((r) => r.scope === where.scope);
+        if (row) Object.assign(row, update);
+        else rows.push({ ...create });
+        return Promise.resolve(row ?? create);
+      },
       deleteMany: ({ where }: { where: Row }) => {
         calls.push("deleteMany");
         hooks.beforeDelete?.(rows);
@@ -266,7 +284,7 @@ describe("clearFlat", () => {
   it("reports false when there is nothing at all", async () => {
     const { db, calls } = fakeDb([]);
     expect(await clearFlat(db, 7)).toBe(false);
-    expect(calls).toEqual(["deleteMany", "updateMany"]);
+    expect(calls).toEqual(["deleteMany", "updateMany", "deleteMany"]);
   });
 
   it("does not wipe a waiver written after the request began", async () => {
@@ -283,5 +301,98 @@ describe("clearFlat", () => {
       note: "late waiver",
       meanMin: 9,
     });
+  });
+});
+
+describe("removing both halves concurrently (F30)", () => {
+  const both = () => [
+    {
+      scope: SCOPE,
+      meanMin: 8,
+      note: "x",
+      flatPoints: 10,
+    },
+  ];
+
+  it("leaves no empty row when the waiver and the flat marking are cleared at once", async () => {
+    const { db, rows } = fakeDb(both());
+    const [waiverCleared, flatCleared] = await Promise.all([
+      removeOverride(db, 7),
+      clearFlat(db, 7),
+    ]);
+    expect(waiverCleared).toBe(true);
+    expect(flatCleared).toBe(true);
+    expect(rows).toEqual([]);
+  });
+
+  it("leaves no empty row in the other order either", async () => {
+    const { db, rows } = fakeDb(both());
+    const [flatCleared, waiverCleared] = await Promise.all([
+      clearFlat(db, 7),
+      removeOverride(db, 7),
+    ]);
+    expect([flatCleared, waiverCleared]).toEqual([true, true]);
+    expect(rows).toEqual([]);
+  });
+
+  it("still keeps a half that nobody removed", async () => {
+    const { db, rows } = fakeDb(both());
+    await removeOverride(db, 7);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ flatPoints: 10, note: null });
+  });
+});
+
+describe("the two halves of a per-CCA row do not overwrite each other (F13)", () => {
+  const NOW = new Date("2027-04-01T00:00:00.000Z");
+
+  it("setFlat on an existing waiver row keeps the waiver fields", async () => {
+    const { db, rows } = fakeDb([
+      { scope: SCOPE, meanMin: 8, meanMax: 15, note: "choir waiver" },
+    ]);
+    await writeFlat(db, 7, 12, "E1", NOW);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      flatPoints: 12,
+      meanMin: 8,
+      meanMax: 15,
+      note: "choir waiver",
+    });
+  });
+
+  it("setOverride on a flat row keeps flatPoints", async () => {
+    const { db, rows } = fakeDb([{ scope: SCOPE, flatPoints: 12 }]);
+    await writeOverride(
+      db,
+      7,
+      { meanMin: 9, meanMax: null, sdMin: null, sdMax: null, note: "why" },
+      "E1",
+      NOW,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ flatPoints: 12, meanMin: 9, note: "why" });
+  });
+
+  it("resolves the range of a row that is both flat and waived from the waiver", () => {
+    const row = {
+      meanMin: 12,
+      meanMax: null,
+      sdMin: null,
+      sdMax: 4,
+      note: "w",
+      flatPoints: 10,
+    };
+    const resolved = resolveRange(
+      { meanMin: 10, meanMax: 14, sdMin: 2, sdMax: 5 },
+      row,
+    );
+    expect(resolved.range).toEqual({
+      meanMin: 12,
+      meanMax: 14,
+      sdMin: 2,
+      sdMax: 4,
+    });
+    expect(resolved.isWaived).toBe(true);
+    expect(resolved.waivedFields).toEqual(["meanMin", "sdMax"]);
   });
 });

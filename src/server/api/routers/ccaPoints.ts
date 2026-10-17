@@ -61,8 +61,10 @@ import { fillRange } from "~/lib/points/meanSd";
  *
  * ONE EXCEPTION IN WHAT IS RETURNED: `flatExportData` returns, to JCRC only (live
  * capability re-check), the rosters of the flat CCAs with matrics and names. That
- * is membership plus JCRC's own flat value, never a leader's score, and every call
- * is audited (`ccaPoints.flat.export`, counts only).
+ * is membership plus JCRC's own flat value, never a leader's score. Every call
+ * writes an audit row (`ccaPoints.flat.export`, counts only) before the payload is
+ * returned; like event.exportAttendees that row is best-effort (writeAudit logs a
+ * failure and never throws), so a failed write is logged and does not block.
  *
  * The five JCRC procedures are `roleManagerProcedure` (admin + jcrc) and
  * ADDITIONALLY assert `manageCcaPointsRanges` against a LIVE role read (I-5), the
@@ -488,8 +490,9 @@ export const ccaPointsRouter = createTRPCRouter({
             ],
       ),
     );
-    // Audited before anything is returned: if the row cannot be written, nothing
-    // leaves the server. The reason holds counts only.
+    // The audit row is written before the payload is returned. It is best-effort,
+    // like event.exportAttendees: writeAudit logs a failure and never throws, so a
+    // failed write is logged, not blocking. The reason holds counts only.
     await audit(ctx.db, {
       actorUserID,
       actorRoles: roles,
