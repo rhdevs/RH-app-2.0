@@ -31,7 +31,6 @@ import {
   type HeadCandidateResult,
 } from "~/lib/schemas/cca";
 import { MATRIC_RE } from "~/lib/schemas/profile";
-import { freezeBeforeHeadChange } from "~/server/api/services/transcript/freeze";
 import { canonicalFromNusnetID, canonicalUserID } from "~/lib/identity";
 
 /**
@@ -813,14 +812,6 @@ export const ccaRouter = createTRPCRouter({
           message: "SUCCESSOR_HAS_NOT_SIGNED_IN",
         });
       }
-
-      // Transcript: a handover that removes a head freezes the member list first.
-      await freezeBeforeHeadChange(ctx.db, {
-        ccaID: input.ccaID,
-        reason: "handover",
-        actorUserID: userID,
-        keepOnly: desired,
-      });
 
       const { granted, revoked, batchId } = await setCcaHeads(
         ctx.db,

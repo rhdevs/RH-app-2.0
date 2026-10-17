@@ -52,7 +52,6 @@ import {
   type GrantableRole,
 } from "../services/roles";
 import { MATRIC_RE } from "~/lib/schemas/profile";
-import { freezeBeforeHeadChange } from "~/server/api/services/transcript/freeze";
 
 /**
  * The admin / role-management router (02-backend-authz.md §§6-8).
@@ -480,7 +479,7 @@ async function resolveCcaHeadTarget(
  * buckets and the confirmation UI that doc 03 owns. Until then this resolver
  * returns UNRESOLVED for them, which is a refusal, not a silent guess.
  */
-export function resolveIdentifier(
+function resolveIdentifier(
   raw: string,
 ): { userID: string; via: "email" | "nusnet" } | null {
   const s = raw.trim();
@@ -2233,14 +2232,6 @@ export const adminRouter = createTRPCRouter({
         input.userID,
       );
 
-      // Transcript: removing a head freezes the member list first.
-      await freezeBeforeHeadChange(ctx.db, {
-        ccaID: input.ccaID,
-        reason: "head_removed",
-        actorUserID,
-        removing: [input.userID],
-      });
-
       const before = await getUserRoles(ctx.db, input.userID);
       const after = await ctx.db.$transaction(async (tx) => {
         await tx.ccaHead.deleteMany({
@@ -2317,14 +2308,6 @@ export const adminRouter = createTRPCRouter({
         actorRoles,
         toUserID,
       );
-
-      // Transcript: the outgoing head is removed, so freeze the member list first.
-      await freezeBeforeHeadChange(ctx.db, {
-        ccaID: input.ccaID,
-        reason: "head_removed",
-        actorUserID,
-        removing: [input.fromUserID],
-      });
 
       const [beforeFrom, beforeTo] = await Promise.all([
         getUserRoles(ctx.db, input.fromUserID),
