@@ -1003,4 +1003,5 @@ Superseded by section 23 (one-step Open transcripts). What remains: the race-fre
 - **CI (F7).** `.github/workflows/transcript-tests.yml` runs `npm ci` and `npm run test` (database-free) on pull requests, read-only permissions, no secrets.
 - **MatricGate (F11).** The dead `/verify` allow-list entry and its comment are removed.
 - **Accepted (documented, not changed).** A head's resident search returns names and NUSNET ids, rate-limited. Deleting a user account that heads a CCA does not affect transcripts: member lists are saved only when transcripts open.
-
+- **Purge order (F42).** A real purge first takes the year out of "published" (back to collecting), so residents never see an open year whose holds and records are already deleted; the period row is deleted last, and a re-run finishes an interrupted purge.
+- **CI node and access table (F7, F8).** The transcript workflow runs on Node 22 (vite 7 needs 20.19 or newer) with `persist-credentials: false`. `procedureAccess.ts` lists every procedure of the `transcript` and `transcriptManage` routers with its access class; the database-free `procedureTable.test.ts` fails if a router procedure is missing from it (or the reverse), and `authorization.int.test.ts` checks the manager-only ones against each kind of caller.

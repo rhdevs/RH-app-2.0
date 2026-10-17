@@ -78,10 +78,12 @@ function delegateOf(db: PrismaClient, name: TranscriptCollection) {
  * every transcript collection. Returns the number per collection.
  *
  * Collection by collection, each `deleteMany` on its own (one transaction over
- * a real year's data would outrun the default 5 second limit). The period row
- * goes LAST, so a run that stops part way still shows the year as present, and
- * running it again finishes the job: a purge is idempotent, and a second run
- * returns zeros.
+ * a real year's data would outrun the default 5 second limit). The FIRST write
+ * takes the year out of "published" (back to collecting), so a run that stops
+ * part way never leaves residents looking at an open year whose holds and
+ * records are already gone. The period row is deleted LAST, and running it
+ * again finishes the job: a purge is idempotent, and a second run returns
+ * zeros.
  */
 export async function purgeAcademicYear(
   db: PrismaClient,
@@ -104,6 +106,10 @@ export async function purgeAcademicYear(
     return counts;
   }
 
+  await db.transcriptPeriod.updateMany({
+    where: { academicYear, status: { not: "collecting" } },
+    data: { status: "collecting" },
+  });
   const order = [
     ...TRANSCRIPT_COLLECTIONS.filter((n) => n !== "TranscriptPeriod"),
     "TranscriptPeriod" as const,

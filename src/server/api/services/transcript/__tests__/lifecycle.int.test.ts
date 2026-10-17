@@ -700,6 +700,82 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ---- (i) retention --------------------------------------------------- */
     describe("purging a year", () => {
+      it("takes the year out of 'published' first, so an interrupted purge never leaves an open year half deleted (F42)", async () => {
+        await db.transcriptPeriod.create({
+          data: {
+            academicYear: OLD,
+            status: "published",
+            publishedBy: JCRC.id,
+          },
+        });
+        await db.residentEvent.createMany({
+          data: [1, 2, 3].map((i) => ({
+            academicYear: OLD,
+            userID: `HALF-${i}`,
+            action: "correction",
+            actor: JCRC.id,
+            at: new Date("2026-06-01T00:00:00Z"),
+          })),
+        });
+        // The purge stops right after its first data collection.
+        let deletes = 0;
+        const flaky = new Proxy(db, {
+          get(target, prop, receiver) {
+            const value: unknown = Reflect.get(target, prop, receiver);
+            if (
+              value &&
+              typeof value === "object" &&
+              "deleteMany" in (value as object)
+            ) {
+              return new Proxy(value as object, {
+                get(m, p) {
+                  if (p === "deleteMany") {
+                    return (...args: unknown[]) => {
+                      deletes += 1;
+                      if (deletes === 2) {
+                        return Promise.reject(new Error("went away"));
+                      }
+                      return (
+                        m as unknown as Record<
+                          string,
+                          (...a: unknown[]) => Promise<unknown>
+                        >
+                      ).deleteMany!(...args);
+                    };
+                  }
+                  const v: unknown = Reflect.get(m, p, m);
+                  return typeof v === "function"
+                    ? (v as (...a: unknown[]) => unknown).bind(m)
+                    : v;
+                },
+              });
+            }
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+
+        await expect(retention.purgeAcademicYear(flaky, OLD)).rejects.toThrow(
+          "went away",
+        );
+
+        const half = await db.transcriptPeriod.findFirstOrThrow({
+          where: { academicYear: OLD },
+        });
+        expect(half.status).toBe("collecting");
+        expect(await as(R12).transcript.mine.years()).not.toContain(OLD);
+
+        // Run it again: it finishes, and nothing of that year is left.
+        await retention.purgeAcademicYear(db, OLD);
+        expect(
+          await db.transcriptPeriod.count({ where: { academicYear: OLD } }),
+        ).toBe(0);
+        expect(
+          await db.residentEvent.count({ where: { academicYear: OLD } }),
+        ).toBe(0);
+      }, 120_000);
+
       it("purges a few thousand rows of one year, leaves other years alone, and is safe to run again (F24)", async () => {
         const at = new Date("2026-06-01T00:00:00Z");
         const rows = (academicYear: string, n: number) =>

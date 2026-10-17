@@ -2,16 +2,17 @@ import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { proceduresOf } from "./procedureAccess";
 
 /**
  * AUTHORIZATION, procedure by procedure, against the LOCAL development database
  * (skipped unless DATABASE_URL is localhost and the database is
  * `rhapp_transcript_dev`; run with `npm run test:db`).
  *
- * The list of procedures is read from the router itself and compared with the
- * table below, so a new procedure under transcript.periods, transcript.freezes
- * or transcriptManage.corrections fails this test until it is added to the
- * table (and so is checked against every kind of caller).
+ * The procedures come from procedureAccess.ts, which procedureTable.test.ts
+ * (database-free, run by CI) keeps equal to the routers: a new procedure fails
+ * that test until it has a class, and then is checked here against every kind
+ * of caller.
  */
 
 const REQUIRED_DB = "rhapp_transcript_dev";
@@ -42,37 +43,11 @@ const SOCCER_HEAD = R(4, ["cca_head", "resident"]);
 const R12 = R(12, ["resident"]);
 const R20 = R(20, ["resident"]);
 
-/** Every procedure that must be manager-only, by its full path. */
-const MANAGER_ONLY = [
-  "transcript.periods.list",
-  "transcript.periods.setDownloadBy",
-  "transcript.periods.open",
-  "transcript.freezes.list",
-  "transcriptManage.corrections.panel",
-  "transcriptManage.corrections.unlock",
-  "transcriptManage.corrections.relock",
-  "transcriptManage.corrections.withhold",
-  "transcriptManage.corrections.release",
-  "transcriptManage.corrections.history",
-  "transcriptManage.corrections.memberships.list",
-  "transcriptManage.corrections.memberships.saveManual",
-  "transcriptManage.corrections.memberships.removeManual",
-  "transcriptManage.corrections.memberships.restoreManual",
-  "transcriptManage.corrections.participation.list",
-  "transcriptManage.corrections.participation.options",
-  "transcriptManage.corrections.participation.set",
-  "transcriptManage.corrections.participation.remove",
-  "transcriptManage.corrections.volunteer",
-  "transcriptManage.corrections.awards",
-  "transcriptManage.corrections.jcrc.get",
-  "transcriptManage.corrections.jcrc.remove",
-  "transcriptManage.corrections.jcrc.restore",
-] as const;
-
-const PREFIXES = [
-  "transcript.periods.",
-  "transcript.freezes.",
-  "transcriptManage.corrections.",
+/** Every procedure of each access class, from the shared table. */
+const MANAGER_ONLY = proceduresOf("manager-only");
+const SIGNED_IN_ONLY = [
+  ...proceduresOf("resident-self"),
+  ...proceduresOf("head-or-manager"),
 ];
 
 describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
@@ -147,21 +122,6 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     }, 120_000);
 
     /* ---------------------------------------------------------------- */
-    describe("the table matches the router", () => {
-      it("lists every procedure under the three routers, no more and no fewer", async () => {
-        const { appRouter } = await import("~/server/api/root");
-        const actual = Object.keys(
-          (appRouter as unknown as { _def: { procedures: object } })._def
-            .procedures,
-        )
-          .filter((path) => PREFIXES.some((p) => path.startsWith(p)))
-          .sort();
-
-        expect(actual).toEqual([...MANAGER_ONLY].sort());
-      });
-    });
-
-    /* ---------------------------------------------------------------- */
     describe("every procedure refuses everyone who is not a manager", () => {
       const personas: Array<
         [string, { id: string; roles: string[] } | null, string]
@@ -206,6 +166,31 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await db.transcriptPeriod.findMany()).toEqual(before.periods);
         expect(await db.residentUnlock.count()).toBe(before.unlocks);
         expect(await db.residentEvent.count()).toBe(before.events);
+      });
+
+      it("turns a signed-out visitor away from every other procedure too", async () => {
+        for (const path of SIGNED_IN_ONLY) {
+          const result = await errorOf(call(as(null), path));
+          expect(result.startsWith("UNAUTHORIZED:"), `${path}: ${result}`).toBe(
+            true,
+          );
+        }
+      });
+
+      it("lets a manager preview a resident's transcript, and refuses a head", async () => {
+        const input = { userID: R12.id, academicYear: AY };
+
+        expect(await errorOf(as(JCRC).transcript.preview(input))).toBe("ok");
+        expect(
+          (await errorOf(as(SOCCER_HEAD).transcript.preview(input))).startsWith(
+            "FORBIDDEN:",
+          ),
+        ).toBe(true);
+        expect(
+          (await errorOf(as(R12).transcript.preview(input))).startsWith(
+            "FORBIDDEN:",
+          ),
+        ).toBe(true);
       });
 
       it("lets a real manager past the gate (the input is what refuses then)", async () => {
