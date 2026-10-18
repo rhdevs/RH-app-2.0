@@ -381,6 +381,26 @@ async function assertRoleFitsMembership(
 type RosterChanges = Partial<RosterAnnotation>;
 
 /**
+ * A role period is stored only beside a role: when the role the entry will
+ * have after this change is blank, its role period is stored as null. The role
+ * is the one the transcript would show: a current head's blank role is the
+ * "Head" default, so their role period stays; in an open year, the locked
+ * entry's own role.
+ */
+function withoutOrphanRolePeriod(
+  target: { frozen: boolean; isHead: boolean },
+  current: RosterAnnotation | null,
+  changes: RosterChanges,
+): RosterChanges {
+  const base = target.frozen ? current : savedChoices(current);
+  const merged = { ...base, ...changes };
+  const role = target.frozen
+    ? blankToNull(merged.roleLabel)
+    : resolveEntry(merged, { isHead: target.isHead }).roleLabel;
+  return role ? changes : { ...changes, roleDuration: null };
+}
+
+/**
  * What a save writes into an existing entry. In an open year (a correction)
  * the locked entry's own fields are changed. While collecting, an entry an Open
  * run has already locked keeps holding RESOLVED values, with the head's real
@@ -485,6 +505,7 @@ export async function rosterUpsert(
         extraContribution: true,
       },
     });
+    const saved = withoutOrphanRolePeriod(target, current, changes);
     const row = await tx.transcriptRosterEntry.upsert({
       where: {
         academicYear_userID_ccaID: {
@@ -498,10 +519,10 @@ export async function rosterUpsert(
         userID: target.key,
         ccaID: input.ccaID,
         frozen: false,
-        ...changes,
+        ...saved,
         ...stamp,
       },
-      update: { ...collectingUpdate(target, current, changes), ...stamp },
+      update: { ...collectingUpdate(target, current, saved), ...stamp },
     });
     if (logged) {
       const cca = await tx.cCA.findUnique({

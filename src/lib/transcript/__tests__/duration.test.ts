@@ -188,7 +188,16 @@ describe("hasSavedRoleOrPeriod: what keeps a leaver on the year's list", () => {
   it("counts a saved role, or a saved Semester 1 or 2", () => {
     expect(hasSavedRoleOrPeriod({ roleLabel: "Head" })).toBe(true);
     expect(hasSavedRoleOrPeriod({ duration: "sem2" })).toBe(true);
-    expect(hasSavedRoleOrPeriod({ roleDuration: "sem1" })).toBe(true);
+    expect(
+      hasSavedRoleOrPeriod({ roleLabel: "Captain", roleDuration: "sem1" }),
+    ).toBe(true);
+  });
+
+  it("never counts a role period saved without a role", () => {
+    expect(hasSavedRoleOrPeriod({ roleDuration: "sem1" })).toBe(false);
+    expect(
+      hasSavedRoleOrPeriod({ roleLabel: "  ", roleDuration: "sem2" }),
+    ).toBe(false);
   });
 
   it("never counts the full-year default, a blank role, an extra alone, or nothing", () => {

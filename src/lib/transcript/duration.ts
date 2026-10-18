@@ -82,8 +82,8 @@ export function savedChoices(
 const isPartYear = (value: unknown) => value === "sem1" || value === "sem2";
 
 /**
- * A DELIBERATE saved entry: a role, or a Semester 1 / Semester 2 membership or
- * role period, chosen and saved by a head or manager (never a lock's filled-in
+ * A DELIBERATE saved entry: a role, or a Semester 1 / Semester 2 membership
+ * period (a role period counts only beside a saved role), chosen and saved by a head or manager (never a lock's filled-in
  * default; read through `savedChoices`). "Full year" is the default, which the
  * screens save as nothing, so it never counts. While the year is collecting,
  * such an entry keeps its person in the CCA's list for the year even after
@@ -95,10 +95,12 @@ export function hasSavedRoleOrPeriod(
   choices: Partial<RosterAnnotation> | null | undefined,
 ): boolean {
   if (!choices) return false;
+  const hasRole = Boolean(choices.roleLabel?.trim());
+  // A role period only means something with a role beside it.
   return (
-    Boolean(choices.roleLabel?.trim()) ||
+    hasRole ||
     isPartYear(choices.duration) ||
-    isPartYear(choices.roleDuration)
+    (hasRole && isPartYear(choices.roleDuration))
   );
 }
 

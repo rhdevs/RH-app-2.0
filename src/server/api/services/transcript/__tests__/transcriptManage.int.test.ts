@@ -742,14 +742,47 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         row = (await rosterOf(SOCCER_HEAD, SOCCER)).find(
           (r) => r.userID === R12.id,
         )!;
+        // No role left, so its role period is not kept either (R3).
         expect(row).toMatchObject({
           duration: "sem2",
           roleLabel: null,
-          roleDuration: "sem2",
+          roleDuration: null,
           extraContribution: null,
         });
         expect(row.effective.duration).toBe("sem2");
         expect(row.effective.roleLabel).toBeNull();
+      });
+
+      it("stores no role period without a role, except a current head's under the Head default (R3)", async () => {
+        const soccer = as(SOCCER_HEAD).transcriptManage;
+        const stored = (userID: string) =>
+          db.transcriptRosterEntry.findFirstOrThrow({
+            where: { academicYear: AY, ccaID: SOCCER, userID },
+          });
+        // A plain member: a role period alone is dropped.
+        await soccer.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: R12.id,
+          roleLabel: null,
+          roleDuration: "sem1",
+        });
+        expect(await stored(R12.id)).toMatchObject({
+          roleLabel: null,
+          roleDuration: null,
+        });
+        // The head: no saved role, but "Head" by default, so it is kept.
+        await soccer.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          roleLabel: null,
+          roleDuration: "sem1",
+        });
+        expect(await stored(SOCCER_HEAD.id)).toMatchObject({
+          roleLabel: null,
+          roleDuration: "sem1",
+        });
       });
 
       it("refuses a role period that sticks out of the membership period", async () => {
