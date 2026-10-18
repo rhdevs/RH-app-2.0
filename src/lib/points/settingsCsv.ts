@@ -1,3 +1,4 @@
+import { csvCell } from "~/lib/points/csvCell";
 import { SETTINGS_FORMAT_VERSION } from "~/lib/points/constants";
 import type { Range } from "~/lib/points/constants";
 import { fillRange } from "~/lib/points/meanSd";
@@ -26,12 +27,6 @@ export const SETTINGS_EXPORT_HEADER = [
 ] as const;
 
 const CRLF = "\r\n";
-
-/** One RFC 4180 cell; `guard` neutralises a leading = + - @ tab or CR (same as exportCsv.ts). */
-function cell(value: string, guard: boolean): string {
-  const safe = guard && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
 
 export type SettingsWaiver = {
   ccaID: number;
@@ -73,9 +68,9 @@ export function buildSettingsCsv(args: {
         version,
         "waiver",
         String(w.ccaID),
-        cell(w.ccaName, true),
+        csvCell(w.ccaName, true),
         ...rangeCells(fillRange(w, args.defaultRange)),
-        cell(w.note ?? "", true),
+        csvCell(w.note ?? "", true),
         stamp,
       ].join(","),
     );

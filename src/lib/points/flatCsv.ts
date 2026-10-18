@@ -1,3 +1,4 @@
+import { csvCell } from "~/lib/points/csvCell";
 import { FLAT_FORMAT_VERSION } from "~/lib/points/constants";
 import { formatFlatPoints } from "~/lib/points/flat";
 import { isValidMatric } from "~/lib/points/entries";
@@ -19,12 +20,6 @@ export const FLAT_EXPORT_HEADER = [
 ] as const;
 
 const CRLF = "\r\n";
-
-/** One RFC 4180 cell; `guard` neutralises a leading = + - @ tab or CR (same as exportCsv.ts). */
-function cell(value: string, guard: boolean): string {
-  const safe = guard && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
 
 export type FlatCcaMember = { matric: string; name: string };
 
@@ -48,9 +43,9 @@ export function buildFlatPointsCsv(args: {
       return [
         String(FLAT_FORMAT_VERSION),
         String(cca.ccaID),
-        cell(cca.ccaName, true),
+        csvCell(cca.ccaName, true),
         m.matric.toUpperCase(),
-        cell(m.name, true),
+        csvCell(m.name, true),
         formatFlatPoints(cca.flatPoints),
         stamp,
       ].join(",");

@@ -1,3 +1,4 @@
+import { csvCell } from "~/lib/points/csvCell";
 import { EXPORT_FORMAT_VERSION } from "~/lib/points/constants";
 import { isValidMatric, type PointsEntry } from "~/lib/points/entries";
 
@@ -21,17 +22,6 @@ export const EXPORT_HEADER = [
 ] as const;
 
 const CRLF = "\r\n";
-
-/**
- * One RFC 4180 cell. With `guard`, a leading = + - @ tab or carriage return gets an apostrophe
- * first (neutralise, THEN quote — the order matters, see serializeCsv's csvField
- * in src/app/events/_lib/format.ts), so a name that starts with a formula
- * character cannot execute when the file is opened in Excel.
- */
-function cell(value: string, guard: boolean): string {
-  const safe = guard && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
 
 /** Only ccaName and name are free text; every other column is a controlled value. */
 function row(
@@ -57,17 +47,17 @@ function row(
     throw new Error("Cannot export: a member has no score.");
   }
   return [
-    cell(String(EXPORT_FORMAT_VERSION), false),
-    cell(String(ccaID), false),
-    cell(ccaName, true),
-    cell(entry.matric.toUpperCase(), false),
-    cell(entry.name ?? "", true),
-    cell(String(entry.basePoints), false),
+    csvCell(String(EXPORT_FORMAT_VERSION), false),
+    csvCell(String(ccaID), false),
+    csvCell(ccaName, true),
+    csvCell(entry.matric.toUpperCase(), false),
+    csvCell(entry.name ?? "", true),
+    csvCell(String(entry.basePoints), false),
     entry.semesterOnly ? "Y" : "N",
     entry.outgoingRole,
     entry.incomingRole,
     entry.ihg ? "Y" : "N",
-    cell(exportedAt, false),
+    csvCell(exportedAt, false),
   ].join(",");
 }
 
