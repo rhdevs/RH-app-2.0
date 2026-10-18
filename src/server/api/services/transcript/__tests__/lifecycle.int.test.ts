@@ -525,6 +525,84 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe(1);
       });
 
+      it("a head's save to a CCA this Open run already locked keeps the resolved defaults, so the published row says Head (R1)", async () => {
+        // The head has saved nothing for themself: "Head" is only the default.
+        await db.transcriptRosterEntry.deleteMany({
+          where: { academicYear: AY, ccaID: SOCCER, userID: SOCCER_HEAD.id },
+        });
+        await freeze.freezeCca(db, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          actorUserID: JCRC.id,
+          now: APR_2027,
+        });
+        // Still collecting: the head adds their Additional Contributions.
+        await as(SOCCER_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          extraContribution: "Booked the pitches all year.",
+        });
+        const entry = () =>
+          db.transcriptRosterEntry.findFirstOrThrow({
+            where: { academicYear: AY, ccaID: SOCCER, userID: SOCCER_HEAD.id },
+          });
+        // Still locked, with resolved values; the real choices kept aside.
+        expect(await entry()).toMatchObject({
+          frozen: true,
+          roleLabel: "Head",
+          roleDuration: "full",
+          duration: "full",
+          extraContribution: "Booked the pitches all year.",
+          preFreeze: {
+            roleLabel: null,
+            roleDuration: null,
+            duration: null,
+            extraContribution: "Booked the pitches all year.",
+          },
+        });
+        // The head's screen shows the saved choices, not the filled-in Head.
+        const screen = await as(SOCCER_HEAD).transcriptManage.roster.list({
+          ccaID: SOCCER,
+          academicYear: AY,
+        });
+        expect(
+          screen.rows.find((r) => r.userID === SOCCER_HEAD.id),
+        ).toMatchObject({
+          roleLabel: null,
+          extraContribution: "Booked the pitches all year.",
+        });
+
+        // A later rerun of the lock still starts from the head's real choices.
+        await freeze.freezeCca(db, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          actorUserID: JCRC.id,
+          now: APR_2027,
+        });
+        expect((await entry()).preFreeze).toMatchObject({
+          roleLabel: null,
+          extraContribution: "Booked the pitches all year.",
+        });
+
+        // The run then claims the year without locking Soccer again.
+        await db.transcriptPeriod.upsert({
+          where: { academicYear: AY },
+          create: { academicYear: AY, status: "published" },
+          update: { status: "published" },
+        });
+        const r = await as(JCRC).transcript.preview({
+          userID: SOCCER_HEAD.id,
+          academicYear: AY,
+        });
+        const soccer = r.transcript.pages
+          .flatMap((p) => (p.kind === "main" ? p.sections : []))
+          .flatMap((s) => (s.kind === "involvements" ? s.rows : []))
+          .find((row) => row.ccaName === "Soccer (MALE)");
+        expect(soccer?.role).toBe("Head");
+        expect(soccer?.extraContribution).toBe("Booked the pitches all year.");
+      });
+
       it("reports members the roster could not match", async () => {
         await db.userCCA.create({ data: { userID: GHOST, ccaID: SOCCER } });
         try {

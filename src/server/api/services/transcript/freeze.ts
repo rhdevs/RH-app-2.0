@@ -1,6 +1,10 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
-import { resolveEntry, savedChoices } from "~/lib/transcript/duration";
+import {
+  resolveEntry,
+  savedChoices,
+  type RosterAnnotation,
+} from "~/lib/transcript/duration";
 import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import {
   FREEZE_STATE_LABEL,
@@ -192,15 +196,8 @@ async function freezeOnce(
           const own = storedBy.get(m.key) ?? null;
           // The head's own choices: kept aside by an earlier lock, else the
           // entry's fields. A default an earlier lock filled in is never one.
-          const choices = savedChoices(own);
-          const r = resolveEntry(choices, { isHead: m.isHead });
           const data = {
-            duration: r.duration,
-            roleLabel: r.roleLabel,
-            roleDuration: r.roleDuration,
-            extraContribution: r.extraContribution,
-            frozen: true,
-            preFreeze: choices ?? EMPTY_CHOICES,
+            ...lockedFields(savedChoices(own), { isHead: m.isHead }),
             updatedBy: input.actorUserID,
             updatedAt: now,
           };
@@ -278,6 +275,29 @@ const EMPTY_CHOICES = {
   roleDuration: null,
   extraContribution: null,
 };
+
+/**
+ * What a LOCKED entry holds: the head's saved choices resolved exactly as the
+ * head's screen shows them (defaults filled in, the role inside the
+ * membership), with the choices themselves kept aside in `preFreeze`. The one
+ * place this is worked out, for the lock and for a save to an entry an Open
+ * run has already locked, so a locked entry always holds RESOLVED values and
+ * its `preFreeze` the head's real choices.
+ */
+export function lockedFields(
+  choices: RosterAnnotation | null,
+  live: { isHead: boolean },
+) {
+  const r = resolveEntry(choices, live);
+  return {
+    duration: r.duration,
+    roleLabel: r.roleLabel,
+    roleDuration: r.roleDuration,
+    extraContribution: r.extraContribution,
+    frozen: true,
+    preFreeze: choices ?? EMPTY_CHOICES,
+  };
+}
 
 /* ---- what the admin table shows --------------------------------------------- */
 

@@ -29,6 +29,7 @@ import {
   assertStillCollecting,
   logCorrections,
 } from "./residentRecords";
+import { lockedFields } from "./freeze";
 import { getPeriod } from "./periods";
 import { actorLabels } from "./residents";
 
@@ -301,7 +302,7 @@ type UpsertInput = z.infer<typeof rosterUpsertInput>;
 async function findTarget(
   db: PrismaClient,
   input: UpsertInput,
-): Promise<{ key: string; keys: string[]; frozen: boolean }> {
+): Promise<{ key: string; keys: string[]; frozen: boolean; isHead: boolean }> {
   const notAMember = new TRPCError({
     code: "BAD_REQUEST",
     message: "NOT_A_MEMBER",
@@ -317,12 +318,23 @@ async function findTarget(
       },
     });
     if (!entry) throw notAMember;
-    return { key: entry.userID, keys: [entry.userID], frozen: true };
+    return {
+      key: entry.userID,
+      keys: [entry.userID],
+      frozen: true,
+      isHead: false,
+    };
   }
   const { members } = await yearMembers(db, input.ccaID, input.academicYear);
   const member = members.find((m) => m.keys.includes(input.userID));
   if (!member) throw notAMember;
-  return { key: member.key, keys: member.keys, frozen: false };
+  // The same live-head input the lock resolves this member with.
+  return {
+    key: member.key,
+    keys: member.keys,
+    frozen: false,
+    isHead: member.isHead,
+  };
 }
 
 /**
@@ -366,6 +378,42 @@ async function assertRoleFitsMembership(
   }
 }
 
+type RosterChanges = Partial<RosterAnnotation>;
+
+/**
+ * What a save writes into an existing entry. In an open year (a correction)
+ * the locked entry's own fields are changed. While collecting, an entry an Open
+ * run has already locked keeps holding RESOLVED values, with the head's real
+ * choices (this change on top) kept aside in `preFreeze`, so the year can be
+ * opened from it as it is; an entry an earlier, part-way lock wrote into but no
+ * longer holds goes back to the saved choices, with this change on top. Either
+ * way a default a lock filled in never turns into a choice.
+ */
+function collectingUpdate(
+  target: { frozen: boolean; isHead: boolean },
+  current:
+    | (RosterAnnotation & {
+        frozen: boolean | null;
+        preFreeze: RosterAnnotation | null;
+      })
+    | null,
+  changes: RosterChanges,
+) {
+  if (target.frozen || !current) return changes;
+  if (current.frozen === true) {
+    const merged = { ...savedChoices(current)!, ...changes };
+    return lockedFields(merged, { isHead: target.isHead });
+  }
+  if (current.preFreeze) {
+    return {
+      ...savedChoices(current),
+      ...changes,
+      preFreeze: { unset: true },
+    };
+  }
+  return changes;
+}
+
 /**
  * Set or clear one member's overrides. The edit guard applies (a published year
  * only for a manager correcting an unlocked resident) and the user
@@ -399,31 +447,8 @@ export async function rosterUpsert(
     ...(input.extraContribution !== undefined && {
       extraContribution: input.extraContribution,
     }),
-    updatedBy: actorUserID,
-    updatedAt: now,
   };
-  // While collecting, an entry an earlier, part-way Open wrote resolved values
-  // into goes back to the head's saved choices, with this change on top, so a
-  // default that lock filled in never turns into a choice.
-  const kept = target.frozen
-    ? null
-    : await db.transcriptRosterEntry.findUnique({
-        where: {
-          academicYear_userID_ccaID: {
-            academicYear: input.academicYear,
-            userID: target.key,
-            ccaID: input.ccaID,
-          },
-        },
-        select: { preFreeze: true },
-      });
-  const update = kept?.preFreeze
-    ? {
-        ...savedChoices({ preFreeze: kept.preFreeze }),
-        ...changes,
-        preFreeze: { unset: true },
-      }
-    : changes;
+  const stamp = { updatedBy: actorUserID, updatedAt: now };
 
   // Before the write, so the history can say what really changed.
   // Logged when it is a correction, or the actor's change to their own entry.
@@ -442,6 +467,24 @@ export async function rosterUpsert(
 
   const row = await db.$transaction(async (tx) => {
     await assertStillCollecting(tx, input.academicYear, guard);
+    // Read in the transaction, so a lock written since the checks above is seen.
+    const current = await tx.transcriptRosterEntry.findUnique({
+      where: {
+        academicYear_userID_ccaID: {
+          academicYear: input.academicYear,
+          userID: target.key,
+          ccaID: input.ccaID,
+        },
+      },
+      select: {
+        frozen: true,
+        preFreeze: true,
+        duration: true,
+        roleLabel: true,
+        roleDuration: true,
+        extraContribution: true,
+      },
+    });
     const row = await tx.transcriptRosterEntry.upsert({
       where: {
         academicYear_userID_ccaID: {
@@ -456,8 +499,9 @@ export async function rosterUpsert(
         ccaID: input.ccaID,
         frozen: false,
         ...changes,
+        ...stamp,
       },
-      update,
+      update: { ...collectingUpdate(target, current, changes), ...stamp },
     });
     if (logged) {
       const cca = await tx.cCA.findUnique({
