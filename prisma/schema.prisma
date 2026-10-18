@@ -650,6 +650,49 @@ model CcaProfile {
   isVolunteering Boolean?
 }
 
+/// JCRC's configuration for CCA points entry (/admin/points). CONFIG ONLY: the
+/// allowed mean/SD ranges and the hall-wide open/close switch. It NEVER holds a
+/// score, a matric or any resident data — leaders enter points in their own
+/// browser and export a CSV; nothing about the points themselves is stored or
+/// sent here.
+///
+/// A separate collection, for the same reason as CcaProfile: `CCA` carries a
+/// DB-level $jsonSchema validator, so a write adding `meanMin` etc. to it would
+/// be silently rejected (writeErrors[0].code 121, with `ok: 1`). DO NOT move
+/// these fields onto CCA / User / UserCCA.
+///
+/// Row shapes, keyed by `scope`:
+///   "default"        hall-wide ranges, plus `entryOpen` (the switch; ONLY used
+///                    on this row — an absent row or a null `entryOpen` reads as
+///                    CLOSED).
+///   "cca:<ccaID>"    a per-CCA waiver (`ccaID` is set). A null range field
+///                    means "use the default for that field", independently.
+///
+/// I-2: every scalar is NULLABLE, so a row written by another process without a
+/// field cannot break deserialisation for later readers.
+///
+/// THE UNIQUE INDEX ON `scope` DOES NOT EXIST UNTIL
+/// scripts/remediation/create-cca-points-config.mjs RUNS. A Prisma @unique on
+/// Mongo is a client-side type assertion only. Do NOT `prisma db push` to get it
+/// — it drops User.email_unique_ci (see the User model).
+model CcaPointsConfig {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  scope     String?   @unique(map: "scope_unique")
+  ccaID     Int?
+  meanMin   Float?
+  meanMax   Float?
+  sdMin     Float?
+  sdMax     Float?
+  entryOpen Boolean?
+  /// Why a waiver exists (required by the setOverride procedure, nullable here).
+  note      String?
+  /// Per-CCA rows only: the CCA is a FLAT-points CCA and every member receives this
+  /// many points for it (null = not flat). Set by JCRC; the sandbox applies the maths.
+  flatPoints Float?
+  updatedAt DateTime?
+  updatedBy String?
+}
+
 /// A resident's application to JOIN a CCA. New, unvalidated collection — the
 /// SAME reasoning as CcaProfile/UserRole/UserMatric: application state cannot
 /// live on the $jsonSchema-guarded `UserCCA` (which declares only {ccaID,

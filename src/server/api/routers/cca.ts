@@ -13,6 +13,7 @@ import {
   assertMayViewCcaRoster,
 } from "~/server/api/services/ccaScope";
 import { assertScrcEnabled } from "~/server/api/services/scrcFlag";
+import { buildDirectoryEntries } from "~/server/api/services/ccaDirectory";
 import {
   redactRosterForReadOnly,
   resolveRoster,
@@ -225,6 +226,11 @@ export const ccaRouter = createTRPCRouter({
    *
    * Entries include heads as well as members (with a `role`), so the export is
    * the whole roster; the members and heads tables map back to it by `rowKey`.
+   *
+   * The entry building lives in services/ccaDirectory.ts (buildDirectoryEntries),
+   * which is shared with ccaPoints.flatExportData (JCRC-only, audited). Sharing
+   * it changed nothing here: this procedure's output and its assertHeadsCca
+   * guard are exactly as before.
    */
   memberDirectory: identifiedProcedure
     .input(z.object({ ccaID: z.number().int().positive() }))
@@ -237,99 +243,8 @@ export const ccaRouter = createTRPCRouter({
         input.ccaID,
       );
 
-      const roster = await resolveRoster(ctx.db, input.ccaID);
-      const entries = [...roster.heads, ...roster.members];
-
-      const userIds: string[] = [];
-      const matricKeys = new Set<string>();
-      for (const e of entries) {
-        if (e.kind !== "resolved") continue;
-        userIds.push(e.userId);
-        for (const k of e.membershipKeys) matricKeys.add(k);
-        if (e.storedUserID) matricKeys.add(e.storedUserID);
-        const cid = canonicalUserID(e.email);
-        if (cid) matricKeys.add(cid);
-      }
-
-      const [profiles, matrics] = await Promise.all([
-        userIds.length === 0
-          ? Promise.resolve(
-              [] as {
-                id: string;
-                telegramHandle: string | null;
-                block: number | null;
-                bio: string | null;
-              }[],
-            )
-          : ctx.db.user.findMany({
-              where: { id: { in: userIds } },
-              select: {
-                id: true,
-                telegramHandle: true,
-                block: true,
-                bio: true,
-              },
-            }),
-        matricKeys.size === 0
-          ? Promise.resolve([] as { userID: string; matric: string }[])
-          : ctx.db.userMatric.findMany({
-              where: { userID: { in: [...matricKeys] } },
-              select: { userID: true, matric: true },
-            }),
-      ]);
-
-      const profileById = new Map(profiles.map((p) => [p.id, p]));
-      const matricByKey = new Map(matrics.map((m) => [m.userID, m.matric]));
-
-      const directory = entries.map((e) => {
-        const role: "Head" | "Member" = e.isHead ? "Head" : "Member";
-        if (e.kind !== "resolved") {
-          return {
-            rowKey: `k:${e.key}`,
-            resolved: false,
-            role,
-            name: null,
-            email: null,
-            userID: e.key,
-            matric: null,
-            block: null,
-            telegramHandle: null,
-            bio: null,
-            membershipRecords: e.userCcaRowCount,
-            joinedAt: e.grantedAt ? e.grantedAt.toISOString() : null,
-            note:
-              e.reason === "AMBIGUOUS_KEY"
-                ? "Ambiguous record — more than one account claims this membership."
-                : "Unmatched record — no account matches this membership key.",
-          };
-        }
-        const prof = profileById.get(e.userId);
-        let matric: string | null = null;
-        const cid = canonicalUserID(e.email);
-        for (const k of [...e.membershipKeys, e.storedUserID, cid]) {
-          if (k && matricByKey.has(k)) {
-            matric = matricByKey.get(k) ?? null;
-            if (matric) break;
-          }
-        }
-        return {
-          rowKey: `u:${e.userId}`,
-          resolved: true,
-          role,
-          name: e.displayName,
-          email: e.email,
-          userID: e.storedUserID,
-          matric,
-          block: prof?.block ?? null,
-          telegramHandle: prof?.telegramHandle ?? null,
-          bio: prof?.bio ?? null,
-          membershipRecords: e.userCcaRowCount,
-          joinedAt: e.grantedAt ? e.grantedAt.toISOString() : null,
-          note: null,
-        };
-      });
-
-      return { cca: roster.cca, via: scope.via, entries: directory };
+      const { cca, entries } = await buildDirectoryEntries(ctx.db, input.ccaID);
+      return { cca, via: scope.via, entries };
     }),
 
   /**
