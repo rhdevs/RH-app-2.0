@@ -8,7 +8,6 @@ import {
   type OpenBlocker,
 } from "~/lib/transcript/lifecycle";
 import { freezeCca } from "./freeze";
-import { NOT_UNFROZEN } from "./loader";
 
 /**
  * THE ACADEMIC YEAR, ONE STEP: collecting -> published ("Open"), driven only by
@@ -185,7 +184,7 @@ export async function openTranscripts(
 
   // Lock every CCA. Run twice: the second pass, right before the year is
   // claimed, catches a CCA created while the first pass was running.
-  for (const _pass of [1, 2]) {
+  for (let pass = 0; pass < 2; pass += 1) {
     const ccas = await db.cCA.findMany({
       select: { ccaID: true, ccaName: true },
     });
