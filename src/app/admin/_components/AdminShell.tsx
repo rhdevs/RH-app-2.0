@@ -12,6 +12,7 @@ import {
   Settings2,
   CalendarCheck,
   KeyRound,
+  SlidersHorizontal,
 } from "lucide-react";
 
 import Header from "~/app/_components/header";
@@ -61,6 +62,14 @@ const ADMIN_TABS = [
     label: "Events",
     icon: CalendarCheck,
     requires: "reviewEvents",
+  },
+  // JCRC's CCA points-entry config: the open/closed switch, the default and
+  // per-CCA mean/SD ranges. Config only — no points pass through it.
+  {
+    href: "/admin/points",
+    label: "Points",
+    icon: SlidersHorizontal,
+    requires: "manageCcaPointsRanges",
   },
   {
     href: "/admin/facilities",
