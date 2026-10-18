@@ -205,9 +205,13 @@ export async function keysOf(
  * Up to 10 residents whose name, email or matric contains `query`. The caller
  * has already been checked and the query bounded to 3+ characters.
  *
- * `nameOnly` (a head of a volunteering CCA, who is not a manager) matches the
- * display name alone. Matching on email or matric would let repeated queries
- * confirm a masked matric one character at a time.
+ * `nameOnly` is for ANY CCA head who is not a manager (not only the head of a
+ * volunteering CCA): heads may search the whole hall, to add anyone to an
+ * activity or to volunteer hours. It matches the display name alone. Matching
+ * on email or matric would let repeated queries confirm a masked matric one
+ * character at a time. The hits still carry each resident's key (`userID`, a
+ * NUSNET id), which the head's next call needs; this is accepted and
+ * documented, and the search is rate-limited.
  */
 export async function searchResidents(
   db: PrismaClient,
