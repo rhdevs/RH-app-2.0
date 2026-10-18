@@ -272,6 +272,15 @@ export const AUDIT_ACTIONS = [
   // the flat CCAs' rosters with matrics, like event.attendees.export). `reason`
   // carries counts only ("3 CCA(s), 41 member(s)"), never a matric or a name.
   "ccaPoints.flat.export",
+  // Per-CCA type, IHG and sport config (the same page). Config only: `reason`
+  // carries the value ("type 0.5x", "IHG 1st; cap 12", "sport yes"), never a
+  // member, and the first three stamp `targetCcaID`. `ccaPoints.year.start` is
+  // the yearly reset (IHG results cleared, entry closed): `rolesAfter:
+  // ["closed"]` and a count in `reason`.
+  "ccaPoints.type.set",
+  "ccaPoints.ihg.set",
+  "ccaPoints.sport.set",
+  "ccaPoints.year.start",
   // Events feature. THE RULE, applied without exception: STATE-MACHINE
   // TRANSITIONS ARE AUDITED, FIELD SAVES ARE NOT. `event.create` and
   // `event.update` therefore write nothing — `update` fires on every save, and a
@@ -1283,7 +1292,9 @@ export type Capabilities = {
   /**
    * May configure CCA points entry (/admin/points): the hall-wide open/closed
    * switch, the default allowed mean/SD ranges, per-CCA waivers and flat-points
-   * CCAs. Nothing reachable through it carries leader-entered points. The one
+   * CCAs, each CCA's type, sport tick and IHG result and cap (setType, setSport,
+   * setIhg), and the yearly reset (startNewPointsYear). Nothing reachable through
+   * it carries leader-entered points. The one
    * procedure that returns matrics is ccaPoints.flatExportData: the rosters of the
    * flat CCAs (membership plus JCRC's own flat value) for JCRC's CSV export, behind
    * a live capability re-check and audited as ccaPoints.flat.export.

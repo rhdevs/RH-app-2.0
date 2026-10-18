@@ -18,9 +18,14 @@ import { buildDirectoryEntries } from "~/server/api/services/ccaDirectory";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
 import {
   clearFlat,
+  effectiveIsSport,
+  hasWaiver,
+  ihgReason,
   isEntryOpen,
   isFlatRow,
+  isIhgComplete,
   listOverrideRows,
+  newYearReason,
   rangeProblem,
   readDefaultRow,
   readOverrideRow,
@@ -28,12 +33,19 @@ import {
   resolveRange,
   brokenWaiversMessage,
   flatExportReason,
+  sportReason,
+  sportsMissingIhg,
+  startNewPointsYear as resetPointsYear,
+  typeReason,
   waiverRows,
   waiversBrokenByDefault,
   writeDefaultRange,
   writeEntryOpen,
   writeFlat,
+  writeIhg,
   writeOverride,
+  writeSport,
+  writeType,
 } from "~/server/api/services/ccaPointsConfig";
 import {
   flatPointsProblem,
@@ -41,7 +53,15 @@ import {
   isValidFlatPoints,
 } from "~/lib/points/flat";
 import {
+  CCA_TYPES,
   DEFAULT_RANGE,
+  IHG_CAP_MAX,
+  IHG_CAP_MIN,
+  IHG_RESULTS,
+  isCcaType,
+  isIhgResult,
+  isSportsCategory,
+  isValidIhgCap,
   MEAN_LIMITS,
   SD_LIMITS,
   type Range,
@@ -59,6 +79,10 @@ import { fillRange } from "~/lib/points/meanSd";
  * or a roster of scores — the confidentiality rule for this feature is that
  * leader-entered points are never persisted or transmitted to the server.
  *
+ * IHG IS THE SAME: only a sport's result and cap (config) live here. Which
+ * members the head ticks for the IHG points stays in the head's browser and the
+ * CSV; no procedure takes a matric, a row key or a tick.
+ *
  * ONE EXCEPTION IN WHAT IS RETURNED: `flatExportData` returns, to JCRC only (live
  * capability re-check), the rosters of the flat CCAs with matrics and names. That
  * is membership plus JCRC's own flat value, never a leader's score. Every call
@@ -66,7 +90,7 @@ import { fillRange } from "~/lib/points/meanSd";
  * returned; like event.exportAttendees that row is best-effort (writeAudit logs a
  * failure and never throws), so a failed write is logged and does not block.
  *
- * The five JCRC procedures are `roleManagerProcedure` (admin + jcrc) and
+ * The twelve JCRC procedures are `roleManagerProcedure` (admin + jcrc) and
  * ADDITIONALLY assert `manageCcaPointsRanges` against a LIVE role read (I-5), the
  * same belt-and-braces shape as ccaRecruitment.ts. roleManagerProcedure also
  * narrows `ctx.session.user.userID` to a non-null canonical id (I-1).
@@ -85,6 +109,41 @@ async function requirePointsCapability(
     throw new TRPCError({ code: "FORBIDDEN", message: FORBIDDEN_CAPABILITY });
   }
   return roles;
+}
+
+/** Every CCA, name order: what the gate and the CCA list are built from. */
+const listCcas = (db: PrismaClient) =>
+  db.cCA.findMany({
+    select: { ccaID: true, ccaName: true, category: true },
+    orderBy: { ccaName: "asc" },
+  });
+
+/** The CCA must exist; returns what the type, sport and IHG writes need. */
+async function requireCca(db: PrismaClient, ccaID: number) {
+  const cca = await db.cCA.findFirst({
+    where: { ccaID },
+    select: { ccaID: true, category: true },
+  });
+  if (!cca)
+    throw new TRPCError({ code: "NOT_FOUND", message: "CCA_NOT_FOUND" });
+  return cca;
+}
+
+/**
+ * While points entry is open, heads are ticking IHG recipients against the cap, so
+ * a non-flat sport must not lose its result or cap (or become a sport without
+ * them). Callers pass whether the write would leave such a sport incomplete.
+ */
+async function refuseWhileEntryOpen(
+  db: PrismaClient,
+  wouldLeaveSportIncomplete: boolean,
+): Promise<void> {
+  if (!wouldLeaveSportIncomplete) return;
+  if (!isEntryOpen(await readDefaultRow(db))) return;
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: "ENTRY_OPEN_IHG",
+  });
 }
 
 const mean = z.number().min(MEAN_LIMITS[0]).max(MEAN_LIMITS[1]);
@@ -145,16 +204,12 @@ export const ccaPointsRouter = createTRPCRouter({
       ]);
       const resolved = resolveRange(defaultRow, overrideRow);
       const flatPoints = overrideRow?.flatPoints ?? null;
-      // A flat CCA's page loads no roster, so it needs the name from here.
-      const flatCcaName =
-        flatPoints === null
-          ? null
-          : ((
-              await ctx.db.cCA.findFirst({
-                where: { ccaID: input.ccaID },
-                select: { ccaName: true },
-              })
-            )?.ccaName ?? null);
+      const cca = await ctx.db.cCA.findFirst({
+        where: { ccaID: input.ccaID },
+        select: { ccaName: true, category: true },
+      });
+      // A sport's head needs JCRC's IHG result and cap; null = not a sport, or flat.
+      const isSport = effectiveIsSport(overrideRow, cca?.category ?? null);
       return {
         entryOpen: isEntryOpen(defaultRow),
         range: resolved.range,
@@ -163,7 +218,19 @@ export const ccaPointsRouter = createTRPCRouter({
         note: resolved.isWaived ? (overrideRow?.note ?? null) : null,
         /** Set when JCRC marked this CCA flat: the leader has nothing to do. */
         flatPoints,
-        flatCcaName,
+        /** A flat CCA's page loads no roster, so it needs the name from here. */
+        flatCcaName: flatPoints === null ? null : (cca?.ccaName ?? null),
+        ihg:
+          isSport && flatPoints === null
+            ? {
+                result: isIhgResult(overrideRow?.ihgResult)
+                  ? overrideRow.ihgResult
+                  : null,
+                cap: isValidIhgCap(overrideRow?.ihgCap)
+                  ? overrideRow.ihgCap
+                  : null,
+              }
+            : null,
       };
     }),
 
@@ -171,23 +238,15 @@ export const ccaPointsRouter = createTRPCRouter({
   getConfig: roleManagerProcedure.query(async ({ ctx }) => {
     await requirePointsCapability(ctx.db, ctx.session.user.userID);
 
-    const [defaultRow, overrideRows] = await Promise.all([
+    const [defaultRow, overrideRows, allCcas] = await Promise.all([
       readDefaultRow(ctx.db),
       listOverrideRows(ctx.db),
+      listCcas(ctx.db),
     ]);
     const waivers = waiverRows(overrideRows);
     const flatRows = overrideRows.filter(isFlatRow);
-    const ccaIDs = [...waivers, ...flatRows].flatMap((r) =>
-      r.ccaID === null ? [] : [r.ccaID],
-    );
-    const ccas =
-      ccaIDs.length === 0
-        ? []
-        : await ctx.db.cCA.findMany({
-            where: { ccaID: { in: ccaIDs } },
-            select: { ccaID: true, ccaName: true },
-          });
-    const nameById = new Map(ccas.map((c) => [c.ccaID, c.ccaName]));
+    const nameById = new Map(allCcas.map((c) => [c.ccaID, c.ccaName]));
+    const rowById = new Map(overrideRows.map((r) => [r.ccaID, r]));
     const flatWithCounts = await Promise.all(
       flatRows.flatMap((r) =>
         r.ccaID === null || r.flatPoints === null
@@ -226,6 +285,24 @@ export const ccaPointsRouter = createTRPCRouter({
       updatedAt: defaultRow?.updatedAt ?? null,
       updatedBy: defaultRow?.updatedBy ?? null,
       flatCcas: flatWithCounts,
+      /** EVERY CCA with its type, sport flag, IHG config, flat and waiver state. */
+      ccas: allCcas.map((c) => {
+        const row = rowById.get(c.ccaID) ?? null;
+        return {
+          ccaID: c.ccaID,
+          ccaName: c.ccaName,
+          isSport: effectiveIsSport(row, c.category),
+          sportSource:
+            typeof row?.isSport === "boolean"
+              ? ("jcrc" as const)
+              : ("category" as const),
+          type: isCcaType(row?.ccaType) ? row.ccaType : null,
+          ihgResult: isIhgResult(row?.ihgResult) ? row.ihgResult : null,
+          ihgCap: isValidIhgCap(row?.ihgCap) ? row.ihgCap : null,
+          isFlat: isFlatRow(row),
+          hasWaiver: hasWaiver(row),
+        };
+      }),
       overrides: waivers.flatMap((r) =>
         r.ccaID === null
           ? []
@@ -257,6 +334,19 @@ export const ccaPointsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const actorUserID = ctx.session.user.userID;
       const roles = await requirePointsCapability(ctx.db, actorUserID);
+      if (input.open) {
+        // Every non-flat sport needs its IHG result and cap before heads start.
+        const notReady = sportsMissingIhg(
+          await listCcas(ctx.db),
+          await listOverrideRows(ctx.db),
+        );
+        if (notReady.length > 0) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: `IHG_NOT_READY: ${notReady.join(", ")}`,
+          });
+        }
+      }
       const now = new Date();
       await writeEntryOpen(ctx.db, input.open, actorUserID, now);
       await audit(ctx.db, {
@@ -429,6 +519,20 @@ export const ccaPointsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const actorUserID = ctx.session.user.userID;
       const roles = await requirePointsCapability(ctx.db, actorUserID);
+      // Un-flattening a sport without both makes it a sport that needs them.
+      const cca = await ctx.db.cCA.findFirst({
+        where: { ccaID: input.ccaID },
+        select: { category: true },
+      });
+      if (cca) {
+        const row = await readOverrideRow(ctx.db, input.ccaID);
+        await refuseWhileEntryOpen(
+          ctx.db,
+          isFlatRow(row) &&
+            effectiveIsSport(row, cca.category) &&
+            !isIhgComplete(row),
+        );
+      }
       const existed = await clearFlat(ctx.db, input.ccaID);
       if (existed) {
         await audit(ctx.db, {
@@ -440,6 +544,134 @@ export const ccaPointsRouter = createTRPCRouter({
       }
       return { cleared: existed };
     }),
+
+  /** A CCA's points type (1x / 0.5x); null clears it. Carried to the sandbox in the bundle. */
+  setType: roleManagerProcedure
+    .input(
+      z.object({
+        ccaID: z.number().int().positive(),
+        type: z.enum(CCA_TYPES).nullable(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const actorUserID = ctx.session.user.userID;
+      const roles = await requirePointsCapability(ctx.db, actorUserID);
+      await requireCca(ctx.db, input.ccaID);
+      const now = new Date();
+      await writeType(ctx.db, input.ccaID, input.type, actorUserID, now);
+      await audit(ctx.db, {
+        actorUserID,
+        actorRoles: roles,
+        action: "ccaPoints.type.set",
+        targetCcaID: input.ccaID,
+        reason: typeReason(input.type),
+      });
+      return { ccaID: input.ccaID, type: input.type, updatedAt: now };
+    }),
+
+  /**
+   * A sport's IHG result and the most members its head may tick for the points.
+   * Config only: the ticks never reach the server. Refused for a CCA that is not
+   * effectively a sport (JCRC's tick, else the category). While points entry is
+   * open a blank result or cap is refused; lowering a cap is not.
+   */
+  setIhg: roleManagerProcedure
+    .input(
+      z.object({
+        ccaID: z.number().int().positive(),
+        result: z.enum(IHG_RESULTS).nullable(),
+        cap: z.number().int().min(IHG_CAP_MIN).max(IHG_CAP_MAX).nullable(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const actorUserID = ctx.session.user.userID;
+      const roles = await requirePointsCapability(ctx.db, actorUserID);
+      const cca = await requireCca(ctx.db, input.ccaID);
+      const row = await readOverrideRow(ctx.db, input.ccaID);
+      if (!effectiveIsSport(row, cca.category)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "NOT_A_SPORT" });
+      }
+      await refuseWhileEntryOpen(
+        ctx.db,
+        (input.result === null || input.cap === null) && !isFlatRow(row),
+      );
+      const now = new Date();
+      await writeIhg(
+        ctx.db,
+        input.ccaID,
+        { ihgResult: input.result, ihgCap: input.cap },
+        actorUserID,
+        now,
+      );
+      await audit(ctx.db, {
+        actorUserID,
+        actorRoles: roles,
+        action: "ccaPoints.ihg.set",
+        targetCcaID: input.ccaID,
+        reason: ihgReason(input.result, input.cap),
+      });
+      return {
+        ccaID: input.ccaID,
+        result: input.result,
+        cap: input.cap,
+        updatedAt: now,
+      };
+    }),
+
+  /**
+   * JCRC's "Sport" tick for a CCA. true / false overrides the category default;
+   * null goes back to it. While points entry is open it cannot make a CCA a sport
+   * that has no IHG result and cap.
+   */
+  setSport: roleManagerProcedure
+    .input(
+      z.object({
+        ccaID: z.number().int().positive(),
+        isSport: z.boolean().nullable(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const actorUserID = ctx.session.user.userID;
+      const roles = await requirePointsCapability(ctx.db, actorUserID);
+      const cca = await requireCca(ctx.db, input.ccaID);
+      const row = await readOverrideRow(ctx.db, input.ccaID);
+      const willBeSport = input.isSport ?? isSportsCategory(cca.category);
+      await refuseWhileEntryOpen(
+        ctx.db,
+        willBeSport &&
+          !effectiveIsSport(row, cca.category) &&
+          !isFlatRow(row) &&
+          !isIhgComplete(row),
+      );
+      const now = new Date();
+      await writeSport(ctx.db, input.ccaID, input.isSport, actorUserID, now);
+      await audit(ctx.db, {
+        actorUserID,
+        actorRoles: roles,
+        action: "ccaPoints.sport.set",
+        targetCcaID: input.ccaID,
+        reason: sportReason(input.isSport),
+      });
+      return { ccaID: input.ccaID, isSport: input.isSport, updatedAt: now };
+    }),
+
+  /**
+   * The yearly reset: clears every IHG result (caps stay) and closes points entry.
+   * Types, caps, sport ticks, waivers, flat values and the default range are kept.
+   */
+  startNewPointsYear: roleManagerProcedure.mutation(async ({ ctx }) => {
+    const actorUserID = ctx.session.user.userID;
+    const roles = await requirePointsCapability(ctx.db, actorUserID);
+    const cleared = await resetPointsYear(ctx.db, actorUserID, new Date());
+    await audit(ctx.db, {
+      actorUserID,
+      actorRoles: roles,
+      action: "ccaPoints.year.start",
+      rolesAfter: ["closed"],
+      reason: newYearReason(cleared),
+    });
+    return { cleared, entryOpen: false };
+  }),
 
   /**
    * Everything the flat-points CSV needs: for every flat CCA, its value and its

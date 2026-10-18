@@ -1,6 +1,12 @@
 import type { CcaPointsConfig, Prisma, PrismaClient } from "@prisma/client";
 
-import { DEFAULT_RANGE, type Range } from "~/lib/points/constants";
+import {
+  DEFAULT_RANGE,
+  isIhgResult,
+  isSportsCategory,
+  isValidIhgCap,
+  type Range,
+} from "~/lib/points/constants";
 import {
   fillRange,
   rangeProblem,
@@ -14,12 +20,16 @@ import {
  *
  * Two kinds of row in one collection (see `model CcaPointsConfig`):
  *   "default"      hall-wide ranges + `entryOpen`
- *   "cca:<ccaID>"  a per-CCA waiver (blank fields mean "use the default")
- *                  and/or a FLAT-points marking (`flatPoints`, null = not flat)
+ *   "cca:<ccaID>"  a per-CCA waiver (blank fields mean "use the default"),
+ *                  a FLAT-points marking (`flatPoints`, null = not flat), a
+ *                  points type (`ccaType`), an IHG config (`ihgResult` +
+ *                  `ihgCap`) and JCRC's sport tick (`isSport`, null = follow
+ *                  the category)
  *
- * One per-CCA row can therefore be a waiver, a flat marking, or both. Code that
- * lists or deletes waivers must not touch the flat marking, and vice versa — see
- * `waiverRows`, `removeOverride` and `clearFlat`.
+ * One per-CCA row therefore has FIVE independent parts: waiver, flat, type, IHG
+ * and sport. Each is cleared without reading the row first, and no clear may
+ * delete a row that still holds another part — see `waiverRows`,
+ * `removeOverride`, `clearFlat`, `deleteIfBlank` and `ALL_CONFIG_FIELDS`.
  *
  * THE SWITCH IS CLOSED BY DEFAULT. An absent row, or a null `entryOpen`, reads
  * as closed: points entry is a NEW surface, so — like cca.management.enabled and
@@ -70,11 +80,60 @@ export { rangeProblem };
 export type ConfigRowLike = RangeOverride & {
   note: string | null;
   flatPoints: number | null;
+  /** Optional so fixtures that predate type, IHG and sport still fit; unset reads as blank. */
+  ccaType?: string | null;
+  ihgResult?: string | null;
+  ihgCap?: number | null;
+  isSport?: boolean | null;
 };
 
 /** Flat when `flatPoints` is a number (0 is a valid flat value). */
 export const isFlatRow = (row: ConfigRowLike | null): boolean =>
   row?.flatPoints !== null && row?.flatPoints !== undefined;
+
+/** Has a points type. */
+export const isTypeRow = (row: ConfigRowLike | null): boolean =>
+  row?.ccaType !== null && row?.ccaType !== undefined;
+
+/** Has any IHG config (a result, a cap, or both). */
+export const isIhgRow = (row: ConfigRowLike | null): boolean =>
+  (row?.ihgResult !== null && row?.ihgResult !== undefined) ||
+  (row?.ihgCap !== null && row?.ihgCap !== undefined);
+
+/** A valid result AND a valid cap: all a sport needs before entry may open. */
+export const isIhgComplete = (row: ConfigRowLike | null): boolean =>
+  isIhgResult(row?.ihgResult) && isValidIhgCap(row?.ihgCap);
+
+/**
+ * THE ONLY sports rule: JCRC's tick wins, otherwise the CCA's category decides.
+ * Temporary: a later portfolio refactor will replace this.
+ */
+export const effectiveIsSport = (
+  row: Pick<ConfigRowLike, "isSport"> | null,
+  category: string | null,
+): boolean => row?.isSport ?? isSportsCategory(category);
+
+/**
+ * The entry-open gate: names (in the order given) of every non-flat sport that
+ * lacks a valid IHG result or cap. Flat sports are ignored: their members get a
+ * flat value and no IHG.
+ */
+export function sportsMissingIhg(
+  ccas: readonly { ccaID: number; ccaName: string; category: string | null }[],
+  rows: readonly (ConfigRowLike & { ccaID: number | null })[],
+): string[] {
+  const rowById = new Map(rows.map((r) => [r.ccaID, r]));
+  return ccas
+    .filter((c) => {
+      const row = rowById.get(c.ccaID) ?? null;
+      return (
+        effectiveIsSport(row, c.category) &&
+        !isFlatRow(row) &&
+        !isIhgComplete(row)
+      );
+    })
+    .map((c) => c.ccaName);
+}
 
 /** A real waiver: any range field or a note is set. */
 export const hasWaiver = (row: ConfigRowLike | null): boolean =>
@@ -124,6 +183,16 @@ export function brokenWaiversMessage(
   const list = broken.map((b) => `${b.ccaName} (${b.problem})`).join(", ");
   return `This would make these waivers impossible: ${list}. Edit those waivers first.`;
 }
+
+/** Audit reasons for type, IHG, sport and the new year: config values and counts only. */
+export const typeReason = (type: string | null): string =>
+  `type ${type ?? "blank"}`;
+export const ihgReason = (result: string | null, cap: number | null): string =>
+  `IHG ${result ?? "blank"}; cap ${cap ?? "blank"}`;
+export const newYearReason = (cleared: number): string =>
+  `${cleared} IHG result(s) cleared; entry closed`;
+export const sportReason = (isSport: boolean | null): string =>
+  isSport === null ? "sport default" : isSport ? "sport yes" : "sport no";
 
 /** Audit reason for a flat-points export: counts only, never a matric or a name. */
 export function flatExportReason(
@@ -227,11 +296,11 @@ export async function writeOverride(
 
 /**
  * Prisma + MongoDB tell an explicit null from an unset field, so "blank" has to
- * test for both. The two halves of a per-CCA row (waiver fields, flat marking)
- * are each removed WITHOUT reading the row first: a read-then-delete could wipe
- * the other half if it were written in between. Instead the delete itself says
- * "only when the other half is blank", and if it matched nothing the one half is
- * nulled in place.
+ * test for both. The five parts of a per-CCA row (waiver, flat marking, type, IHG
+ * config, sport tick) are each removed WITHOUT reading the row first: a
+ * read-then-delete could wipe another part if it were written in between.
+ * Instead the delete itself says "only when every other part is blank", and if
+ * it matched nothing the one part is nulled in place.
  */
 const blank = (field: string): Prisma.CcaPointsConfigWhereInput => ({
   OR: [{ [field]: null }, { [field]: { isSet: false } }],
@@ -240,28 +309,37 @@ const filled = (field: string): Prisma.CcaPointsConfigWhereInput => ({
   [field]: { not: null },
 });
 const WAIVER_FIELDS = ["meanMin", "meanMax", "sdMin", "sdMax", "note"] as const;
+const TYPE_FIELDS = ["ccaType"] as const;
+const IHG_FIELDS = ["ihgResult", "ihgCap"] as const;
+const SPORT_FIELDS = ["isSport"] as const;
+/** Every config field of a per-CCA row; a row with all of these blank is empty. */
+const ALL_CONFIG_FIELDS = [
+  ...WAIVER_FIELDS,
+  "flatPoints",
+  ...TYPE_FIELDS,
+  ...IHG_FIELDS,
+  ...SPORT_FIELDS,
+] as const;
 const anyWaiverField: Prisma.CcaPointsConfigWhereInput = {
   OR: WAIVER_FIELDS.map(filled),
 };
 
 /**
- * Two removals that run at once can each null their own half of a row that held
- * both, leaving a row with every config field blank: neither waiver nor flat, and
+ * Two removals that run at once can each null their own part of a row that held
+ * both, leaving a row with every config field blank: it means nothing, and
  * nothing would ever clean it up. So each removal ends by deleting the row if it
  * is now entirely blank. Whichever finishes last finds the empty row and removes it.
  */
 async function deleteIfBlank(db: PrismaClient, scope: string): Promise<void> {
   await db.ccaPointsConfig.deleteMany({
-    where: {
-      scope,
-      AND: [...WAIVER_FIELDS, "flatPoints"].map(blank),
-    },
+    where: { scope, AND: ALL_CONFIG_FIELDS.map(blank) },
   });
 }
 
 /**
- * Removes the WAIVER, returning whether there was one. A CCA that is also flat
- * keeps its row (only the waiver fields are cleared); otherwise the row goes.
+ * Removes the WAIVER, returning whether there was one. A CCA that also holds a
+ * flat marking, a type, an IHG config or a sport tick keeps its row (only the
+ * waiver fields are cleared); otherwise the row goes.
  */
 export async function removeOverride(
   db: PrismaClient,
@@ -269,7 +347,16 @@ export async function removeOverride(
 ): Promise<boolean> {
   const scope = ccaScope(ccaID);
   const deleted = await db.ccaPointsConfig.deleteMany({
-    where: { scope, AND: [blank("flatPoints"), anyWaiverField] },
+    where: {
+      scope,
+      AND: [
+        blank("flatPoints"),
+        ...TYPE_FIELDS.map(blank),
+        ...IHG_FIELDS.map(blank),
+        ...SPORT_FIELDS.map(blank),
+        anyWaiverField,
+      ],
+    },
   });
   if (deleted.count > 0) return true;
   const cleared = await db.ccaPointsConfig.updateMany({
@@ -321,7 +408,8 @@ export async function writeFlat(
 
 /**
  * Removes the flat marking, returning whether the CCA was flat. A CCA that also
- * has a waiver keeps its row; otherwise the row goes.
+ * has a waiver, a type, an IHG config or a sport tick keeps its row; otherwise
+ * the row goes.
  */
 export async function clearFlat(
   db: PrismaClient,
@@ -329,7 +417,16 @@ export async function clearFlat(
 ): Promise<boolean> {
   const scope = ccaScope(ccaID);
   const deleted = await db.ccaPointsConfig.deleteMany({
-    where: { scope, ...filled("flatPoints"), AND: WAIVER_FIELDS.map(blank) },
+    where: {
+      scope,
+      ...filled("flatPoints"),
+      AND: [
+        ...WAIVER_FIELDS,
+        ...TYPE_FIELDS,
+        ...IHG_FIELDS,
+        ...SPORT_FIELDS,
+      ].map(blank),
+    },
   });
   if (deleted.count > 0) return true;
   const cleared = await db.ccaPointsConfig.updateMany({
@@ -338,4 +435,99 @@ export async function clearFlat(
   });
   await deleteIfBlank(db, scope);
   return cleared.count > 0;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Type, IHG, sport and the new points year                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Sets (or, with null, clears) a CCA's points type; the other parts are left alone. */
+export async function writeType(
+  db: PrismaClient,
+  ccaID: number,
+  ccaType: string | null,
+  actorUserID: string,
+  now: Date,
+): Promise<void> {
+  await db.ccaPointsConfig.upsert({
+    where: { scope: ccaScope(ccaID) },
+    create: {
+      scope: ccaScope(ccaID),
+      ccaID,
+      ccaType,
+      updatedAt: now,
+      updatedBy: actorUserID,
+    },
+    update: { ccaType, updatedAt: now, updatedBy: actorUserID },
+  });
+  await deleteIfBlank(db, ccaScope(ccaID));
+}
+
+/** Sets a sport's IHG result and cap together (null, null clears both). */
+export async function writeIhg(
+  db: PrismaClient,
+  ccaID: number,
+  ihg: { ihgResult: string | null; ihgCap: number | null },
+  actorUserID: string,
+  now: Date,
+): Promise<void> {
+  await db.ccaPointsConfig.upsert({
+    where: { scope: ccaScope(ccaID) },
+    create: {
+      scope: ccaScope(ccaID),
+      ccaID,
+      ...ihg,
+      updatedAt: now,
+      updatedBy: actorUserID,
+    },
+    update: { ...ihg, updatedAt: now, updatedBy: actorUserID },
+  });
+  await deleteIfBlank(db, ccaScope(ccaID));
+}
+
+/** Sets JCRC's sport tick; null goes back to the category default. */
+export async function writeSport(
+  db: PrismaClient,
+  ccaID: number,
+  isSport: boolean | null,
+  actorUserID: string,
+  now: Date,
+): Promise<void> {
+  await db.ccaPointsConfig.upsert({
+    where: { scope: ccaScope(ccaID) },
+    create: {
+      scope: ccaScope(ccaID),
+      ccaID,
+      isSport,
+      updatedAt: now,
+      updatedBy: actorUserID,
+    },
+    update: { isSport, updatedAt: now, updatedBy: actorUserID },
+  });
+  await deleteIfBlank(db, ccaScope(ccaID));
+}
+
+/**
+ * Starts a new points year: nulls every IHG result (caps stay), closes points
+ * entry, then deletes any per-CCA row left with every config field blank. Returns
+ * how many results were cleared. Types, caps, sport ticks, waivers, flat values
+ * and the default range are kept.
+ */
+export async function startNewPointsYear(
+  db: PrismaClient,
+  actorUserID: string,
+  now: Date,
+): Promise<number> {
+  const cleared = await db.ccaPointsConfig.updateMany({
+    where: { scope: { startsWith: "cca:" }, ihgResult: { not: null } },
+    data: { ihgResult: null, updatedAt: now, updatedBy: actorUserID },
+  });
+  await writeEntryOpen(db, false, actorUserID, now);
+  await db.ccaPointsConfig.deleteMany({
+    where: {
+      scope: { startsWith: "cca:" },
+      AND: ALL_CONFIG_FIELDS.map(blank),
+    },
+  });
+  return cleared.count;
 }
