@@ -20,6 +20,12 @@ import BookingModal, {
   compareFacilityLocations,
 } from "~/app/_components/BookingModal";
 import Toast from "~/app/_components/Toast";
+import { Calendar } from "~/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "~/components/ui/popover";
 import { ADMIN_ROLE, JCRC_ROLE, CCA_HEAD_ROLE } from "~/lib/roleNames";
 
 /** "HH:MM" for a Date, in the browser's local zone — the same wall-clock basis
@@ -81,6 +87,7 @@ export default function AvailabilityBoard() {
     return hhmm(d);
   });
 
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [pickedFacility, setPickedFacility] = useState<number | null>(null);
 
@@ -311,7 +318,31 @@ export default function AvailabilityBoard() {
                 <button onClick={() => shiftDay(-1)} aria-label="Previous day">
                   <ChevronLeft className="h-4 w-4" />
                 </button>
-                <span className="text-sm">{format(day, "eee, MMM d")}</span>
+                <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="Pick a day"
+                      className="rounded-md px-2 py-0.5 text-sm hover:bg-gray-200"
+                    >
+                      {format(day, "eee, MMM d")}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="center">
+                    <Calendar
+                      mode="single"
+                      selected={day}
+                      defaultMonth={day}
+                      onSelect={(d) => {
+                        // Re-clicking the selected day yields undefined in
+                        // single mode; keep the day and just close.
+                        if (d) setDay(d);
+                        setPickerOpen(false);
+                      }}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
                 <button onClick={() => shiftDay(1)} aria-label="Next day">
                   <ChevronRight className="h-4 w-4" />
                 </button>
