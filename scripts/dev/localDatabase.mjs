@@ -29,22 +29,32 @@ export function localDatabaseProblem(url) {
   } catch {
     return "DATABASE_URL is not a valid URL.";
   }
-  const dbName = parsed.pathname.replace(/^\//, "");
+  // Plain mongodb:// only: a mongodb+srv:// name is looked up in DNS, so the
+  // host it names is not the host it connects to.
+  if (parsed.protocol !== "mongodb:") {
+    return `the scheme must be "mongodb:" (got "${parsed.protocol}").`;
+  }
   if (
     !["localhost", "127.0.0.1"].includes(parsed.hostname) ||
-    dbName !== REQUIRED_DB
+    parsed.pathname !== `/${REQUIRED_DB}`
   ) {
     return (
-      `host must be localhost/127.0.0.1 and database must be "${REQUIRED_DB}" ` +
-      `(got host "${parsed.hostname}", database "${dbName}").`
+      `host must be localhost/127.0.0.1 and the path must be "/${REQUIRED_DB}" ` +
+      `(got host "${parsed.hostname}", path "${parsed.pathname}").`
     );
+  }
+  // What was checked is what is used: a URL the parser had to rewrite (such
+  // as "/prod/../${REQUIRED_DB}") may name another database to the driver.
+  if (parsed.href !== url) {
+    return "DATABASE_URL must be written exactly as it parses (no dot segments).";
   }
   return null;
 }
 
 /**
  * The local dev database URL, or the process exits with "Refusing to <what>:
- * ...". Also pins DATABASE_URL in this process to the URL it checked.
+ * ...". The URL passed on is the one rebuilt from the parsed parts that were
+ * checked, and DATABASE_URL in this process is pinned to it.
  */
 export function requireLocalDatabase(what) {
   const url = loadDatabaseUrl();
@@ -53,6 +63,7 @@ export function requireLocalDatabase(what) {
     console.error(`Refusing to ${what}: ${problem}`);
     process.exit(1);
   }
-  process.env.DATABASE_URL = url;
-  return url;
+  const checked = new URL(url).href;
+  process.env.DATABASE_URL = checked;
+  return checked;
 }

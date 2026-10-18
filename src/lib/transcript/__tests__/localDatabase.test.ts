@@ -38,6 +38,24 @@ describe("the dev scripts' local-database gate (seed and dev:db:push)", () => {
     }
   });
 
+  it("refuses mongodb+srv, and a path that only parses to the dev database", () => {
+    for (const url of [
+      // A DNS seed list: the host it names is not the host it connects to.
+      "mongodb+srv://localhost/rhapp_transcript_dev",
+      "mongodb+srv://127.0.0.1/rhapp_transcript_dev",
+      // Parses to /rhapp_transcript_dev, but the raw string names prod.
+      "mongodb://localhost:27017/prod/../rhapp_transcript_dev",
+      "mongodb://localhost:27017/rhapp_transcript_dev/../prod",
+      "mongodb://localhost:27017/rhapp_transcript_dev/",
+      "mongodb://localhost:27017/prod%2F..%2Frhapp_transcript_dev",
+    ]) {
+      expect(localDatabaseProblem(url), url).not.toBeNull();
+    }
+    expect(
+      localDatabaseProblem("mongodb+srv://localhost/rhapp_transcript_dev"),
+    ).toContain('"mongodb:"');
+  });
+
   it("is what the seed and dev:db:push both use, and the npm script points at the guard", () => {
     const seed = readFileSync("scripts/dev/seed-transcript.mjs", "utf8");
     const push = readFileSync("scripts/dev/db-push.mjs", "utf8");
