@@ -7,9 +7,16 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "~/components/ui/collapsible";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "~/components/ui/tooltip";
+import type { IhgContext } from "~/lib/points/constants";
 import type { PointsEntry } from "~/lib/points/entries";
 import { ActiveForInfo, ActiveForToggle } from "./ActiveForToggle";
 import {
+  IhgTick,
   MatricStatus,
   RoleSelect,
   ScoreField,
@@ -23,7 +30,14 @@ type ListProps = {
   state: PointsState;
   disabled: boolean;
   highlightKey: string | null;
+  /** Null for a non-sport: no IHG column or row at all. */
+  ihg: IhgContext | null;
 };
+
+const ihgTickHelp = (ihg: IhgContext): string =>
+  `Tick the members who get this sport's IHG points.${
+    ihg.cap === null ? "" : ` At most ${ihg.cap}.`
+  }`;
 
 const ring = (on: boolean): string =>
   on ? "bg-amber-50 ring-2 ring-inset ring-amber-400" : "";
@@ -54,7 +68,7 @@ function Score({
 
 /** Desktop: one table row per member. */
 export function MemberTable(props: ListProps) {
-  const { rows, state, disabled, highlightKey } = props;
+  const { rows, state, disabled, highlightKey, ihg } = props;
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
       <table className="w-full text-sm">
@@ -72,6 +86,20 @@ export function MemberTable(props: ListProps) {
                 <ActiveForInfo />
               </span>
             </th>
+            {ihg && (
+              <th scope="col" className="px-2 py-2 first:pl-3">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="cursor-help underline decoration-dotted underline-offset-2">
+                      IHG
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs normal-case tracking-normal">
+                    {ihgTickHelp(ihg)}
+                  </TooltipContent>
+                </Tooltip>
+              </th>
+            )}
             <th scope="col" className="px-2 py-2 pr-3">
               Roles
             </th>
@@ -102,6 +130,16 @@ export function MemberTable(props: ListProps) {
                   onChange={(v) => state.update(e.rowKey, { semesterOnly: v })}
                 />
               </td>
+              {ihg && (
+                <td className="px-2 py-2 first:pl-3">
+                  <IhgTick
+                    name={e.name ?? "Member"}
+                    checked={e.ihg}
+                    disabled={disabled}
+                    onChange={(on) => state.setIhg(e.rowKey, on)}
+                  />
+                </td>
+              )}
               <td className="px-2 py-2 pr-3">
                 {/* Outgoing over incoming, so the table fits beside the summary. */}
                 <div className="grid grid-cols-[auto_1fr] items-center gap-x-1.5 gap-y-1 text-xs text-gray-500">
@@ -135,7 +173,7 @@ export function MemberTable(props: ListProps) {
 
 /** Mobile: one card per member, big targets, roles tucked away. */
 export function MemberCards(props: ListProps) {
-  const { rows, state, disabled, highlightKey } = props;
+  const { rows, state, disabled, highlightKey, ihg } = props;
   return (
     <ul className="space-y-3">
       {rows.map((e, i) => (
@@ -167,6 +205,18 @@ export function MemberCards(props: ListProps) {
               />
             </div>
           </div>
+          {ihg && (
+            <label className="mt-3 flex items-center justify-between gap-3 text-sm text-gray-700">
+              IHG points
+              <IhgTick
+                big
+                name={e.name ?? "Member"}
+                checked={e.ihg}
+                disabled={disabled}
+                onChange={(on) => state.setIhg(e.rowKey, on)}
+              />
+            </label>
+          )}
           <Collapsible className="mt-2">
             <CollapsibleTrigger className="group flex w-full items-center justify-between rounded-md py-2 text-sm text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
               <span>

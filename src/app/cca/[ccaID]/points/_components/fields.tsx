@@ -3,6 +3,7 @@
 import { Minus, Plus } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
+import { Checkbox } from "~/components/ui/checkbox";
 import {
   Tooltip,
   TooltipContent,
@@ -133,6 +134,32 @@ export function ScoreField({
         </p>
       )}
     </div>
+  );
+}
+
+/** Whether this member gets the sport's IHG points. Ticks stay in this browser. */
+export function IhgTick({
+  name,
+  checked,
+  disabled,
+  big,
+  onChange,
+}: {
+  name: string;
+  checked: boolean;
+  disabled?: boolean;
+  /** Larger touch target on phone cards. */
+  big?: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <Checkbox
+      checked={checked}
+      disabled={disabled}
+      aria-label={`IHG points for ${name}`}
+      onCheckedChange={(v) => onChange(v === true)}
+      className={big ? "h-6 w-6" : undefined}
+    />
   );
 }
 

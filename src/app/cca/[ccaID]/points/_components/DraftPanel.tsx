@@ -11,10 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
-import type { PointsState } from "./usePointsEntries";
-
-const time = (d: Date): string =>
-  d.toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+import { savedAtText, type PointsState } from "./usePointsEntries";
 
 /**
  * Draft status, the dropped-members notice, and "Clear draft". The draft only
@@ -81,7 +78,7 @@ export default function DraftPanel({ state }: { state: PointsState }) {
               : state.saveFailed
                 ? "Couldn't save the draft on this device. Keep this tab open until you export."
                 : state.savedAt
-                  ? `Draft saved on this device · ${time(state.savedAt)}`
+                  ? `Draft saved on this device · ${savedAtText(state.savedAt)}`
                   : "Nothing saved yet."}
         </p>
         {state.draftsEnabled && state.savedAt && (

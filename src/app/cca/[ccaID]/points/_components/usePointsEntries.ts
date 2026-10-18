@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { Range } from "~/lib/points/constants";
+import type { IhgContext, IhgResult, Range } from "~/lib/points/constants";
 import {
   buildDraft,
   canAutosave,
@@ -46,6 +46,27 @@ export function parseScoreText(text: string): number | null {
   return /^\d+$/.test(t) ? Number(t) : Number.NaN;
 }
 
+/** How a sport's IHG result reads on the page. */
+export function ihgResultLabel(result: IhgResult): string {
+  return result === "3rd4th_no_match" ? "3rd–4th, no placement match" : result;
+}
+
+/** "3 Apr 2027, 14:32", or just the time when the draft was saved today. */
+export function savedAtText(savedAt: Date, now: Date = new Date()): string {
+  const time = savedAt.toLocaleTimeString("en-SG", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  if (savedAt.toDateString() === now.toDateString()) return time;
+  const date = savedAt.toLocaleDateString("en-SG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  return `${date}, ${time}`;
+}
+
 const scoreText = (n: number | null): string =>
   n === null || Number.isNaN(n) ? "" : String(n);
 
@@ -84,8 +105,10 @@ export function usePointsEntries(args: {
   storageKeyUserID: string | null;
   range: Readonly<Range>;
   entryOpen: boolean;
+  /** JCRC's IHG config for a sport; null when this CCA is not one. */
+  ihg: IhgContext | null;
 }) {
-  const { ccaID, roster, storageKeyUserID, range, entryOpen } = args;
+  const { ccaID, roster, storageKeyUserID, range, entryOpen, ihg } = args;
   const storageKey =
     storageKeyUserID === null ? null : draftKey(ccaID, storageKeyUserID);
 
@@ -214,6 +237,11 @@ export function usePointsEntries(args: {
     [entryOpen, commit],
   );
 
+  const setIhg = useCallback(
+    (rowKey: string, on: boolean) => update(rowKey, { ihg: on }),
+    [update],
+  );
+
   const setScoreText = useCallback(
     (rowKey: string, text: string) => {
       if (!entryOpen) return;
@@ -264,10 +292,10 @@ export function usePointsEntries(args: {
       sdOk: check.sdOk,
       hints: scores.length > 0 ? adjustmentHint(check, range) : [],
       histogram: scoreHistogram(entries),
-      // P15: pass the IHG context from getEntryContext
-      blockers: exportBlockers(entries, range, entryOpen, null),
+      tickedCount: entries.filter((e) => e.ihg).length,
+      blockers: exportBlockers(entries, range, entryOpen, ihg),
     };
-  }, [entries, range, entryOpen]);
+  }, [entries, range, entryOpen, ihg]);
 
   return {
     entries,
@@ -281,6 +309,7 @@ export function usePointsEntries(args: {
     draftsEnabled: storageKey !== null,
     update,
     setScoreText,
+    setIhg,
     clearDraft,
     discardUnreadable,
     ...derived,

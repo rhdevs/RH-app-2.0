@@ -4,7 +4,7 @@ import { ChevronUp } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import type { Range } from "~/lib/points/constants";
+import type { IhgContext, Range } from "~/lib/points/constants";
 import { formatStat } from "~/lib/points/hints";
 import {
   Sheet,
@@ -33,6 +33,7 @@ export default function MobileBar({
   state,
   range,
   entryOpen,
+  ihg,
   summary,
   sheetOpen,
   onSheetOpenChange,
@@ -41,6 +42,7 @@ export default function MobileBar({
   state: PointsState;
   range: Readonly<Range>;
   entryOpen: boolean;
+  ihg: IhgContext | null;
   summary: ReactNode;
   sheetOpen: boolean;
   onSheetOpenChange: (open: boolean) => void;
@@ -76,6 +78,15 @@ export default function MobileBar({
                   ? formatStat(state.stats.sd, range.sdMin, range.sdMax)
                   : "—"}
               </span>
+              {ihg && (
+                <span className="flex items-center gap-1 tabular-nums">
+                  <Dot
+                    ok={ihg.cap !== null && state.tickedCount <= ihg.cap}
+                    has={ihg.cap !== null}
+                  />
+                  IHG {state.tickedCount}/{ihg.cap ?? "—"}
+                </span>
+              )}
               <ChevronUp className="ml-auto h-4 w-4 shrink-0 text-gray-400" />
             </button>
           </SheetTrigger>

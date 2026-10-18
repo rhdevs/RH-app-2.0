@@ -12,7 +12,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
-import type { Range } from "~/lib/points/constants";
+import type { IhgContext, Range } from "~/lib/points/constants";
 import { downloadCsvFile } from "~/lib/points/download";
 import type { PointsEntry } from "~/lib/points/entries";
 import { buildPointsCsv, pointsCsvFilename } from "~/lib/points/exportCsv";
@@ -48,11 +48,12 @@ export default function ExportDialog({
   mean: number;
   sd: number;
   /** JCRC's settings as the page holds them right now (they refresh in the background). */
-  context: { entryOpen: boolean; range: Range };
+  context: { entryOpen: boolean; range: Range; ihg: IhgContext | null };
   /** Re-reads JCRC's settings; null when the read failed. */
   refreshContext: () => Promise<{
     entryOpen: boolean;
     range: Range;
+    ihg: IhgContext | null;
   } | null>;
   onExported: (fileName: string) => void;
 }) {
@@ -78,8 +79,7 @@ export default function ExportDialog({
   }, [open]);
   // Judged against the LIVE settings on every render, so a change while the
   // dialog is open shows here at once; judged again just before the file is built.
-  // P15: pass the IHG context from getEntryContext
-  const live = { ...context, ihg: null };
+  const live = context;
   const verdict = downloadVerdict(check, entries, live);
   const download = () => {
     if (!downloadVerdict(check, entries, live).allowed) return;
@@ -107,7 +107,9 @@ export default function ExportDialog({
               <p className="font-medium text-gray-900">
                 This file is confidential. Email it only to your portfolio head.
               </p>
-              <dl className="grid grid-cols-3 gap-2 rounded-md bg-gray-50 p-3 text-center">
+              <dl
+                className={`grid gap-2 rounded-md bg-gray-50 p-3 text-center ${context.ihg ? "grid-cols-4" : "grid-cols-3"}`}
+              >
                 <div>
                   <dt className="text-xs text-gray-500">Members</dt>
                   <dd className="text-lg font-semibold tabular-nums text-gray-900">
@@ -130,6 +132,14 @@ export default function ExportDialog({
                     {formatStat(sd, context.range.sdMin, context.range.sdMax)}
                   </dd>
                 </div>
+                {context.ihg && (
+                  <div>
+                    <dt className="text-xs text-gray-500">IHG ticked</dt>
+                    <dd className="text-lg font-semibold tabular-nums text-gray-900">
+                      {entries.filter((e) => e.ihg).length}
+                    </dd>
+                  </div>
+                )}
               </dl>
               <p>The file is saved to this device only. Nothing is uploaded.</p>
               {check.status === "checking" && (
