@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { parseCsv } from "../../../app/admin/_lib/csv";
 import {
   IMPORT_CHUNK_SIZE,
+  IMPORT_CITATION_CAP,
   MAX_IMPORT_ROWS,
   TEMPLATE_CSV,
   TEMPLATE_EXAMPLE,
@@ -394,33 +395,44 @@ describe("the template and the columns", () => {
 });
 
 describe("limits and wording", () => {
+  it("caps a raw citation at 2,000 characters, far above the 300 the award allows", () => {
+    expect(IMPORT_CITATION_CAP).toBe(2_000);
+    const one = (citation: string) =>
+      awardImportPreviewInput.safeParse({
+        academicYear: AY,
+        rows: [{ identifier: "e1@u.nus.edu", award: "A", citation }],
+      }).success;
+    expect(one("x".repeat(2_000))).toBe(true);
+    expect(one("x".repeat(2_001))).toBe(false);
+  });
+
   const rows = (n: number) =>
     Array.from({ length: n }, (_, i) => ({
       identifier: `e${i}@u.nus.edu`,
       award: "A",
     }));
 
-  it("takes 10,000 rows and refuses 10,001 with the plain message", () => {
-    expect(MAX_IMPORT_ROWS).toBe(10_000);
+  it("takes 2,000 rows and refuses 2,001 with the plain message", () => {
+    expect(MAX_IMPORT_ROWS).toBe(2_000);
     expect(
       awardImportPreviewInput.safeParse({
         academicYear: AY,
-        rows: rows(10_000),
+        rows: rows(2_000),
       }).success,
     ).toBe(true);
     const over = awardImportPreviewInput.safeParse({
       academicYear: AY,
-      rows: rows(10_001),
+      rows: rows(2_001),
     });
     expect(over.success).toBe(false);
     expect(TOO_MANY_ROWS_MESSAGE).toBe(
-      "This file has more than 10,000 rows. Split it and upload in parts.",
+      "This file has more than 2,000 rows. Split it and upload in parts.",
     );
     expect(errorText("TOO_MANY_ROWS")).toBe(TOO_MANY_ROWS_MESSAGE);
     expect(
       awardImportCommitInput.safeParse({
         academicYear: AY,
-        rows: rows(10_001),
+        rows: rows(2_001),
         decisions: [],
       }).success,
     ).toBe(false);

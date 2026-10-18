@@ -693,6 +693,114 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
     });
 
+    /* ---- (D3) an Open that lands during a head's save (P9) --------------- */
+    describe("an Open that lands between a head's check and their write", () => {
+      /**
+       * The database, except that the year is opened (published) right before
+       * every transaction starts: after the guard passed, before the write.
+       */
+      const openingDuring = (): PrismaClient =>
+        new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return async (fn: unknown, opts?: unknown) => {
+                await db.transcriptPeriod.upsert({
+                  where: { academicYear: AY },
+                  create: { academicYear: AY, status: "published" },
+                  update: { status: "published" },
+                });
+                return (
+                  target.$transaction as unknown as (
+                    f: unknown,
+                    o?: unknown,
+                  ) => Promise<unknown>
+                )(fn, opts);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+      const backToCollecting = () =>
+        db.transcriptPeriod.update({
+          where: { academicYear: AY },
+          data: { status: "collecting" },
+        });
+
+      it("writes nothing: the roster, activity participants and volunteer people all refuse", async () => {
+        const roster = await import("../manageRoster");
+        const activities = await import("../activities");
+        const volunteer = await import("../manageVolunteer");
+
+        expect(
+          await errorOf(
+            roster.rosterUpsert(openingDuring(), SOCCER_HEAD.id, {
+              ccaID: SOCCER,
+              academicYear: AY,
+              userID: R12.id,
+              extraContribution: "Saved too late.",
+            }),
+          ),
+        ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+        const entry = await db.transcriptRosterEntry.findFirst({
+          where: { academicYear: AY, ccaID: SOCCER, userID: R12.id },
+        });
+        expect(entry?.extraContribution ?? null).not.toBe("Saved too late.");
+        await backToCollecting();
+
+        const league = await db.ccaActivity.findFirstOrThrow({
+          where: {
+            ccaID: SOCCER,
+            academicYear: AY,
+            title: "Inter-hall league",
+          },
+        });
+        const before = await db.ccaActivityParticipant.count({
+          where: { activityID: league.id },
+        });
+        expect(
+          await errorOf(
+            activities.participantsSet(openingDuring(), SOCCER_HEAD.id, {
+              id: league.id,
+              ccaID: SOCCER,
+              participants: [{ userID: R20.id, role: "", description: "" }],
+            }),
+          ),
+        ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+        expect(
+          await db.ccaActivityParticipant.count({
+            where: { activityID: league.id },
+          }),
+        ).toBe(before);
+        await backToCollecting();
+
+        const tuition = await db.volunteerActivity.findFirstOrThrow({
+          where: {
+            ccaID: 9002,
+            academicYear: AY,
+            title: { startsWith: "Weekly tuition" },
+          },
+        });
+        const people = await db.volunteerPerson.count({
+          where: { activityID: tuition.id },
+        });
+        expect(
+          await errorOf(
+            volunteer.volunteerPeopleSet(openingDuring(), "SEED-R06", {
+              activityID: tuition.id,
+              ccaID: 9002,
+              userIDs: [R20.id],
+            }),
+          ),
+        ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+        expect(
+          await db.volunteerPerson.count({ where: { activityID: tuition.id } }),
+        ).toBe(people);
+      });
+    });
+
     /* ---- (E) who may edit -------------------------------------------------- */
     describe("edit rights", () => {
       const editAs = (

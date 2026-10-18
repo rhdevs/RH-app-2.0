@@ -17,7 +17,11 @@ import type {
 } from "~/lib/transcript/manageInput";
 import { participantSummaries } from "~/lib/transcript/corrections";
 import { NOT_REMOVED } from "./loader";
-import { assertCanEditForResidents, logCorrections } from "./residentRecords";
+import {
+  assertCanEditForResidents,
+  assertStillCollecting,
+  logCorrections,
+} from "./residentRecords";
 import { actorLabels, lookupResidents, requireResidents } from "./residents";
 
 /**
@@ -329,6 +333,7 @@ export async function participantsSet(
   );
 
   const result = await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, activity.academicYear, guard);
     const existing = await tx.ccaActivityParticipant.findMany({
       where: { activityID: activity.id },
     });

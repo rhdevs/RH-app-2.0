@@ -7,6 +7,8 @@ import {
   jcrcSaveMineInput,
   rosterUpsertInput,
   searchQueryInput,
+  MAX_ATTENDANCE_CHANGES,
+  userIDInput,
   volunteerActivityCreateInput,
   volunteerActivityUpdateInput,
   volunteerAttendanceSaveInput,
@@ -467,6 +469,73 @@ describe("search and id inputs", () => {
     ]) {
       expect(idInput.safeParse({ id }).success).toBe(false);
     }
+  });
+});
+
+describe("userIDInput: only what a canonical key can be (P9)", () => {
+  it("takes NUSNET-shaped ids and EXT: allowlist ids", () => {
+    for (const id of [
+      "E1234567",
+      "SEED-R12",
+      "john.tan",
+      "a_b-c%d",
+      "EXT:NGOCANH_MAI",
+      "  E1234567  ",
+    ]) {
+      expect(userIDInput.safeParse(id).success, id).toBe(true);
+    }
+    expect(userIDInput.parse("  E1234567  ")).toBe("E1234567");
+  });
+
+  it("refuses a colon outside the EXT prefix, and every other character a key never has", () => {
+    for (const id of [
+      "E1234567:x",
+      "EXT:lower",
+      "EXT:",
+      ":E1234567",
+      "a@u.nus.edu",
+      "a/b",
+      "a b",
+      "a+b",
+      "é1234567",
+      "",
+      "x".repeat(101),
+    ]) {
+      const result = userIDInput.safeParse(id);
+      expect(result.success, id).toBe(false);
+    }
+    const bad = userIDInput.safeParse("E1234567:x");
+    expect(bad.success ? null : bad.error.issues[0]?.message).toBe(
+      "INVALID_USER_ID",
+    );
+  });
+
+  it("is what every procedure taking a resident key uses, preview included", async () => {
+    const { readFileSync } = await import("node:fs");
+    const router = readFileSync("src/server/api/routers/transcript.ts", "utf8");
+    expect(router).toMatch(/userID: userIDInput, academicYear/);
+    expect(router).not.toMatch(/userID: z\.string\(\)/);
+  });
+});
+
+describe("hidden request caps (P9)", () => {
+  it("takes 5,000 attendance changes in one save and refuses more", () => {
+    expect(MAX_ATTENDANCE_CHANGES).toBe(5_000);
+    const save = (n: number) =>
+      volunteerAttendanceSaveInput.safeParse({
+        activityID: "0123456789abcdef01234567",
+        ccaID: 9002,
+        changes: Array.from({ length: n }, (_, i) => ({
+          sessionID: "0123456789abcdef01234567",
+          userID: `E${String(i).padStart(7, "0")}`,
+          attended: true,
+        })),
+      });
+    expect(save(5_000).success).toBe(true);
+    const over = save(5_001);
+    expect(over.success ? null : over.error.issues[0]?.message).toBe(
+      "TOO_MANY_CHANGES",
+    );
   });
 });
 

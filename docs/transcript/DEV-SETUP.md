@@ -32,11 +32,11 @@ The other variables can be placeholders for local work (the build needs `NEXTAUT
 | --- | --- |
 | Start the database (first run also initiates the replica set) | `npm run dev:db:up` |
 | Stop it (data is kept in the `rhapp-transcript-mongo-data` volume) | `npm run dev:db:down` |
-| Create the collections and indexes (LOCAL ONLY, never production) | `npx prisma db push` |
+| Create the collections and indexes (LOCAL ONLY, never production) | `npm run dev:db:push` (refuses unless `DATABASE_URL` is localhost/127.0.0.1 and `rhapp_transcript_dev`, the same check as the seed) |
 | Fill it with fake data (idempotent) | `npm run dev:db:seed` |
 | Start the app | `npm run dev` |
 
-Order on a fresh machine: `dev:db:up`, then `npx prisma db push`, then `dev:db:seed`.
+Order on a fresh machine: `dev:db:up`, then `dev:db:push`, then `dev:db:seed`. Use `npm run dev:db:push`, never a bare `npx prisma db push`: the bare command trusts whatever `.env` points at.
 
 The seed also sets the kill switch `transcript.enabled` to `"on"` (a `SystemFlag` row). Without it every transcript page says "Transcripts are not available yet." and every transcript procedure refuses with `TRANSCRIPT_DISABLED`. To try the switched-off state locally: `node scripts/remediation/set-transcript-flag.mjs off --commit` (and `on --commit` to go back); the app picks it up within 15 seconds.
 
@@ -48,7 +48,7 @@ To wipe everything and start again:
 npm run dev:db:down
 docker volume rm dev_rhapp-transcript-mongo-data
 npm run dev:db:up
-npx prisma db push
+npm run dev:db:push
 npm run dev:db:seed
 ```
 
@@ -76,7 +76,7 @@ The local database has no `$jsonSchema` validators (production's CCA, UserCCA an
 
 ```bash
 npm run dev:db:up
-npx prisma db push
+npm run dev:db:push
 npm run test:db
 ```
 

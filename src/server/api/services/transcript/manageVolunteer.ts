@@ -24,7 +24,11 @@ import {
 import { instantToSgDate, sgDateToInstant } from "~/lib/transcript/sgDate";
 import { assertCanEditCcaYear } from "./editRights";
 import { correctionSummary } from "~/lib/transcript/corrections";
-import { assertCanEditForResidents, logCorrections } from "./residentRecords";
+import {
+  assertCanEditForResidents,
+  assertStillCollecting,
+  logCorrections,
+} from "./residentRecords";
 import { NOT_REMOVED } from "./loader";
 import { actorLabels, lookupResidents, requireResidents } from "./residents";
 
@@ -681,6 +685,7 @@ export async function volunteerPeopleSet(
   );
 
   const result = await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, activity.academicYear, guard);
     const existing = await tx.volunteerPerson.findMany({
       where: { activityID: activity.id },
     });
@@ -778,6 +783,7 @@ export async function volunteerAttendanceSave(
   );
 
   const result = await db.$transaction(async (tx: Prisma.TransactionClient) => {
+    await assertStillCollecting(tx, activity.academicYear, guard);
     const [sessions, people, existing] = await Promise.all([
       tx.volunteerSession.findMany({
         where: { activityID: activity.id, ...NOT_REMOVED },

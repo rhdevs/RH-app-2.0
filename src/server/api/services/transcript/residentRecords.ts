@@ -119,6 +119,32 @@ export async function assertCanEditForResidents(
   });
 }
 
+/**
+ * The same question again, INSIDE the write's transaction: an ordinary write
+ * (not a correction) needs the year still collecting. The guard above runs
+ * before the transaction, so a head's save in flight while the JCRC presses
+ * Open transcripts could otherwise land after the year opened. Reading the year
+ * inside the transaction narrows that window to the transaction itself. A
+ * correction is for an open year already, so it is not checked here.
+ */
+export async function assertStillCollecting(
+  tx: Pick<PrismaClient, "transcriptPeriod">,
+  academicYear: string,
+  guard: { correction: boolean },
+): Promise<void> {
+  if (guard.correction) return;
+  const period = await tx.transcriptPeriod.findUnique({
+    where: { academicYear },
+    select: { status: true },
+  });
+  if (normaliseYearStatus(period?.status) === "published") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: PUBLISHED_REFUSAL,
+    });
+  }
+}
+
 /* ---- the history ---------------------------------------------------------- */
 
 export interface ResidentEventInput {

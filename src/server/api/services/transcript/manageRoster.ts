@@ -24,7 +24,11 @@ import {
   joinChanges,
   membershipChangeParts,
 } from "~/lib/transcript/corrections";
-import { assertCanEditForResidents, logCorrections } from "./residentRecords";
+import {
+  assertCanEditForResidents,
+  assertStillCollecting,
+  logCorrections,
+} from "./residentRecords";
 import { getPeriod } from "./periods";
 import { actorLabels } from "./residents";
 
@@ -437,6 +441,7 @@ export async function rosterUpsert(
     : null;
 
   const row = await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, input.academicYear, guard);
     const row = await tx.transcriptRosterEntry.upsert({
       where: {
         academicYear_userID_ccaID: {

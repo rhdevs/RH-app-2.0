@@ -28,6 +28,7 @@ import {
   isRealIsoDate,
   isValidAcademicYear,
 } from "./academicYear";
+import { isExtUserID } from "~/lib/identity";
 
 /**
  * INPUT RULES for the transcript management procedures. PURE, so every bound is
@@ -103,8 +104,20 @@ export const academicYearInput = z
 
 export const ccaIDInput = z.number().int().positive().max(1_000_000);
 
-/** A resident's key, as the client names them. Never trusted for "self". */
-export const userIDInput = line(1, 100);
+/** The characters a NUSNET-shaped key can have (canonicalUserID's class). */
+const KEY_CHARACTERS = /^[A-Za-z0-9._%-]+$/;
+
+/**
+ * A resident's key, as the client names them. Never trusted for "self". Only
+ * what a canonical key can be: a NUSNET-shaped id (letters, digits and
+ * `._%-`), or an admin-pinned `EXT:` allowlist id (`isExtUserID`). So `:`
+ * appears nowhere but in the EXT prefix, which the EXT allowlist relies on, and
+ * no `@`, `/`, space or other character a canonical id never has gets through.
+ */
+export const userIDInput = line(1, 100).refine(
+  (s) => KEY_CHARACTERS.test(s) || isExtUserID(s),
+  "INVALID_USER_ID",
+);
 
 export const durationInput = z.enum(DURATIONS);
 
@@ -283,7 +296,7 @@ export const volunteerPeopleSetInput = z.object({
 });
 
 /** Cells changed in one save; one tick or un-tick each. */
-export const MAX_ATTENDANCE_CHANGES = 20_000;
+export const MAX_ATTENDANCE_CHANGES = 5_000;
 
 export const volunteerAttendanceSaveInput = z.object({
   activityID: idInput.shape.id,

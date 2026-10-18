@@ -143,6 +143,7 @@ const ERROR_TEXT: Record<string, string> = {
   PERIOD_CHANGING:
     "Someone else is changing this academic year. Reload and try again.",
   RESIDENT_NOT_FOUND: "No resident was found for that selection.",
+  INVALID_USER_ID: "No resident was found for that selection.",
   CCA_NOT_FOUND: "That CCA no longer exists.",
   INSUFFICIENT_ROLE: "You do not have access to this.",
   INVALID_ACADEMIC_YEAR: "That is not a valid academic year.",
@@ -163,7 +164,7 @@ const ERROR_TEXT: Record<string, string> = {
   TOO_MANY_AT_ONCE:
     "That is more than one save can take. Do it in smaller steps.",
   TOO_MANY_ROWS:
-    "This file has more than 10,000 rows. Split it and upload in parts.",
+    "This file has more than 2,000 rows. Split it and upload in parts.",
   UNDECIDED_AWARD_NAMES: "Decide every new award name before importing.",
   AWARD_TYPE_GONE:
     "An award chosen for a new name is no longer in the catalogue.",

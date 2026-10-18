@@ -13,9 +13,11 @@ import { academicYearInput, idInput, line } from "./manageInput";
  */
 
 /** Rows in one upload. */
-export const MAX_IMPORT_ROWS = 10_000;
+export const MAX_IMPORT_ROWS = 2_000;
+/** Hidden: the longest raw citation one import row may carry. */
+export const IMPORT_CITATION_CAP = 2_000;
 export const TOO_MANY_ROWS_MESSAGE =
-  "This file has more than 10,000 rows. Split it and upload in parts.";
+  "This file has more than 2,000 rows. Split it and upload in parts.";
 /** Rows written per chunk. */
 export const IMPORT_CHUNK_SIZE = 200;
 
@@ -396,11 +398,15 @@ export const SKIPPED_BY_USER = "Skipped by you.";
 
 /* ---- the procedures' inputs ------------------------------------------------------------ */
 
-/** Lenient on purpose: a row that is wrong is reported as Invalid, not refused. */
+/**
+ * Lenient on purpose: a row that is wrong is reported as Invalid, not refused.
+ * The caps are hidden request-size guards, far above the real limits (a
+ * citation over AWARD_CITATION_MAX is an Invalid row, not a refused upload).
+ */
 const importRow = z.object({
   identifier: z.string().max(500),
   award: z.string().max(500),
-  citation: z.string().max(5000).nullish(),
+  citation: z.string().max(IMPORT_CITATION_CAP).nullish(),
 });
 
 const importRows = z.array(importRow).max(MAX_IMPORT_ROWS, "TOO_MANY_ROWS");

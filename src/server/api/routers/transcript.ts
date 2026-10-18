@@ -14,6 +14,7 @@ import {
   isLater,
   normaliseYearStatus,
 } from "~/lib/transcript/lifecycle";
+import { userIDInput } from "~/lib/transcript/manageInput";
 import { canManageTranscriptPeriods } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
 import {
@@ -143,11 +144,18 @@ export const transcriptRouter = createTRPCRouter({
   /**
    * A manager's look at one resident's transcript. Nothing is recorded. It is
    * assembled exactly as the resident's own is: the locked lists once the year
-   * is open, else each CCA's current list. The ONLY procedure that takes a
-   * userID from the client, which is why it is manager-only.
+   * is open, else each CCA's current list. Manager-only. It is NOT the only
+   * procedure that takes a userID from the client: heads name residents in
+   * roster.upsert, participants.set, volunteer.people.set and
+   * volunteer.attendance.save, and managers in corrections.*, awards.assign,
+   * jcrc.saveFor and the award import. Every one is validated: `userIDInput`
+   * (only the characters a canonical key can have; the import's identifiers go
+   * through the bulk importer's own resolver instead), then resolved on the
+   * server to the resident's canonical key (or refused), and checked against
+   * the caller's rights for that CCA and year.
    */
   preview: managerProcedure
-    .input(z.object({ userID: z.string().min(1).max(100), academicYear }))
+    .input(z.object({ userID: userIDInput, academicYear }))
     .query(async ({ ctx, input }) => {
       const period = await getPeriod(ctx.db, input.academicYear);
       const data = await loadTranscriptInput(

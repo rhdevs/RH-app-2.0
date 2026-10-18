@@ -15,11 +15,10 @@
  *    (a local database has no validator, so this discipline is the only guard).
  *  - No real names, emails or matric numbers: everything is invented.
  */
-import { readFileSync, existsSync } from "node:fs";
 import bcrypt from "bcrypt";
 import { PrismaClient } from "@prisma/client";
+import { REQUIRED_DB, requireLocalDatabase } from "./localDatabase.mjs";
 
-const REQUIRED_DB = "rhapp_transcript_dev";
 const AY = "AY2026/27";
 // "Download by 31 Dec 2027": a Singapore calendar date, stored as midnight there.
 const DOWNLOAD_BY = new Date("2027-12-30T16:00:00Z");
@@ -53,41 +52,7 @@ const DEV_PASSWORD = "Transcript-Dev-2026";
 const BCRYPT_ROUNDS = 10; // the app's minimum (BCRYPT_ROUNDS is clamped to 10-15)
 
 // --- safety gate (runs before any client is created) ------------------------
-function loadDatabaseUrl() {
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
-  if (existsSync(".env")) {
-    for (const line of readFileSync(".env", "utf8").split(/\r?\n/)) {
-      const m = /^DATABASE_URL=("?)(.*)\1$/.exec(line.trim());
-      if (m) return m[2];
-    }
-  }
-  return undefined;
-}
-
-const url = loadDatabaseUrl();
-if (!url) {
-  console.error("Refusing to seed: DATABASE_URL is not set.");
-  process.exit(1);
-}
-let parsed;
-try {
-  parsed = new URL(url);
-} catch {
-  console.error("Refusing to seed: DATABASE_URL is not a valid URL.");
-  process.exit(1);
-}
-const dbName = parsed.pathname.replace(/^\//, "");
-if (
-  !["localhost", "127.0.0.1"].includes(parsed.hostname) ||
-  dbName !== REQUIRED_DB
-) {
-  console.error(
-    `Refusing to seed: host must be localhost/127.0.0.1 and database must be "${REQUIRED_DB}" ` +
-      `(got host "${parsed.hostname}", database "${dbName}").`,
-  );
-  process.exit(1);
-}
-process.env.DATABASE_URL = url;
+requireLocalDatabase("seed");
 
 const db = new PrismaClient();
 

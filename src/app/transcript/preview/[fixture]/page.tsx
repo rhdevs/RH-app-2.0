@@ -8,6 +8,8 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+export const dynamic = "force-dynamic";
+
 /**
  * DEVELOPMENT ONLY. Lets each specimen (see src/lib/transcript/fixtures.ts) be
  * viewed so every layout edge case can be checked. 404s in production.
