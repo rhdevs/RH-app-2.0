@@ -5,6 +5,7 @@ import {
   awardActiveKey,
   effectiveBatchStatus,
   cleanCitation,
+  isSelfRecorded,
   matchesSearch,
   normalizeAwardName,
   planAssignment,
@@ -393,8 +394,8 @@ export async function awardsList(
       awardTypeID: r.awardTypeID ?? null,
       importBatchID: r.importBatchID ?? null,
       removed: r.voidedAt != null,
-      /** The manager recorded or edited their own award (shown, never blocked). */
-      selfRecorded: r.recordedBy === r.userID || r.updatedBy === r.userID,
+      /** The manager recorded, edited or removed their own award (shown, never blocked). */
+      selfRecorded: isSelfRecorded(r),
       recordedByName: label(r.recordedBy),
       recordedAt: r.recordedAt ?? null,
       updatedByName: label(r.updatedBy),

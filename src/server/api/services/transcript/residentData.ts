@@ -14,6 +14,7 @@ import type {
   participationSetInput,
   residentScope,
 } from "~/lib/transcript/residentInput";
+import { isSelfRecorded } from "~/lib/transcript/awards";
 import { instantToSgDate } from "~/lib/transcript/sgDate";
 import {
   creditedHours,
@@ -424,6 +425,8 @@ export interface ResidentAward {
   updatedAt: Date | null;
   removedByName: string | null;
   removedAt: Date | null;
+  /** The resident recorded, edited or removed it themself (shown, never blocked). */
+  selfRecorded: boolean;
 }
 
 export async function awardsOf(
@@ -455,5 +458,6 @@ export async function awardsOf(
     updatedAt: r.updatedAt ?? null,
     removedByName: label(r.voidedBy),
     removedAt: r.voidedAt ?? null,
+    selfRecorded: isSelfRecorded(r),
   }));
 }

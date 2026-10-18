@@ -71,6 +71,8 @@ export const RESIDENT_EVENT_ACTIONS = [
   "manual_remove",
   "manual_restore",
   "correction",
+  /** A manager or head changed their OWN records, in any year status. */
+  "change",
 ] as const;
 export type ResidentEventAction = (typeof RESIDENT_EVENT_ACTIONS)[number];
 
@@ -84,6 +86,7 @@ export const RESIDENT_EVENT_LABEL: Record<ResidentEventAction, string> = {
   manual_remove: "Manual entry removed",
   manual_restore: "Manual entry restored",
   correction: "Correction",
+  change: "Change",
 };
 
 export const SUMMARY_MAX = 200;

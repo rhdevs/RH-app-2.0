@@ -19,6 +19,7 @@ import {
   toggleSelected,
   UNDO_BATCH_CONFIRMATION,
   type ListedAward,
+  isSelfRecorded,
 } from "../awards";
 import {
   awardBatchUndoInput,
@@ -312,5 +313,20 @@ describe("award inputs", () => {
     expect(ids(2001)).toBe(false);
     expect(ids(0)).toBe(false);
     expect(awardBatchUndoInput.safeParse({ batchId: ID }).success).toBe(true);
+  });
+});
+
+describe("isSelfRecorded", () => {
+  it("flags an award the resident recorded, edited or removed themself", () => {
+    const base = {
+      userID: "A",
+      recordedBy: "B",
+      updatedBy: null,
+      voidedBy: null,
+    };
+    expect(isSelfRecorded(base)).toBe(false);
+    expect(isSelfRecorded({ ...base, recordedBy: "A" })).toBe(true);
+    expect(isSelfRecorded({ ...base, updatedBy: "A" })).toBe(true);
+    expect(isSelfRecorded({ ...base, voidedBy: "A" })).toBe(true);
   });
 });

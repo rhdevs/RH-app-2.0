@@ -413,7 +413,9 @@ export async function rosterUpsert(
     : changes;
 
   // Before the write, so the history can say what really changed.
-  const before = guard.correction
+  // Logged when it is a correction, or the actor's change to their own entry.
+  const logged = guard.correction || target.key === actorUserID;
+  const before = logged
     ? await db.transcriptRosterEntry.findUnique({
         where: {
           academicYear_userID_ccaID: {
@@ -443,7 +445,7 @@ export async function rosterUpsert(
       },
       update,
     });
-    if (guard.correction) {
+    if (logged) {
       const cca = await tx.cCA.findUnique({
         where: { ccaID: input.ccaID },
         select: { ccaName: true },

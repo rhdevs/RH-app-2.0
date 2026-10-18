@@ -7,7 +7,11 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import { errorText } from "~/lib/transcript/adminView";
-import { AWARD_CITATION_MAX, AWARD_NAME_MAX } from "~/lib/transcript/awards";
+import {
+  AWARD_CITATION_MAX,
+  AWARD_NAME_MAX,
+  SELF_RECORDED_TAG,
+} from "~/lib/transcript/awards";
 import { counterText } from "~/lib/transcript/headView";
 import { formatSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
@@ -34,6 +38,7 @@ interface Award {
   updatedByName: string | null;
   removedByName: string | null;
   removedAt: Date | string | null;
+  selfRecorded?: boolean;
 }
 
 /** One award: its name and citation, with Remove or Restore. */
@@ -84,6 +89,7 @@ function AwardCard({
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="text-sm font-medium text-gray-900">{award.title}</h4>
         {award.removed && <Tag>Removed</Tag>}
+        {award.selfRecorded && <Tag>{SELF_RECORDED_TAG}</Tag>}
         <span className="text-xs text-gray-500">
           {award.recordedAt
             ? `Recorded ${formatSgDate(award.recordedAt)}${award.recordedByName ? ` by ${award.recordedByName}` : ""}`

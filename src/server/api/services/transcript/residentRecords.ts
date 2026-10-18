@@ -150,8 +150,14 @@ export function recordResidentEvent(
 }
 
 /**
- * Log the correction a guarded write made, one line per affected resident. Does
- * nothing when the write was an ordinary one.
+ * Log what a guarded write did to residents' records, one line per resident:
+ *  - a CORRECTION (a published year, the resident unlocked): every resident;
+ *  - otherwise only a SELF-MADE change, the actor changing their own records
+ *    (a JCRC member giving themself an award while the year is collecting, a
+ *    head setting their own role), so it shows in that resident's history in
+ *    every year status, flagged as self-made. Self-actions are allowed, never
+ *    hidden.
+ * An ordinary change to someone else's records while collecting is not logged.
  */
 export async function logCorrections(
   db: Pick<PrismaClient, "residentEvent">,
@@ -161,12 +167,12 @@ export async function logCorrections(
   entries: ReadonlyArray<{ userID: string; summary: string }>,
   now: Date = new Date(),
 ): Promise<void> {
-  if (!guard.correction) return;
   for (const entry of entries) {
+    if (!guard.correction && entry.userID !== actorUserID) continue;
     await recordResidentEvent(db, {
       academicYear,
       userID: entry.userID,
-      action: "correction",
+      action: guard.correction ? "correction" : "change",
       summary: entry.summary,
       actor: actorUserID,
       at: now,

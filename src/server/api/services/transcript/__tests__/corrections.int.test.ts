@@ -841,6 +841,101 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(theirs.some((l) => l.selfMade)).toBe(false);
       });
 
+      it("logs and flags a JCRC member's award to themself while the year is collecting, and not others' (P2)", async () => {
+        const colours = await db.awardType.findUniqueOrThrow({
+          where: { normalizedName: "full colours" },
+        });
+        await as(JCRC).transcriptManage.awards.assign({
+          academicYear: AY,
+          awardTypeID: colours.id,
+          recipients: [{ userID: JCRC.id }, { userID: R20.id }],
+        });
+
+        // The JCRC member's own history has the change, flagged as self-made.
+        const mine = await history(JCRC);
+        expect(mine).toHaveLength(1);
+        expect(mine[0]).toMatchObject({ action: "change", selfMade: true });
+        expect(mine[0]!.summary).toContain("Full Colours");
+        // An ordinary award to someone else while collecting is not a history line.
+        expect(await history(R20)).toEqual([]);
+
+        const list = await as(ADMIN).transcriptManage.awards.list({
+          academicYear: AY,
+        });
+        const flag = (userID: string) =>
+          list.find((a) => a.userID === userID && a.title === "Full Colours")
+            ?.selfRecorded;
+        expect(flag(JCRC.id)).toBe(true);
+        expect(flag(R20.id)).toBe(false);
+      });
+
+      it("flags an award a manager removed from themself, and logs it (P2)", async () => {
+        const colours = await db.awardType.findUniqueOrThrow({
+          where: { normalizedName: "full colours" },
+        });
+        await as(ADMIN).transcriptManage.awards.assign({
+          academicYear: AY,
+          awardTypeID: colours.id,
+          recipients: [{ userID: JCRC.id }],
+        });
+        const given = (
+          await as(ADMIN).transcriptManage.awards.list({ academicYear: AY })
+        ).find((a) => a.userID === JCRC.id && a.title === "Full Colours")!;
+        // Recorded by someone else: not self-made, and no history line.
+        expect(given.selfRecorded).toBe(false);
+        expect(await history(JCRC)).toEqual([]);
+
+        await as(JCRC).transcriptManage.awards.remove({ id: given.id });
+        const after = (
+          await as(ADMIN).transcriptManage.awards.list({
+            academicYear: AY,
+            includeRemoved: true,
+          })
+        ).find((a) => a.id === given.id)!;
+        expect(after).toMatchObject({ removed: true, selfRecorded: true });
+        const mine = await history(JCRC);
+        expect(mine.map((l) => [l.action, l.selfMade])).toEqual([
+          ["change", true],
+        ]);
+        // The resident panel's awards tab flags it too.
+        const tab = await as(ADMIN).transcriptManage.corrections.awards({
+          userID: JCRC.id,
+          academicYear: AY,
+          includeRemoved: true,
+        });
+        expect(tab.find((a) => a.id === given.id)?.selfRecorded).toBe(true);
+      });
+
+      it("logs a head's change to their own roster entry while collecting, and not to others' (P2)", async () => {
+        await setRole(SOCCER_HEAD, "Captain", SOCCER_HEAD);
+        await setRole(R12, "Kit manager", SOCCER_HEAD);
+
+        const mine = await history(SOCCER_HEAD);
+        expect(mine).toHaveLength(1);
+        expect(mine[0]).toMatchObject({ action: "change", selfMade: true });
+        expect(mine[0]!.summary).toContain("Soccer");
+        expect(await history(R12)).toEqual([]);
+      });
+
+      it("flags a manager withholding and releasing their own open transcript (P2)", async () => {
+        await publishYear();
+        await as(JCRC).transcriptManage.corrections.withhold({
+          userID: JCRC.id,
+          academicYear: AY,
+          reason: "Testing my own hold",
+        });
+        await as(JCRC).transcriptManage.corrections.release({
+          userID: JCRC.id,
+          academicYear: AY,
+        });
+        const mine = await history(JCRC);
+        expect(mine.map((l) => l.action).sort()).toEqual([
+          "release",
+          "withhold",
+        ]);
+        expect(mine.every((l) => l.selfMade)).toBe(true);
+      });
+
       it("lists every event for the resident and year, newest first, with names", async () => {
         await publishYear();
         await unlock(R12, "Role was wrong");

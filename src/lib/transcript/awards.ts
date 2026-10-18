@@ -67,6 +67,17 @@ export const removedAwardKey = (activeKey: string, id: string) =>
 /** The small tag on an award a manager recorded or edited for themselves. */
 export const SELF_RECORDED_TAG = "Self-recorded";
 
+/** Did the resident record, edit or remove this award themself? */
+export const isSelfRecorded = (r: {
+  userID: string;
+  recordedBy?: string | null;
+  updatedBy?: string | null;
+  voidedBy?: string | null;
+}): boolean =>
+  r.recordedBy === r.userID ||
+  r.updatedBy === r.userID ||
+  r.voidedBy === r.userID;
+
 /** An upload still "importing" this long after it began has been cut off. */
 export const BATCH_INTERRUPTED_AFTER_MS = 15 * 60 * 1000;
 
