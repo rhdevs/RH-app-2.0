@@ -264,7 +264,8 @@ export function usePointsEntries(args: {
       sdOk: check.sdOk,
       hints: scores.length > 0 ? adjustmentHint(check, range) : [],
       histogram: scoreHistogram(entries),
-      blockers: exportBlockers(entries, range, entryOpen),
+      // P15: pass the IHG context from getEntryContext
+      blockers: exportBlockers(entries, range, entryOpen, null),
     };
   }, [entries, range, entryOpen]);
 

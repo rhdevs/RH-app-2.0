@@ -1,4 +1,4 @@
-import type { Range } from "~/lib/points/constants";
+import type { IhgContext, Range } from "~/lib/points/constants";
 import {
   exportAllowedNow,
   type ExportBlocker,
@@ -37,7 +37,11 @@ export type DownloadVerdict =
 export function downloadVerdict(
   check: ExportCheck,
   entries: readonly PointsEntry[],
-  live: { entryOpen: boolean; range: Readonly<Range> },
+  live: {
+    entryOpen: boolean;
+    range: Readonly<Range>;
+    ihg: IhgContext | null;
+  },
 ): DownloadVerdict {
   if (check.status !== "done") return { allowed: false, reason: check.status };
   const now = exportAllowedNow(entries, live);

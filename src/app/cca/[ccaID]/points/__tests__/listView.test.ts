@@ -21,6 +21,7 @@ const entry = (
   semesterOnly: false,
   outgoingRole: "none",
   incomingRole: "none",
+  ihg: false,
 });
 
 const keys = (rows: readonly PointsEntry[]): string[] =>

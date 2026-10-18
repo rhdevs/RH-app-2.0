@@ -35,6 +35,7 @@ const entry = (n: number, basePoints: number | null): PointsEntry => ({
   semesterOnly: false,
   outgoingRole: "none",
   incomingRole: "none",
+  ihg: false,
 });
 
 describe("applyEntryPatch (the edit gate)", () => {

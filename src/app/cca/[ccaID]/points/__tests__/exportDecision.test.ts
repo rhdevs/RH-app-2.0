@@ -17,11 +17,12 @@ const entry = (n: number, basePoints: number): PointsEntry => ({
   semesterOnly: false,
   outgoingRole: "none",
   incomingRole: "none",
+  ihg: false,
 });
 
 // Mean 13, SD 3.42: inside the default range.
 const entries = [8, 10, 12, 14, 16, 18].map((s, i) => entry(i + 1, s));
-const open = { entryOpen: true, range: DEFAULT_RANGE };
+const open = { entryOpen: true, range: DEFAULT_RANGE, ihg: null };
 const DONE: ExportCheck = { status: "done" };
 
 describe("checkAfterOpenChange", () => {
@@ -56,6 +57,7 @@ describe("downloadVerdict", () => {
     const verdict = downloadVerdict(DONE, entries, {
       entryOpen: false,
       range: DEFAULT_RANGE,
+      ihg: null,
     });
     expect(verdict.allowed).toBe(false);
     if (verdict.allowed || verdict.reason !== "blocked")
@@ -67,7 +69,26 @@ describe("downloadVerdict", () => {
     const verdict = downloadVerdict(DONE, entries, {
       entryOpen: true,
       range: { ...DEFAULT_RANGE, meanMin: 14, meanMax: 15 },
+      ihg: null,
     });
     expect(verdict).toMatchObject({ allowed: false, reason: "blocked" });
+  });
+
+  it("a cap lowered between opening and downloading blocks the download", () => {
+    const ticked = entries.map((e, i) => ({ ...e, ihg: i < 5 }));
+    const atOpen = { entryOpen: true, range: DEFAULT_RANGE };
+    expect(
+      downloadVerdict(DONE, ticked, {
+        ...atOpen,
+        ihg: { result: "1st", cap: 5 },
+      }),
+    ).toEqual({ allowed: true });
+    const verdict = downloadVerdict(DONE, ticked, {
+      ...atOpen,
+      ihg: { result: "1st", cap: 3 },
+    });
+    if (verdict.allowed || verdict.reason !== "blocked")
+      throw new Error("expected a blocked verdict");
+    expect(verdict.blockers.map((b) => b.code)).toEqual(["IHG_OVER_CAP"]);
   });
 });

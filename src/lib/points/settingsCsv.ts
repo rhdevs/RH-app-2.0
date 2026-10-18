@@ -1,4 +1,4 @@
-import { EXPORT_FORMAT_VERSION } from "~/lib/points/constants";
+import { SETTINGS_FORMAT_VERSION } from "~/lib/points/constants";
 import type { Range } from "~/lib/points/constants";
 import { fillRange } from "~/lib/points/meanSd";
 
@@ -55,7 +55,7 @@ export function buildSettingsCsv(args: {
   waivers: readonly SettingsWaiver[];
   exportedAt: Date;
 }): string {
-  const version = String(EXPORT_FORMAT_VERSION);
+  const version = String(SETTINGS_FORMAT_VERSION);
   const stamp = args.exportedAt.toISOString();
   const defaultRow = [
     version,

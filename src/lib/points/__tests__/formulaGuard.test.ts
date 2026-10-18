@@ -15,6 +15,7 @@ const entry = (name: string): PointsEntry => ({
   semesterOnly: false,
   outgoingRole: "none",
   incomingRole: "none",
+  ihg: false,
 });
 
 // What each leading character becomes: neutralised with an apostrophe, then

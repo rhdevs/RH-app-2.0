@@ -78,9 +78,11 @@ export default function ExportDialog({
   }, [open]);
   // Judged against the LIVE settings on every render, so a change while the
   // dialog is open shows here at once; judged again just before the file is built.
-  const verdict = downloadVerdict(check, entries, context);
+  // P15: pass the IHG context from getEntryContext
+  const live = { ...context, ihg: null };
+  const verdict = downloadVerdict(check, entries, live);
   const download = () => {
-    if (!downloadVerdict(check, entries, context).allowed) return;
+    if (!downloadVerdict(check, entries, live).allowed) return;
     try {
       const now = new Date();
       const fileName = pointsCsvFilename(ccaID, now);

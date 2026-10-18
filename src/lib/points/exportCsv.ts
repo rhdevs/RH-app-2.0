@@ -16,6 +16,7 @@ export const EXPORT_HEADER = [
   "semesterOnly",
   "outgoingRole",
   "incomingRole",
+  "ihg",
   "exportedAt",
 ] as const;
 
@@ -65,6 +66,7 @@ function row(
     entry.semesterOnly ? "Y" : "N",
     entry.outgoingRole,
     entry.incomingRole,
+    entry.ihg ? "Y" : "N",
     cell(exportedAt, false),
   ].join(",");
 }

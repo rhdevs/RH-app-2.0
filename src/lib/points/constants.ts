@@ -34,8 +34,15 @@ export const DEFAULT_RANGE: Readonly<Range> = {
 /** Inclusive tolerance for range comparisons, so 14.0000000001 still passes. */
 export const TOLERANCE = 1e-9;
 
-/** The only leader-export format the sandbox reads (its `formatVersion` column). */
-export const EXPORT_FORMAT_VERSION = 1;
+/**
+ * The leader-export format this app writes (its `formatVersion` column).
+ * Version 2 adds the `ihg` column; the sandbox reads 1 and 2.
+ */
+export const EXPORT_FORMAT_VERSION = 2;
+
+/** The flat-points and settings exports stay at version 1, which the sandbox reads for them. */
+export const FLAT_FORMAT_VERSION = 1;
+export const SETTINGS_FORMAT_VERSION = 1;
 
 /**
  * A CCA's points type, set by JCRC on /admin/points. The bundle carries these
@@ -56,6 +63,12 @@ export const IHG_RESULTS = ["1st", "2nd", "3rd", "3rd4th_no_match"] as const;
 export type IhgResult = (typeof IHG_RESULTS)[number];
 export const isIhgResult = (v: unknown): v is IhgResult =>
   typeof v === "string" && (IHG_RESULTS as readonly string[]).includes(v);
+
+/**
+ * JCRC's IHG config for one CCA, as getEntryContext returns it. `null` as a
+ * whole means the CCA is not a sport.
+ */
+export type IhgContext = { result: IhgResult | null; cap: number | null };
 
 /** The most members a head may tick for a sport's IHG points. */
 export const IHG_CAP_MIN = 1;

@@ -1,4 +1,4 @@
-import { EXPORT_FORMAT_VERSION } from "~/lib/points/constants";
+import { FLAT_FORMAT_VERSION } from "~/lib/points/constants";
 import { formatFlatPoints } from "~/lib/points/flat";
 import { isValidMatric } from "~/lib/points/entries";
 
@@ -46,7 +46,7 @@ export function buildFlatPointsCsv(args: {
         throw new Error("Cannot export: a member's matric is not valid.");
       }
       return [
-        String(EXPORT_FORMAT_VERSION),
+        String(FLAT_FORMAT_VERSION),
         String(cca.ccaID),
         cell(cca.ccaName, true),
         m.matric.toUpperCase(),
