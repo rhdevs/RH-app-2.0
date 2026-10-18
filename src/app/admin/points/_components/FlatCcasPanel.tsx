@@ -236,8 +236,8 @@ export default function FlatCcasPanel({
               Make {removing?.ccaName} a normal CCA again?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Its leaders will be asked to allocate points as usual. A flat file
-              you already exported is not changed.
+              Its leaders will be asked to allocate points as usual. A bundle
+              you already downloaded is not changed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {clear.error && (
