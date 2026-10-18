@@ -115,6 +115,15 @@ describe("academic year panel", () => {
     expect(buttons(renderPeriod({ canOpen: false }))).not.toContain(
       "Open transcripts",
     );
+    expect(renderPeriod({ canOpen: false })).not.toContain("Contact RHDevs");
+  });
+
+  it("offers no Open transcripts for a past year, and says to contact RHDevs", () => {
+    const html = renderPeriod({ canOpen: false, pastUnopened: true });
+    expect(buttons(html)).not.toContain("Open transcripts");
+    expect(html).toContain(
+      "This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs.",
+    );
   });
 
   it("treats a year with no period yet as collecting", () => {
@@ -196,7 +205,7 @@ describe("the admin reminders, by date (time travel)", () => {
       panelReminders(periods([]), "AY2026/27", new Date("2027-04-02T00:00:00Z"))
         .openReminder,
     ).toBe(
-      "Transcripts for AY2026/27 are not open yet. Open them at the end of the year, before 1 August.",
+      "Transcripts for AY2026/27 are not open yet. Open them at the end of the year, before 1 August. After that, this year can no longer be opened from the app.",
     );
     expect(
       panelReminders(
@@ -210,7 +219,7 @@ describe("the admin reminders, by date (time travel)", () => {
   it("warns from 1 August when the previous year was never opened", () => {
     const august = new Date("2027-08-05T00:00:00Z");
     expect(panelReminders(periods([]), "AY2027/28", august).previousYear).toBe(
-      "Transcripts for AY2026/27 are still not open. Open them now, before CCAs change their member lists in the August application period.",
+      "Transcripts for AY2026/27 were never opened. This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs.",
     );
     expect(
       panelReminders(periods(["AY2026/27"]), "AY2027/28", august).previousYear,

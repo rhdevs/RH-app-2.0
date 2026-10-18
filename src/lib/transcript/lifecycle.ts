@@ -9,7 +9,10 @@ import { currentAcademicYear, parseAcademicYear } from "./academicYear";
  *    residents see nothing. Each CCA's member list is its LIVE list.
  *  - OPEN TRANSCRIPTS (JCRC or admin, around April, before 1 August): locks every
  *    CCA's member list for the year as it is, then opens transcripts to every
- *    resident. After that only per-resident corrections change anything.
+ *    resident. After that only per-resident corrections change anything. Only
+ *    the CURRENT year can be opened: once 1 August has passed, the August
+ *    application period has changed the member lists, so a past year would get
+ *    the next year's members.
  *
  * No clock is read here: every function takes `now`, so a test can move through
  * the years.
@@ -78,7 +81,9 @@ export function academicYearsUpTo(last: string): string[] {
 export type OpenBlocker =
   | "YEAR_BEFORE_START"
   | "ALREADY_PUBLISHED"
-  | "YEAR_NOT_STARTED";
+  | "YEAR_NOT_STARTED"
+  /** A past year: its member lists have changed since August. */
+  | "YEAR_ENDED";
 
 /** Is this a real academic year that comes before transcripts began? */
 export function isBeforeFirstYear(academicYear: string): boolean {
@@ -90,7 +95,9 @@ export function isBeforeFirstYear(academicYear: string): boolean {
 /**
  * Why Open transcripts must be refused for a year, or null if it may go ahead:
  * the year must not be before transcripts began, must still be collecting, and
- * must be the current year or a past one (never a future year).
+ * must be the CURRENT year. A future year has not started; a past year's member
+ * lists were changed by the August application period, so opening it would
+ * save the next year's members into it.
  */
 export function openBlocker(
   academicYear: string,
@@ -99,9 +106,9 @@ export function openBlocker(
 ): OpenBlocker | null {
   if (isBeforeFirstYear(academicYear)) return "YEAR_BEFORE_START";
   if (status === "published") return "ALREADY_PUBLISHED";
-  if (isLater(academicYear, currentAcademicYear(now))) {
-    return "YEAR_NOT_STARTED";
-  }
+  const current = currentAcademicYear(now);
+  if (isLater(academicYear, current)) return "YEAR_NOT_STARTED";
+  if (academicYear !== current) return "YEAR_ENDED";
   return null;
 }
 
@@ -158,9 +165,9 @@ export function showOpenReminder(
 
 /**
  * The PREVIOUS academic year when it is still collecting once the current one
- * has begun (from 1 August): its transcripts must be opened before CCAs change
- * their member lists in the August application period. Null when there is no
- * such year (before the first transcript year) or it is open.
+ * has begun (from 1 August): its transcripts were never opened, and it can no
+ * longer be opened from the app (see openBlocker). Null when there is no such
+ * year (before the first transcript year) or it is open.
  */
 export function previousYearNotOpen(
   now: Date,

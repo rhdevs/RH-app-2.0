@@ -44,12 +44,19 @@ describe("the year status: collecting, then open", () => {
     }
   });
 
-  it("opens the current year or a past one still collecting, never a future one", () => {
+  it("opens the current year only: never a past or a future one", () => {
     const now = at("2027-04-15T00:00:00Z"); // AY2026/27
     expect(openBlocker("AY2026/27", "collecting", now)).toBeNull();
+    // From 1 August (Singapore) AY2026/27 is a past year.
     expect(
       openBlocker("AY2026/27", "collecting", at("2027-09-01T00:00:00Z")),
+    ).toBe("YEAR_ENDED");
+    expect(
+      openBlocker("AY2026/27", "collecting", at("2027-07-31T15:59:59Z")),
     ).toBeNull();
+    expect(
+      openBlocker("AY2026/27", "collecting", at("2027-07-31T16:00:00Z")),
+    ).toBe("YEAR_ENDED");
     expect(openBlocker("AY2027/28", "collecting", now)).toBe(
       "YEAR_NOT_STARTED",
     );

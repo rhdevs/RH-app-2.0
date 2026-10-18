@@ -119,6 +119,16 @@ describe("Open transcripts is checked before any write", () => {
     );
   });
 
+  it("refuses a past year still collecting: its member lists changed in August", async () => {
+    const sep2027 = new Date("2027-09-10T04:00:00Z"); // AY2027/28
+    expect(await open(collecting, "AY2026/27", sep2027)).toBe(
+      "PRECONDITION_FAILED:YEAR_ENDED",
+    );
+    expect(await open(null, "AY2026/27", sep2027)).toBe(
+      "PRECONDITION_FAILED:YEAR_ENDED",
+    );
+  });
+
   it("refuses a malformed academic year", async () => {
     expect(await open(collecting, "2026")).toBe(
       "BAD_REQUEST:INVALID_ACADEMIC_YEAR",

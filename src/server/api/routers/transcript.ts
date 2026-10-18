@@ -9,7 +9,11 @@ import {
 import { assembleTranscript } from "~/lib/transcript/assemble";
 import { instantToSgDate, sgDateToInstant } from "~/lib/transcript/sgDate";
 import { residentViewOf } from "~/lib/transcript/corrections";
-import { normaliseYearStatus } from "~/lib/transcript/lifecycle";
+import {
+  isBeforeFirstYear,
+  isLater,
+  normaliseYearStatus,
+} from "~/lib/transcript/lifecycle";
 import { canManageTranscriptPeriods } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
 import {
@@ -101,12 +105,31 @@ export const transcriptRouter = createTRPCRouter({
      * OPEN TRANSCRIPTS: locks every CCA's member list for the year as it is,
      * then opens the year to residents. If any CCA fails, the year stays
      * collecting and the failures are returned; running it again finishes.
+     * Only the CURRENT academic year: refused here, and again by openBlocker
+     * inside openTranscripts.
      */
     open: managerProcedure
       .input(z.object({ academicYear }))
-      .mutation(({ ctx, input }) =>
-        openTranscripts(ctx.db, input.academicYear, ctx.session.user.userID),
-      ),
+      .mutation(({ ctx, input }) => {
+        const now = new Date();
+        const current = currentAcademicYear(now);
+        // A year before transcripts began gets its own refusal from the service.
+        if (
+          input.academicYear !== current &&
+          !isBeforeFirstYear(input.academicYear)
+        ) {
+          const code = isLater(input.academicYear, current)
+            ? "YEAR_NOT_STARTED"
+            : "YEAR_ENDED";
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: code });
+        }
+        return openTranscripts(
+          ctx.db,
+          input.academicYear,
+          ctx.session.user.userID,
+          now,
+        );
+      }),
   }),
 
   /** Each CCA's member list for a year: whether it was saved when it opened. */

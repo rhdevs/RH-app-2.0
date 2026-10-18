@@ -18,15 +18,16 @@ import {
   OPEN_CONFIRMATION,
   OPEN_LABEL,
   OPEN_REMINDER,
+  PAST_YEAR_NOTE,
   PREVIOUS_YEAR_WARNING,
   errorText,
   normaliseStatus,
+  openAvailability,
   openSummary,
   statusLabel,
   yearOptions,
 } from "~/lib/transcript/adminView";
 import {
-  isLater,
   previousYearNotOpen,
   showOpenReminder,
 } from "~/lib/transcript/lifecycle";
@@ -49,8 +50,13 @@ export interface PeriodPanelViewProps {
   onSelect: (year: string) => void;
   /** The stored status of the selected year; null when it has no period yet. */
   status: string | null;
-  /** The selected year can be opened: still collecting and not a future year. */
+  /** The selected year can be opened: still collecting and the current year. */
   canOpen: boolean;
+  /**
+   * The selected year is a past year that was never opened: no button, only
+   * the note that it can no longer be opened from the app.
+   */
+  pastUnopened?: boolean;
   /** "Opened on 15 Apr 2027 by ..." or null. */
   publishedLine: string | null;
   /** The Open transcripts confirmation is showing. */
@@ -176,6 +182,14 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
         </p>
         <ErrorLine message={p.downloadByError} />
 
+        {p.pastUnopened && !p.canOpen && (
+          <p
+            role="status"
+            className="mt-6 max-w-2xl border-t border-gray-100 pt-5 text-sm text-gray-700"
+          >
+            {PAST_YEAR_NOTE}
+          </p>
+        )}
         {p.canOpen && (
           <div className="mt-6 flex flex-wrap gap-3 border-t border-gray-100 pt-5">
             <Button
@@ -331,7 +345,8 @@ export default function PeriodPanel() {
         open.reset();
       }}
       status={period?.status ?? null}
-      canOpen={!published && year !== "" && !isLater(year, current)}
+      canOpen={openAvailability(year, current, period?.status) === "open"}
+      pastUnopened={openAvailability(year, current, period?.status) === "past"}
       publishedLine={
         published && period?.publishedAt
           ? `Opened on ${when(period.publishedAt)}${period.publishedByName ? ` by ${period.publishedByName}` : ""}.`

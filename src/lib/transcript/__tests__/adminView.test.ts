@@ -3,7 +3,9 @@ import {
   OPEN_CONFIRMATION,
   OPEN_LABEL,
   OPEN_REMINDER,
+  PAST_YEAR_NOTE,
   PREVIOUS_YEAR_WARNING,
+  openAvailability,
   WRITES_LOCKED_NOTE,
   errorText,
   fieldError,
@@ -78,11 +80,29 @@ describe("wording", () => {
 
   it("words the 1 April reminder and the 1 August warning", () => {
     expect(OPEN_REMINDER("AY2026/27")).toBe(
-      "Transcripts for AY2026/27 are not open yet. Open them at the end of the year, before 1 August.",
+      "Transcripts for AY2026/27 are not open yet. Open them at the end of the year, before 1 August. After that, this year can no longer be opened from the app.",
     );
     expect(PREVIOUS_YEAR_WARNING("AY2026/27")).toBe(
-      "Transcripts for AY2026/27 are still not open. Open them now, before CCAs change their member lists in the August application period.",
+      "Transcripts for AY2026/27 were never opened. This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs.",
     );
+    expect(PAST_YEAR_NOTE).toBe(
+      "This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs.",
+    );
+    expect(errorText("YEAR_ENDED")).toBe(PAST_YEAR_NOTE);
+  });
+
+  it("offers Open transcripts for the current collecting year only", () => {
+    const now = "AY2027/28";
+    expect(openAvailability("AY2027/28", now, "collecting")).toBe("open");
+    expect(openAvailability("AY2027/28", now, null)).toBe("open");
+    expect(openAvailability("AY2027/28", now, "published")).toBe("none");
+    // A past year never opened: no button, the note instead.
+    expect(openAvailability("AY2026/27", now, "collecting")).toBe("past");
+    expect(openAvailability("AY2026/27", now, null)).toBe("past");
+    expect(openAvailability("AY2026/27", now, "published")).toBe("none");
+    // A future year: nothing.
+    expect(openAvailability("AY2028/29", now, null)).toBe("none");
+    expect(openAvailability("", now, null)).toBe("none");
   });
 
   it("has no exclamation marks and never says 'successfully'", () => {

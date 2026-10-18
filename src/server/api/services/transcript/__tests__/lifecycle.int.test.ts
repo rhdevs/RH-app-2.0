@@ -284,10 +284,40 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("CONFLICT:ALREADY_PUBLISHED");
       });
 
-      it("opens a past year that is still collecting", async () => {
-        const result = await periods.openTranscripts(db, AY, JCRC.id, SEP_2027);
-        expect(result.opened).toBe(true);
-        expect(await statusOf()).toBe("published");
+      it("refuses a past year that is still collecting, and locks nothing", async () => {
+        // From 1 August the member lists are the next year's: never saved into AY.
+        expect(
+          await errorOf(periods.openTranscripts(db, AY, JCRC.id, SEP_2027)),
+        ).toBe("PRECONDITION_FAILED:YEAR_ENDED");
+        expect(await lockCount()).toBe(0);
+        expect(await statusOf()).not.toBe("published");
+      });
+
+      it("refuses a past year at the procedure too, and allows the current one", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+          vi.setSystemTime(SEP_2027);
+          expect(
+            await errorOf(
+              as(JCRC).transcript.periods.open({ academicYear: AY }),
+            ),
+          ).toBe("PRECONDITION_FAILED:YEAR_ENDED");
+          expect(await lockCount()).toBe(0);
+
+          vi.setSystemTime(APR_2027);
+          expect(
+            await errorOf(
+              as(JCRC).transcript.periods.open({ academicYear: NEXT }),
+            ),
+          ).toBe("PRECONDITION_FAILED:YEAR_NOT_STARTED");
+          const opened = await as(JCRC).transcript.periods.open({
+            academicYear: AY,
+          });
+          expect(opened.opened).toBe(true);
+          expect(await statusOf()).toBe("published");
+        } finally {
+          vi.useRealTimers();
+        }
       });
 
       it("stays collecting if one CCA fails, says which and why, logs no message text, and finishes on the next run", async () => {

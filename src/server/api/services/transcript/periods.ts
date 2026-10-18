@@ -34,6 +34,7 @@ const BLOCKER_CODE: Record<
   YEAR_BEFORE_START: "BAD_REQUEST",
   ALREADY_PUBLISHED: "CONFLICT",
   YEAR_NOT_STARTED: "PRECONDITION_FAILED",
+  YEAR_ENDED: "PRECONDITION_FAILED",
 };
 
 function requireValidYear(academicYear: string) {
@@ -141,8 +142,9 @@ function failureCode(error: unknown): string {
 }
 
 /**
- * OPEN TRANSCRIPTS for a year (the current one, or a past one still
- * collecting; never a future one). Locks every CCA's member list exactly as it
+ * OPEN TRANSCRIPTS for a year: the CURRENT one only, still collecting. A past
+ * year is refused (YEAR_ENDED) because its member lists have already changed in
+ * August; a future one has not started. Locks every CCA's member list exactly as it
  * is now, one CCA at a time, each in its own transaction; CCAs already locked
  * by an earlier run are kept. If ANY CCA fails, the year stays collecting,
  * nothing is opened, and the failures are returned (and logged without any

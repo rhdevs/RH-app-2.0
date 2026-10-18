@@ -42,8 +42,8 @@ export const OPEN_LABEL = "Open transcripts";
 /**
  * The years to offer in every admin picker: each year from the first one to the
  * current academic year (whether or not it has a period row yet, so a previous
- * year that was never opened can still be opened or corrected) plus any
- * existing period, newest first, each once.
+ * year can still be looked at) plus any existing period, newest first, each
+ * once. Only the current year can be opened.
  */
 export function yearOptions(
   periods: ReadonlyArray<{ academicYear: string }>,
@@ -103,16 +103,37 @@ export function openSummary(
 
 /** From 1 April: time to open this year's transcripts. */
 export const OPEN_REMINDER = (academicYear: string) =>
-  `Transcripts for ${academicYear} are not open yet. Open them at the end of the year, before 1 August.`;
+  `Transcripts for ${academicYear} are not open yet. Open them at the end of the year, before 1 August. After that, this year can no longer be opened from the app.`;
+
+/**
+ * What the year panel offers for the selected year: the Open transcripts button
+ * (the current year, still collecting), the past-year note (a past year never
+ * opened), or nothing (open already, or a future year).
+ */
+export function openAvailability(
+  selected: string,
+  currentAcademicYear: string,
+  status: string | null | undefined,
+): "open" | "past" | "none" {
+  if (!selected || !currentAcademicYear) return "none";
+  if (normaliseStatus(status) === "published") return "none";
+  if (selected === currentAcademicYear) return "open";
+  return selected < currentAcademicYear ? "past" : "none";
+}
+
+/** Why a past year has no Open transcripts button. */
+export const PAST_YEAR_NOTE =
+  "This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs.";
 
 /** From 1 August: the previous year's transcripts were never opened. */
 export const PREVIOUS_YEAR_WARNING = (academicYear: string) =>
-  `Transcripts for ${academicYear} are still not open. Open them now, before CCAs change their member lists in the August application period.`;
+  `Transcripts for ${academicYear} were never opened. ${PAST_YEAR_NOTE}`;
 
 /** The API's error codes, in plain words for an inline message. */
 const ERROR_TEXT: Record<string, string> = {
   YEAR_NOT_STARTED:
     "This academic year has not started yet, so its transcripts cannot be opened.",
+  YEAR_ENDED: PAST_YEAR_NOTE,
   NOT_THE_TERM_YEAR:
     "Heads can only change the current academic year. Other years are read-only; ask the JCRC for changes.",
   YEAR_BEFORE_START: `Transcripts start at ${FIRST_ACADEMIC_YEAR}. Earlier years cannot be opened.`,
