@@ -14,6 +14,7 @@ import {
 import { AUDIT_ACTIONS } from "~/server/api/services/roles";
 import {
   brokenWaiversMessage,
+  bundleExportReason,
   clearFlat,
   effectiveIsSport,
   flatExportReason,
@@ -169,6 +170,28 @@ describe("flat export audit", () => {
     const reason = flatExportReason(2, 7);
     expect(reason).not.toMatch(/[A-Za-z]\d{7}[A-Za-z]/);
     expect(reason).toMatch(/^\d+ CCA\(s\), \d+ member\(s\)$/);
+  });
+});
+
+describe("bundle export audit", () => {
+  it("registers ccaPoints.bundle.export within the 32-character filter cap", () => {
+    expect(AUDIT_ACTIONS).toContain("ccaPoints.bundle.export");
+    expect("ccaPoints.bundle.export".length).toBeLessThanOrEqual(32);
+  });
+
+  it("builds a reason from counts only", () => {
+    expect(bundleExportReason(91, 3, 41)).toBe(
+      "91 CCA(s), 3 flat CCA(s), 41 member(s)",
+    );
+    expect(bundleExportReason(0, 0, 0)).toBe(
+      "0 CCA(s), 0 flat CCA(s), 0 member(s)",
+    );
+  });
+
+  it("cannot carry a matric or a name: it only takes numbers", () => {
+    const reason = bundleExportReason(2, 1, 7);
+    expect(reason).not.toMatch(/[A-Za-z]\d{7}[A-Za-z]/);
+    expect(reason).toMatch(/^\d+ CCA\(s\), \d+ flat CCA\(s\), \d+ member\(s\)$/);
   });
 });
 

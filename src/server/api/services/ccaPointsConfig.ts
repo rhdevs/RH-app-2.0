@@ -202,8 +202,17 @@ export function flatExportReason(
   return `${ccaCount} CCA(s), ${memberCount} member(s)`;
 }
 
+/** Audit reason for a sandbox-bundle export: counts only, never a matric or a name. */
+export function bundleExportReason(
+  ccaCount: number,
+  flatCcaCount: number,
+  memberCount: number,
+): string {
+  return `${ccaCount} CCA(s), ${flatCcaCount} flat CCA(s), ${memberCount} member(s)`;
+}
+
 /* -------------------------------------------------------------------------- */
-/* Database helpers                                                            */
+/* Database helpers                                                          */
 /* -------------------------------------------------------------------------- */
 
 export function readDefaultRow(

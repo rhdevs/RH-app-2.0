@@ -32,6 +32,7 @@ import {
   removeOverride,
   resolveRange,
   brokenWaiversMessage,
+  bundleExportReason,
   flatExportReason,
   sportReason,
   sportsMissingIhg,
@@ -67,6 +68,7 @@ import {
   type Range,
 } from "~/lib/points/constants";
 import { fillRange } from "~/lib/points/meanSd";
+import type { BundleCca } from "~/lib/points/bundleCsv";
 
 /**
  * JCRC's points-entry configuration, and the one read a CCA head needs.
@@ -83,12 +85,13 @@ import { fillRange } from "~/lib/points/meanSd";
  * members the head ticks for the IHG points stays in the head's browser and the
  * CSV; no procedure takes a matric, a row key or a tick.
  *
- * ONE EXCEPTION IN WHAT IS RETURNED: `flatExportData` returns, to JCRC only (live
- * capability re-check), the rosters of the flat CCAs with matrics and names. That
- * is membership plus JCRC's own flat value, never a leader's score. Every call
- * writes an audit row (`ccaPoints.flat.export`, counts only) before the payload is
- * returned; like event.exportAttendees that row is best-effort (writeAudit logs a
- * failure and never throws), so a failed write is logged and does not block.
+ * ONE EXCEPTION IN WHAT IS RETURNED: `flatExportData` and `bundleExportData`
+ * return, to JCRC only (live capability re-check), the rosters of the flat CCAs
+ * with matrics and names. That is membership plus JCRC's own flat value, never a
+ * leader's score. Every call writes an audit row (`ccaPoints.flat.export` /
+ * `ccaPoints.bundle.export`, counts only) before the payload is returned; like
+ * event.exportAttendees that row is best-effort (writeAudit logs a failure and
+ * never throws), so a failed write is logged and does not block.
  *
  * The twelve JCRC procedures are `roleManagerProcedure` (admin + jcrc) and
  * ADDITIONALLY assert `manageCcaPointsRanges` against a LIVE role read (I-5), the
@@ -170,6 +173,36 @@ function audit(
   },
 ) {
   return writeAudit(db, e);
+}
+
+/** The flat CCAs' value and whole roster with matrics: membership plus JCRC's own config. */
+async function flatRosters(
+  db: PrismaClient,
+  flatRows: Awaited<ReturnType<typeof listOverrideRows>>,
+  nameById: ReadonlyMap<number, string>,
+) {
+  return Promise.all(
+    flatRows.flatMap((r) =>
+      r.ccaID === null || r.flatPoints === null
+        ? []
+        : [
+            (async () => {
+              const { entries } = await buildDirectoryEntries(db, r.ccaID!);
+              return {
+                ccaID: r.ccaID!,
+                ccaName: nameById.get(r.ccaID!) ?? `CCA ${r.ccaID}`,
+                flatPoints: r.flatPoints!,
+                members: entries.map((e) => ({
+                  rowKey: e.rowKey,
+                  matric: e.matric,
+                  name: e.name,
+                  resolved: e.resolved,
+                })),
+              };
+            })(),
+          ],
+    ),
+  );
 }
 
 const overrideInput = z.object({
@@ -697,31 +730,7 @@ export const ccaPointsRouter = createTRPCRouter({
             select: { ccaID: true, ccaName: true },
           });
     const nameById = new Map(named.map((c) => [c.ccaID, c.ccaName]));
-    const payload = await Promise.all(
-      flatRows.flatMap((r) =>
-        r.ccaID === null || r.flatPoints === null
-          ? []
-          : [
-              (async () => {
-                const { entries } = await buildDirectoryEntries(
-                  ctx.db,
-                  r.ccaID!,
-                );
-                return {
-                  ccaID: r.ccaID!,
-                  ccaName: nameById.get(r.ccaID!) ?? `CCA ${r.ccaID}`,
-                  flatPoints: r.flatPoints!,
-                  members: entries.map((e) => ({
-                    rowKey: e.rowKey,
-                    matric: e.matric,
-                    name: e.name,
-                    resolved: e.resolved,
-                  })),
-                };
-              })(),
-            ],
-      ),
-    );
+    const payload = await flatRosters(ctx.db, flatRows, nameById);
     // The audit row is written before the payload is returned. It is best-effort,
     // like event.exportAttendees: writeAudit logs a failure and never throws, so a
     // failed write is logged, not blocking. The reason holds counts only.
@@ -735,5 +744,78 @@ export const ccaPointsRouter = createTRPCRouter({
       ),
     });
     return payload;
+  }),
+
+  /**
+   * The ONE file JCRC gives the sandbox: the effective default range, the waivers,
+   * every CCA (type, sport tick, IHG result and cap, flat value) and the flat
+   * rosters with matrics. Like flatExportData it is a MUTATION: a bulk read of
+   * matrics and names, so each call writes one `ccaPoints.bundle.export` audit row
+   * (counts only) before the payload is returned, and the result is not cached.
+   */
+  bundleExportData: roleManagerProcedure.mutation(async ({ ctx }) => {
+    const actorUserID = ctx.session.user.userID;
+    const roles = await requirePointsCapability(ctx.db, actorUserID);
+    const [defaultRow, overrideRows, allCcas] = await Promise.all([
+      readDefaultRow(ctx.db),
+      listOverrideRows(ctx.db),
+      ctx.db.cCA.findMany({
+        select: { ccaID: true, ccaName: true, category: true },
+        orderBy: { ccaID: "asc" },
+      }),
+    ]);
+    const nameById = new Map(allCcas.map((c) => [c.ccaID, c.ccaName]));
+    const rowById = new Map(overrideRows.map((r) => [r.ccaID, r]));
+    const flat = await flatRosters(
+      ctx.db,
+      overrideRows.filter(isFlatRow),
+      nameById,
+    );
+    const ccas: BundleCca[] = allCcas.map((c) => {
+      const row = rowById.get(c.ccaID) ?? null;
+      const isSport = effectiveIsSport(row, c.category);
+      return {
+        ccaID: c.ccaID,
+        ccaName: c.ccaName,
+        flatPoints: isFlatRow(row) ? (row?.flatPoints ?? null) : null,
+        type: isCcaType(row?.ccaType) ? row.ccaType : null,
+        isSport,
+        ihgResult:
+          isSport && isIhgResult(row?.ihgResult) ? row.ihgResult : null,
+        ihgCap: isSport && isValidIhgCap(row?.ihgCap) ? row.ihgCap : null,
+      };
+    });
+    const waivers = waiverRows(overrideRows).flatMap((r) =>
+      r.ccaID === null
+        ? []
+        : [
+            {
+              ccaID: r.ccaID,
+              ccaName: nameById.get(r.ccaID) ?? `CCA ${r.ccaID}`,
+              meanMin: r.meanMin,
+              meanMax: r.meanMax,
+              sdMin: r.sdMin,
+              sdMax: r.sdMax,
+              note: r.note,
+            },
+          ],
+    );
+    // Audit before returning; best-effort like flatExportData. Counts only.
+    await audit(ctx.db, {
+      actorUserID,
+      actorRoles: roles,
+      action: "ccaPoints.bundle.export",
+      reason: bundleExportReason(
+        ccas.length,
+        flat.length,
+        flat.reduce((n, c) => n + c.members.length, 0),
+      ),
+    });
+    return {
+      effectiveDefault: resolveRange(defaultRow, null).range,
+      waivers,
+      ccas,
+      flat,
+    };
   }),
 });

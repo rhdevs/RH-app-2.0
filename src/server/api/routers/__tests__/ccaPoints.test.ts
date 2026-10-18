@@ -24,6 +24,7 @@ import { getUserRoles } from "~/server/api/services/access";
 import { buildDirectoryEntries } from "~/server/api/services/ccaDirectory";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
 import { pointsErrorCopy } from "~/app/admin/points/_components/errorCopy";
+import { DEFAULT_RANGE } from "~/lib/points/constants";
 import { createCallerFactory } from "~/server/api/trpc";
 
 const createCaller = createCallerFactory(ccaPointsRouter);
@@ -138,6 +139,7 @@ describe("JCRC procedures re-check the LIVE roles", () => {
       ["setSport", (c) => c.setSport({ ccaID: 1, isSport: true })],
       ["startNewPointsYear", (c) => c.startNewPointsYear()],
       ["flatExportData", (c) => c.flatExportData()],
+      ["bundleExportData", (c) => c.bundleExportData()],
     ];
 
   it.each(calls)(
@@ -261,6 +263,210 @@ describe("ccaPoints.flatExportData", () => {
     });
     expect(JSON.stringify(entry)).not.toContain("A9900001Z");
     expect(JSON.stringify(entry)).not.toContain("Test Member 1");
+  });
+});
+
+describe("ccaPoints.bundleExportData", () => {
+  const row = (scope: string, patch: Record<string, unknown>) => ({
+    scope,
+    ccaID: Number(scope.slice(4)),
+    flatPoints: null,
+    meanMin: null,
+    meanMax: null,
+    sdMin: null,
+    sdMax: null,
+    note: null,
+    ccaType: null,
+    ihgResult: null,
+    ihgCap: null,
+    isSport: null,
+    updatedAt: new Date(),
+    updatedBy: null,
+    ...patch,
+  });
+
+  function bundleDb(rows: Record<string, unknown>[], ccas: unknown[]) {
+    return {
+      ccaPointsConfig: {
+        findUnique: vi.fn(async () => null),
+        findMany: vi.fn(async () => rows),
+      },
+      cCA: { findMany: vi.fn(async () => ccas) },
+    };
+  }
+
+  function mockChoirRoster() {
+    mockedEntries.mockResolvedValue({
+      cca: { ccaID: 5, ccaName: "Test Choir", category: null },
+      entries: [
+        {
+          rowKey: "u:1",
+          resolved: true,
+          role: "Member",
+          name: "Test Member 1",
+          email: "test1@u.nus.edu",
+          userID: "E0000001",
+          matric: "A9900001Z",
+          block: 3,
+          telegramHandle: "@test1",
+          bio: "private bio",
+          membershipRecords: 1,
+          joinedAt: null,
+          note: null,
+        },
+        {
+          rowKey: "k:E0000002",
+          resolved: false,
+          role: "Member",
+          name: null,
+          email: null,
+          userID: "E0000002",
+          matric: null,
+          block: null,
+          telegramHandle: null,
+          bio: null,
+          membershipRecords: 0,
+          joinedAt: null,
+          note: "Unmatched record — no account matches this membership key.",
+        },
+      ],
+    } as never);
+  }
+
+  it("returns config, every CCA and the flat rosters, and audits once with counts only", async () => {
+    mockedRoles.mockResolvedValue(["jcrc"]);
+    const db = bundleDb(
+      [
+        row("cca:9101", { meanMin: 12, note: "Small CCA", ccaType: "1x" }),
+        row("cca:5", { flatPoints: 7.5 }),
+        row("cca:7", { ccaType: "0.5x", ihgResult: "1st", ihgCap: 12 }),
+      ].sort((a, b) => a.ccaID - b.ccaID),
+      [
+        { ccaID: 5, ccaName: "Test Choir", category: "Performing Arts" },
+        { ccaID: 7, ccaName: "Test Dance", category: "Sports Activities" },
+        { ccaID: 9101, ccaName: "Test Drama", category: "Performing Arts" },
+      ],
+    );
+    mockChoirRoster();
+
+    const result = await caller(db, ["jcrc"]).bundleExportData();
+
+    expect(db.cCA.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: { ccaID: true, ccaName: true, category: true },
+        orderBy: { ccaID: "asc" },
+      }),
+    );
+    expect(result.ccas).toEqual([
+      {
+        ccaID: 5,
+        ccaName: "Test Choir",
+        flatPoints: 7.5,
+        type: null,
+        isSport: false,
+        ihgResult: null,
+        ihgCap: null,
+      },
+      {
+        ccaID: 7,
+        ccaName: "Test Dance",
+        flatPoints: null,
+        type: "0.5x",
+        isSport: true,
+        ihgResult: "1st",
+        ihgCap: 12,
+      },
+      {
+        ccaID: 9101,
+        ccaName: "Test Drama",
+        flatPoints: null,
+        type: "1x",
+        isSport: false,
+        ihgResult: null,
+        ihgCap: null,
+      },
+    ]);
+    expect(result.waivers).toEqual([
+      {
+        ccaID: 9101,
+        ccaName: "Test Drama",
+        meanMin: 12,
+        meanMax: null,
+        sdMin: null,
+        sdMax: null,
+        note: "Small CCA",
+      },
+    ]);
+    expect(result.effectiveDefault).toEqual(DEFAULT_RANGE);
+    expect(result.flat).toEqual([
+      {
+        ccaID: 5,
+        ccaName: "Test Choir",
+        flatPoints: 7.5,
+        members: [
+          {
+            rowKey: "u:1",
+            matric: "A9900001Z",
+            name: "Test Member 1",
+            resolved: true,
+          },
+          { rowKey: "k:E0000002", matric: null, name: null, resolved: false },
+        ],
+      },
+    ]);
+    expect(mockedAudit).toHaveBeenCalledTimes(1);
+    const entry = mockedAudit.mock.calls[0]?.[1];
+    expect(entry).toMatchObject({
+      action: "ccaPoints.bundle.export",
+      actorUserID: USER,
+      reason: "3 CCA(s), 1 flat CCA(s), 2 member(s)",
+    });
+    expect(JSON.stringify(entry)).not.toContain("A9900001Z");
+    expect(JSON.stringify(entry)).not.toContain("Test Member 1");
+  });
+
+  it("treats a Performing Arts CCA ticked as a sport as a sport", async () => {
+    mockedRoles.mockResolvedValue(["jcrc"]);
+    const db = bundleDb(
+      [row("cca:3", { isSport: true, ihgResult: "2nd", ihgCap: 8 })],
+      [{ ccaID: 3, ccaName: "Test Fencing", category: "Performing Arts" }],
+    );
+
+    const result = await caller(db, ["jcrc"]).bundleExportData();
+
+    expect(result.ccas).toEqual([
+      {
+        ccaID: 3,
+        ccaName: "Test Fencing",
+        flatPoints: null,
+        type: null,
+        isSport: true,
+        ihgResult: "2nd",
+        ihgCap: 8,
+      },
+    ]);
+  });
+
+  it("treats a Sports Activities CCA ticked off as not a sport, hiding stored IHG values", async () => {
+    mockedRoles.mockResolvedValue(["jcrc"]);
+    const db = bundleDb(
+      [row("cca:4", { isSport: false, ihgResult: "1st", ihgCap: 10 })],
+      [{ ccaID: 4, ccaName: "Test Chess", category: "Sports Activities" }],
+    );
+
+    const result = await caller(db, ["jcrc"]).bundleExportData();
+
+    expect(result.ccas).toEqual([
+      {
+        ccaID: 4,
+        ccaName: "Test Chess",
+        flatPoints: null,
+        type: null,
+        isSport: false,
+        ihgResult: null,
+        ihgCap: null,
+      },
+    ]);
   });
 });
 
