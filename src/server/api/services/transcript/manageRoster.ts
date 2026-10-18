@@ -444,8 +444,11 @@ function collectingUpdate(
       })
     | null,
   changes: RosterChanges,
+  correction: boolean,
 ) {
-  if (target.frozen || !current) return changes;
+  // A correction changes the locked entry's own fields, whatever was read of
+  // the year before the guard.
+  if (target.frozen || correction || !current) return changes;
   if (current.frozen === true) {
     const merged = { ...savedChoices(current)!, ...changes };
     return lockedFields(merged, { isHead: target.isHead });
@@ -472,16 +475,20 @@ export async function rosterUpsert(
   input: UpsertInput,
   now: Date = new Date(),
 ) {
-  const target = await findTarget(db, input);
+  const found = await findTarget(db, input);
   const guard = await assertCanEditForResidents(
     db,
     { userID: actorUserID },
     {
       ccaID: input.ccaID,
       academicYear: input.academicYear,
-      affectedUserIDs: [target.key],
+      affectedUserIDs: [found.key],
     },
   );
+  // A correction is for an open year: if the year opened between the read
+  // above and the guard, act on the LOCKED entry, never on the live list.
+  const target =
+    guard.correction && !found.frozen ? await findTarget(db, input) : found;
   await assertRoleFitsMembership(db, input, target);
 
   const changes = {
@@ -552,7 +559,10 @@ export async function rosterUpsert(
         ...saved,
         ...stamp,
       },
-      update: { ...collectingUpdate(target, current, saved), ...stamp },
+      update: {
+        ...collectingUpdate(target, current, saved, guard.correction),
+        ...stamp,
+      },
     });
     if (logged) {
       const cca = await tx.cCA.findUnique({

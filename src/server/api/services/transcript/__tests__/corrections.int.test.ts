@@ -335,6 +335,60 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
         expect((await interHall()).title).toBe("Inter-hall league");
       });
+
+      it("a correction whose first read still saw the year collecting changes the locked entry and keeps earlier corrections (S5)", async () => {
+        await publishYear();
+        await unlock(R12);
+        await as(JCRC).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: R12.id,
+          extraContribution: "Corrected A.",
+        });
+
+        // The database, except that the FIRST read of the year (the one before
+        // the guard) still finds it collecting: Open landed just after it.
+        let reads = 0;
+        const stale = new Proxy(db, {
+          get(target, prop, receiver) {
+            const value: unknown = Reflect.get(target, prop, receiver);
+            if (prop !== "transcriptPeriod") {
+              return typeof value === "function"
+                ? (value as (...a: unknown[]) => unknown).bind(target)
+                : value;
+            }
+            const period = value as PrismaClient["transcriptPeriod"];
+            return new Proxy(period, {
+              get(t, p, r) {
+                if (p !== "findUnique") return Reflect.get(t, p, r);
+                return async (
+                  args: Parameters<typeof period.findUnique>[0],
+                ) => {
+                  const row = await period.findUnique(args);
+                  reads += 1;
+                  return reads === 1 && row
+                    ? { ...row, status: "collecting" }
+                    : row;
+                };
+              },
+            });
+          },
+        }) as PrismaClient;
+
+        const roster = await import("../manageRoster");
+        await roster.rosterUpsert(stale, JCRC.id, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: R12.id,
+          duration: "sem2",
+        });
+        expect(reads).toBeGreaterThan(1);
+        expect(await entryOf(R12)).toMatchObject({
+          frozen: true,
+          duration: "sem2",
+          extraContribution: "Corrected A.",
+        });
+      });
     });
 
     /* ---------------------------------------------------------------- */
