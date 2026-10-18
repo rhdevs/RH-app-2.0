@@ -20,6 +20,7 @@ import { NOT_REMOVED } from "./loader";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
+  ORDINARY_WRITE,
   logCorrections,
 } from "./residentRecords";
 import { actorLabels, lookupResidents, requireResidents } from "./residents";
@@ -158,6 +159,7 @@ export async function activityCreate(
   now: Date = new Date(),
 ) {
   return db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, input.academicYear, ORDINARY_WRITE);
     if (
       (await activeCount(tx, input.ccaID, input.academicYear)) >= MAX_ACTIVITIES
     ) {
@@ -195,15 +197,18 @@ export async function activityUpdate(
 ) {
   const row = await requireActivity(db, input.id, input.ccaID);
   if (row.removedAt) throw fail("CONFLICT", "ACTIVITY_REMOVED");
-  await db.ccaActivity.update({
-    where: { id: row.id },
-    data: {
-      title: input.title,
-      description: input.description === "" ? null : input.description,
-      period: input.period,
-      updatedBy: actorUserID,
-      updatedAt: now,
-    },
+  await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, row.academicYear, ORDINARY_WRITE);
+    await tx.ccaActivity.update({
+      where: { id: row.id },
+      data: {
+        title: input.title,
+        description: input.description === "" ? null : input.description,
+        period: input.period,
+        updatedBy: actorUserID,
+        updatedAt: now,
+      },
+    });
   });
   return { id: row.id };
 }
@@ -218,9 +223,12 @@ export async function activityRemove(
 ) {
   const row = await requireActivity(db, id, ccaID);
   if (!row.removedAt) {
-    await db.ccaActivity.update({
-      where: { id },
-      data: { removedAt: now, removedBy: actorUserID },
+    await db.$transaction(async (tx) => {
+      await assertStillCollecting(tx, row.academicYear, ORDINARY_WRITE);
+      await tx.ccaActivity.update({
+        where: { id },
+        data: { removedAt: now, removedBy: actorUserID },
+      });
     });
   }
   return { id };
@@ -237,6 +245,7 @@ export async function activityRestore(
   const row = await requireActivity(db, id, ccaID);
   if (!row.removedAt) return { id };
   return db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, row.academicYear, ORDINARY_WRITE);
     if ((await activeCount(tx, ccaID, row.academicYear)) >= MAX_ACTIVITIES) {
       throw tooMany();
     }

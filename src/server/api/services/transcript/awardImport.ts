@@ -28,7 +28,11 @@ import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import { NOT_VOIDED } from "./loader";
 import { assertWritable } from "./manageAccess";
 import { correctionSummary } from "~/lib/transcript/corrections";
-import { assertCanEditForResidents, logCorrections } from "./residentRecords";
+import {
+  assertCanEditForResidents,
+  assertStillCollecting,
+  logCorrections,
+} from "./residentRecords";
 import { lookupResidents } from "./residents";
 
 /**
@@ -359,6 +363,7 @@ export async function awardImportCommit(
       try {
         await retryWriteConflicts(() =>
           db.$transaction(async (tx) => {
+            await assertStillCollecting(tx, input.academicYear, guard);
             await tx.award.createMany({ data: chunk.map(rowFor) });
             await logCorrections(
               tx,
@@ -380,6 +385,7 @@ export async function awardImportCommit(
           try {
             await retryWriteConflicts(() =>
               db.$transaction(async (tx) => {
+                await assertStillCollecting(tx, input.academicYear, guard);
                 await tx.award.create({ data: rowFor(a) });
                 await logCorrections(
                   tx,

@@ -22,7 +22,11 @@ import {
   type VolunteerKind,
 } from "~/lib/transcript/volunteer";
 import { loadResidentCcaIDs, NOT_REMOVED, NOT_VOIDED } from "./loader";
-import { assertCanEditForResidents, logCorrections } from "./residentRecords";
+import {
+  assertCanEditForResidents,
+  assertStillCollecting,
+  logCorrections,
+} from "./residentRecords";
 import { actorLabels, requireResident } from "./residents";
 
 /**
@@ -212,6 +216,7 @@ export async function participationSet(
     description: input.description === "" ? null : input.description,
   };
   await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, activity.academicYear, guard);
     if (!row) {
       await tx.ccaActivityParticipant.create({
         data: {
@@ -289,6 +294,7 @@ export async function participationRemove(
     },
   );
   await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, activity.academicYear, guard);
     if (!row.removedAt) {
       await tx.ccaActivityParticipant.update({
         where: { id: row.id },

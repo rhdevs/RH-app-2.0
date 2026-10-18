@@ -27,6 +27,7 @@ import { correctionSummary } from "~/lib/transcript/corrections";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
+  ORDINARY_WRITE,
   logCorrections,
 } from "./residentRecords";
 import { NOT_REMOVED } from "./loader";
@@ -354,6 +355,7 @@ export async function volunteerActivityCreate(
 ) {
   await assertCanWrite(db, actorUserID, input.ccaID, input.academicYear);
   return db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, input.academicYear, ORDINARY_WRITE);
     if (
       (await activeCount(tx, input.ccaID, input.academicYear)) >=
       MAX_VOLUNTEER_ACTIVITIES
@@ -405,6 +407,7 @@ export async function volunteerActivityUpdate(
   if (input.date !== undefined) assertInYear(input.date, activity.academicYear);
 
   await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, activity.academicYear, ORDINARY_WRITE);
     await tx.volunteerActivity.update({
       where: { id: activity.id },
       data: {
@@ -446,9 +449,12 @@ export async function volunteerActivityRemove(
   const activity = await requireActivity(db, id, ccaID);
   await assertCanWrite(db, actorUserID, ccaID, activity.academicYear);
   if (!activity.removedAt) {
-    await db.volunteerActivity.update({
-      where: { id },
-      data: { removedAt: now, removedBy: actorUserID },
+    await db.$transaction(async (tx) => {
+      await assertStillCollecting(tx, activity.academicYear, ORDINARY_WRITE);
+      await tx.volunteerActivity.update({
+        where: { id },
+        data: { removedAt: now, removedBy: actorUserID },
+      });
     });
   }
   return { id };
@@ -466,6 +472,7 @@ export async function volunteerActivityRestore(
   await assertCanWrite(db, actorUserID, ccaID, activity.academicYear);
   if (!activity.removedAt) return { id };
   return db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, activity.academicYear, ORDINARY_WRITE);
     if (
       (await activeCount(tx, ccaID, activity.academicYear)) >=
       MAX_VOLUNTEER_ACTIVITIES
@@ -513,6 +520,7 @@ export async function volunteerSessionAdd(
   );
   await assertCanWrite(db, actorUserID, input.ccaID, activity.academicYear);
   return db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, activity.academicYear, ORDINARY_WRITE);
     const active = await tx.volunteerSession.findMany({
       where: { activityID: activity.id, ...NOT_REMOVED },
       select: { date: true, hours: true },
@@ -556,14 +564,17 @@ export async function volunteerSessionUpdate(
   await assertCanWrite(db, actorUserID, input.ccaID, session.academicYear);
   if (session.removedAt) throw fail("CONFLICT", "SESSION_REMOVED");
   if (input.date !== undefined) assertInYear(input.date, session.academicYear);
-  await db.volunteerSession.update({
-    where: { id: session.id },
-    data: {
-      ...(input.date !== undefined && { date: sessionDate(input.date) }),
-      ...(input.hours !== undefined && { hours: input.hours }),
-      updatedBy: actorUserID,
-      updatedAt: now,
-    },
+  await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, session.academicYear, ORDINARY_WRITE);
+    await tx.volunteerSession.update({
+      where: { id: session.id },
+      data: {
+        ...(input.date !== undefined && { date: sessionDate(input.date) }),
+        ...(input.hours !== undefined && { hours: input.hours }),
+        updatedBy: actorUserID,
+        updatedAt: now,
+      },
+    });
   });
   return { id: session.id };
 }
@@ -588,9 +599,12 @@ export async function volunteerSessionRemove(
   const session = await sessionOfRegular(db, sessionID, ccaID);
   await assertCanWrite(db, actorUserID, ccaID, session.academicYear);
   if (!session.removedAt) {
-    await db.volunteerSession.update({
-      where: { id: sessionID },
-      data: { removedAt: now, removedBy: actorUserID },
+    await db.$transaction(async (tx) => {
+      await assertStillCollecting(tx, session.academicYear, ORDINARY_WRITE);
+      await tx.volunteerSession.update({
+        where: { id: sessionID },
+        data: { removedAt: now, removedBy: actorUserID },
+      });
     });
   }
   return { id: sessionID };
@@ -607,6 +621,7 @@ export async function volunteerSessionRestore(
   await assertCanWrite(db, actorUserID, ccaID, session.academicYear);
   if (!session.removedAt) return { id: sessionID };
   return db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, session.academicYear, ORDINARY_WRITE);
     if (
       (await activeSessionCount(tx, session.activityID)) >=
       MAX_VOLUNTEER_SESSIONS

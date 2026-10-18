@@ -21,7 +21,11 @@ import type {
 } from "~/lib/transcript/manageInput";
 import { NOT_VOIDED } from "./loader";
 import { correctionSummary } from "~/lib/transcript/corrections";
-import { assertCanEditForResidents, logCorrections } from "./residentRecords";
+import {
+  assertCanEditForResidents,
+  assertStillCollecting,
+  logCorrections,
+} from "./residentRecords";
 import { actorLabels, lookupResidents, requireResidents } from "./residents";
 
 /**
@@ -306,6 +310,7 @@ export async function awardsAssign(
     const raced: typeof recipients = [];
     try {
       await db.$transaction(async (tx) => {
+        await assertStillCollecting(tx, input.academicYear, guard);
         if (plan.create.length > 0) {
           await tx.award.createMany({ data: plan.create.map(rowFor) });
         }
@@ -328,6 +333,7 @@ export async function awardsAssign(
         try {
           await retryWriteConflicts(() =>
             db.$transaction(async (tx) => {
+              await assertStillCollecting(tx, input.academicYear, guard);
               await tx.award.create({ data: rowFor(r) });
               await logCorrections(
                 tx,
@@ -437,6 +443,7 @@ export async function awardUpdate(
       });
   try {
     await db.$transaction(async (tx) => {
+      await assertStillCollecting(tx, award.academicYear, guard);
       // The check and the write are one step: an edit that lost a race with a
       // remove changes nothing, so it cannot put the active key back.
       const written = await tx.award.updateMany({
@@ -485,6 +492,7 @@ export async function awardRemove(
   );
   if (!award.voidedAt) {
     await db.$transaction(async (tx) => {
+      await assertStillCollecting(tx, award.academicYear, guard);
       await voidAwards(tx, [award], actorUserID, now);
       await logCorrections(
         tx,
@@ -542,6 +550,7 @@ export async function awardRestore(
   try {
     await retryWriteConflicts(() =>
       db.$transaction(async (tx) => {
+        await assertStillCollecting(tx, award.academicYear, guard);
         await tx.award.update({
           where: { id },
           data: {
@@ -613,6 +622,16 @@ async function bulkTargets(
 }
 
 /** Log a bulk change's corrections, year by year. */
+/** The in-transaction year check for every year a bulk change touches. */
+async function assertYearsStillCollecting(
+  tx: Pick<PrismaClient, "transcriptPeriod">,
+  guards: Map<string, { correction: boolean }>,
+) {
+  for (const [year, guard] of guards) {
+    await assertStillCollecting(tx, year, guard);
+  }
+}
+
 async function logBulk(
   db: Pick<PrismaClient, "residentEvent">,
   actorUserID: string,
@@ -652,6 +671,7 @@ export async function awardsBulkRemove(
   const live = rows.filter((r) => !r.voidedAt);
   if (live.length > 0) {
     await db.$transaction(async (tx) => {
+      await assertYearsStillCollecting(tx, guards);
       await voidAwards(tx, live, actorUserID, now);
       await logBulk(tx, actorUserID, guards, live, "removed", now);
     }, BULK_TX);
@@ -720,6 +740,7 @@ export async function awardsBulkRestore(
   if (restorable.length > 0) {
     try {
       await db.$transaction(async (tx) => {
+        await assertYearsStillCollecting(tx, guards);
         await inChunks(restorable, (r) =>
           tx.award.update({ where: { id: r.id }, data: restoreData(r) }),
         );
@@ -733,6 +754,11 @@ export async function awardsBulkRestore(
         try {
           await retryWriteConflicts(() =>
             db.$transaction(async (tx) => {
+              await assertStillCollecting(
+                tx,
+                r.academicYear,
+                guards.get(r.academicYear)!,
+              );
               await tx.award.update({
                 where: { id: r.id },
                 data: restoreData(r),
@@ -850,6 +876,7 @@ export async function awardBatchUndo(
     },
   );
   const undone = await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, batch.academicYear, guard);
     const claimed = await tx.awardImportBatch.updateMany({
       where: {
         id: batchId,

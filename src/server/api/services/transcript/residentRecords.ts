@@ -127,6 +127,12 @@ export async function assertCanEditForResidents(
  * inside the transaction narrows that window to the transaction itself. A
  * correction is for an open year already, so it is not checked here.
  */
+/**
+ * The guard result of a write only `assertCanEditCcaYear` admits (activities,
+ * volunteer activities and sessions): never a correction.
+ */
+export const ORDINARY_WRITE = { correction: false } as const;
+
 export async function assertStillCollecting(
   tx: Pick<PrismaClient, "transcriptPeriod">,
   academicYear: string,

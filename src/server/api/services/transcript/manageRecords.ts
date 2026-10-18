@@ -5,7 +5,11 @@ import { correctionSummary } from "~/lib/transcript/corrections";
 import type { jcrcSaveForInput } from "~/lib/transcript/manageInput";
 import { NOT_VOIDED } from "./loader";
 import { requireCca } from "./manageAccess";
-import { assertCanEditForResidents, logCorrections } from "./residentRecords";
+import {
+  assertCanEditForResidents,
+  assertStillCollecting,
+  logCorrections,
+} from "./residentRecords";
 import {
   actorLabels,
   keysOf,
@@ -103,6 +107,7 @@ export async function jcrcSave(
     updatedBy: actorUserID,
   };
   await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, fields.academicYear, guard);
     await tx.jcrcService.upsert({
       where: {
         academicYear_userID: { academicYear: fields.academicYear, userID: key },
@@ -161,6 +166,7 @@ async function setJcrcRemoved(
     throw new TRPCError({ code: "NOT_FOUND", message: "RECORD_NOT_FOUND" });
   if (Boolean(row.removedAt) === removed) return { userID: resident.key };
   await db.$transaction(async (tx) => {
+    await assertStillCollecting(tx, fields.academicYear, guard);
     await tx.jcrcService.update({
       where: { id: row.id },
       data: removed

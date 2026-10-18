@@ -880,6 +880,166 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           await db.volunteerPerson.count({ where: { activityID: tuition.id } }),
         ).toBe(people);
       });
+
+      it("every other year-scoped write refuses too: activities, volunteer activities and sessions, JCRC pages and awards (R5)", async () => {
+        const activities = await import("../activities");
+        const volunteer = await import("../manageVolunteer");
+        const records = await import("../manageRecords");
+        const awards = await import("../manageAwards");
+        const refused = "PRECONDITION_FAILED:PERIOD_PUBLISHED";
+
+        const league = await db.ccaActivity.findFirstOrThrow({
+          where: {
+            ccaID: SOCCER,
+            academicYear: AY,
+            title: "Inter-hall league",
+          },
+        });
+        const tuition = await db.volunteerActivity.findFirstOrThrow({
+          where: {
+            ccaID: 9002,
+            academicYear: AY,
+            title: { startsWith: "Weekly tuition" },
+          },
+        });
+        const session = await db.volunteerSession.findFirstOrThrow({
+          where: { activityID: tuition.id, ...loader.NOT_REMOVED },
+        });
+        const awardType = await db.awardType.findFirstOrThrow({
+          where: { name: "Service Excellence Award" },
+        });
+        const snapshot = async () => ({
+          activities: await db.ccaActivity.findMany({
+            where: { ccaID: SOCCER, academicYear: AY },
+            orderBy: { id: "asc" },
+          }),
+          volunteer: await db.volunteerActivity.findMany({
+            where: { ccaID: 9002, academicYear: AY },
+            orderBy: { id: "asc" },
+          }),
+          sessions: await db.volunteerSession.findMany({
+            where: { activityID: tuition.id },
+            orderBy: { id: "asc" },
+          }),
+          jcrc: await db.jcrcService.findMany({
+            where: { academicYear: AY, userID: JCRC.id },
+          }),
+          awards: await db.award.findMany({
+            where: { academicYear: AY, userID: R20.id },
+          }),
+        });
+        const before = await snapshot();
+
+        const writes: Array<[string, () => Promise<unknown>]> = [
+          [
+            "activity create",
+            () =>
+              activities.activityCreate(openingDuring(), SOCCER_HEAD.id, {
+                ccaID: SOCCER,
+                academicYear: AY,
+                title: "Saved too late",
+                description: "",
+                period: "full",
+              }),
+          ],
+          [
+            "activity update",
+            () =>
+              activities.activityUpdate(openingDuring(), SOCCER_HEAD.id, {
+                id: league.id,
+                ccaID: SOCCER,
+                title: "Saved too late",
+                description: "",
+                period: "full",
+              }),
+          ],
+          [
+            "activity remove",
+            () =>
+              activities.activityRemove(
+                openingDuring(),
+                SOCCER_HEAD.id,
+                league.id,
+                SOCCER,
+              ),
+          ],
+          [
+            "volunteer activity create",
+            () =>
+              volunteer.volunteerActivityCreate(openingDuring(), "SEED-R06", {
+                ccaID: 9002,
+                academicYear: AY,
+                title: "Saved too late",
+                kind: "regular",
+                description: "",
+              }),
+          ],
+          [
+            "volunteer activity remove",
+            () =>
+              volunteer.volunteerActivityRemove(
+                openingDuring(),
+                "SEED-R06",
+                tuition.id,
+                9002,
+              ),
+          ],
+          [
+            "volunteer session add",
+            () =>
+              volunteer.volunteerSessionAdd(openingDuring(), "SEED-R06", {
+                activityID: tuition.id,
+                ccaID: 9002,
+                hours: 2,
+              }),
+          ],
+          [
+            "volunteer session update",
+            () =>
+              volunteer.volunteerSessionUpdate(openingDuring(), "SEED-R06", {
+                sessionID: session.id,
+                ccaID: 9002,
+                hours: 7,
+              }),
+          ],
+          [
+            "volunteer session remove",
+            () =>
+              volunteer.volunteerSessionRemove(
+                openingDuring(),
+                "SEED-R06",
+                session.id,
+                9002,
+              ),
+          ],
+          [
+            "JCRC page save",
+            () =>
+              records.jcrcSave(openingDuring(), JCRC.id, JCRC.id, {
+                academicYear: AY,
+                portfolio: "Saved too late",
+                position: "",
+                description: "",
+                contributions: [],
+                testimonial: "",
+              }),
+          ],
+          [
+            "award assign",
+            () =>
+              awards.awardsAssign(openingDuring(), JCRC.id, {
+                academicYear: AY,
+                awardTypeID: awardType.id,
+                recipients: [{ userID: R20.id, citation: "" }],
+              }),
+          ],
+        ];
+        for (const [what, write] of writes) {
+          expect(await errorOf(write()), what).toBe(refused);
+          await backToCollecting();
+        }
+        expect(await snapshot()).toEqual(before);
+      });
     });
 
     /* ---- (E) who may edit -------------------------------------------------- */
