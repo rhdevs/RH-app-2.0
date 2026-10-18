@@ -19,34 +19,9 @@
  * so only a DB row is a no-redeploy switch. Writes via $runCommandRaw and
  * INSPECTS THE REPLY rather than trusting a throw, then reads the row back.
  */
-import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { inspectWriteReply, isCommit, abort, nowExt } from "./lib/rbac.mjs";
-
-/**
- * "host <hosts>, database <name>" for a MongoDB connection string: what this
- * run will write to, so a dry run and a commit both show it. Never the user
- * name or password (everything up to the last "@" of the authority is left
- * out), and never the query options.
- */
-export function describeTarget(url) {
-  if (!url) return "(DATABASE_URL is not set)";
-  const start = url.indexOf("://");
-  if (start < 0) return "(DATABASE_URL could not be read)";
-  const rest = url.slice(start + 3);
-  const end = rest.search(/[/?]/);
-  const authority = end < 0 ? rest : rest.slice(0, end);
-  const host = authority.slice(authority.lastIndexOf("@") + 1);
-  const rawName =
-    end >= 0 && rest[end] === "/" ? rest.slice(end + 1).split("?")[0] : "";
-  let name = rawName;
-  try {
-    name = decodeURIComponent(rawName);
-  } catch {
-    // Shown as written.
-  }
-  return `host ${host || "(none)"}, database ${name || "(none: the default)"}`;
-}
+import { describeTarget } from "./lib/dbTarget.mjs";
 
 const db = new PrismaClient();
 
@@ -135,16 +110,13 @@ async function main() {
   );
 }
 
-// Run only as a script, so a test can import describeTarget.
-const isScript =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isScript) {
-  main()
-    .then(() => console.log("\nDone."))
-    .catch((e) => {
-      console.error(e);
-      process.exitCode = 1;
-    })
-    .finally(() => db.$disconnect());
-}
+// Always runs: this is the production kill switch, so it must never exit 0
+// having done nothing (a check on argv[1] fails on a symlink, a junction or a
+// drive-letter case difference). describeTarget lives in lib/dbTarget.mjs.
+main()
+  .then(() => console.log("\nDone."))
+  .catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  })
+  .finally(() => db.$disconnect());

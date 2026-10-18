@@ -3,16 +3,24 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
-// The kill-switch script, loaded by path so the type checker does not read the
-// plain .mjs file. Importing it runs nothing: main() runs only as a script.
+// The kill-switch script, read as text only: importing it would run it (it
+// always runs, S3). describeTarget is loaded from its lib by path, so the type
+// checker does not read the plain .mjs file.
 const SCRIPT = join(
   process.cwd(),
   "scripts",
   "remediation",
   "set-transcript-flag.mjs",
 );
+const LIB = join(
+  process.cwd(),
+  "scripts",
+  "remediation",
+  "lib",
+  "dbTarget.mjs",
+);
 const { describeTarget } = (await import(
-  /* @vite-ignore */ pathToFileURL(SCRIPT).href
+  /* @vite-ignore */ pathToFileURL(LIB).href
 )) as { describeTarget: (url: string | undefined) => string };
 
 describe("set-transcript-flag.mjs names the database it writes to", () => {
@@ -39,6 +47,14 @@ describe("set-transcript-flag.mjs names the database it writes to", () => {
     for (const secret of ["ops-user", "s3cr", "%40t", "retryWrites", "admin"]) {
       expect(shown).not.toContain(secret);
     }
+  });
+
+  it("always runs main(), never behind a check on how it was started (S3)", () => {
+    const source = readFileSync(SCRIPT, "utf8");
+    expect(source).not.toContain("process.argv[1]");
+    expect(source).not.toContain("import.meta.url");
+    expect(source).toMatch(/^main\(\)/m);
+    expect(source).toContain('from "./lib/dbTarget.mjs"');
   });
 
   it("prints the target before the flag is read, so the dry run and --commit both show it", () => {
