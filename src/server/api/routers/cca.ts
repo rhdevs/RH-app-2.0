@@ -228,7 +228,7 @@ export const ccaRouter = createTRPCRouter({
    * the whole roster; the members and heads tables map back to it by `rowKey`.
    *
    * The entry building lives in services/ccaDirectory.ts (buildDirectoryEntries),
-   * which is shared with ccaPoints.flatExportData (JCRC-only, audited). Sharing
+   * which is shared with ccaPoints.bundleExportData (JCRC-only, audited). Sharing
    * it changed nothing here: this procedure's output and its assertHeadsCca
    * guard are exactly as before.
    */

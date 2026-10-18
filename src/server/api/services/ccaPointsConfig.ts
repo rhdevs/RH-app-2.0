@@ -194,14 +194,6 @@ export const newYearReason = (cleared: number): string =>
 export const sportReason = (isSport: boolean | null): string =>
   isSport === null ? "sport default" : isSport ? "sport yes" : "sport no";
 
-/** Audit reason for a flat-points export: counts only, never a matric or a name. */
-export function flatExportReason(
-  ccaCount: number,
-  memberCount: number,
-): string {
-  return `${ccaCount} CCA(s), ${memberCount} member(s)`;
-}
-
 /** Audit reason for a sandbox-bundle export: counts only, never a matric or a name. */
 export function bundleExportReason(
   ccaCount: number,

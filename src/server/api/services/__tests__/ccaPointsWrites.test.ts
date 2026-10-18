@@ -17,7 +17,6 @@ import {
   bundleExportReason,
   clearFlat,
   effectiveIsSport,
-  flatExportReason,
   ihgReason,
   isIhgComplete,
   isIhgRow,
@@ -153,30 +152,12 @@ describe("brokenWaiversMessage", () => {
 
 /* ----------------------- F7: audit action and reason ---------------------- */
 
-describe("flat export audit", () => {
-  it("registers ccaPoints.flat.export within the 32-character filter cap", () => {
-    expect(AUDIT_ACTIONS).toContain("ccaPoints.flat.export");
-    for (const a of AUDIT_ACTIONS.filter((x) => x.startsWith("ccaPoints."))) {
-      expect(a.length).toBeLessThanOrEqual(32);
-    }
-  });
-
-  it("builds a reason from counts only", () => {
-    expect(flatExportReason(3, 41)).toBe("3 CCA(s), 41 member(s)");
-    expect(flatExportReason(0, 0)).toBe("0 CCA(s), 0 member(s)");
-  });
-
-  it("cannot carry a matric or a name: it only takes numbers", () => {
-    const reason = flatExportReason(2, 7);
-    expect(reason).not.toMatch(/[A-Za-z]\d{7}[A-Za-z]/);
-    expect(reason).toMatch(/^\d+ CCA\(s\), \d+ member\(s\)$/);
-  });
-});
-
 describe("bundle export audit", () => {
   it("registers ccaPoints.bundle.export within the 32-character filter cap", () => {
     expect(AUDIT_ACTIONS).toContain("ccaPoints.bundle.export");
-    expect("ccaPoints.bundle.export".length).toBeLessThanOrEqual(32);
+    for (const a of AUDIT_ACTIONS.filter((x) => x.startsWith("ccaPoints."))) {
+      expect(a.length).toBeLessThanOrEqual(32);
+    }
   });
 
   it("builds a reason from counts only", () => {
@@ -191,7 +172,9 @@ describe("bundle export audit", () => {
   it("cannot carry a matric or a name: it only takes numbers", () => {
     const reason = bundleExportReason(2, 1, 7);
     expect(reason).not.toMatch(/[A-Za-z]\d{7}[A-Za-z]/);
-    expect(reason).toMatch(/^\d+ CCA\(s\), \d+ flat CCA\(s\), \d+ member\(s\)$/);
+    expect(reason).toMatch(
+      /^\d+ CCA\(s\), \d+ flat CCA\(s\), \d+ member\(s\)$/,
+    );
   });
 });
 

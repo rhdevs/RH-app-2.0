@@ -138,7 +138,6 @@ describe("JCRC procedures re-check the LIVE roles", () => {
       ["setIhg", (c) => c.setIhg({ ccaID: 1, result: "1st", cap: 12 })],
       ["setSport", (c) => c.setSport({ ccaID: 1, isSport: true })],
       ["startNewPointsYear", (c) => c.startNewPointsYear()],
-      ["flatExportData", (c) => c.flatExportData()],
       ["bundleExportData", (c) => c.bundleExportData()],
     ];
 
@@ -173,96 +172,6 @@ describe("JCRC procedures re-check the LIVE roles", () => {
       code: "FORBIDDEN",
       message: "INSUFFICIENT_ROLE",
     });
-  });
-});
-
-describe("ccaPoints.flatExportData", () => {
-  it("audits once, with counts only, and returns only the four member fields", async () => {
-    mockedRoles.mockResolvedValue(["jcrc"]);
-    const db = {
-      ccaPointsConfig: {
-        findMany: vi.fn(async () => [
-          {
-            scope: "cca:5",
-            ccaID: 5,
-            flatPoints: 7.5,
-            meanMin: null,
-            meanMax: null,
-            sdMin: null,
-            sdMax: null,
-            note: null,
-            updatedAt: new Date(),
-            updatedBy: null,
-          },
-        ]),
-      },
-      cCA: {
-        findMany: vi.fn(async () => [{ ccaID: 5, ccaName: "Test Choir" }]),
-      },
-    };
-    mockedEntries.mockResolvedValue({
-      cca: { ccaID: 5, ccaName: "Test Choir", category: null },
-      entries: [
-        {
-          rowKey: "u:1",
-          resolved: true,
-          role: "Member",
-          name: "Test Member 1",
-          email: "test1@u.nus.edu",
-          userID: "E0000001",
-          matric: "A9900001Z",
-          block: 3,
-          telegramHandle: "@test1",
-          bio: "private bio",
-          membershipRecords: 1,
-          joinedAt: null,
-          note: null,
-        },
-        {
-          rowKey: "k:E0000002",
-          resolved: false,
-          role: "Member",
-          name: null,
-          email: null,
-          userID: "E0000002",
-          matric: null,
-          block: null,
-          telegramHandle: null,
-          bio: null,
-          membershipRecords: 0,
-          joinedAt: null,
-          note: "Unmatched record — no account matches this membership key.",
-        },
-      ],
-    } as never);
-
-    const result = await caller(db, ["jcrc"]).flatExportData();
-
-    expect(result).toEqual([
-      {
-        ccaID: 5,
-        ccaName: "Test Choir",
-        flatPoints: 7.5,
-        members: [
-          {
-            rowKey: "u:1",
-            matric: "A9900001Z",
-            name: "Test Member 1",
-            resolved: true,
-          },
-          { rowKey: "k:E0000002", matric: null, name: null, resolved: false },
-        ],
-      },
-    ]);
-    expect(mockedAudit).toHaveBeenCalledTimes(1);
-    const entry = mockedAudit.mock.calls[0]?.[1];
-    expect(entry).toMatchObject({
-      action: "ccaPoints.flat.export",
-      actorUserID: USER,
-      reason: "1 CCA(s), 2 member(s)",
-    });
-    expect(JSON.stringify(entry)).not.toContain("A9900001Z");
-    expect(JSON.stringify(entry)).not.toContain("Test Member 1");
   });
 });
 

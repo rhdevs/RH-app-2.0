@@ -268,9 +268,8 @@ export const AUDIT_ACTIONS = [
   // both stamp `targetCcaID`. Config only, like the rest.
   "ccaPoints.flat.set",
   "ccaPoints.flat.clear",
-  // `ccaPoints.flat.export` is one row per flat-points CSV export (a bulk read of
-  // the flat CCAs' rosters with matrics, like event.attendees.export). `reason`
-  // carries counts only ("3 CCA(s), 41 member(s)"), never a matric or a name.
+  // `ccaPoints.flat.export`: retired, no longer written (the sandbox bundle
+  // replaced it), kept so existing audit rows stay documented.
   "ccaPoints.flat.export",
   // `ccaPoints.bundle.export` is one row per sandbox-bundle download (a bulk read
   // of the flat CCAs' rosters with matrics, plus the ranges, waivers and the CCA
@@ -1299,11 +1298,10 @@ export type Capabilities = {
    * switch, the default allowed mean/SD ranges, per-CCA waivers and flat-points
    * CCAs, each CCA's type, sport tick and IHG result and cap (setType, setSport,
    * setIhg), and the yearly reset (startNewPointsYear). Nothing reachable through
-   * it carries leader-entered points. The procedures that return matrics are
-   * ccaPoints.flatExportData and ccaPoints.bundleExportData: the rosters of the
-   * flat CCAs (membership plus JCRC's own flat value) for JCRC's CSV export, behind
-   * a live capability re-check and audited as ccaPoints.flat.export /
-   * ccaPoints.bundle.export.
+   * it carries leader-entered points. The procedure that returns matrics is
+   * ccaPoints.bundleExportData: the rosters of the flat CCAs (membership plus
+   * JCRC's own flat value) for JCRC's sandbox bundle, behind a live capability
+   * re-check and audited as ccaPoints.bundle.export.
    *
    * Manager-tier (admin + jcrc): setting the ranges is JCRC work. `scrc` is
    * absent, same argument as manageCcaRecruitment. A SEPARATE FIELD rather than

@@ -33,7 +33,6 @@ import {
   resolveRange,
   brokenWaiversMessage,
   bundleExportReason,
-  flatExportReason,
   sportReason,
   sportsMissingIhg,
   startNewPointsYear as resetPointsYear,
@@ -85,13 +84,13 @@ import type { BundleCca } from "~/lib/points/bundleCsv";
  * members the head ticks for the IHG points stays in the head's browser and the
  * CSV; no procedure takes a matric, a row key or a tick.
  *
- * ONE EXCEPTION IN WHAT IS RETURNED: `flatExportData` and `bundleExportData`
- * return, to JCRC only (live capability re-check), the rosters of the flat CCAs
+ * ONE EXCEPTION IN WHAT IS RETURNED: `bundleExportData`
+ * returns, to JCRC only (live capability re-check), the rosters of the flat CCAs
  * with matrics and names. That is membership plus JCRC's own flat value, never a
- * leader's score. Every call writes an audit row (`ccaPoints.flat.export` /
- * `ccaPoints.bundle.export`, counts only) before the payload is returned; like
- * event.exportAttendees that row is best-effort (writeAudit logs a failure and
- * never throws), so a failed write is logged and does not block.
+ * leader's score. Every call writes an audit row (`ccaPoints.bundle.export`,
+ * counts only) before the payload is returned; like event.exportAttendees that
+ * row is best-effort (writeAudit logs a failure and never throws), so a failed
+ * write is logged and does not block.
  *
  * The twelve JCRC procedures are `roleManagerProcedure` (admin + jcrc) and
  * ADDITIONALLY assert `manageCcaPointsRanges` against a LIVE role read (I-5), the
@@ -707,49 +706,9 @@ export const ccaPointsRouter = createTRPCRouter({
   }),
 
   /**
-   * Everything the flat-points CSV needs: for every flat CCA, its value and its
-   * whole roster with matrics. THIS IS MEMBERSHIP PLUS JCRC'S OWN CONFIG, not
-   * leader-judged scores, so JCRC (and only a caller who passes the live
-   * capability re-check) may receive matrics here. The file itself is built in
-   * the browser.
-   *
-   * A MUTATION, like event.exportAttendees: this is a bulk read of matrics and
-   * names, so each call writes one `ccaPoints.flat.export` audit row (counts only)
-   * and the result is not kept in the client's query cache.
-   */
-  flatExportData: roleManagerProcedure.mutation(async ({ ctx }) => {
-    const actorUserID = ctx.session.user.userID;
-    const roles = await requirePointsCapability(ctx.db, actorUserID);
-    const flatRows = (await listOverrideRows(ctx.db)).filter(isFlatRow);
-    const ids = flatRows.flatMap((r) => (r.ccaID === null ? [] : [r.ccaID]));
-    const named =
-      ids.length === 0
-        ? []
-        : await ctx.db.cCA.findMany({
-            where: { ccaID: { in: ids } },
-            select: { ccaID: true, ccaName: true },
-          });
-    const nameById = new Map(named.map((c) => [c.ccaID, c.ccaName]));
-    const payload = await flatRosters(ctx.db, flatRows, nameById);
-    // The audit row is written before the payload is returned. It is best-effort,
-    // like event.exportAttendees: writeAudit logs a failure and never throws, so a
-    // failed write is logged, not blocking. The reason holds counts only.
-    await audit(ctx.db, {
-      actorUserID,
-      actorRoles: roles,
-      action: "ccaPoints.flat.export",
-      reason: flatExportReason(
-        payload.length,
-        payload.reduce((n, c) => n + c.members.length, 0),
-      ),
-    });
-    return payload;
-  }),
-
-  /**
    * The ONE file JCRC gives the sandbox: the effective default range, the waivers,
    * every CCA (type, sport tick, IHG result and cap, flat value) and the flat
-   * rosters with matrics. Like flatExportData it is a MUTATION: a bulk read of
+   * rosters with matrics. It is a MUTATION: a bulk read of
    * matrics and names, so each call writes one `ccaPoints.bundle.export` audit row
    * (counts only) before the payload is returned, and the result is not cached.
    */
@@ -800,7 +759,7 @@ export const ccaPointsRouter = createTRPCRouter({
             },
           ],
     );
-    // Audit before returning; best-effort like flatExportData. Counts only.
+    // Audit before returning; best-effort like event.exportAttendees. Counts only.
     await audit(ctx.db, {
       actorUserID,
       actorRoles: roles,

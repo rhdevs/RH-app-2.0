@@ -59,7 +59,7 @@ export const appRouter = createTRPCRouter({
    * mean/SD ranges, flat-points CCAs) plus the one range read a head needs. No
    * procedure here accepts or returns leader-entered points — leaders enter and
    * check them in the browser. The one that returns matrics is JCRC-only
-   * flatExportData (flat CCAs' rosters, audited). See routers/ccaPoints.ts.
+   * bundleExportData (the sandbox bundle, audited). See routers/ccaPoints.ts.
    */
   ccaPoints: ccaPointsRouter,
   /** Events: head authoring, JCRC review, resident timeline + signup. Behind
