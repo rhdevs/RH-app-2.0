@@ -756,7 +756,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(row.effective.roleLabel).toBeNull();
       });
 
-      it("stores no role period without a role, except a current head's under the Head default (R3)", async () => {
+      it("stores no role period without a role, except a current head's, stored with an explicit Head (R3, S1)", async () => {
         const soccer = as(SOCCER_HEAD).transcriptManage;
         const stored = (userID: string) =>
           db.transcriptRosterEntry.findFirstOrThrow({
@@ -774,7 +774,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           roleLabel: null,
           roleDuration: null,
         });
-        // The head: no saved role, but "Head" by default, so it is kept.
+        // The head: no saved role, so "Head" is stored with the period, and
+        // it survives a handover (S1).
         await soccer.roster.upsert({
           ccaID: SOCCER,
           academicYear: AY,
@@ -783,8 +784,37 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           roleDuration: "sem1",
         });
         expect(await stored(SOCCER_HEAD.id)).toMatchObject({
-          roleLabel: null,
+          roleLabel: "Head",
           roleDuration: "sem1",
+        });
+        // The self-made change's history line names the stored "Head".
+        const line = await db.residentEvent.findFirstOrThrow({
+          where: { academicYear: AY, userID: SOCCER_HEAD.id },
+          orderBy: { at: "desc" },
+        });
+        expect(line.summary).toContain("role set to Head");
+        // Back to a full year: the stored "Head" stays.
+        await soccer.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          roleDuration: "full",
+        });
+        expect(await stored(SOCCER_HEAD.id)).toMatchObject({
+          roleLabel: "Head",
+          roleDuration: "full",
+        });
+        // Reset (role and period cleared together) clears both.
+        await soccer.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          roleLabel: "",
+          roleDuration: null,
+        });
+        expect(await stored(SOCCER_HEAD.id)).toMatchObject({
+          roleLabel: null,
+          roleDuration: null,
         });
       });
 

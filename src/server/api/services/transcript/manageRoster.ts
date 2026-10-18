@@ -98,6 +98,9 @@ const asDuration = (v: string | null | undefined): Duration | null =>
 const blankToNull = (v: string | null | undefined) =>
   v?.trim() ? v.trim() : null;
 
+/** The role a current head has by default, stored for a part-year role period. */
+const HEAD_ROLE = "Head";
+
 type StoredEntry = {
   userID: string;
   duration: string | null;
@@ -401,6 +404,28 @@ function withoutOrphanRolePeriod(
 }
 
 /**
+ * A current head who saves only a Semester 1 or Semester 2 role period, with
+ * the role left blank, has "Head" stored as the role, explicitly. Their role
+ * is the "Head" default only while they head the CCA; after a handover the
+ * default is gone, and "Head (Semester 1)" with it. A stored "Head" stays if
+ * the period later goes back to a full year; clearing the role and the period
+ * together (Reset) stores neither.
+ */
+function withHeadRoleStored(
+  target: { frozen: boolean; isHead: boolean },
+  current: RosterAnnotation | null,
+  changes: RosterChanges,
+): RosterChanges {
+  if (target.frozen || !target.isHead) return changes;
+  const merged = { ...savedChoices(current), ...changes };
+  const partYear =
+    merged.roleDuration === "sem1" || merged.roleDuration === "sem2";
+  return partYear && !blankToNull(merged.roleLabel)
+    ? { ...changes, roleLabel: HEAD_ROLE }
+    : changes;
+}
+
+/**
  * What a save writes into an existing entry. In an open year (a correction)
  * the locked entry's own fields are changed. While collecting, an entry an Open
  * run has already locked keeps holding RESOLVED values, with the head's real
@@ -505,7 +530,11 @@ export async function rosterUpsert(
         extraContribution: true,
       },
     });
-    const saved = withoutOrphanRolePeriod(target, current, changes);
+    const saved = withoutOrphanRolePeriod(
+      target,
+      current,
+      withHeadRoleStored(target, current, changes),
+    );
     const row = await tx.transcriptRosterEntry.upsert({
       where: {
         academicYear_userID_ccaID: {
@@ -540,7 +569,15 @@ export async function rosterUpsert(
             summary: correctionSummary(
               "Roster",
               cca?.ccaName ?? `CCA ${input.ccaID}`,
-              joinChanges(membershipChangeParts(before, input)),
+              joinChanges(
+                membershipChangeParts(before, {
+                  ...input,
+                  // The "Head" stored for a head's part-year role period.
+                  ...(saved.roleLabel !== undefined && {
+                    roleLabel: saved.roleLabel,
+                  }),
+                }),
+              ),
             ),
           },
         ],

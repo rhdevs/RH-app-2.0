@@ -751,6 +751,40 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await soccerRole(R09.id)).toBe("Co-captain (Sem 2)");
       });
 
+      it("keeps an outgoing head who saved only Semester 1 as Head (Semester 1) (S1)", async () => {
+        // Clear the seeded "Captain", then save only the role period.
+        await as(SOCCER_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          roleLabel: null,
+          roleDuration: null,
+        });
+        await as(SOCCER_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          roleDuration: "sem1",
+        });
+        // Hands over and leaves the CCA altogether.
+        await as(SOCCER_HEAD).cca.handoverHeads({
+          ccaID: SOCCER,
+          newHeadUserIDs: [R09.id],
+        });
+        await db.userCCA.deleteMany({
+          where: { ccaID: SOCCER, userID: SOCCER_HEAD.id },
+        });
+        await db.ccaHead.deleteMany({
+          where: { ccaID: SOCCER, userID: SOCCER_HEAD.id },
+        });
+        expect(await heads(SOCCER)).toEqual([R09.id]);
+
+        const result = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        expect(result.opened).toBe(true);
+        expect(await frozenKeys(SOCCER, AY)).toContain(SOCCER_HEAD.id);
+        expect(await soccerRole(SOCCER_HEAD.id)).toBe("Head (Sem 1)");
+      });
+
       it("drops a leaver once their saved role and semester are cleared", async () => {
         await db.userCCA.deleteMany({
           where: { ccaID: SOCCER, userID: SOCCER_HEAD.id },
