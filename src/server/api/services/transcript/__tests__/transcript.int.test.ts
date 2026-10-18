@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { useAy2026Clock } from "./ayClock";
 import {
   captureFreezes,
   restoreFreezes,
@@ -48,6 +49,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
   "transcript server logic (local database)",
   { timeout: 60_000 },
   () => {
+    useAy2026Clock();
+
     let db: PrismaClient;
     let createCaller: typeof CreateCaller;
     let baselineAnnotations: Array<Record<string, unknown>> = [];

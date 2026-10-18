@@ -11,6 +11,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { useAy2026Clock } from "./ayClock";
 
 /**
  * INTEGRATION TESTS of the one-step year (collecting -> Open transcripts)
@@ -64,6 +65,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
   "the year lifecycle (local database)",
   { timeout: 120_000 },
   () => {
+    useAy2026Clock();
+
     let db: PrismaClient;
     let createCaller: typeof CreateCaller;
     let freeze: typeof import("../freeze");

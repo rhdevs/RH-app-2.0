@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { useAy2026Clock } from "./ayClock";
 import { errorText } from "~/lib/transcript/adminView";
 import {
   captureFreezes,
@@ -63,6 +64,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
   "transcript management API (local database)",
   { timeout: 60_000 },
   () => {
+    useAy2026Clock();
+
     let db: PrismaClient;
     let createCaller: typeof CreateCaller;
     let ipCounter = 0;

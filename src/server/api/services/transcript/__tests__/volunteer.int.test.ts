@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { useAy2026Clock } from "./ayClock";
 
 /**
  * INTEGRATION TESTS of volunteer activities (sessions, people, attendance)
@@ -50,6 +51,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
   "volunteer activities (local database)",
   { timeout: 120_000 },
   () => {
+    useAy2026Clock();
+
     let db: PrismaClient;
     let createCaller: typeof CreateCaller;
     let retention: typeof import("../retention");
