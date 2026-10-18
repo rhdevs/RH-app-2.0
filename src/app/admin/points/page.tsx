@@ -2,9 +2,11 @@
 
 import { api } from "~/trpc/react";
 import { useCapabilities } from "~/app/admin/_components/AdminCapabilityContext";
+import CcaSettingsPanel from "./_components/CcaSettingsPanel";
 import DefaultRangesForm from "./_components/DefaultRangesForm";
 import EntrySwitchPanel from "./_components/EntrySwitchPanel";
 import FlatCcasPanel from "./_components/FlatCcasPanel";
+import NewYearPanel from "./_components/NewYearPanel";
 import SettingsExport from "./_components/SettingsExport";
 import { hasSavedRanges } from "./_components/rangeForm";
 import WaiversPanel from "./_components/WaiversPanel";
@@ -107,11 +109,17 @@ export default function AdminPointsPage() {
             effectiveDefault={data.effectiveDefault}
             onChanged={refresh}
           />
+          <CcaSettingsPanel ccas={data.ccas} onChanged={refresh} />
           <SettingsExport
             effectiveDefault={data.effectiveDefault}
             waivers={data.overrides}
           />
           <FlatCcasPanel flatCcas={data.flatCcas} onChanged={refresh} />
+          <NewYearPanel
+            ihgResultCount={data.ccas.filter((c) => c.ihgResult !== null).length}
+            entryOpen={data.entryOpen}
+            onChanged={refresh}
+          />
         </>
       )}
     </div>
