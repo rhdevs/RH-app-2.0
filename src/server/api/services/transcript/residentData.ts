@@ -25,6 +25,7 @@ import { loadResidentCcaIDs, NOT_REMOVED, NOT_VOIDED } from "./loader";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
+  yearWrite,
   logCorrections,
 } from "./residentRecords";
 import { actorLabels, requireResident } from "./residents";
@@ -215,7 +216,7 @@ export async function participationSet(
     role: input.role === "" ? null : input.role,
     description: input.description === "" ? null : input.description,
   };
-  await db.$transaction(async (tx) => {
+  await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, activity.academicYear, guard);
     if (!row) {
       await tx.ccaActivityParticipant.create({
@@ -293,7 +294,7 @@ export async function participationRemove(
       affectedUserIDs: [resident.key],
     },
   );
-  await db.$transaction(async (tx) => {
+  await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, activity.academicYear, guard);
     if (!row.removedAt) {
       await tx.ccaActivityParticipant.update({

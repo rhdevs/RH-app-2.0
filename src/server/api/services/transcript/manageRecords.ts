@@ -8,6 +8,7 @@ import { requireCca } from "./manageAccess";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
+  yearWrite,
   logCorrections,
 } from "./residentRecords";
 import {
@@ -106,7 +107,7 @@ export async function jcrcSave(
     updatedAt: now,
     updatedBy: actorUserID,
   };
-  await db.$transaction(async (tx) => {
+  await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, fields.academicYear, guard);
     await tx.jcrcService.upsert({
       where: {
@@ -165,7 +166,7 @@ async function setJcrcRemoved(
   if (!row)
     throw new TRPCError({ code: "NOT_FOUND", message: "RECORD_NOT_FOUND" });
   if (Boolean(row.removedAt) === removed) return { userID: resident.key };
-  await db.$transaction(async (tx) => {
+  await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, fields.academicYear, guard);
     await tx.jcrcService.update({
       where: { id: row.id },

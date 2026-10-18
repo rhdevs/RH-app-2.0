@@ -20,6 +20,7 @@ import { NOT_REMOVED } from "./loader";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
+  yearWrite,
   ORDINARY_WRITE,
   logCorrections,
 } from "./residentRecords";
@@ -158,7 +159,7 @@ export async function activityCreate(
   input: z.infer<typeof activityCreateInput>,
   now: Date = new Date(),
 ) {
-  return db.$transaction(async (tx) => {
+  return yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, input.academicYear, ORDINARY_WRITE);
     if (
       (await activeCount(tx, input.ccaID, input.academicYear)) >= MAX_ACTIVITIES
@@ -197,7 +198,7 @@ export async function activityUpdate(
 ) {
   const row = await requireActivity(db, input.id, input.ccaID);
   if (row.removedAt) throw fail("CONFLICT", "ACTIVITY_REMOVED");
-  await db.$transaction(async (tx) => {
+  await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, row.academicYear, ORDINARY_WRITE);
     await tx.ccaActivity.update({
       where: { id: row.id },
@@ -223,7 +224,7 @@ export async function activityRemove(
 ) {
   const row = await requireActivity(db, id, ccaID);
   if (!row.removedAt) {
-    await db.$transaction(async (tx) => {
+    await yearWrite(db, async (tx) => {
       await assertStillCollecting(tx, row.academicYear, ORDINARY_WRITE);
       await tx.ccaActivity.update({
         where: { id },
@@ -244,7 +245,7 @@ export async function activityRestore(
 ) {
   const row = await requireActivity(db, id, ccaID);
   if (!row.removedAt) return { id };
-  return db.$transaction(async (tx) => {
+  return yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, row.academicYear, ORDINARY_WRITE);
     if ((await activeCount(tx, ccaID, row.academicYear)) >= MAX_ACTIVITIES) {
       throw tooMany();
@@ -341,74 +342,78 @@ export async function participantsSet(
     },
   );
 
-  const result = await db.$transaction(async (tx) => {
-    await assertStillCollecting(tx, activity.academicYear, guard);
-    const existing = await tx.ccaActivityParticipant.findMany({
-      where: { activityID: activity.id },
-    });
-    const diff = diffParticipants(asExisting(existing), desired);
-    const text = (d: DesiredParticipant) => ({
-      role: d.role === "" ? null : d.role,
-      description: d.description === "" ? null : d.description,
-    });
+  const result = await yearWrite(
+    db,
+    async (tx) => {
+      await assertStillCollecting(tx, activity.academicYear, guard);
+      const existing = await tx.ccaActivityParticipant.findMany({
+        where: { activityID: activity.id },
+      });
+      const diff = diffParticipants(asExisting(existing), desired);
+      const text = (d: DesiredParticipant) => ({
+        role: d.role === "" ? null : d.role,
+        description: d.description === "" ? null : d.description,
+      });
 
-    for (const d of diff.add) {
-      await tx.ccaActivityParticipant.create({
-        data: {
-          activityID: activity.id,
-          academicYear: activity.academicYear,
-          ccaID: activity.ccaID,
-          userID: d.userID,
-          ...text(d),
-          addedBy: actorUserID,
-          addedAt: now,
-        },
+      for (const d of diff.add) {
+        await tx.ccaActivityParticipant.create({
+          data: {
+            activityID: activity.id,
+            academicYear: activity.academicYear,
+            ccaID: activity.ccaID,
+            userID: d.userID,
+            ...text(d),
+            addedBy: actorUserID,
+            addedAt: now,
+          },
+        });
+      }
+      for (const d of diff.restore) {
+        await tx.ccaActivityParticipant.update({
+          where: { id: d.id },
+          data: {
+            ...text(d),
+            removedAt: null,
+            removedBy: null,
+            updatedBy: actorUserID,
+            updatedAt: now,
+          },
+        });
+      }
+      for (const d of diff.update) {
+        await tx.ccaActivityParticipant.update({
+          where: { id: d.id },
+          data: { ...text(d), updatedBy: actorUserID, updatedAt: now },
+        });
+      }
+      for (const r of diff.remove) {
+        await tx.ccaActivityParticipant.update({
+          where: { id: r.id },
+          data: { removedAt: now, removedBy: actorUserID },
+        });
+      }
+      await tx.ccaActivity.update({
+        where: { id: activity.id },
+        data: { updatedBy: actorUserID, updatedAt: now },
       });
-    }
-    for (const d of diff.restore) {
-      await tx.ccaActivityParticipant.update({
-        where: { id: d.id },
-        data: {
-          ...text(d),
-          removedAt: null,
-          removedBy: null,
-          updatedBy: actorUserID,
-          updatedAt: now,
-        },
-      });
-    }
-    for (const d of diff.update) {
-      await tx.ccaActivityParticipant.update({
-        where: { id: d.id },
-        data: { ...text(d), updatedBy: actorUserID, updatedAt: now },
-      });
-    }
-    for (const r of diff.remove) {
-      await tx.ccaActivityParticipant.update({
-        where: { id: r.id },
-        data: { removedAt: now, removedBy: actorUserID },
-      });
-    }
-    await tx.ccaActivity.update({
-      where: { id: activity.id },
-      data: { updatedBy: actorUserID, updatedAt: now },
-    });
-    const out = {
-      id: activity.id,
-      added: diff.add.length + diff.restore.length,
-      updated: diff.update.length,
-      removed: diff.remove.length,
-      unchanged: diff.unchanged,
-    };
-    await logCorrections(
-      tx,
-      guard,
-      actorUserID,
-      activity.academicYear,
-      summaries,
-      now,
-    );
-    return out;
-  }, PEOPLE_TX);
+      const out = {
+        id: activity.id,
+        added: diff.add.length + diff.restore.length,
+        updated: diff.update.length,
+        removed: diff.remove.length,
+        unchanged: diff.unchanged,
+      };
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        activity.academicYear,
+        summaries,
+        now,
+      );
+      return out;
+    },
+    PEOPLE_TX,
+  );
   return result;
 }

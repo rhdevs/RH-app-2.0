@@ -1434,6 +1434,12 @@ model TranscriptPeriod {
   /// Who opened transcripts for the year, and when.
   publishedAt  DateTime?
   publishedBy  String?
+  /// A fresh random id, written by every ordinary (non-correction)
+  /// year-scoped write inside its own transaction, so the write genuinely
+  /// conflicts with Open transcripts claiming the year (see
+  /// assertStillCollecting). Random, not a time: a write that stores the value
+  /// already there changes nothing and would not conflict.
+  lastWriteID  String?
 }
 
 /// Per member, per CCA, per academic year ANNOTATIONS on top of the live

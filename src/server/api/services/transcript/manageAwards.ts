@@ -24,6 +24,7 @@ import { correctionSummary } from "~/lib/transcript/corrections";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
+  yearWrite,
   logCorrections,
 } from "./residentRecords";
 import { actorLabels, lookupResidents, requireResidents } from "./residents";
@@ -442,7 +443,7 @@ export async function awardUpdate(
         title: input.title,
       });
   try {
-    await db.$transaction(async (tx) => {
+    await yearWrite(db, async (tx) => {
       await assertStillCollecting(tx, award.academicYear, guard);
       // The check and the write are one step: an edit that lost a race with a
       // remove changes nothing, so it cannot put the active key back.
@@ -491,7 +492,7 @@ export async function awardRemove(
     { academicYear: award.academicYear, affectedUserIDs: [award.userID] },
   );
   if (!award.voidedAt) {
-    await db.$transaction(async (tx) => {
+    await yearWrite(db, async (tx) => {
       await assertStillCollecting(tx, award.academicYear, guard);
       await voidAwards(tx, [award], actorUserID, now);
       await logCorrections(
@@ -670,11 +671,15 @@ export async function awardsBulkRemove(
   const { rows, guards } = await bulkTargets(db, actorUserID, ids);
   const live = rows.filter((r) => !r.voidedAt);
   if (live.length > 0) {
-    await db.$transaction(async (tx) => {
-      await assertYearsStillCollecting(tx, guards);
-      await voidAwards(tx, live, actorUserID, now);
-      await logBulk(tx, actorUserID, guards, live, "removed", now);
-    }, BULK_TX);
+    await yearWrite(
+      db,
+      async (tx) => {
+        await assertYearsStillCollecting(tx, guards);
+        await voidAwards(tx, live, actorUserID, now);
+        await logBulk(tx, actorUserID, guards, live, "removed", now);
+      },
+      BULK_TX,
+    );
   }
   return { removed: live.length };
 }
@@ -739,13 +744,17 @@ export async function awardsBulkRestore(
   let restored = restorable.length;
   if (restorable.length > 0) {
     try {
-      await db.$transaction(async (tx) => {
-        await assertYearsStillCollecting(tx, guards);
-        await inChunks(restorable, (r) =>
-          tx.award.update({ where: { id: r.id }, data: restoreData(r) }),
-        );
-        await logBulk(tx, actorUserID, guards, restorable, "restored", now);
-      }, BULK_TX);
+      await yearWrite(
+        db,
+        async (tx) => {
+          await assertYearsStillCollecting(tx, guards);
+          await inChunks(restorable, (r) =>
+            tx.award.update({ where: { id: r.id }, data: restoreData(r) }),
+          );
+          await logBulk(tx, actorUserID, guards, restorable, "restored", now);
+        },
+        BULK_TX,
+      );
     } catch (e) {
       if (!isUniqueViolation(e)) throw e;
       // Someone restored or gave one of them meanwhile: go one by one.
@@ -875,34 +884,38 @@ export async function awardBatchUndo(
       affectedUserIDs: active.map((a) => a.userID),
     },
   );
-  const undone = await db.$transaction(async (tx) => {
-    await assertStillCollecting(tx, batch.academicYear, guard);
-    const claimed = await tx.awardImportBatch.updateMany({
-      where: {
-        id: batchId,
-        OR: [{ undoneAt: null }, { undoneAt: { isSet: false } }],
-      },
-      data: { undoneAt: now, undoneBy: actorUserID },
-    });
-    if (claimed.count !== 1) throw fail("CONFLICT", "BATCH_ALREADY_UNDONE");
-    // Each award gives back its unique key as it is removed.
-    await voidAwards(tx, active, actorUserID, now);
-    await logCorrections(
-      tx,
-      guard,
-      actorUserID,
-      batch.academicYear,
-      active.map((a) => ({
-        userID: a.userID,
-        summary: correctionSummary(
-          "Awards",
-          a.title ?? "Award",
-          "removed (upload undone)",
-        ),
-      })),
-      now,
-    );
-    return { id: batchId, removed: active.length };
-  }, BULK_TX);
+  const undone = await yearWrite(
+    db,
+    async (tx) => {
+      await assertStillCollecting(tx, batch.academicYear, guard);
+      const claimed = await tx.awardImportBatch.updateMany({
+        where: {
+          id: batchId,
+          OR: [{ undoneAt: null }, { undoneAt: { isSet: false } }],
+        },
+        data: { undoneAt: now, undoneBy: actorUserID },
+      });
+      if (claimed.count !== 1) throw fail("CONFLICT", "BATCH_ALREADY_UNDONE");
+      // Each award gives back its unique key as it is removed.
+      await voidAwards(tx, active, actorUserID, now);
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        batch.academicYear,
+        active.map((a) => ({
+          userID: a.userID,
+          summary: correctionSummary(
+            "Awards",
+            a.title ?? "Award",
+            "removed (upload undone)",
+          ),
+        })),
+        now,
+      );
+      return { id: batchId, removed: active.length };
+    },
+    BULK_TX,
+  );
   return undone;
 }

@@ -27,6 +27,7 @@ import { correctionSummary } from "~/lib/transcript/corrections";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
+  yearWrite,
   ORDINARY_WRITE,
   logCorrections,
 } from "./residentRecords";
@@ -354,7 +355,7 @@ export async function volunteerActivityCreate(
   now: Date = new Date(),
 ) {
   await assertCanWrite(db, actorUserID, input.ccaID, input.academicYear);
-  return db.$transaction(async (tx) => {
+  return yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, input.academicYear, ORDINARY_WRITE);
     if (
       (await activeCount(tx, input.ccaID, input.academicYear)) >=
@@ -406,7 +407,7 @@ export async function volunteerActivityUpdate(
   }
   if (input.date !== undefined) assertInYear(input.date, activity.academicYear);
 
-  await db.$transaction(async (tx) => {
+  await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, activity.academicYear, ORDINARY_WRITE);
     await tx.volunteerActivity.update({
       where: { id: activity.id },
@@ -449,7 +450,7 @@ export async function volunteerActivityRemove(
   const activity = await requireActivity(db, id, ccaID);
   await assertCanWrite(db, actorUserID, ccaID, activity.academicYear);
   if (!activity.removedAt) {
-    await db.$transaction(async (tx) => {
+    await yearWrite(db, async (tx) => {
       await assertStillCollecting(tx, activity.academicYear, ORDINARY_WRITE);
       await tx.volunteerActivity.update({
         where: { id },
@@ -471,7 +472,7 @@ export async function volunteerActivityRestore(
   const activity = await requireActivity(db, id, ccaID);
   await assertCanWrite(db, actorUserID, ccaID, activity.academicYear);
   if (!activity.removedAt) return { id };
-  return db.$transaction(async (tx) => {
+  return yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, activity.academicYear, ORDINARY_WRITE);
     if (
       (await activeCount(tx, ccaID, activity.academicYear)) >=
@@ -519,7 +520,7 @@ export async function volunteerSessionAdd(
     input.ccaID,
   );
   await assertCanWrite(db, actorUserID, input.ccaID, activity.academicYear);
-  return db.$transaction(async (tx) => {
+  return yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, activity.academicYear, ORDINARY_WRITE);
     const active = await tx.volunteerSession.findMany({
       where: { activityID: activity.id, ...NOT_REMOVED },
@@ -564,7 +565,7 @@ export async function volunteerSessionUpdate(
   await assertCanWrite(db, actorUserID, input.ccaID, session.academicYear);
   if (session.removedAt) throw fail("CONFLICT", "SESSION_REMOVED");
   if (input.date !== undefined) assertInYear(input.date, session.academicYear);
-  await db.$transaction(async (tx) => {
+  await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, session.academicYear, ORDINARY_WRITE);
     await tx.volunteerSession.update({
       where: { id: session.id },
@@ -599,7 +600,7 @@ export async function volunteerSessionRemove(
   const session = await sessionOfRegular(db, sessionID, ccaID);
   await assertCanWrite(db, actorUserID, ccaID, session.academicYear);
   if (!session.removedAt) {
-    await db.$transaction(async (tx) => {
+    await yearWrite(db, async (tx) => {
       await assertStillCollecting(tx, session.academicYear, ORDINARY_WRITE);
       await tx.volunteerSession.update({
         where: { id: sessionID },
@@ -620,7 +621,7 @@ export async function volunteerSessionRestore(
   const session = await sessionOfRegular(db, sessionID, ccaID);
   await assertCanWrite(db, actorUserID, ccaID, session.academicYear);
   if (!session.removedAt) return { id: sessionID };
-  return db.$transaction(async (tx) => {
+  return yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, session.academicYear, ORDINARY_WRITE);
     if (
       (await activeSessionCount(tx, session.activityID)) >=
@@ -699,60 +700,64 @@ export async function volunteerPeopleSet(
     summaries.map((x) => x.userID),
   );
 
-  const result = await db.$transaction(async (tx) => {
-    await assertStillCollecting(tx, activity.academicYear, guard);
-    const existing = await tx.volunteerPerson.findMany({
-      where: { activityID: activity.id },
-    });
-    const byUser = new Map(existing.map((e) => [e.userID, e]));
-    let added = 0;
-    let removed = 0;
-    for (const key of keys) {
-      const row = byUser.get(key);
-      if (!row) {
-        await tx.volunteerPerson.create({
-          data: {
-            activityID: activity.id,
-            academicYear: activity.academicYear,
-            ccaID: activity.ccaID,
-            userID: key,
-            addedBy: actorUserID,
-            addedAt: now,
-          },
-        });
-        added += 1;
-      } else if (row.removedAt) {
-        await tx.volunteerPerson.update({
-          where: { id: row.id },
-          data: { removedAt: null, removedBy: null },
-        });
-        added += 1;
+  const result = await yearWrite(
+    db,
+    async (tx) => {
+      await assertStillCollecting(tx, activity.academicYear, guard);
+      const existing = await tx.volunteerPerson.findMany({
+        where: { activityID: activity.id },
+      });
+      const byUser = new Map(existing.map((e) => [e.userID, e]));
+      let added = 0;
+      let removed = 0;
+      for (const key of keys) {
+        const row = byUser.get(key);
+        if (!row) {
+          await tx.volunteerPerson.create({
+            data: {
+              activityID: activity.id,
+              academicYear: activity.academicYear,
+              ccaID: activity.ccaID,
+              userID: key,
+              addedBy: actorUserID,
+              addedAt: now,
+            },
+          });
+          added += 1;
+        } else if (row.removedAt) {
+          await tx.volunteerPerson.update({
+            where: { id: row.id },
+            data: { removedAt: null, removedBy: null },
+          });
+          added += 1;
+        }
       }
-    }
-    for (const row of existing) {
-      if (!row.removedAt && !wanted.has(row.userID)) {
-        await tx.volunteerPerson.update({
-          where: { id: row.id },
-          data: { removedAt: now, removedBy: actorUserID },
-        });
-        removed += 1;
+      for (const row of existing) {
+        if (!row.removedAt && !wanted.has(row.userID)) {
+          await tx.volunteerPerson.update({
+            where: { id: row.id },
+            data: { removedAt: now, removedBy: actorUserID },
+          });
+          removed += 1;
+        }
       }
-    }
-    await tx.volunteerActivity.update({
-      where: { id: activity.id },
-      data: { updatedBy: actorUserID, updatedAt: now },
-    });
-    const out = { id: activity.id, added, removed };
-    await logCorrections(
-      tx,
-      guard,
-      actorUserID,
-      activity.academicYear,
-      summaries,
-      now,
-    );
-    return out;
-  }, SAVE_TX);
+      await tx.volunteerActivity.update({
+        where: { id: activity.id },
+        data: { updatedBy: actorUserID, updatedAt: now },
+      });
+      const out = { id: activity.id, added, removed };
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        activity.academicYear,
+        summaries,
+        now,
+      );
+      return out;
+    },
+    SAVE_TX,
+  );
   return result;
 }
 
@@ -797,88 +802,92 @@ export async function volunteerAttendanceSave(
     [...perUser.keys()],
   );
 
-  const result = await db.$transaction(async (tx: Prisma.TransactionClient) => {
-    await assertStillCollecting(tx, activity.academicYear, guard);
-    const [sessions, people, existing] = await Promise.all([
-      tx.volunteerSession.findMany({
-        where: { activityID: activity.id, ...NOT_REMOVED },
-        select: { id: true },
-      }),
-      tx.volunteerPerson.findMany({
-        where: { activityID: activity.id, ...NOT_REMOVED },
-        select: { userID: true },
-      }),
-      tx.volunteerAttendance.findMany({ where: { activityID: activity.id } }),
-    ]);
-    const liveSessions = new Set(sessions.map((s) => s.id));
-    const livePeople = new Set(people.map((p) => p.userID));
-    for (const c of input.changes) {
-      if (!liveSessions.has(c.sessionID) || !livePeople.has(c.userID)) {
-        throw fail("BAD_REQUEST", "INVALID_ATTENDANCE");
+  const result = await yearWrite(
+    db,
+    async (tx: Prisma.TransactionClient) => {
+      await assertStillCollecting(tx, activity.academicYear, guard);
+      const [sessions, people, existing] = await Promise.all([
+        tx.volunteerSession.findMany({
+          where: { activityID: activity.id, ...NOT_REMOVED },
+          select: { id: true },
+        }),
+        tx.volunteerPerson.findMany({
+          where: { activityID: activity.id, ...NOT_REMOVED },
+          select: { userID: true },
+        }),
+        tx.volunteerAttendance.findMany({ where: { activityID: activity.id } }),
+      ]);
+      const liveSessions = new Set(sessions.map((s) => s.id));
+      const livePeople = new Set(people.map((p) => p.userID));
+      for (const c of input.changes) {
+        if (!liveSessions.has(c.sessionID) || !livePeople.has(c.userID)) {
+          throw fail("BAD_REQUEST", "INVALID_ATTENDANCE");
+        }
       }
-    }
 
-    const have = new Map(
-      existing.map((e) => [`${e.sessionID}:${e.userID}`, e]),
-    );
-    const toDelete: string[] = [];
-    const toCreate: Prisma.VolunteerAttendanceCreateManyInput[] = [];
-    const toUpdate: Array<{ id: string; hoursOverride: number | null }> = [];
-    for (const c of input.changes) {
-      const row = have.get(`${c.sessionID}:${c.userID}`);
-      if (!c.attended) {
-        if (row) toDelete.push(row.id);
-      } else if (!row) {
-        toCreate.push({
-          sessionID: c.sessionID,
-          activityID: activity.id,
-          academicYear: activity.academicYear,
-          ccaID: activity.ccaID,
-          userID: c.userID,
-          hoursOverride: c.hoursOverride ?? null,
-          markedBy: actorUserID,
-          markedAt: now,
+      const have = new Map(
+        existing.map((e) => [`${e.sessionID}:${e.userID}`, e]),
+      );
+      const toDelete: string[] = [];
+      const toCreate: Prisma.VolunteerAttendanceCreateManyInput[] = [];
+      const toUpdate: Array<{ id: string; hoursOverride: number | null }> = [];
+      for (const c of input.changes) {
+        const row = have.get(`${c.sessionID}:${c.userID}`);
+        if (!c.attended) {
+          if (row) toDelete.push(row.id);
+        } else if (!row) {
+          toCreate.push({
+            sessionID: c.sessionID,
+            activityID: activity.id,
+            academicYear: activity.academicYear,
+            ccaID: activity.ccaID,
+            userID: c.userID,
+            hoursOverride: c.hoursOverride ?? null,
+            markedBy: actorUserID,
+            markedAt: now,
+          });
+        } else if (
+          c.hoursOverride !== undefined &&
+          (row.hoursOverride ?? null) !== c.hoursOverride
+        ) {
+          toUpdate.push({ id: row.id, hoursOverride: c.hoursOverride });
+        }
+      }
+
+      if (toDelete.length > 0) {
+        await tx.volunteerAttendance.deleteMany({
+          where: { id: { in: toDelete } },
         });
-      } else if (
-        c.hoursOverride !== undefined &&
-        (row.hoursOverride ?? null) !== c.hoursOverride
-      ) {
-        toUpdate.push({ id: row.id, hoursOverride: c.hoursOverride });
       }
-    }
-
-    if (toDelete.length > 0) {
-      await tx.volunteerAttendance.deleteMany({
-        where: { id: { in: toDelete } },
-      });
-    }
-    if (toCreate.length > 0) {
-      await tx.volunteerAttendance.createMany({ data: toCreate });
-    }
-    for (const u of toUpdate) {
-      await tx.volunteerAttendance.update({
-        where: { id: u.id },
-        data: {
-          hoursOverride: u.hoursOverride,
-          markedBy: actorUserID,
-          markedAt: now,
-        },
-      });
-    }
-    const out = {
-      created: toCreate.length,
-      updated: toUpdate.length,
-      deleted: toDelete.length,
-    };
-    await logCorrections(
-      tx,
-      guard,
-      actorUserID,
-      activity.academicYear,
-      summaries,
-      now,
-    );
-    return out;
-  }, SAVE_TX);
+      if (toCreate.length > 0) {
+        await tx.volunteerAttendance.createMany({ data: toCreate });
+      }
+      for (const u of toUpdate) {
+        await tx.volunteerAttendance.update({
+          where: { id: u.id },
+          data: {
+            hoursOverride: u.hoursOverride,
+            markedBy: actorUserID,
+            markedAt: now,
+          },
+        });
+      }
+      const out = {
+        created: toCreate.length,
+        updated: toUpdate.length,
+        deleted: toDelete.length,
+      };
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        activity.academicYear,
+        summaries,
+        now,
+      );
+      return out;
+    },
+    SAVE_TX,
+  );
   return result;
 }

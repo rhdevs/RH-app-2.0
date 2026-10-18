@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   WRITE_CONFLICT_ATTEMPTS,
+  YEAR_WRITE_ATTEMPTS,
   isWriteConflict,
   retryWriteConflicts,
 } from "../writeConflict";
@@ -59,6 +60,16 @@ describe("retryWriteConflicts", () => {
     });
     expect(write).toHaveBeenCalledTimes(WRITE_CONFLICT_ATTEMPTS);
     expect(WRITE_CONFLICT_ATTEMPTS).toBe(3);
+  });
+
+  it("takes a larger bound when given one (year-scoped writes, S2)", async () => {
+    const write = vi.fn().mockRejectedValue(conflict());
+
+    await expect(
+      retryWriteConflicts(write, noWait, YEAR_WRITE_ATTEMPTS),
+    ).rejects.toMatchObject({ code: "P2034" });
+    expect(write).toHaveBeenCalledTimes(YEAR_WRITE_ATTEMPTS);
+    expect(YEAR_WRITE_ATTEMPTS).toBeGreaterThan(WRITE_CONFLICT_ATTEMPTS);
   });
 
   it("never retries any other error", async () => {

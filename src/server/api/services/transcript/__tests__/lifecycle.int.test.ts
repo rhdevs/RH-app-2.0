@@ -1076,6 +1076,205 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
     });
 
+    /* ---- (D4) the in-transaction check is a WRITE (S2) -------------------- */
+    describe("a write in flight while Open claims the year (S2)", () => {
+      type Hooks = {
+        /** Runs inside the write's transaction, before the check's write. */
+        beforeCheck?: (tx: PrismaClient) => Promise<void>;
+        /** Runs inside the write's transaction, after the check's write. */
+        afterCheck?: () => Promise<void>;
+      };
+      /**
+       * The database, except that in the FIRST transaction the year check
+       * (the period row's updateMany) runs between the hooks; a retry runs
+       * untouched. `attempts` counts the transactions started.
+       */
+      const pausedAtCheck = (hooks: Hooks) => {
+        const state = { attempts: 0 };
+        const wrapTx = (tx: PrismaClient, first: boolean): PrismaClient =>
+          new Proxy(tx, {
+            get(target, prop, receiver) {
+              const value: unknown = Reflect.get(target, prop, receiver);
+              if (prop !== "transcriptPeriod" || !first) return value;
+              const period = value as PrismaClient["transcriptPeriod"];
+              return new Proxy(period, {
+                get(t, p, r) {
+                  if (p !== "updateMany") return Reflect.get(t, p, r);
+                  return async (
+                    args: Parameters<typeof period.updateMany>[0],
+                  ) => {
+                    await hooks.beforeCheck?.(tx);
+                    const out = await period.updateMany(args);
+                    await hooks.afterCheck?.();
+                    return out;
+                  };
+                },
+              });
+            },
+          });
+        const database = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return (
+                fn: (tx: PrismaClient) => Promise<unknown>,
+                opts?: unknown,
+              ) => {
+                state.attempts += 1;
+                const first = state.attempts === 1;
+                return (
+                  target.$transaction as unknown as (
+                    f: (tx: PrismaClient) => Promise<unknown>,
+                    o?: unknown,
+                  ) => Promise<unknown>
+                )((tx) => fn(wrapTx(tx, first)), opts);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+        return { database, state };
+      };
+      /** What claimYear writes: the year marked open, outside any transaction. */
+      const claim = () =>
+        db.transcriptPeriod.updateMany({
+          where: { academicYear: AY, status: { not: "published" } },
+          data: {
+            status: "published",
+            publishedAt: APR_2027,
+            publishedBy: JCRC.id,
+          },
+        });
+      const r12Contribution = async () =>
+        (
+          await db.transcriptRosterEntry.findFirst({
+            where: { academicYear: AY, ccaID: SOCCER, userID: R12.id },
+          })
+        )?.extraContribution ?? null;
+
+      beforeEach(async () => {
+        await db.transcriptPeriod.upsert({
+          where: { academicYear: AY },
+          create: { academicYear: AY, status: "collecting" },
+          update: { status: "collecting" },
+        });
+      });
+
+      it("Open committing after the write read the year as collecting: the write conflicts, is retried and refused, never committed", async () => {
+        const roster = await import("../manageRoster");
+        const { database, state } = pausedAtCheck({
+          beforeCheck: async (tx) => {
+            // What the old check did: the transaction reads the year as
+            // collecting (its snapshot starts here)...
+            const seen = await tx.transcriptPeriod.findUnique({
+              where: { academicYear: AY },
+            });
+            expect(seen?.status).toBe("collecting");
+            // ...then Open claims the year and commits before the check writes.
+            expect((await claim()).count).toBe(1);
+          },
+        });
+        expect(
+          await errorOf(
+            roster.rosterUpsert(database, SOCCER_HEAD.id, {
+              ccaID: SOCCER,
+              academicYear: AY,
+              userID: R12.id,
+              extraContribution: "Saved too late.",
+            }),
+          ),
+        ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+        // The first try lost a write conflict and was run again.
+        expect(state.attempts).toBe(2);
+        expect(await r12Contribution()).not.toBe("Saved too late.");
+      });
+
+      it("Open cannot commit while a write that passed the check is in flight: it waits, and the write lands before the year opens", async () => {
+        const roster = await import("../manageRoster");
+        let writeDone = false;
+        let claimedDuringWrite = false;
+        let claiming: Promise<unknown> = Promise.resolve();
+        const { database, state } = pausedAtCheck({
+          afterCheck: async () => {
+            claiming = claim().then((r) => {
+              claimedDuringWrite = !writeDone;
+              return r;
+            });
+            // Ample time for the claim: it must stay blocked behind the write.
+            await new Promise((done) => setTimeout(done, 750));
+          },
+        });
+        await roster.rosterUpsert(database, SOCCER_HEAD.id, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: R12.id,
+          extraContribution: "Saved just in time.",
+        });
+        writeDone = true;
+        await claiming;
+        expect(claimedDuringWrite).toBe(false);
+        expect(state.attempts).toBe(1);
+        expect(await r12Contribution()).toBe("Saved just in time.");
+        expect(
+          (
+            await db.transcriptPeriod.findUnique({
+              where: { academicYear: AY },
+            })
+          )?.status,
+        ).toBe("published");
+      });
+
+      it("two saves at the same moment both land: the loser of the conflict is retried transparently", async () => {
+        const roster = await import("../manageRoster");
+        const save = (userID: string, text: string) =>
+          roster.rosterUpsert(db, SOCCER_HEAD.id, {
+            ccaID: SOCCER,
+            academicYear: AY,
+            userID,
+            extraContribution: text,
+          });
+        await Promise.all([
+          save(R12.id, "Together A."),
+          save("SEED-R13", "Together B."),
+          save("SEED-R18", "Together C."),
+        ]);
+        const rows = await db.transcriptRosterEntry.findMany({
+          where: {
+            academicYear: AY,
+            ccaID: SOCCER,
+            userID: { in: [R12.id, "SEED-R13", "SEED-R18"] },
+          },
+        });
+        expect(rows.map((r) => r.extraContribution).sort()).toEqual([
+          "Together A.",
+          "Together B.",
+          "Together C.",
+        ]);
+      });
+
+      it("creates the current year's row as collecting when missing, and no row for another year", async () => {
+        const records = await import("../residentRecords");
+        await db.transcriptPeriod.deleteMany({
+          where: { academicYear: { in: [AY, NEXT] } },
+        });
+        await db.$transaction((tx) =>
+          records.assertStillCollecting(tx, AY, records.ORDINARY_WRITE),
+        );
+        await db.$transaction((tx) =>
+          records.assertStillCollecting(tx, NEXT, records.ORDINARY_WRITE),
+        );
+        const rows = await db.transcriptPeriod.findMany({
+          where: { academicYear: { in: [AY, NEXT] } },
+        });
+        expect(rows.map((r) => [r.academicYear, r.status])).toEqual([
+          [AY, "collecting"],
+        ]);
+        expect(rows[0]?.lastWriteID).toBeTruthy();
+      });
+    });
+
     /* ---- (E) who may edit -------------------------------------------------- */
     describe("edit rights", () => {
       const editAs = (

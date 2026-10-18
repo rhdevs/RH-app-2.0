@@ -1,5 +1,7 @@
-import type { PrismaClient } from "@prisma/client";
+import { randomUUID } from "node:crypto";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
+import { currentAcademicYear } from "~/lib/transcript/academicYear";
 import {
   ONLY_UNLOCKED_RESIDENTS,
   decideWrite,
@@ -12,7 +14,11 @@ import {
 import { accessFor } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
 import { editRefusalFor } from "./editRights";
-import { getPeriod } from "./periods";
+import {
+  YEAR_WRITE_ATTEMPTS,
+  retryWriteConflicts,
+} from "~/lib/transcript/writeConflict";
+import { getPeriod, STATUS_COLLECTING } from "./periods";
 
 /**
  * THE WRITE GUARD FOR RESIDENT-SPECIFIC RECORDS, and the history it feeds.
@@ -124,8 +130,16 @@ export async function assertCanEditForResidents(
  * (not a correction) needs the year still collecting. The guard above runs
  * before the transaction, so a head's save in flight while the JCRC presses
  * Open transcripts could otherwise land after the year opened. Reading the year
- * inside the transaction narrows that window to the transaction itself. A
- * correction is for an open year already, so it is not checked here.
+ * is not enough: a read does not conflict with Open claiming the year, so a
+ * write that read "collecting" could still commit just after the claim. So the
+ * check WRITES the year's period row (a fresh `lastWriteID`) in the
+ * transaction: Open's claim and this write then genuinely conflict, and
+ * whichever comes second either waits (the claim) or is aborted and run again
+ * (the write, see `yearWrite`), and the rerun sees the year open and refuses.
+ * The row is created as "collecting" when missing, for the CURRENT year only:
+ * only the current year can be opened, and a row for any other year would add
+ * it to the admin year lists. A correction is for an open year already, so it
+ * is not checked here.
  */
 /**
  * The guard result of a write only `assertCanEditCcaYear` admits (activities,
@@ -137,8 +151,30 @@ export async function assertStillCollecting(
   tx: Pick<PrismaClient, "transcriptPeriod">,
   academicYear: string,
   guard: { correction: boolean },
+  now: Date = new Date(),
 ): Promise<void> {
   if (guard.correction) return;
+  const lastWriteID = randomUUID();
+  const touched = await tx.transcriptPeriod.updateMany({
+    where: { academicYear },
+    data: { lastWriteID },
+  });
+  if (touched.count === 0) {
+    // No row: the year was never opened. Only the current year can be.
+    if (academicYear !== currentAcademicYear(now)) return;
+    try {
+      await tx.transcriptPeriod.create({
+        data: { academicYear, status: STATUS_COLLECTING, lastWriteID },
+      });
+    } catch (error) {
+      // Created at the same moment (by Open, or another write): run again.
+      if ((error as { code?: unknown }).code === "P2002") {
+        throw transientConflict(error);
+      }
+      throw error;
+    }
+    return;
+  }
   const period = await tx.transcriptPeriod.findUnique({
     where: { academicYear },
     select: { status: true },
@@ -149,6 +185,34 @@ export async function assertStillCollecting(
       message: PUBLISHED_REFUSAL,
     });
   }
+}
+
+/** A race lost to a write at the same moment, retried like a write conflict. */
+function transientConflict(cause: unknown): Error {
+  return Object.assign(
+    new Error("YEAR_ROW_RACE: the year's row was created meanwhile"),
+    { errorLabels: ["TransientTransactionError"], cause },
+  );
+}
+
+/**
+ * The transaction of a year-scoped write that calls `assertStillCollecting`,
+ * run again from the start when it loses a write conflict: every such write
+ * touches the year's period row, so two saves at the same moment conflict with
+ * each other (and with Open transcripts), and the loser is retried
+ * transparently, up to YEAR_WRITE_ATTEMPTS times in all. The body must re-read
+ * what it depends on: a retry starts afresh.
+ */
+export function yearWrite<T>(
+  db: PrismaClient,
+  body: (tx: Prisma.TransactionClient) => Promise<T>,
+  options?: { maxWait?: number; timeout?: number },
+): Promise<T> {
+  return retryWriteConflicts(
+    () => db.$transaction(body, options),
+    undefined,
+    YEAR_WRITE_ATTEMPTS,
+  );
 }
 
 /* ---- the history ---------------------------------------------------------- */

@@ -27,6 +27,7 @@ import {
 import {
   assertCanEditForResidents,
   assertStillCollecting,
+  yearWrite,
   logCorrections,
 } from "./residentRecords";
 import { lockedFields } from "./freeze";
@@ -510,7 +511,7 @@ export async function rosterUpsert(
       })
     : null;
 
-  const row = await db.$transaction(async (tx) => {
+  const row = await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, input.academicYear, guard);
     // Read in the transaction, so a lock written since the checks above is seen.
     const current = await tx.transcriptRosterEntry.findUnique({
