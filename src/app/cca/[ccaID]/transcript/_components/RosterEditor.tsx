@@ -16,6 +16,7 @@ import {
   draftOf,
   durationOptions,
   effectiveMembership,
+  KEPT_MEMBER_NOTE,
   roleDurationOptions,
   roleDurationValue,
   type DurationOption,
@@ -52,6 +53,8 @@ export interface RosterRowData {
   userID: string;
   displayName: string | null;
   isHead: boolean;
+  /** Left the CCA; kept on the list by a saved role or semester. */
+  kept?: boolean;
   defaultDuration: Duration | null;
   duration: string | null;
   defaultRoleLabel: string | null;
@@ -188,6 +191,11 @@ export function RosterRowView(p: RosterRowViewProps) {
           {name}
           {row.isHead && (
             <span className="ml-2 text-xs font-normal text-gray-500">Head</span>
+          )}
+          {row.kept && (
+            <span className="mt-1 block text-xs font-normal text-gray-500">
+              {KEPT_MEMBER_NOTE}
+            </span>
           )}
         </td>
         <td className="min-w-[10rem] px-3 py-3">
@@ -340,6 +348,11 @@ export function RosterCardView(p: RosterRowViewProps) {
         {name}
         {row.isHead && (
           <span className="ml-2 text-xs font-normal text-gray-500">Head</span>
+        )}
+        {row.kept && (
+          <span className="mt-1 block text-xs font-normal text-gray-500">
+            {KEPT_MEMBER_NOTE}
+          </span>
         )}
       </p>
       <div>

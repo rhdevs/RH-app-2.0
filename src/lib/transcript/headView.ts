@@ -24,7 +24,20 @@ export const PUBLISHED_NOTE = (academicYear: string) =>
   `Transcripts for ${academicYear} are open. Editing is closed. Ask the JCRC to fix individual residents.`;
 
 export const ROSTER_HELPER =
-  "Members who leave the CCA before transcripts open are not listed on them.";
+  "Members who leave the CCA before transcripts open are not listed on them, unless a role or a semester is saved for them here.";
+
+/**
+ * Before a handover during the year: the outgoing head saves their own role,
+ * the new head saves theirs. A saved role keeps the outgoing head on the list
+ * and always beats the "Head" default. Shown on the tab and in the handover
+ * dialog.
+ */
+export const HANDOVER_ROLE_NOTE =
+  'Handing over during the year? Before you do, set your own role for this year in the Transcript tab, for example "Head" for Semester 1 only, so it stays on your transcript. Then ask the new head to set theirs, for example "Head" for Semester 2 only.';
+
+/** Beside someone who left the CCA but stays on the list by a saved role. */
+export const KEPT_MEMBER_NOTE =
+  "No longer in the CCA. Kept on this year's list because a role or semester is saved.";
 
 export const NO_DESCRIPTION_NOTE =
   "This CCA has no description yet. Add one so it appears in your members’ transcripts.";

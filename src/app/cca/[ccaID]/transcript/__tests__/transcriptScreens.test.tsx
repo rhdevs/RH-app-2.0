@@ -285,6 +285,30 @@ describe("transcript page route", () => {
   });
 });
 
+describe("the CCA transcript tab: the handover note (P6)", () => {
+  it("tells heads to set their own role before a handover, while the year is editable", () => {
+    const shown = renderToStaticMarkup(
+      <TranscriptNotes
+        stateNote={null}
+        descriptionEmpty={false}
+        detailsHref="/cca/9005/details"
+        showHandoverNote
+      />,
+    );
+    expect(shown).toContain(
+      "Handing over during the year? Before you do, set your own role for this year in the Transcript tab",
+    );
+    const hidden = renderToStaticMarkup(
+      <TranscriptNotes
+        stateNote={null}
+        descriptionEmpty={false}
+        detailsHref="/cca/9005/details"
+      />,
+    );
+    expect(hidden).not.toContain("Handing over");
+  });
+});
+
 describe("the CCA transcript tab: no lock, a deadline line", () => {
   it("tells heads to finish before transcripts open", () => {
     expect(tab.OPEN_DEADLINE_NOTE).toBe(

@@ -17,7 +17,7 @@ import {
   type FreezeReason,
   type YearStatus,
 } from "~/lib/transcript/lifecycle";
-import { liveMembers } from "./liveRoster";
+import { yearMembers } from "./liveRoster";
 import { NOT_UNFROZEN } from "./loader";
 import {
   correctionSummary,
@@ -46,6 +46,11 @@ export interface RosterRow {
   userID: string;
   displayName: string | null;
   isHead: boolean;
+  /**
+   * No longer in the CCA, but a saved role or period keeps them on this
+   * year's list (collecting years only).
+   */
+  kept?: boolean;
   /** "full" on a live list (the default a row goes back to); null on a locked one. */
   defaultDuration: Duration | null;
   /** The stored choice, or null for the default (a full year). */
@@ -127,12 +132,14 @@ function liveRow(m: {
   displayName: string | null;
   isHead: boolean;
   own: RosterAnnotation | null;
+  kept?: boolean;
 }): RosterRow {
   const { own } = m;
   return {
     userID: m.key,
     displayName: m.displayName,
     isHead: m.isHead,
+    ...(m.kept && { kept: true }),
     defaultDuration: "full",
     duration: asDuration(own?.duration),
     defaultRoleLabel: m.isHead ? "Head" : null,
@@ -249,7 +256,7 @@ export async function rosterList(
     return { ...base, unresolved: 0, rows: [], mode: "none" };
   }
 
-  const { members, unresolved } = await liveMembers(db, ccaID);
+  const { members, unresolved } = await yearMembers(db, ccaID, academicYear);
   const allKeys = [...new Set(members.flatMap((m) => m.keys))];
   const [stored, names] = await Promise.all([
     db.transcriptRosterEntry.findMany({ where: { academicYear, ccaID } }),
@@ -257,12 +264,13 @@ export async function rosterList(
   ]);
   const storedBy = new Map(stored.map((s) => [s.userID, s]));
 
-  const rows = members.map(({ entry, key }) =>
+  const rows = members.map((m) =>
     liveRow({
-      key,
-      displayName: entry.displayName ?? names.get(key)?.displayName ?? null,
-      isHead: entry.isHead,
-      own: savedChoices(storedBy.get(key)),
+      key: m.key,
+      displayName: m.displayName ?? names.get(m.key)?.displayName ?? null,
+      isHead: m.isHead,
+      own: savedChoices(storedBy.get(m.key)),
+      kept: m.kept,
     }),
   );
   return { ...base, unresolved, rows: sortRows(rows), mode: "live" };
@@ -282,8 +290,9 @@ type UpsertInput = z.infer<typeof rosterUpsertInput>;
 
 /**
  * Who an edit is about. In an open (published) year it must be someone on the
- * CCA's locked list; while collecting, a current member of the CCA (the live
- * list). Who may edit which year at all is the edit guard's business.
+ * CCA's locked list; while collecting, someone on the year's list (a current
+ * member, or someone a saved role or period keeps). Who may edit which year at
+ * all is the edit guard's business.
  */
 async function findTarget(
   db: PrismaClient,
@@ -306,10 +315,10 @@ async function findTarget(
     if (!entry) throw notAMember;
     return { key: entry.userID, keys: [entry.userID], frozen: true };
   }
-  const { members } = await liveMembers(db, input.ccaID);
-  const live = members.find((m) => m.keys.includes(input.userID));
-  if (!live) throw notAMember;
-  return { key: live.key, keys: live.keys, frozen: false };
+  const { members } = await yearMembers(db, input.ccaID, input.academicYear);
+  const member = members.find((m) => m.keys.includes(input.userID));
+  if (!member) throw notAMember;
+  return { key: member.key, keys: member.keys, frozen: false };
 }
 
 /**

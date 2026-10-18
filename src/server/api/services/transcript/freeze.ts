@@ -7,7 +7,7 @@ import {
   normaliseYearStatus,
   type FreezeReason,
 } from "~/lib/transcript/lifecycle";
-import { liveMembers } from "./liveRoster";
+import { keptBySavedEntry, liveMembers } from "./liveRoster";
 import { NOT_UNFROZEN } from "./loader";
 import { actorLabels } from "./residents";
 
@@ -17,7 +17,8 @@ import { actorLabels } from "./residents";
  * Member lists are set by the August application period, so a CCA's list for a
  * year is its LIVE list until "Open transcripts" locks every CCA's list for
  * that year, so the next August recruitment cannot change the transcripts. A
- * lock writes one frozen TranscriptRosterEntry for every live member, resolved
+ * lock writes one frozen TranscriptRosterEntry for every live member (and for
+ * everyone a saved role or period keeps in the list, see keptBySavedEntry), resolved
  * exactly as the head's screen shows them (overrides, else defaults, with the
  * role inside the membership), and one CcaYearFreeze record, in ONE
  * transaction. Nothing else locks a list: head changes never do.
@@ -169,18 +170,30 @@ async function freezeOnce(
           where: { academicYear, ccaID: input.ccaID },
         });
         const storedBy = new Map(stored.map((e) => [e.userID, e]));
+        // Who a saved role or period keeps although they left the live
+        // roster (an outgoing head's "Head (Semester 1)"): never a head by
+        // default, only what was saved.
+        const liveKeys = new Set(live.members.flatMap((m) => m.keys));
+        const kept = keptBySavedEntry(stored, liveKeys).map((e) => ({
+          key: e.userID,
+          isHead: false,
+        }));
 
         const toCreate: Prisma.TranscriptRosterEntryCreateManyInput[] = [];
         const toUpdate: Array<{
           id: string;
           data: Prisma.TranscriptRosterEntryUpdateManyMutationInput;
         }> = [];
-        for (const m of members) {
+        const listed = [
+          ...members.map((m) => ({ key: m.key, isHead: m.entry.isHead })),
+          ...kept,
+        ];
+        for (const m of listed) {
           const own = storedBy.get(m.key) ?? null;
           // The head's own choices: kept aside by an earlier lock, else the
           // entry's fields. A default an earlier lock filled in is never one.
           const choices = savedChoices(own);
-          const r = resolveEntry(choices, { isHead: m.entry.isHead });
+          const r = resolveEntry(choices, { isHead: m.isHead });
           const data = {
             duration: r.duration,
             roleLabel: r.roleLabel,

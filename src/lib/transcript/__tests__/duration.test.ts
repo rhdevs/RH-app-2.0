@@ -5,6 +5,7 @@ import {
   durationLabel,
   isDuration,
   resolveEntry,
+  hasSavedRoleOrPeriod,
   roleFits,
   savedChoices,
 } from "../duration";
@@ -180,5 +181,35 @@ describe("savedChoices: the head's own choices, never a lock's filled-in default
     expect(
       resolveEntry(savedChoices(locked), { isHead: false }).roleLabel,
     ).toBeNull();
+  });
+});
+
+describe("hasSavedRoleOrPeriod: what keeps a leaver on the year's list", () => {
+  it("counts a saved role, or a saved Semester 1 or 2", () => {
+    expect(hasSavedRoleOrPeriod({ roleLabel: "Head" })).toBe(true);
+    expect(hasSavedRoleOrPeriod({ duration: "sem2" })).toBe(true);
+    expect(hasSavedRoleOrPeriod({ roleDuration: "sem1" })).toBe(true);
+  });
+
+  it("never counts the full-year default, a blank role, an extra alone, or nothing", () => {
+    expect(hasSavedRoleOrPeriod({ duration: "full" })).toBe(false);
+    expect(hasSavedRoleOrPeriod({ roleDuration: "full" })).toBe(false);
+    expect(hasSavedRoleOrPeriod({ roleLabel: "   " })).toBe(false);
+    expect(
+      hasSavedRoleOrPeriod({ extraContribution: "Ran the kit room." }),
+    ).toBe(false);
+    expect(hasSavedRoleOrPeriod(null)).toBe(false);
+  });
+
+  it("reads the choices a lock kept aside, not its filled-in Head", () => {
+    expect(
+      hasSavedRoleOrPeriod(
+        savedChoices({
+          roleLabel: "Head",
+          duration: "full",
+          preFreeze: { roleLabel: null, duration: null },
+        }),
+      ),
+    ).toBe(false);
   });
 });

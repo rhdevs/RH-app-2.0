@@ -3,6 +3,7 @@ import { instantToSgDate } from "~/lib/transcript/sgDate";
 import { canonicalUserID } from "~/lib/identity";
 import {
   clampRoleDuration,
+  hasSavedRoleOrPeriod,
   isDuration,
   resolveEntry,
   savedChoices,
@@ -358,20 +359,27 @@ async function loadMemberships(
       });
     }
   } else {
-    // Still collecting: each CCA's current (live) membership.
-    const live = await liveMemberships(db, key, user);
-    if (live.length > 0) {
-      const stored = await db.transcriptRosterEntry.findMany({
+    // Still collecting: each CCA's current (live) membership, plus every CCA
+    // where a saved role or period keeps the person on this year's list.
+    const [live, stored] = await Promise.all([
+      liveMemberships(db, key, user),
+      db.transcriptRosterEntry.findMany({
         where: { academicYear, userID: key },
+      }),
+    ]);
+    const byCca = new Map(stored.map((r) => [r.ccaID, r]));
+    const liveIDs = new Set(live.map((m) => m.ccaID));
+    const kept = stored
+      .filter(
+        (r) => !liveIDs.has(r.ccaID) && hasSavedRoleOrPeriod(savedChoices(r)),
+      )
+      .map((r) => ({ ccaID: r.ccaID, isHead: false }));
+    for (const m of [...live, ...kept]) {
+      // The saved choices, never values a part-way Open wrote in.
+      entries.push({
+        ccaID: m.ccaID,
+        ...resolveEntry(savedChoices(byCca.get(m.ccaID)), m),
       });
-      const byCca = new Map(stored.map((r) => [r.ccaID, r]));
-      for (const m of live) {
-        // The saved choices, never values a part-way Open wrote in.
-        entries.push({
-          ccaID: m.ccaID,
-          ...resolveEntry(savedChoices(byCca.get(m.ccaID)), m),
-        });
-      }
     }
   }
 

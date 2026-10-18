@@ -579,6 +579,120 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
     });
 
+    /* ---- (D2) a handover before Open (P6) -------------------------------- */
+    describe("a handover before Open", () => {
+      const soccerRole = async (userID: string) => {
+        const r = await as(JCRC).transcript.preview({
+          userID,
+          academicYear: AY,
+        });
+        const row = r.transcript.pages
+          .flatMap((p) => (p.kind === "main" ? p.sections : []))
+          .flatMap((s) => (s.kind === "involvements" ? s.rows : []))
+          .find((x) => x.ccaName === "Soccer (MALE)");
+        return row ? row.role || null : "NOT LISTED";
+      };
+      const NEW_HEAD = R(9, ["cca_head", "resident"]);
+
+      it("keeps an outgoing head with a saved role on the list and the transcript, and a saved role beats the Head default", async () => {
+        // The outgoing head saves their own part-year role, then hands over
+        // and leaves the CCA altogether.
+        await as(SOCCER_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          roleLabel: "Head",
+          roleDuration: "sem1",
+        });
+        await as(SOCCER_HEAD).cca.handoverHeads({
+          ccaID: SOCCER,
+          newHeadUserIDs: [R09.id],
+        });
+        await db.userCCA.deleteMany({
+          where: { ccaID: SOCCER, userID: SOCCER_HEAD.id },
+        });
+        expect(await heads(SOCCER)).toEqual([R09.id]);
+
+        // (b) The new head saves their own role: it beats the live "Head".
+        await as(NEW_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: R09.id,
+          roleLabel: "Co-captain",
+          roleDuration: "sem2",
+        });
+        // A leaver with only an extra contribution saved is NOT kept.
+        await as(NEW_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: "SEED-R13",
+          extraContribution: "Kept the kit room tidy.",
+        });
+        await db.userCCA.deleteMany({
+          where: { ccaID: SOCCER, userID: "SEED-R13" },
+        });
+
+        // While collecting: on the new head's screen, marked as kept.
+        const screen = await as(NEW_HEAD).transcriptManage.roster.list({
+          ccaID: SOCCER,
+          academicYear: AY,
+        });
+        const out = screen.rows.find((r) => r.userID === SOCCER_HEAD.id);
+        expect(out).toMatchObject({
+          kept: true,
+          isHead: false,
+          roleLabel: "Head",
+          roleDuration: "sem1",
+        });
+        expect(
+          screen.rows.find((r) => r.userID === "SEED-R13"),
+        ).toBeUndefined();
+        expect(screen.rows.find((r) => r.userID === R09.id)).toMatchObject({
+          isHead: true,
+          roleLabel: "Co-captain",
+        });
+        // The kept person can still be edited by the new head.
+        await as(NEW_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          extraContribution: "Captained the first half of the season.",
+        });
+        expect(await soccerRole(SOCCER_HEAD.id)).toBe("Head (Sem 1)");
+        expect(await soccerRole("SEED-R13")).toBe("NOT LISTED");
+
+        // Open transcripts keeps them, exactly as the screen showed.
+        const result = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        expect(result.opened).toBe(true);
+        expect(await frozenKeys(SOCCER, AY)).toContain(SOCCER_HEAD.id);
+        expect(await frozenKeys(SOCCER, AY)).not.toContain("SEED-R13");
+        expect(await soccerRole(SOCCER_HEAD.id)).toBe("Head (Sem 1)");
+        expect(await soccerRole(R09.id)).toBe("Co-captain (Sem 2)");
+      });
+
+      it("drops a leaver once their saved role and semester are cleared", async () => {
+        await db.userCCA.deleteMany({
+          where: { ccaID: SOCCER, userID: SOCCER_HEAD.id },
+        });
+        await db.ccaHead.deleteMany({
+          where: { ccaID: SOCCER, userID: SOCCER_HEAD.id },
+        });
+        // Seeded: SEED-R04 saved "Captain" for Soccer, so they are kept.
+        expect(await soccerRole(SOCCER_HEAD.id)).toBe("Captain");
+        await as(ADMIN).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          roleLabel: null,
+          roleDuration: null,
+          duration: null,
+        });
+        expect(await soccerRole(SOCCER_HEAD.id)).toBe("NOT LISTED");
+        await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        expect(await frozenKeys(SOCCER, AY)).not.toContain(SOCCER_HEAD.id);
+      });
+    });
+
     /* ---- (E) who may edit -------------------------------------------------- */
     describe("edit rights", () => {
       const editAs = (

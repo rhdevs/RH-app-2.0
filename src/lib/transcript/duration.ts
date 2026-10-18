@@ -78,6 +78,30 @@ export function savedChoices(
   };
 }
 
+/** Semester 1 or Semester 2: a period someone chose, never the default. */
+const isPartYear = (value: unknown) => value === "sem1" || value === "sem2";
+
+/**
+ * A DELIBERATE saved entry: a role, or a Semester 1 / Semester 2 membership or
+ * role period, chosen and saved by a head or manager (never a lock's filled-in
+ * default; read through `savedChoices`). "Full year" is the default, which the
+ * screens save as nothing, so it never counts. While the year is collecting,
+ * such an entry keeps its person in the CCA's list for the year even after
+ * they leave the live roster, so an outgoing head who saved "Head" for
+ * Semester 1 before handing over is still on the transcript. An "Additional
+ * contribution" alone does not keep anyone.
+ */
+export function hasSavedRoleOrPeriod(
+  choices: Partial<RosterAnnotation> | null | undefined,
+): boolean {
+  if (!choices) return false;
+  return (
+    Boolean(choices.roleLabel?.trim()) ||
+    isPartYear(choices.duration) ||
+    isPartYear(choices.roleDuration)
+  );
+}
+
 export interface ResolvedEntry {
   duration: Duration;
   roleLabel: string | null;

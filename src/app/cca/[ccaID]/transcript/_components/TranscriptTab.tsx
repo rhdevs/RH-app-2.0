@@ -13,6 +13,7 @@ import { errorText } from "~/lib/transcript/adminView";
 import {
   NO_DESCRIPTION_NOTE,
   REFRESH_FAILED_NOTE,
+  HANDOVER_ROLE_NOTE,
   ROSTER_HELPER,
   rosterNotice,
 } from "~/lib/transcript/headView";
@@ -35,12 +36,17 @@ export interface TranscriptNotesProps {
   /** Null while the profile is still loading or could not be read. */
   descriptionEmpty: boolean | null;
   detailsHref: string;
+  /** The year is editable: remind heads to set their roles before a handover. */
+  showHandoverNote?: boolean;
 }
 
 /** The calm notes above the roster. Plain text, no colour alarms. */
 export function TranscriptNotes(p: TranscriptNotesProps) {
   return (
     <div className="space-y-2 text-sm">
+      {p.showHandoverNote && (
+        <p className="text-gray-700">{HANDOVER_ROLE_NOTE}</p>
+      )}
       {p.stateNote && (
         <p className="text-amber-800" role="status">
           {p.stateNote}
@@ -167,6 +173,7 @@ export default function TranscriptTab({ ccaID }: { ccaID: number }) {
             profile.data ? profile.data.description.trim() === "" : null
           }
           detailsHref={`/cca/${ccaID}/details`}
+          showHandoverNote={!readOnly}
         />
       </SectionCard>
 
