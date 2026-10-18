@@ -38,6 +38,8 @@ The other variables can be placeholders for local work (the build needs `NEXTAUT
 
 Order on a fresh machine: `dev:db:up`, then `npx prisma db push`, then `dev:db:seed`.
 
+The seed also sets the kill switch `transcript.enabled` to `"on"` (a `SystemFlag` row). Without it every transcript page says "Transcripts are not available yet." and every transcript procedure refuses with `TRANSCRIPT_DISABLED`. To try the switched-off state locally: `node scripts/remediation/set-transcript-flag.mjs off --commit` (and `on --commit` to go back); the app picks it up within 15 seconds.
+
 ## Reset
 
 To wipe everything and start again:

@@ -202,6 +202,43 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     /* ---------------------------------------------------------------- */
+    describe("the transcript.enabled kill switch", () => {
+      const setFlag = async (value: string | null) => {
+        await db.systemFlag.deleteMany({
+          where: { key: "transcript.enabled" },
+        });
+        if (value !== null) {
+          await db.systemFlag.create({
+            data: { key: "transcript.enabled", value },
+          });
+        }
+        const { resetTranscriptFlagCache } = await import("../flag");
+        resetTranscriptFlagCache();
+      };
+
+      it("refuses every kind of caller while off, and lets them through once on", async () => {
+        try {
+          for (const value of [null, "off"]) {
+            await setFlag(value);
+            expect(await errorOf(as(JCRC).transcript.periods.list())).toBe(
+              "FORBIDDEN:TRANSCRIPT_DISABLED",
+            );
+            expect(await errorOf(as(JCRC).transcript.mine.readiness())).toBe(
+              "FORBIDDEN:TRANSCRIPT_DISABLED",
+            );
+          }
+          await setFlag("on");
+          expect(await errorOf(as(JCRC).transcript.periods.list())).toBe("ok");
+          expect(await errorOf(as(JCRC).transcript.mine.readiness())).toBe(
+            "ok",
+          );
+        } finally {
+          await setFlag("on");
+        }
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
     describe("a locked resident in an open year, then unlocked", () => {
       const open = () => as(JCRC).transcript.periods.open({ academicYear: AY });
       const unlock = (userID: string) =>

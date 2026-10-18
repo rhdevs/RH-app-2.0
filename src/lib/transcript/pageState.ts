@@ -103,6 +103,15 @@ export function selectTranscriptState(input: {
   };
 }
 
+/** While the transcript kill switch (`transcript.enabled`) is off. */
+export const TRANSCRIPTS_OFF_NOTES = {
+  headline: "Transcripts are not available yet.",
+  detail: "They will appear here once the hall turns them on.",
+  /** For admin and JCRC only: what turns them on. */
+  forManagers:
+    "To turn them on, an admin sets the transcript.enabled system flag to on, after the transcript indexes are built.",
+} as const;
+
 export const NOT_AVAILABLE_NOTES = {
   headline: (academicYear: string) =>
     `Your transcript for ${academicYear} isn’t available yet.`,

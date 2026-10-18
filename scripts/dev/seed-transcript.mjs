@@ -256,7 +256,25 @@ async function reset() {
   await db.cCA.deleteMany({ where: { ccaID: { in: CCA_IDS } } });
 }
 
+/**
+ * The transcript kill switch, ON for local work (production starts with no row,
+ * which is off). An upsert, so it is the same on every run.
+ */
+async function enableTranscripts() {
+  await db.systemFlag.upsert({
+    where: { key: "transcript.enabled" },
+    create: {
+      key: "transcript.enabled",
+      value: "on",
+      updatedAt: new Date(),
+      updatedBy: "seed",
+    },
+    update: { value: "on", updatedAt: new Date(), updatedBy: "seed" },
+  });
+}
+
 async function seed() {
+  await enableTranscripts();
   await db.cCA.createMany({
     data: CCAS.map(([ccaID, ccaName, category]) => ({
       ccaID,

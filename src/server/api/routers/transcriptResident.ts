@@ -43,7 +43,9 @@ import {
   withholdResident,
 } from "~/server/api/services/transcript/residentManage";
 import { requireResident } from "~/server/api/services/transcript/residents";
-import { createTRPCRouter, roleManagerProcedure } from "~/server/api/trpc";
+// The repo's builders with the transcript kill switch added (procedures.ts).
+import { transcriptRoleManagerProcedure as roleManagerProcedure } from "~/server/api/services/transcript/procedures";
+import { createTRPCRouter } from "~/server/api/trpc";
 
 /**
  * PER-RESIDENT CORRECTIONS: admin and jcrc only. Every procedure names one

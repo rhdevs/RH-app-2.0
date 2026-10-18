@@ -125,6 +125,22 @@ describe("/transcript", () => {
     expect(await outcome()).toEqual(["NotAvailable"]);
   });
 
+  it("shows the calm page, with the switched-off words, while transcripts are off", async () => {
+    auth.mockResolvedValue({ user: { id: "x" } });
+    years.mockRejectedValue(
+      new TRPCError({ code: "FORBIDDEN", message: "TRANSCRIPT_DISABLED" }),
+    );
+
+    const page = (await Page({ searchParams: {} })) as ReactElement<{
+      notes?: { headline: string };
+    }>;
+    expect(names(page)).toEqual(["NotAvailable"]);
+    expect(page.props.notes?.headline).toBe(
+      "Transcripts are not available yet.",
+    );
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it("rethrows an unexpected error instead of calling it 'not available'", async () => {
     auth.mockResolvedValue({ user: { id: "x" } });
     years.mockRejectedValue(new Error("database is down"));

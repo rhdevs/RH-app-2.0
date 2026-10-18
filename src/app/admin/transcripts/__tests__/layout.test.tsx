@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -18,12 +19,17 @@ vi.mock("~/server/db", () => ({ db: {} }));
 vi.mock("~/server/api/services/access", () => ({
   getUserRoles: (...args: unknown[]) => getUserRoles(...args),
 }));
+const flag = vi.hoisted(() => ({ on: true }));
+vi.mock("~/server/api/services/transcript/flag", () => ({
+  isTranscriptEnabled: async () => flag.on,
+}));
 
 const { default: Layout } = await import("../layout");
 
 const outcome = async (): Promise<string> => {
   try {
-    await Layout({ children: "CHILDREN" });
+    const page = await Layout({ children: "CHILDREN" });
+    if (page.props.children !== "CHILDREN") return "switched off";
     return "rendered";
   } catch (error) {
     return (error as Error).message;
@@ -74,6 +80,24 @@ describe("/admin/transcripts layout gate", () => {
 
     expect(await outcome()).toBe("REDIRECT:/admin");
     expect(getUserRoles).toHaveBeenCalledWith({}, "SEED-R09");
+  });
+
+  it("shows the switched-off note to a manager while transcripts are off, and stays a gate", async () => {
+    auth.mockResolvedValue({ user: { userID: "SEED-R02" } });
+    flag.on = false;
+    try {
+      getUserRoles.mockResolvedValue(["jcrc", "resident"]);
+      expect(await outcome()).toBe("switched off");
+      const html = renderToStaticMarkup(await Layout({ children: "CHILDREN" }));
+      expect(html).toContain("Transcripts are not available yet.");
+      expect(html).toContain("transcript.enabled");
+      expect(html).not.toContain("CHILDREN");
+      // A resident is still turned away first.
+      getUserRoles.mockResolvedValue(["resident"]);
+      expect(await outcome()).toBe("REDIRECT:/admin");
+    } finally {
+      flag.on = true;
+    }
   });
 
   it("fails closed when the role read fails", async () => {

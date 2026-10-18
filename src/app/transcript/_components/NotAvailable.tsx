@@ -10,10 +10,13 @@ import { type ReactNode } from "react";
 export function NotAvailable({
   academicYear,
   switcher,
+  notes,
 }: {
   academicYear: string;
   /** The year switcher, when the resident has other years to look at. */
   switcher?: ReactNode;
+  /** Other words: transcripts are switched off altogether. */
+  notes?: { headline: string; detail: string };
 }) {
   return (
     <>
@@ -28,10 +31,10 @@ export function NotAvailable({
             </h1>
           </div>
           <p role="status" className="mt-6 text-base font-semibold">
-            {NOT_AVAILABLE_NOTES.headline(academicYear)}
+            {notes?.headline ?? NOT_AVAILABLE_NOTES.headline(academicYear)}
           </p>
           <p className="mt-1 text-sm text-neutral-700">
-            {NOT_AVAILABLE_NOTES.detail}
+            {notes?.detail ?? NOT_AVAILABLE_NOTES.detail}
           </p>
         </div>
       </main>

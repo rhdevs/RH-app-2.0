@@ -2,8 +2,10 @@ import { redirect } from "next/navigation";
 
 import { canManageTranscriptPeriods } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
+import { isTranscriptEnabled } from "~/server/api/services/transcript/flag";
 import { auth } from "~/server/auth";
 import { db } from "~/server/db";
+import { TranscriptsOffPanel } from "../../transcript/_components/TranscriptsOffPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +16,8 @@ export const dynamic = "force-dynamic";
  * or a resident who types the address is sent back to the admin overview (and
  * the admin layout above sends a plain resident on to the home page). Every
  * procedure behind these screens re-checks too; this only decides the page.
+ * While the transcript kill switch is off, the screens are replaced by a calm
+ * note (every procedure behind them would refuse anyway).
  */
 export default async function TranscriptsAdminLayout({
   children,
@@ -31,6 +35,10 @@ export default async function TranscriptsAdminLayout({
   }
 
   if (!canManageTranscriptPeriods(roles)) redirect("/admin");
+
+  if (!(await isTranscriptEnabled(db))) {
+    return <TranscriptsOffPanel forManagers />;
+  }
 
   return <>{children}</>;
 }

@@ -4,6 +4,7 @@ import { TRPCError } from "@trpc/server";
 import { currentAcademicYear } from "~/lib/transcript/academicYear";
 import { instantToSgDate } from "~/lib/transcript/sgDate";
 import {
+  TRANSCRIPTS_OFF_NOTES,
   downloadByBanner,
   parseAyParam,
   selectTranscriptState,
@@ -52,6 +53,15 @@ export default async function TranscriptPage({
     } catch (error) {
       if (error instanceof TRPCError && error.code === "UNAUTHORIZED") {
         redirect("/login");
+      }
+      // The kill switch is off: transcripts are not available to anyone.
+      if (
+        error instanceof TRPCError &&
+        error.message === "TRANSCRIPT_DISABLED"
+      ) {
+        return (
+          <NotAvailable academicYear={now} notes={TRANSCRIPTS_OFF_NOTES} />
+        );
       }
       // FORBIDDEN (no canonical identity): nothing can be issued for them.
       // Anything else (a database outage, say) must not read as "not

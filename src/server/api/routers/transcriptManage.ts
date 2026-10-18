@@ -107,11 +107,12 @@ import {
 } from "~/server/api/services/transcript/manageVolunteer";
 import { searchResidents } from "~/server/api/services/transcript/residents";
 import { transcriptResidentRouter } from "./transcriptResident";
+// The repo's builders with the transcript kill switch added (procedures.ts).
 import {
-  createTRPCRouter,
-  identifiedProcedure,
-  roleManagerProcedure,
-} from "~/server/api/trpc";
+  transcriptIdentifiedProcedure as identifiedProcedure,
+  transcriptRoleManagerProcedure as roleManagerProcedure,
+} from "~/server/api/services/transcript/procedures";
+import { createTRPCRouter } from "~/server/api/trpc";
 
 /**
  * Transcript MANAGEMENT: the edits behind the head, JCRC and admin screens.

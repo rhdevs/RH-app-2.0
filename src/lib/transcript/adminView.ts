@@ -133,6 +133,7 @@ const ERROR_TEXT: Record<string, string> = {
   YEAR_NOT_STARTED:
     "This academic year has not started yet, so its transcripts cannot be opened.",
   YEAR_ENDED: PAST_YEAR_NOTE,
+  TRANSCRIPT_DISABLED: "Transcripts are not available yet.",
   NOT_THE_TERM_YEAR:
     "Heads can only change the current academic year. Other years are read-only; ask the JCRC for changes.",
   YEAR_BEFORE_START: `Transcripts start at ${FIRST_ACADEMIC_YEAR}. Earlier years cannot be opened.`,

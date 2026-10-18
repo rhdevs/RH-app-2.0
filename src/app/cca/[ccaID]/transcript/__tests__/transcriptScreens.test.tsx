@@ -18,6 +18,11 @@ vi.mock("next/navigation", () => ({
   },
 }));
 vi.mock("~/trpc/react", () => ({ api: {} }));
+const flag = vi.hoisted(() => ({ on: true }));
+vi.mock("~/server/db", () => ({ db: {} }));
+vi.mock("~/server/api/services/transcript/flag", () => ({
+  isTranscriptEnabled: async () => flag.on,
+}));
 
 const noop = () => undefined;
 
@@ -251,16 +256,32 @@ describe("transcript page route", () => {
   it("404s a malformed CCA id, like its sibling sections", async () => {
     const { default: Page } = await import("../page");
     for (const bad of ["0", "abc", "12.5", ""]) {
-      expect(() => Page({ params: { ccaID: bad } }), bad).toThrow("NOT_FOUND");
+      await expect(Page({ params: { ccaID: bad } }), bad).rejects.toThrow(
+        "NOT_FOUND",
+      );
     }
   });
 
   it("renders for a real id", async () => {
     const { default: Page } = await import("../page");
-    const element = Page({ params: { ccaID: "9005" } });
+    const element = await Page({ params: { ccaID: "9005" } });
     // It draws the Transcript tab for exactly the CCA in the address.
     expect(element.type).toBe(tab.default);
     expect(element.props).toEqual({ ccaID: 9005 });
+  });
+
+  it("shows a calm note instead of the tab while transcripts are switched off", async () => {
+    const { default: Page } = await import("../page");
+    flag.on = false;
+    try {
+      const html = renderToStaticMarkup(
+        await Page({ params: { ccaID: "9005" } }),
+      );
+      expect(html).toContain("Transcripts are not available yet.");
+      expect(html).not.toContain("transcript.enabled");
+    } finally {
+      flag.on = true;
+    }
   });
 });
 
