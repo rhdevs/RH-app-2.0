@@ -49,6 +49,46 @@ describe("set-transcript-flag.mjs names the database it writes to", () => {
     }
   });
 
+  it("never shows a password with an unescaped / ? or @ (S4)", () => {
+    expect(describeTarget("mongodb://user:pa/ss@host/db")).toBe(
+      "host host, database db",
+    );
+    expect(describeTarget("mongodb://user:pa?ss@host/db")).toBe(
+      "(host not recognised)",
+    );
+    expect(describeTarget("mongodb://user:a@b/c@host:27017/db")).toBe(
+      "host host:27017, database db",
+    );
+    for (const url of [
+      "mongodb://user:pa/ss@host/db",
+      "mongodb://user:pa?ss@host/db",
+      "mongodb://user:a@b/c@host:27017/db",
+      "mongodb://user:se cret@host/db",
+      "mongodb://user:pa/ss@host/db?authSource=admin",
+    ]) {
+      const shown = describeTarget(url);
+      for (const secret of ["user", "pa", "ss", "se cret", "a@b", "admin"]) {
+        expect(shown, url).not.toContain(secret);
+      }
+    }
+  });
+
+  it("checks every host, and shows nothing but the refusal if any fails (S4)", () => {
+    expect(describeTarget("mongodb://[::1]:27017,127.0.0.1/db")).toBe(
+      "host [::1]:27017,127.0.0.1, database db",
+    );
+    expect(describeTarget("mongodb://good:27017,bad host:1/db")).toBe(
+      "(host not recognised)",
+    );
+    expect(describeTarget("mongodb://host:port/db")).toBe(
+      "(host not recognised)",
+    );
+    expect(describeTarget("mongodb:///db")).toBe("(host not recognised)");
+    expect(describeTarget("mongodb://host/we!rd")).toBe(
+      "host host, database (not recognised)",
+    );
+  });
+
   it("always runs main(), never behind a check on how it was started (S3)", () => {
     const source = readFileSync(SCRIPT, "utf8");
     expect(source).not.toContain("process.argv[1]");
