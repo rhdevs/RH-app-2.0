@@ -143,7 +143,7 @@ export interface InvolvementRow {
   role: string | null;
   /** "2026/27", or "2026/27 Sem 2" for one semester; always on one line. */
   year: string;
-  /** Null when there is none: no "Additional contribution" sub-row. */
+  /** Null when there is none: no "Additional Contributions" row. */
   extraContribution: string | null;
   /** The CCA's description, shortened for the row; blank when there is none. */
   description: string;

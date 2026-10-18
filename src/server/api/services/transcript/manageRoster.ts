@@ -35,7 +35,7 @@ import { actorLabels } from "./residents";
 /**
  * A head's (or manager's) view and edits of ONE CCA's transcript annotations
  * for one academic year: how long each member was in, what role and for how
- * long, and the "Additional contribution" text.
+ * long, and the "Additional Contributions" text.
  *
  * LIVE BEFORE PUBLISH, FROZEN AFTER. While the year is collecting the member
  * list is the live roster, read by the same resolver the publish step uses; once

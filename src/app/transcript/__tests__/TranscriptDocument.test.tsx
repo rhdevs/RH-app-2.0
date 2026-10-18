@@ -170,11 +170,11 @@ describe("TranscriptDocument: content", () => {
     expect(bare).not.toContain("III. Awards");
   });
 
-  it("prints Additional contribution in the Description column, and the JCRC row's own description", () => {
+  it("prints Additional Contributions in the Description column, and the JCRC row's own description", () => {
     const html = render("jcrc-sports-secretary", JCRC_AY);
 
     expect(html).toMatch(
-      /italic">Additional contribution<\/td><td[^>]*><\/td><td[^>]*>Choreographed and directed the Hall Night finale\.<\/td><td[^>]*><\/td><\/tr>/,
+      /italic">Additional Contributions<\/td><td[^>]*><\/td><td[^>]*>Choreographed and directed the Hall Night finale\.<\/td><td[^>]*><\/td><\/tr>/,
     );
     expect(html).toContain(
       "The elected student committee that leads the hall. See the JCRC page.",
@@ -491,7 +491,7 @@ describe("TranscriptDocument: activities", () => {
     }
   });
 
-  it("puts each activity on ONE row: number, indented title, role, description, empty Year", () => {
+  it("puts each activity on ONE row: number, title, role, description, empty Year", () => {
     const html = render("member-with-activities");
     const rows = [...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map((m) => ({
       tr: m[0],
@@ -512,11 +512,8 @@ describe("TranscriptDocument: activities", () => {
       "Sang the opening solo and rehearsed the altos each week.",
       "",
     ]);
-    // Title and description share one indent; number and Role are not offset.
-    expect(row.cells[1]!.attrs).toContain("pl-5");
-    expect(row.cells[3]!.attrs).toContain("pl-5");
-    expect(row.cells[0]!.attrs).not.toContain("pl-");
-    expect(row.cells[2]!.attrs).not.toContain("pl-");
+    // No indent anywhere: every cell lines up with the CCA row's cells.
+    for (const c of row.cells) expect(c.attrs).not.toContain("pl-");
     expect(row.cells[1]!.attrs).not.toContain("font-bold");
     expect(row.tr).not.toContain("text-neutral");
     expect(row.tr).toContain("break-inside-avoid");
@@ -546,28 +543,32 @@ describe("TranscriptDocument: activities", () => {
     expect(cells[2]).not.toContain("pl-");
   });
 
-  it("gives Additional contribution the same offsets as an activity row", () => {
+  it("gives Additional Contributions no indent", () => {
     const html = render("member-with-activities");
     const row =
-      /<tr[^>]*>((?:<td[^>]*><\/td>)<td[^>]*italic">Additional contribution<\/td>.*?)<\/tr>/.exec(
+      /<tr[^>]*>((?:<td[^>]*><\/td>)<td[^>]*italic">Additional Contributions<\/td>.*?)<\/tr>/.exec(
         html,
       )![1]!;
     const cells = [...row.matchAll(/<td([^>]*)>/g)].map((m) => m[1]!);
 
-    expect(cells[1]).toContain("pl-5");
     expect(cells[1]).toContain("italic");
-    expect(cells[3]).toContain("pl-5");
-    expect(cells[2]).not.toContain("pl-");
+    for (const c of cells) expect(c).not.toContain("pl-");
   });
 
-  it("prints Additional contribution as the last unnumbered row under its CCA", () => {
+  it("prints Additional Contributions as the last unnumbered row under its CCA", () => {
     const html = render("member-with-activities");
     expect(html).toMatch(
-      /<td[^>]*><\/td><td[^>]*italic">Additional contribution<\/td><td[^>]*><\/td><td[^>]*>Arranged two pieces for the annual hall concert\.<\/td><td[^>]*><\/td><\/tr>/,
+      /<td[^>]*><\/td><td[^>]*italic">Additional Contributions<\/td><td[^>]*><\/td><td[^>]*>Arranged two pieces for the annual hall concert\.<\/td><td[^>]*><\/td><\/tr>/,
     );
     expect(html.indexOf("Choir retreat")).toBeLessThan(
-      html.indexOf("Additional contribution"),
+      html.indexOf("Additional Contributions"),
     );
+    // The row carries no number and nothing else in the label cell.
+    const label = /<td[^>]*>([^<]*)<\/td><td[^>]*italic">([^<]*)<\/td>/.exec(
+      html.slice(html.indexOf("Choir retreat")),
+    )!;
+    expect(label[1]).toBe("");
+    expect(label[2]).toBe("Additional Contributions");
   });
 
   it("draws the JCRC contributions with no header row", () => {
@@ -593,9 +594,9 @@ describe("TranscriptDocument: activities", () => {
     const html = render("member-with-activities");
     const choir = html.slice(html.indexOf("Hall Choir"));
 
-    expect(choir).toContain("Additional contribution");
+    expect(choir).toContain("Additional Contributions");
     expect(choir.indexOf("Choir retreat")).toBeLessThan(
-      choir.indexOf("Additional contribution"),
+      choir.indexOf("Additional Contributions"),
     );
     expect(choir).toContain("Arranged two pieces");
   });
@@ -604,7 +605,7 @@ describe("TranscriptDocument: activities", () => {
     const html = render("additional-contribution");
 
     expect(html).toMatch(
-      /italic">Additional contribution<\/td><td[^>]*><\/td><td[^>]*>Built the main set piece/,
+      /italic">Additional Contributions<\/td><td[^>]*><\/td><td[^>]*>Built the main set piece/,
     );
   });
 

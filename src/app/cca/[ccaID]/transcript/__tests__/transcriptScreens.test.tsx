@@ -173,7 +173,7 @@ describe("roster table", () => {
       "Duration",
       "Role",
       "Role period",
-      "Additional contribution",
+      "Additional Contributions",
     ]) {
       expect(html).toContain(`>${h}<`);
     }

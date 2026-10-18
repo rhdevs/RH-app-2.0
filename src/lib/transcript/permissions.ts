@@ -19,7 +19,7 @@ export function canEditAwards(roles: readonly string[]): boolean {
 }
 
 /**
- * May set or clear a member's "Additional contributions" text for one CCA.
+ * May set or clear a member's "Additional Contributions" text for one CCA.
  * `cca_head` alone is not enough: the caller must head that CCA.
  */
 export function canManageExtraContribution(

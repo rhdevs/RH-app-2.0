@@ -251,7 +251,7 @@ export function RosterRowView(p: RosterRowViewProps) {
         </td>
         <td className="min-w-[16rem] px-3 py-3">
           <label htmlFor={`extra-${key}`} className="sr-only">
-            {`Additional contribution for ${name}`}
+            {`Additional Contributions for ${name}`}
           </label>
           <Textarea
             id={`extra-${key}`}
@@ -430,7 +430,7 @@ export function RosterCardView(p: RosterRowViewProps) {
       )}
       <div>
         <label htmlFor={`extra-${key}`} className={CARD_LABEL}>
-          Additional contribution
+          Additional Contributions
         </label>
         <Textarea
           id={`extra-${key}`}
@@ -545,7 +545,7 @@ export function RosterTableView({
                 "Duration",
                 "Role",
                 "Role period",
-                "Additional contribution",
+                "Additional Contributions",
                 "",
               ].map((h, i) => (
                 <th

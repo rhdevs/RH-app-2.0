@@ -168,7 +168,7 @@ export function MembershipFormView(p: MembershipFormViewProps) {
       </div>
       <div>
         <label htmlFor={`extra-${p.idKey}`} className={FIELD_LABEL}>
-          Additional contribution
+          Additional Contributions
         </label>
         <Textarea
           id={`extra-${p.idKey}`}

@@ -96,8 +96,9 @@ function SectionBody({ section }: { section: TranscriptSection }) {
  * The one table of CCAs and their activities: # | CCA / activity | Role |
  * Description | Year, with one header row (repeated on each printed page). CCAs
  * are numbered 1, 2, 3 and each activity 1.1, 1.2 ... on ONE row of its own,
- * indented, with its role and description and an empty Year. A CCA's
- * additional contribution is its last row, unnumbered, its text in the
+ * with its role and description and an empty Year, aligned with the CCA cells
+ * (no indent). A CCA's "Additional Contributions" is its last row, unnumbered,
+ * its label in italics and its text in the
  * Description column. The Year column fits "2026/27 Sem 2" on one line.
  *
  * Page breaks: every row stays whole, and a CCA row never separates from its
@@ -154,24 +155,22 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
               {row.activities.map((a) => (
                 <tr key={a.number} className="break-inside-avoid">
                   <td className={NESTED}>{a.number}</td>
-                  <td className={`${NESTED} ${INDENT}`}>
+                  <td className={NESTED}>
                     <SemText text={a.title} />
                   </td>
                   <td className={NESTED}>{a.role}</td>
-                  <td className={`${NESTED} ${INDENT}`}>{a.description}</td>
+                  <td className={NESTED}>{a.description}</td>
                   <td className={NESTED} />
                 </tr>
               ))}
               {row.extraContribution && (
                 <tr className="break-inside-avoid">
                   <td className={NESTED} />
-                  <td className={`${NESTED} ${INDENT} italic`}>
-                    Additional contribution
+                  <td className={`${NESTED} italic`}>
+                    Additional Contributions
                   </td>
                   <td className={NESTED} />
-                  <td className={`${NESTED} ${INDENT}`}>
-                    {row.extraContribution}
-                  </td>
+                  <td className={NESTED}>{row.extraContribution}</td>
                   <td className={NESTED} />
                 </tr>
               )}
@@ -185,9 +184,6 @@ function Involvements({ rows }: { rows: InvolvementRow[] }) {
 
 /** Activity and contribution rows sit under their CCA in smaller type. */
 const NESTED = "px-1 py-0.5 align-top text-[10.5px]";
-
-/** The one small left indent (20px with the cell padding) of an activity's title and description; its Role cell is not offset. */
-const INDENT = "pl-5";
 
 /** Activities of CCAs the resident is not a member of. */
 function OtherInvolvement({ rows }: { rows: OtherInvolvementRow[] }) {
