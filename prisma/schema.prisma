@@ -1447,6 +1447,10 @@ model TranscriptPeriod {
 /// head (or JCRC/admin) chooses a semester label by hand.
 /// `frozen` is set when the year is opened (Open transcripts), so later changes
 /// to who is in the CCA cannot alter the transcript.
+/// `preFreeze` keeps the head's own choices aside when a lock writes the
+/// resolved values (defaults included) into the entry, so a lock run again
+/// after one that stopped part way, and the collecting-year screens, read the
+/// real choices rather than a default the lock filled in.
 model TranscriptRosterEntry {
   id                String    @id @default(auto()) @map("_id") @db.ObjectId
   academicYear      String
@@ -1460,12 +1464,24 @@ model TranscriptRosterEntry {
   roleDuration      String?
   extraContribution String?
   frozen            Boolean?  @default(false)
+  /// The saved choices before a lock wrote resolved values; null on an entry
+  /// no lock has touched (its fields ARE the choices).
+  preFreeze         TranscriptRosterChoices?
   updatedBy         String?
   updatedAt         DateTime?
 
   @@unique([academicYear, userID, ccaID], map: "transcript_roster_member")
   /// A head's roster screen: everyone annotated for one CCA in one year.
   @@index([academicYear, ccaID], map: "transcript_roster_cca")
+}
+
+/// A head's (or manager's) own choices for one roster entry, as saved. All
+/// null on an entry a lock created for a member with no saved choices.
+type TranscriptRosterChoices {
+  duration          String?
+  roleLabel         String?
+  roleDuration      String?
+  extraContribution String?
 }
 
 /// A volunteer activity of a volunteering CCA (one tagged

@@ -53,6 +53,31 @@ export interface RosterAnnotation {
   extraContribution: string | null;
 }
 
+/** A stored roster entry, with the choices a lock may have kept aside. */
+export interface StoredRosterEntry extends Partial<RosterAnnotation> {
+  preFreeze?: Partial<RosterAnnotation> | null;
+}
+
+/**
+ * The SAVED choices of a roster entry. A lock writes the resolved values
+ * (defaults included) into the entry and keeps the choices it found in
+ * `preFreeze`; an entry no lock has touched holds its choices in its own
+ * fields. Every collecting-year reader (the head's screen, the transcript, a
+ * lock run again) must read this, never the raw fields.
+ */
+export function savedChoices(
+  entry: StoredRosterEntry | null | undefined,
+): RosterAnnotation | null {
+  if (!entry) return null;
+  const from = entry.preFreeze ?? entry;
+  return {
+    duration: from.duration ?? null,
+    roleLabel: from.roleLabel ?? null,
+    roleDuration: from.roleDuration ?? null,
+    extraContribution: from.extraContribution ?? null,
+  };
+}
+
 export interface ResolvedEntry {
   duration: Duration;
   roleLabel: string | null;

@@ -114,7 +114,6 @@ describe("wording", () => {
       openSummary("AY2026/27", {
         opened: true,
         lockedNow: 3,
-        alreadyLocked: 1,
         failures: [],
         unresolved: 0,
       }),
@@ -130,8 +129,7 @@ describe("the Open transcripts result", () => {
     expect(
       openSummary("AY2026/27", {
         opened: true,
-        lockedNow: 10,
-        alreadyLocked: 2,
+        lockedNow: 12,
         failures: [],
         unresolved: 0,
       }),
@@ -142,7 +140,6 @@ describe("the Open transcripts result", () => {
     const text = openSummary("AY2026/27", {
       opened: false,
       lockedNow: 3,
-      alreadyLocked: 0,
       failures: [
         { name: "Soccer (MALE)", code: "FREEZE_RACE" },
         { name: "Chess Club", code: "UNKNOWN" },
@@ -160,7 +157,6 @@ describe("the Open transcripts result", () => {
       openSummary("AY2026/27", {
         opened: true,
         lockedNow: 1,
-        alreadyLocked: 0,
         failures: [],
         unresolved: 3,
       }),

@@ -1537,7 +1537,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       it("tells Open transcripts how many CCA lists it saved", async () => {
         const opened = await publishAy(JCRC);
         expect(opened.opened).toBe(true);
-        expect(opened.lockedNow + opened.alreadyLocked).toBe(14);
+        expect(opened.lockedNow).toBe(14);
       });
 
       it("sends no full matric in any list a head or manager can read", async () => {

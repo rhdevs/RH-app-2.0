@@ -5,7 +5,9 @@ import {
   isDuration,
   resolveEntry,
   roleFits,
+  savedChoices,
   type Duration,
+  type RosterAnnotation,
 } from "~/lib/transcript/duration";
 import type { rosterUpsertInput } from "~/lib/transcript/manageInput";
 import type { z } from "zod";
@@ -34,7 +36,10 @@ import { actorLabels } from "./residents";
  * LIVE BEFORE PUBLISH, FROZEN AFTER. While the year is collecting the member
  * list is the live roster, read by the same resolver the publish step uses; once
  * published it is the frozen entries. Stored values are OVERRIDES; the derived
- * defaults are returned beside them so the screen can show both.
+ * defaults are returned beside them so the screen can show both. While
+ * collecting, an entry's overrides are its SAVED choices (`savedChoices`): an
+ * Open transcripts that stopped part way may have written resolved values into
+ * it, and those are not the head's choices.
  */
 
 export interface RosterRow {
@@ -116,12 +121,12 @@ function frozenRow(e: StoredEntry, displayName: string | null): RosterRow {
   };
 }
 
-/** A current member: stored choices beside the defaults (a full year, "Head"). */
+/** A current member: saved choices beside the defaults (a full year, "Head"). */
 function liveRow(m: {
   key: string;
   displayName: string | null;
   isHead: boolean;
-  own: StoredEntry | null;
+  own: RosterAnnotation | null;
 }): RosterRow {
   const { own } = m;
   return {
@@ -188,7 +193,7 @@ export async function rosterRowsFor(
         key,
         displayName,
         isHead: head !== null,
-        own: entries.find((x) => x.ccaID === ccaID) ?? null,
+        own: savedChoices(entries.find((x) => x.ccaID === ccaID)),
       }),
     });
   }
@@ -257,7 +262,7 @@ export async function rosterList(
       key,
       displayName: entry.displayName ?? names.get(key)?.displayName ?? null,
       isHead: entry.isHead,
-      own: storedBy.get(key) ?? null,
+      own: savedChoices(storedBy.get(key)),
     }),
   );
   return { ...base, unresolved, rows: sortRows(rows), mode: "live" };
@@ -316,9 +321,9 @@ async function findTarget(
 async function assertRoleFitsMembership(
   db: PrismaClient,
   input: UpsertInput,
-  target: { key: string },
+  target: { key: string; frozen: boolean },
 ) {
-  const existing = await db.transcriptRosterEntry.findUnique({
+  const row = await db.transcriptRosterEntry.findUnique({
     where: {
       academicYear_userID_ccaID: {
         academicYear: input.academicYear,
@@ -327,6 +332,8 @@ async function assertRoleFitsMembership(
       },
     },
   });
+  // A locked entry holds the settled values; otherwise the saved choices.
+  const existing = target.frozen ? row : savedChoices(row);
   const duration =
     input.duration !== undefined
       ? input.duration
@@ -382,6 +389,28 @@ export async function rosterUpsert(
     updatedBy: actorUserID,
     updatedAt: now,
   };
+  // While collecting, an entry an earlier, part-way Open wrote resolved values
+  // into goes back to the head's saved choices, with this change on top, so a
+  // default that lock filled in never turns into a choice.
+  const kept = target.frozen
+    ? null
+    : await db.transcriptRosterEntry.findUnique({
+        where: {
+          academicYear_userID_ccaID: {
+            academicYear: input.academicYear,
+            userID: target.key,
+            ccaID: input.ccaID,
+          },
+        },
+        select: { preFreeze: true },
+      });
+  const update = kept?.preFreeze
+    ? {
+        ...savedChoices({ preFreeze: kept.preFreeze }),
+        ...changes,
+        preFreeze: { unset: true },
+      }
+    : changes;
 
   // Before the write, so the history can say what really changed.
   const before = guard.correction
@@ -412,7 +441,7 @@ export async function rosterUpsert(
         frozen: false,
         ...changes,
       },
-      update: changes,
+      update,
     });
     if (guard.correction) {
       const cca = await tx.cCA.findUnique({

@@ -5,6 +5,7 @@ import {
   clampRoleDuration,
   isDuration,
   resolveEntry,
+  savedChoices,
   type ResolvedEntry,
 } from "~/lib/transcript/duration";
 import { readPeriod } from "~/lib/transcript/activities";
@@ -365,9 +366,10 @@ async function loadMemberships(
       });
       const byCca = new Map(stored.map((r) => [r.ccaID, r]));
       for (const m of live) {
+        // The saved choices, never values a part-way Open wrote in.
         entries.push({
           ccaID: m.ccaID,
-          ...resolveEntry(byCca.get(m.ccaID), m),
+          ...resolveEntry(savedChoices(byCca.get(m.ccaID)), m),
         });
       }
     }

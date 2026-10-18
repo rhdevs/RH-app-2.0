@@ -84,7 +84,6 @@ export function openSummary(
   result: {
     opened: boolean;
     lockedNow: number;
-    alreadyLocked: number;
     failures: ReadonlyArray<{ name: string; code: string }>;
     unresolved: number;
   },
@@ -98,7 +97,7 @@ export function openSummary(
       .join(", ");
     return `Transcripts for ${academicYear} are not open yet. ${plural(result.failures.length, "CCA", "CCAs")} could not be saved: ${list}. Press Open transcripts again to finish.${unmatched}`;
   }
-  return `Transcripts for ${academicYear} are open. ${plural(result.lockedNow + result.alreadyLocked, "CCA member list", "CCA member lists")} saved.${unmatched}`;
+  return `Transcripts for ${academicYear} are open. ${plural(result.lockedNow, "CCA member list", "CCA member lists")} saved.${unmatched}`;
 }
 
 /** From 1 April: time to open this year's transcripts. */

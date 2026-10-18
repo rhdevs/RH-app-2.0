@@ -6,6 +6,7 @@ import {
   isDuration,
   resolveEntry,
   roleFits,
+  savedChoices,
 } from "../duration";
 
 describe("no date ever decides a semester", () => {
@@ -135,5 +136,49 @@ describe("resolveEntry", () => {
     resolveEntry(stored, member);
 
     expect(stored).toEqual(before);
+  });
+});
+
+describe("savedChoices: the head's own choices, never a lock's filled-in default", () => {
+  it("reads an entry no lock has touched from its own fields", () => {
+    expect(
+      savedChoices({
+        duration: "sem1",
+        roleLabel: "Captain",
+        roleDuration: null,
+      }),
+    ).toEqual({
+      duration: "sem1",
+      roleLabel: "Captain",
+      roleDuration: null,
+      extraContribution: null,
+    });
+    expect(savedChoices(null)).toBeNull();
+    expect(savedChoices(undefined)).toBeNull();
+  });
+
+  it("reads the choices a lock kept aside, not the resolved values it wrote", () => {
+    const locked = {
+      duration: "full",
+      roleLabel: "Head",
+      roleDuration: "full",
+      extraContribution: null,
+      preFreeze: {
+        duration: null,
+        roleLabel: null,
+        roleDuration: null,
+        extraContribution: null,
+      },
+    };
+    expect(savedChoices(locked)).toEqual({
+      duration: null,
+      roleLabel: null,
+      roleDuration: null,
+      extraContribution: null,
+    });
+    // So a member who is no longer the head is no longer "Head".
+    expect(
+      resolveEntry(savedChoices(locked), { isHead: false }).roleLabel,
+    ).toBeNull();
   });
 });

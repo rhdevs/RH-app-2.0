@@ -274,7 +274,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             MEMBERS_SEEDED + PEOPLE * CCAS_EACH.length,
           );
           expect(result.opened).toBe(true);
-          expect(result.lockedNow + result.alreadyLocked).toBe(14);
+          expect(result.lockedNow).toBe(14);
           expect(seconds).toBeLessThan(30);
           expect(
             await db.transcriptRosterEntry.count({
@@ -346,7 +346,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           expect(opened).toMatchObject({
             opened: true,
             lockedNow: 14,
-            alreadyLocked: 0,
+            relocked: 0,
           });
           expect(
             await db.ccaYearFreeze.count({

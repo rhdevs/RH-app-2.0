@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
-import { resolveEntry } from "~/lib/transcript/duration";
+import { resolveEntry, savedChoices } from "~/lib/transcript/duration";
 import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import {
   FREEZE_STATE_LABEL,
@@ -21,6 +21,14 @@ import { actorLabels } from "./residents";
  * exactly as the head's screen shows them (overrides, else defaults, with the
  * role inside the membership), and one CcaYearFreeze record, in ONE
  * transaction. Nothing else locks a list: head changes never do.
+ *
+ * A lock ALWAYS works from the current list, even when the CCA was already
+ * locked by an earlier Open transcripts that stopped part way: the year is
+ * still collecting, heads may have changed the list or the records since, and
+ * the published transcript must show what they see now. The choices a head
+ * saved are kept aside in `preFreeze` the first time a lock overwrites an
+ * entry, so a lock run again starts from those choices, not from a default
+ * ("Head") an earlier lock filled in.
  *
  * Nothing here ever writes CCA / UserCCA / User.
  */
@@ -60,34 +68,24 @@ export function groupByPayload<D extends object>(
 const isDuplicateKey = (error: unknown) =>
   (error as { code?: string }).code === "P2002";
 
-/** The ACTIVE lock of a CCA for a year, or null. */
-export function activeFreeze(
-  db: PrismaClient,
-  ccaID: number,
-  academicYear: string,
-) {
-  return db.ccaYearFreeze.findFirst({
-    where: { ccaID, academicYear, ...NOT_UNFROZEN },
-  });
+export interface FreezeResult {
+  kind: "frozen";
+  academicYear: string;
+  memberCount: number;
+  /**
+   * Roster rows not locked: members the resolver could not match to a
+   * person, and extra accounts of a person already counted once.
+   */
+  unresolvedCount: number;
+  reason: FreezeReason;
+  /** The CCA had a lock from an earlier run; this one replaced it. */
+  replaced: boolean;
 }
 
-export type FreezeResult =
-  | {
-      kind: "frozen";
-      academicYear: string;
-      memberCount: number;
-      /**
-       * Roster rows not locked: members the resolver could not match to a
-       * person, and extra accounts of a person already counted once.
-       */
-      unresolvedCount: number;
-      reason: FreezeReason;
-    }
-  | { kind: "unchanged"; academicYear: string };
-
 /**
- * A lock that lost a race: a unique key collided but no active lock exists, so
- * the CCA is NOT locked. Labelled as a transient transaction error, so
+ * A lock that lost a race: a unique key collided (a roster entry or the lock
+ * record was written meanwhile), so the transaction rolled back and the CCA is
+ * NOT locked by this try. Labelled as a transient transaction error, so
  * retryWriteConflicts runs the lock again from a fresh read; after the bound
  * it is thrown, and Open transcripts reports the CCA as failed.
  */
@@ -107,10 +105,11 @@ export interface FreezeInput {
 }
 
 /**
- * Lock a CCA's member list for a year, as part of Open transcripts.
- * Idempotent: a year already locked for the CCA is left as it is. A lock that
- * loses a write conflict, or a race with a roster save, is run again from the
- * start (a lock that won meanwhile makes it "unchanged").
+ * Lock a CCA's member list for a year, as part of Open transcripts, from the
+ * CURRENT list. A lock the CCA already has for the year (from a run that
+ * stopped part way) is replaced, with its locked entries, in the same
+ * transaction. A lock that loses a write conflict, or a race with a roster
+ * save, is run again from the start.
  */
 export function freezeCca(
   db: PrismaClient,
@@ -125,9 +124,6 @@ async function freezeOnce(
 ): Promise<FreezeResult> {
   const now = input.now ?? new Date();
   const { academicYear } = input;
-  if (await activeFreeze(db, input.ccaID, academicYear)) {
-    return { kind: "unchanged", academicYear };
-  }
 
   const period = await db.transcriptPeriod.findUnique({
     where: { academicYear },
@@ -148,9 +144,27 @@ async function freezeOnce(
   const unresolved = live.unresolved + (live.members.length - members.length);
 
   let memberCount = 0;
+  let replaced = false;
   try {
     await db.$transaction(
       async (tx) => {
+        // Looked at again inside the transaction: an Open that finished
+        // meanwhile wins, and this lock writes nothing.
+        const inside = await tx.transcriptPeriod.findUnique({
+          where: { academicYear },
+          select: { status: true },
+        });
+        if (normaliseYearStatus(inside?.status) === "published") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "PERIOD_PUBLISHED",
+          });
+        }
+        replaced =
+          (await tx.ccaYearFreeze.count({
+            where: { academicYear, ccaID: input.ccaID, ...NOT_UNFROZEN },
+          })) > 0;
+
         const stored = await tx.transcriptRosterEntry.findMany({
           where: { academicYear, ccaID: input.ccaID },
         });
@@ -159,17 +173,21 @@ async function freezeOnce(
         const toCreate: Prisma.TranscriptRosterEntryCreateManyInput[] = [];
         const toUpdate: Array<{
           id: string;
-          data: Prisma.TranscriptRosterEntryUpdateInput;
+          data: Prisma.TranscriptRosterEntryUpdateManyMutationInput;
         }> = [];
         for (const m of members) {
           const own = storedBy.get(m.key) ?? null;
-          const r = resolveEntry(own, { isHead: m.entry.isHead });
+          // The head's own choices: kept aside by an earlier lock, else the
+          // entry's fields. A default an earlier lock filled in is never one.
+          const choices = savedChoices(own);
+          const r = resolveEntry(choices, { isHead: m.entry.isHead });
           const data = {
             duration: r.duration,
             roleLabel: r.roleLabel,
             roleDuration: r.roleDuration,
             extraContribution: r.extraContribution,
             frozen: true,
+            preFreeze: choices ?? EMPTY_CHOICES,
             updatedBy: input.actorUserID,
             updatedAt: now,
           };
@@ -184,7 +202,8 @@ async function freezeOnce(
         }
 
         // The locked list is exactly today's: clear every older lock flag for
-        // this CCA and year first (people who have left drop out).
+        // this CCA and year first (people who have left drop out), including
+        // the entries an earlier, part-way lock of this CCA saved.
         await tx.transcriptRosterEntry.updateMany({
           where: { academicYear, ccaID: input.ccaID },
           data: { frozen: false },
@@ -198,7 +217,7 @@ async function freezeOnce(
         for (const chunk of chunked(toCreate, WRITE_CHUNK)) {
           await tx.transcriptRosterEntry.createMany({ data: chunk });
         }
-        // One document per year and CCA.
+        // One document per year and CCA: an earlier lock's record is replaced.
         memberCount = toCreate.length + toUpdate.length;
         const record = {
           reason: "open",
@@ -222,13 +241,10 @@ async function freezeOnce(
     );
   } catch (error) {
     if (!isDuplicateKey(error)) throw error;
-    // A unique key collided. "Already locked" ONLY if a lock of this CCA and
-    // year now stands; otherwise the collision was a roster entry written
-    // meanwhile, the transaction rolled back and NOTHING is locked: run it
-    // again from a fresh read.
-    if (await activeFreeze(db, input.ccaID, academicYear)) {
-      return { kind: "unchanged", academicYear };
-    }
+    // A unique key collided: a roster entry or the lock record was written
+    // meanwhile (a head's save, or another Open at the same moment). The
+    // transaction rolled back and NOTHING was locked by this try: run it again
+    // from a fresh read, which sees what was written and replaces it.
     throw freezeRaceError(error);
   }
 
@@ -238,8 +254,17 @@ async function freezeOnce(
     memberCount,
     unresolvedCount: unresolved,
     reason: "open",
+    replaced,
   };
 }
+
+/** The choices of a member with nothing saved: everything at its default. */
+const EMPTY_CHOICES = {
+  duration: null,
+  roleLabel: null,
+  roleDuration: null,
+  extraContribution: null,
+};
 
 /* ---- what the admin table shows --------------------------------------------- */
 

@@ -239,7 +239,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(result).toMatchObject({
           opened: true,
           lockedNow: ccas,
-          alreadyLocked: 0,
+          relocked: 0,
           failures: [],
         });
         expect(await lockCount()).toBe(ccas);
@@ -320,13 +320,13 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
       });
 
-      it("stays collecting if one CCA fails, says which and why, logs no message text, and finishes on the next run", async () => {
-        const logged = vi
-          .spyOn(console, "error")
-          .mockImplementation(() => undefined);
-        // Soccer's lock fails once, inside its transaction.
-        let failOnce = true;
-        const failing = new Proxy(db, {
+      /**
+       * The database, except that the lock of `ccaID` fails ONCE inside its
+       * transaction (at the lock record), as a network blip would.
+       */
+      const failingOnceFor = (ccaID: number): PrismaClient => {
+        const state = { failOnce: true };
+        return new Proxy(db, {
           get(target, prop, receiver) {
             if (prop === "$transaction") {
               return (fn: (tx: unknown) => Promise<unknown>, opts?: unknown) =>
@@ -345,17 +345,23 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
                           return new Proxy(model as object, {
                             get(m, mp, mr) {
                               const real: unknown = Reflect.get(m, mp, mr);
-                              if (mp !== "upsert") return real;
+                              if (mp !== "upsert") {
+                                return typeof real === "function"
+                                  ? (real as (...a: unknown[]) => unknown).bind(
+                                      m,
+                                    )
+                                  : real;
+                              }
                               return (args: {
                                 where: {
                                   academicYear_ccaID: { ccaID: number };
                                 };
                               }) => {
                                 if (
-                                  failOnce &&
-                                  args.where.academicYear_ccaID.ccaID === SOCCER
+                                  state.failOnce &&
+                                  args.where.academicYear_ccaID.ccaID === ccaID
                                 ) {
-                                  failOnce = false;
+                                  state.failOnce = false;
                                   throw Object.assign(
                                     new Error(`boom for ${R12.id}`),
                                     { code: "P2010" },
@@ -379,6 +385,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               : value;
           },
         }) as PrismaClient;
+      };
+
+      it("stays collecting if one CCA fails, says which and why, logs no message text, and finishes on the next run", async () => {
+        const logged = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        // Soccer's lock fails once, inside its transaction.
+        const failing = failingOnceFor(SOCCER);
 
         const first = await periods.openTranscripts(
           failing,
@@ -412,15 +426,103 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(line).not.toContain("boom");
         expect(line).not.toContain(R12.id);
 
-        // Running it again keeps what is locked and finishes the rest.
+        // Running it again locks EVERY CCA again from its current list,
+        // replacing the locks of the first run, and opens the year.
         const second = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
         expect(second).toMatchObject({
           opened: true,
-          lockedNow: 1,
-          alreadyLocked: ccas - 1,
+          lockedNow: ccas,
+          relocked: ccas - 1,
           failures: [],
         });
         expect(await statusOf()).toBe("published");
+      });
+
+      it("a rerun after a part-way Open locks every CCA again, so a head's edits in between are published", async () => {
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+        // The head has saved nothing for themself, so the first run fills in
+        // the default "Head" for them.
+        await db.transcriptRosterEntry.deleteMany({
+          where: { academicYear: AY, ccaID: SOCCER, userID: SOCCER_HEAD.id },
+        });
+        // RVC Special Projects fails; Soccer is locked by the first run.
+        const first = await periods.openTranscripts(
+          failingOnceFor(9001),
+          AY,
+          JCRC.id,
+          APR_2027,
+        );
+        expect(first.opened).toBe(false);
+        expect(await frozenKeys(SOCCER, AY)).toEqual(SOCCER_MEMBERS);
+        expect(
+          await db.transcriptRosterEntry.findFirst({
+            where: { academicYear: AY, ccaID: SOCCER, userID: SOCCER_HEAD.id },
+          }),
+        ).toMatchObject({ roleLabel: "Head", frozen: true });
+
+        // Still collecting: the head keeps working on Soccer's records and list.
+        await as(SOCCER_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: R12.id,
+          roleLabel: "Captain",
+          extraContribution: "Ran the Sunday drills.",
+        });
+        await db.userCCA.deleteMany({
+          where: { ccaID: SOCCER, userID: "SEED-R13" },
+        });
+        await db.userCCA.create({ data: { userID: R20.id, ccaID: SOCCER } });
+        // And hands over: SEED-R04 stays a member, but is no longer the head.
+        await as(SOCCER_HEAD).cca.handoverHeads({
+          ccaID: SOCCER,
+          newHeadUserIDs: [R09.id],
+        });
+        // The head's screen shows the live list with the saved choices only,
+        // never a default the first run filled in.
+        const screen = await as(
+          R(9, ["cca_head", "resident"]),
+        ).transcriptManage.roster.list({ ccaID: SOCCER, academicYear: AY });
+        const r04 = screen.rows.find((r) => r.userID === SOCCER_HEAD.id);
+        expect(r04).toMatchObject({ roleLabel: null, isHead: false });
+        expect(r04?.effective.roleLabel).toBeNull();
+
+        const second = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        const ccas = await db.cCA.count();
+        expect(second).toMatchObject({
+          opened: true,
+          lockedNow: ccas,
+          relocked: ccas - 1,
+        });
+
+        // The published Soccer list is today's, with the head's edit in it.
+        expect(await frozenKeys(SOCCER, AY)).toEqual(
+          [...SOCCER_MEMBERS.filter((k) => k !== "SEED-R13"), R20.id].sort(),
+        );
+        const soccerRow = async (userID: string) => {
+          const r = await as(JCRC).transcript.preview({
+            userID,
+            academicYear: AY,
+          });
+          return r.transcript.pages
+            .flatMap((p) => (p.kind === "main" ? p.sections : []))
+            .flatMap((s) => (s.kind === "involvements" ? s.rows : []))
+            .find((row) => row.ccaName === "Soccer (MALE)");
+        };
+        expect((await soccerRow(R12.id))?.role).toBe("Captain");
+        expect(await soccerRow("SEED-R13")).toBeUndefined();
+        expect(await soccerRow(R20.id)).toBeDefined();
+        // The old head's "Head" was the first run's default, not a choice.
+        expect((await soccerRow(SOCCER_HEAD.id))?.role || null).toBeNull();
+        expect((await soccerRow(R09.id))?.role).toBe("Head");
+        const lock = await db.ccaYearFreeze.findFirstOrThrow({
+          where: { academicYear: AY, ccaID: SOCCER },
+        });
+        expect(lock.memberCount).toBe(SOCCER_MEMBERS.length);
+        expect(
+          await db.ccaYearFreeze.count({
+            where: { academicYear: AY, ccaID: SOCCER },
+          }),
+        ).toBe(1);
       });
 
       it("reports members the roster could not match", async () => {

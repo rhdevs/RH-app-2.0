@@ -19,7 +19,9 @@ import { NOT_UNFROZEN } from "./loader";
  *    nothing. Each CCA's member list is its live list.
  *  - OPEN TRANSCRIPTS locks every CCA's member list for the year as it is, one
  *    CCA at a time, then opens the year to residents. If any CCA cannot be
- *    locked, the year stays collecting and running it again finishes the rest.
+ *    locked, the year stays collecting, and running it again locks EVERY CCA
+ *    again from its current list (replacing the earlier locks), so what heads
+ *    changed in between reaches the published transcripts.
  *
  * Nothing here ever writes CCA / UserCCA / User.
  */
@@ -120,10 +122,13 @@ export interface OpenResult {
   academicYear: string;
   /** True once every CCA is locked and the year is open to residents. */
   opened: boolean;
-  /** CCAs locked by this run. */
+  /** CCAs locked by this run, from their current lists. */
   lockedNow: number;
-  /** CCAs that were already locked (by an earlier run that stopped part way). */
-  alreadyLocked: number;
+  /**
+   * Of those, the CCAs an earlier run that stopped part way had locked: their
+   * old locks were replaced.
+   */
+  relocked: number;
   /** CCAs that could not be locked, with a short code; run it again to finish. */
   failures: Array<{ name: string; code: string }>;
   /** Members, across the CCAs locked now, the roster resolver could not match. */
@@ -144,9 +149,11 @@ function failureCode(error: unknown): string {
 /**
  * OPEN TRANSCRIPTS for a year: the CURRENT one only, still collecting. A past
  * year is refused (YEAR_ENDED) because its member lists have already changed in
- * August; a future one has not started. Locks every CCA's member list exactly as it
- * is now, one CCA at a time, each in its own transaction; CCAs already locked
- * by an earlier run are kept. If ANY CCA fails, the year stays collecting,
+ * August; a future one has not started. Locks every CCA's member list exactly
+ * as it is now, one CCA at a time, each in its own transaction; a CCA an earlier run
+ * already locked is locked AGAIN from its current list, replacing that lock and
+ * its entries, because heads could still change the list and the records while
+ * the year stayed collecting. If ANY CCA fails, the year stays collecting,
  * nothing is opened, and the failures are returned (and logged without any
  * message text or member ids). Once every CCA is locked the year becomes
  * published, with who opened it and when.
@@ -168,24 +175,21 @@ export async function openTranscripts(
     throw new TRPCError({ code: BLOCKER_CODE[blocker], message: blocker });
   }
 
-  let alreadyLocked = 0;
+  let relocked = 0;
   let lockedNow = 0;
   let unresolved = 0;
   const failures: Array<{ name: string; code: string }> = [];
+  // The CCAs THIS run locked. Locks from an earlier run do not count: every
+  // CCA is locked again from its current list.
+  const done = new Set<number>();
 
-  // Lock the CCAs not locked yet. Run twice: the second pass, right before the
-  // year is claimed, catches a CCA created while the first pass was running.
-  for (const pass of [1, 2]) {
-    const [ccas, locked] = await Promise.all([
-      db.cCA.findMany({ select: { ccaID: true, ccaName: true } }),
-      db.ccaYearFreeze.findMany({
-        where: { academicYear, ...NOT_UNFROZEN },
-        select: { ccaID: true },
-      }),
-    ]);
-    const done = new Set(locked.map((f) => f.ccaID));
+  // Lock every CCA. Run twice: the second pass, right before the year is
+  // claimed, catches a CCA created while the first pass was running.
+  for (const _pass of [1, 2]) {
+    const ccas = await db.cCA.findMany({
+      select: { ccaID: true, ccaName: true },
+    });
     const todo = ccas.filter((c) => !done.has(c.ccaID));
-    if (pass === 1) alreadyLocked = ccas.length - todo.length;
     failures.length = 0;
     for (const cca of todo) {
       try {
@@ -195,10 +199,10 @@ export async function openTranscripts(
           actorUserID,
           now,
         });
-        if (result.kind === "frozen") {
-          lockedNow += 1;
-          unresolved += result.unresolvedCount;
-        }
+        done.add(cca.ccaID);
+        lockedNow += 1;
+        if (result.replaced) relocked += 1;
+        unresolved += result.unresolvedCount;
       } catch (error) {
         // Counted and reported; the others still go on. Logged without the
         // error's message, which can carry member ids.
@@ -213,7 +217,7 @@ export async function openTranscripts(
           return {
             academicYear,
             lockedNow,
-            alreadyLocked,
+            relocked,
             failures: [],
             unresolved,
             opened: true,
@@ -237,12 +241,12 @@ export async function openTranscripts(
   const counts = {
     academicYear,
     lockedNow,
-    alreadyLocked,
+    relocked,
     failures: [...failures],
     unresolved,
   };
   // Some CCA is still not locked: the year stays collecting, so running it
-  // again finishes the rest and a year is never half open.
+  // again locks every CCA again and a year is never half open.
   if (failures.length > 0) return { ...counts, opened: false };
 
   await claimYear(db, academicYear, actorUserID, now);
