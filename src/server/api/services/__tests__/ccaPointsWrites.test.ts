@@ -884,6 +884,29 @@ describe("startNewPointsYear (R48, R53)", () => {
     ]);
   });
 
+  it("closes entry before it clears the results", async () => {
+    const { db, calls } = fakeDb([
+      { ...DEFAULT_ROW },
+      { scope: "cca:1", ihgResult: "1st", ihgCap: 12 },
+    ]);
+    await startNewPointsYear(db, "E1", NOW);
+    expect(calls).toEqual(["upsert", "updateMany", "deleteMany"]);
+  });
+
+  it("clears no result when closing entry fails", async () => {
+    const { db, rows, calls } = fakeDb([
+      { ...DEFAULT_ROW },
+      { scope: "cca:1", ihgResult: "1st", ihgCap: 12 },
+    ]);
+    (db.ccaPointsConfig as unknown as { upsert: () => Promise<never> }).upsert =
+      () => Promise.reject(new Error("db down"));
+    await expect(startNewPointsYear(db, "E1", NOW)).rejects.toThrow("db down");
+    expect(calls).not.toContain("updateMany");
+    expect(rows.find((r) => r.scope === "cca:1")).toMatchObject({
+      ihgResult: "1st",
+    });
+  });
+
   it("closes entry and returns 0 when nothing is stored yet", async () => {
     const { db, rows } = fakeDb([]);
     expect(await startNewPointsYear(db, "E1", NOW)).toBe(0);

@@ -14,7 +14,7 @@ import {
 } from "~/components/ui/alert-dialog";
 import type { IhgContext, Range } from "~/lib/points/constants";
 import { downloadCsvFile } from "~/lib/points/download";
-import type { PointsEntry } from "~/lib/points/entries";
+import { withoutStaleIhg, type PointsEntry } from "~/lib/points/entries";
 import { buildPointsCsv, pointsCsvFilename } from "~/lib/points/exportCsv";
 import { formatStat } from "~/lib/points/hints";
 import {
@@ -81,12 +81,18 @@ export default function ExportDialog({
   // dialog is open shows here at once; judged again just before the file is built.
   const live = context;
   const verdict = downloadVerdict(check, entries, live);
+  const stale = withoutStaleIhg(entries, live.ihg);
   const download = () => {
     if (!downloadVerdict(check, entries, live).allowed) return;
     try {
       const now = new Date();
       const fileName = pointsCsvFilename(ccaID, now);
-      const csv = buildPointsCsv({ ccaID, ccaName, entries, exportedAt: now });
+      const csv = buildPointsCsv({
+        ccaID,
+        ccaName,
+        entries: withoutStaleIhg(entries, live.ihg).entries,
+        exportedAt: now,
+      });
       downloadCsvFile(fileName, csv);
       onOpenChange(false);
       onExported(fileName);
@@ -166,6 +172,12 @@ export default function ExportDialog({
                     <li key={b.code}>{b.message}</li>
                   ))}
                 </ul>
+              )}
+              {stale.dropped > 0 && (
+                <p className="text-amber-700" role="status">
+                  {stale.dropped} IHG {stale.dropped === 1 ? "tick" : "ticks"}{" "}
+                  will be left out: this CCA is no longer a sport.
+                </p>
               )}
               {error && (
                 <p className="text-red-700" role="alert">

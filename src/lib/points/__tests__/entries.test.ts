@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_RANGE } from "~/lib/points/constants";
-import { exportBlockers, type PointsEntry } from "~/lib/points/entries";
+import {
+  exportBlockers,
+  withoutStaleIhg,
+  type PointsEntry,
+} from "~/lib/points/entries";
 
 function entry(n: number, patch: Partial<PointsEntry> = {}): PointsEntry {
   return {
@@ -200,7 +204,9 @@ describe("exportBlockers", () => {
     const roster = Object.freeze(
       goodRoster().map((e) => Object.freeze({ ...e })),
     );
-    expect(() => exportBlockers(roster, DEFAULT_RANGE, true, null)).not.toThrow();
+    expect(() =>
+      exportBlockers(roster, DEFAULT_RANGE, true, null),
+    ).not.toThrow();
   });
 });
 
@@ -296,5 +302,33 @@ describe("exportBlockers: IHG", () => {
       "MEAN_OUT_OF_RANGE",
       "SD_OUT_OF_RANGE",
     ]);
+  });
+});
+
+describe("withoutStaleIhg", () => {
+  const sport = { result: "1st" as const, cap: 3 };
+
+  it("clears ticks and counts them when the CCA is not a sport", () => {
+    const entries = [
+      entry(1, { ihg: true }),
+      entry(2),
+      entry(3, { ihg: true }),
+    ];
+    const out = withoutStaleIhg(entries, null);
+    expect(out.dropped).toBe(2);
+    expect(out.entries.every((e) => !e.ihg)).toBe(true);
+  });
+
+  it("keeps the ticks for a sport", () => {
+    const entries = [entry(1, { ihg: true }), entry(2)];
+    const out = withoutStaleIhg(entries, sport);
+    expect(out.dropped).toBe(0);
+    expect(out.entries.map((e) => e.ihg)).toEqual([true, false]);
+  });
+
+  it("does not mutate its input", () => {
+    const entries = [entry(1, { ihg: true })];
+    withoutStaleIhg(entries, null);
+    expect(entries[0]?.ihg).toBe(true);
   });
 });

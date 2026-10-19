@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { EXPORT_FORMAT_VERSION } from "~/lib/points/constants";
-import type { PointsEntry } from "~/lib/points/entries";
+import { withoutStaleIhg, type PointsEntry } from "~/lib/points/entries";
 import { buildPointsCsv, pointsCsvFilename } from "~/lib/points/exportCsv";
 
 const HEADER =
@@ -185,5 +185,14 @@ describe("pointsCsvFilename", () => {
     expect(pointsCsvFilename(7, new Date(2027, 11, 9, 0, 0))).toBe(
       "points_7_20271209.csv",
     );
+  });
+});
+
+describe("buildPointsCsv with a stale IHG tick", () => {
+  it("writes N when the live IHG context is null", () => {
+    const { entries } = withoutStaleIhg([entry({ ihg: true })], null);
+    const csv = buildPointsCsv({ ccaID: 1, ccaName: "X", entries, exportedAt });
+    const row = csv.split("\n")[1] ?? "";
+    expect(row.split(",")[9]).toBe("N");
   });
 });

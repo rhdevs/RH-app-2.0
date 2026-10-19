@@ -225,6 +225,23 @@ export function exportBlockers(
 }
 
 /**
+ * IHG ticks only mean something for a sport. When the live IHG context is null
+ * (the CCA is not, or is no longer, a sport, or is flat) a stale tick must not
+ * reach the file: returns copies with the ticks cleared and how many there were.
+ * Never mutates its input; the draft is left alone.
+ */
+export function withoutStaleIhg(
+  entries: readonly PointsEntry[],
+  ihg: IhgContext | null,
+): { entries: PointsEntry[]; dropped: number } {
+  if (ihg !== null) return { entries: [...entries], dropped: 0 };
+  return {
+    entries: entries.map((e) => ({ ...e, ihg: false })),
+    dropped: entries.filter((e) => e.ihg).length,
+  };
+}
+
+/**
  * Re-judge an export against the CURRENT settings from the server (JCRC may have
  * closed entry or changed the range since the page loaded). Pure: the caller
  * supplies the freshly fetched context.

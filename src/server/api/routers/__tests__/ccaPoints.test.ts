@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { computeCapabilities } from "~/server/api/services/roles";
 
@@ -194,10 +194,14 @@ describe("ccaPoints.bundleExportData", () => {
     ...patch,
   });
 
-  function bundleDb(rows: Record<string, unknown>[], ccas: unknown[]) {
+  function bundleDb(
+    rows: Record<string, unknown>[],
+    ccas: unknown[],
+    defaultRow: Record<string, unknown> | null = null,
+  ) {
     return {
       ccaPointsConfig: {
-        findUnique: vi.fn(async () => null),
+        findUnique: vi.fn(async () => defaultRow),
         findMany: vi.fn(async () => rows),
       },
       cCA: { findMany: vi.fn(async () => ccas) },
@@ -332,6 +336,43 @@ describe("ccaPoints.bundleExportData", () => {
     });
     expect(JSON.stringify(entry)).not.toContain("A9900001Z");
     expect(JSON.stringify(entry)).not.toContain("Test Member 1");
+  });
+
+  it("reports a stored default row as effectiveDefault and a note-only waiver with null ranges", async () => {
+    mockedRoles.mockResolvedValue(["jcrc"]);
+    const db = bundleDb(
+      [row("cca:9101", { note: "Just a note" })],
+      [{ ccaID: 9101, ccaName: "Test Drama", category: "Performing Arts" }],
+      {
+        ...row("default", {}),
+        scope: "default",
+        ccaID: null,
+        meanMin: 11,
+        meanMax: 15,
+        sdMin: 1,
+        sdMax: 4,
+      },
+    );
+
+    const result = await caller(db, ["jcrc"]).bundleExportData();
+
+    expect(result.effectiveDefault).toEqual({
+      meanMin: 11,
+      meanMax: 15,
+      sdMin: 1,
+      sdMax: 4,
+    });
+    expect(result.waivers).toEqual([
+      {
+        ccaID: 9101,
+        ccaName: "Test Drama",
+        meanMin: null,
+        meanMax: null,
+        sdMin: null,
+        sdMax: null,
+        note: "Just a note",
+      },
+    ]);
   });
 
   it("treats a Performing Arts CCA ticked as a sport as a sport", async () => {
@@ -671,7 +712,14 @@ describe("ccaPoints.startNewPointsYear", () => {
       rolesAfter: ["closed"],
       reason: "3 IHG result(s) cleared; entry closed",
     });
-    expect(JSON.stringify(entry)).not.toMatch(/[A-Za-z]\d{7}[A-Za-z]/);
+    expect(entry).toEqual({
+      actorUserID: USER,
+      actorRoles: ["jcrc"],
+      action: "ccaPoints.year.start",
+      rolesAfter: ["closed"],
+      reason: "3 IHG result(s) cleared; entry closed",
+    });
+    expect(entry).not.toHaveProperty("targetCcaID");
   });
 });
 
@@ -884,6 +932,65 @@ describe("ENTRY_OPEN_IHG: writes refused while entry is open", () => {
     );
   });
 
+  it("clearFlat on a flat non-sports CCA ticked as a sport, with no IHG, is refused while open", async () => {
+    const db = pointsDb({
+      ccas: [choir],
+      rows: [OPEN, configRow("cca:8", { flatPoints: 10, isSport: true })],
+    });
+    await expect(
+      caller(db, ["jcrc"]).clearFlat({ ccaID: 8 }),
+    ).rejects.toMatchObject(refused);
+    expect(mockedAudit).not.toHaveBeenCalled();
+  });
+
+  it("clearFlat on a flat Sports Activities CCA unticked as a sport is allowed while open", async () => {
+    const db = pointsDb({
+      ccas: [soccer],
+      rows: [OPEN, configRow("cca:7", { flatPoints: 10, isSport: false })],
+      deleteCount: 1,
+      updateCount: 1,
+    });
+    await expect(caller(db, ["jcrc"]).clearFlat({ ccaID: 7 })).resolves.toEqual(
+      { cleared: true },
+    );
+  });
+
+  it("clearFlat on a flat sport with a result but no cap is refused while open", async () => {
+    const db = pointsDb({
+      ccas: [soccer],
+      rows: [OPEN, configRow("cca:7", { flatPoints: 10, ihgResult: "1st" })],
+    });
+    await expect(
+      caller(db, ["jcrc"]).clearFlat({ ccaID: 7 }),
+    ).rejects.toMatchObject(refused);
+    expect(mockedAudit).not.toHaveBeenCalled();
+  });
+
+  it("setSport(true) and setSport(null) on a flat row are allowed while open", async () => {
+    const dbTrue = pointsDb({
+      ccas: [choir],
+      rows: [OPEN, configRow("cca:8", { flatPoints: 10 })],
+    });
+    await caller(dbTrue, ["jcrc"]).setSport({ ccaID: 8, isSport: true });
+    const dbNull = pointsDb({
+      ccas: [soccer],
+      rows: [OPEN, configRow("cca:7", { flatPoints: 10, isSport: false })],
+    });
+    await caller(dbNull, ["jcrc"]).setSport({ ccaID: 7, isSport: null });
+    expect(mockedAudit).toHaveBeenCalledTimes(2);
+  });
+
+  it("setSport(true) on a row with a result but no cap is refused while open", async () => {
+    const db = pointsDb({
+      ccas: [choir],
+      rows: [OPEN, configRow("cca:8", { ihgResult: "1st" })],
+    });
+    await expect(
+      caller(db, ["jcrc"]).setSport({ ccaID: 8, isSport: true }),
+    ).rejects.toMatchObject(refused);
+    expect(db.ccaPointsConfig.upsert).not.toHaveBeenCalled();
+  });
+
   it("clearFlat on a flat sport without both is allowed while closed", async () => {
     const db = pointsDb({
       ccas: [soccer],
@@ -1088,5 +1195,77 @@ describe("pointsErrorCopy for the IHG refusals", () => {
     const copy = pointsErrorCopy("ENTRY_OPEN_IHG", "PRECONDITION_FAILED");
     expect(copy).toMatch(/^Close points entry/);
     expect(copy).not.toContain("ENTRY_OPEN_IHG");
+  });
+});
+
+describe("invalid stored config values", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const logged = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.map(
+      (c) => JSON.parse(String(c[0])) as Record<string, unknown>,
+    );
+  const invalid = (ccaID: number, field: string, value: unknown) => ({
+    evt: "points_config_invalid_value",
+    ccaID,
+    field,
+    value,
+  });
+
+  it("getConfig reads them as null and logs each one", async () => {
+    vi.mocked(resolveRoster).mockResolvedValue({
+      heads: [],
+      members: [],
+    } as never);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const db = pointsDb({
+      ccas: [{ ccaID: 4, ccaName: "Debate", category: "Interest Groups" }],
+      rows: [
+        CLOSED,
+        configRow("cca:4", { ccaType: "2x", ihgResult: "4th", ihgCap: 0 }),
+      ],
+    });
+
+    const result = await caller(db, ["jcrc"]).getConfig();
+
+    expect(result.ccas[0]).toMatchObject({
+      type: null,
+      ihgResult: null,
+      ihgCap: null,
+    });
+    expect(logged(spy)).toEqual([
+      invalid(4, "ccaType", "2x"),
+      invalid(4, "ihgResult", "4th"),
+      invalid(4, "ihgCap", 0),
+    ]);
+  });
+
+  it("getEntryContext reads an invalid result or cap as null and logs it", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const db = {
+      ...pointsDb({
+        ccas: [soccer],
+        rows: [OPEN, configRow("cca:7", { ihgResult: "9th", ihgCap: 500 })],
+      }),
+      ccaHead: { findUnique: vi.fn(async () => ({ id: "row" })) },
+    };
+    const result = await caller(db, ["cca_head"]).getEntryContext({ ccaID: 7 });
+    expect(result.ihg).toEqual({ result: null, cap: null });
+    expect(logged(spy)).toEqual([
+      invalid(7, "ihgResult", "9th"),
+      invalid(7, "ihgCap", 500),
+    ]);
+  });
+
+  it("bundleExportData reads an invalid type as null and logs it", async () => {
+    mockedRoles.mockResolvedValue(["jcrc"]);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const db = pointsDb({
+      ccas: [choir],
+      rows: [OPEN, configRow("cca:8", { ccaType: "3x" })],
+    });
+    const result = await caller(db, ["jcrc"]).bundleExportData();
+    expect(result.ccas[0]?.type).toBeNull();
+    expect(logged(spy)).toEqual([invalid(8, "ccaType", "3x")]);
   });
 });

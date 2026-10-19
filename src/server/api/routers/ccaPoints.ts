@@ -46,6 +46,7 @@ import {
   writeOverride,
   writeSport,
   writeType,
+  validConfigValue,
 } from "~/server/api/services/ccaPointsConfig";
 import {
   flatPointsProblem,
@@ -255,12 +256,18 @@ export const ccaPointsRouter = createTRPCRouter({
         ihg:
           isSport && flatPoints === null
             ? {
-                result: isIhgResult(overrideRow?.ihgResult)
-                  ? overrideRow.ihgResult
-                  : null,
-                cap: isValidIhgCap(overrideRow?.ihgCap)
-                  ? overrideRow.ihgCap
-                  : null,
+                result: validConfigValue(
+                  input.ccaID,
+                  "ihgResult",
+                  overrideRow?.ihgResult,
+                  isIhgResult,
+                ),
+                cap: validConfigValue(
+                  input.ccaID,
+                  "ihgCap",
+                  overrideRow?.ihgCap,
+                  isValidIhgCap,
+                ),
               }
             : null,
       };
@@ -328,9 +335,19 @@ export const ccaPointsRouter = createTRPCRouter({
             typeof row?.isSport === "boolean"
               ? ("jcrc" as const)
               : ("category" as const),
-          type: isCcaType(row?.ccaType) ? row.ccaType : null,
-          ihgResult: isIhgResult(row?.ihgResult) ? row.ihgResult : null,
-          ihgCap: isValidIhgCap(row?.ihgCap) ? row.ihgCap : null,
+          type: validConfigValue(c.ccaID, "ccaType", row?.ccaType, isCcaType),
+          ihgResult: validConfigValue(
+            c.ccaID,
+            "ihgResult",
+            row?.ihgResult,
+            isIhgResult,
+          ),
+          ihgCap: validConfigValue(
+            c.ccaID,
+            "ihgCap",
+            row?.ihgCap,
+            isValidIhgCap,
+          ),
           isFlat: isFlatRow(row),
           hasWaiver: hasWaiver(row),
         };
@@ -737,11 +754,14 @@ export const ccaPointsRouter = createTRPCRouter({
         ccaID: c.ccaID,
         ccaName: c.ccaName,
         flatPoints: isFlatRow(row) ? (row?.flatPoints ?? null) : null,
-        type: isCcaType(row?.ccaType) ? row.ccaType : null,
+        type: validConfigValue(c.ccaID, "ccaType", row?.ccaType, isCcaType),
         isSport,
-        ihgResult:
-          isSport && isIhgResult(row?.ihgResult) ? row.ihgResult : null,
-        ihgCap: isSport && isValidIhgCap(row?.ihgCap) ? row.ihgCap : null,
+        ihgResult: isSport
+          ? validConfigValue(c.ccaID, "ihgResult", row?.ihgResult, isIhgResult)
+          : null,
+        ihgCap: isSport
+          ? validConfigValue(c.ccaID, "ihgCap", row?.ihgCap, isValidIhgCap)
+          : null,
       };
     });
     const waivers = waiverRows(overrideRows).flatMap((r) =>

@@ -76,6 +76,25 @@ export function resolveRange(
 
 export { rangeProblem };
 
+/**
+ * A stored config value, or null when it is blank or not valid. A non-blank
+ * invalid value should never be in the table; if one is, say so in the log
+ * (config only, never a score) rather than hiding it.
+ */
+export function validConfigValue<T>(
+  ccaID: number,
+  field: string,
+  value: unknown,
+  isValid: (v: unknown) => v is T,
+): T | null {
+  if (value === null || value === undefined) return null;
+  if (isValid(value)) return value;
+  console.error(
+    JSON.stringify({ evt: "points_config_invalid_value", ccaID, field, value }),
+  );
+  return null;
+}
+
 /** The fields of a per-CCA row that decide what kind of row it is. */
 export type ConfigRowLike = RangeOverride & {
   note: string | null;
@@ -509,8 +528,8 @@ export async function writeSport(
 }
 
 /**
- * Starts a new points year: nulls every IHG result (caps stay), closes points
- * entry, then deletes any per-CCA row left with every config field blank. Returns
+ * Starts a new points year: closes points entry, nulls every IHG result (caps stay),
+ * then deletes any per-CCA row left with every config field blank. Returns
  * how many results were cleared. Types, caps, sport ticks, waivers, flat values
  * and the default range are kept.
  */
@@ -519,11 +538,13 @@ export async function startNewPointsYear(
   actorUserID: string,
   now: Date,
 ): Promise<number> {
+  // Close first: if clearing the results then fails, entry is shut, not open
+  // with sports missing their IHG result.
+  await writeEntryOpen(db, false, actorUserID, now);
   const cleared = await db.ccaPointsConfig.updateMany({
     where: { scope: { startsWith: "cca:" }, ihgResult: { not: null } },
     data: { ihgResult: null, updatedAt: now, updatedBy: actorUserID },
   });
-  await writeEntryOpen(db, false, actorUserID, now);
   await db.ccaPointsConfig.deleteMany({
     where: {
       scope: { startsWith: "cca:" },

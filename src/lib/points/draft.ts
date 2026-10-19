@@ -61,7 +61,10 @@ export function prefillEntry(member: RosterMember): PointsEntry {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-function isDraftRow(v: unknown): v is DraftRow {
+/** A stored row; one saved before the IHG tick existed has no `ihg`. */
+type StoredDraftRow = Omit<DraftRow, "ihg"> & { ihg?: boolean };
+
+function isDraftRow(v: unknown): v is StoredDraftRow {
   if (!isRecord(v)) return false;
   const score = v.basePoints;
   return (
