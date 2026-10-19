@@ -27,6 +27,7 @@ import {
   assertStillCollecting,
   yearWrite,
   logCorrections,
+  retryableRace,
 } from "./residentRecords";
 import { actorLabels, requireResident } from "./residents";
 
@@ -180,29 +181,6 @@ export async function participationSet(
     input.activityID,
     input.academicYear,
   );
-  const row = await db.ccaActivityParticipant.findFirst({
-    where: { activityID: activity.id, userID: resident.key },
-  });
-  const planned = diffParticipants(
-    row
-      ? [
-          {
-            id: row.id,
-            userID: row.userID,
-            role: row.role ?? null,
-            description: row.description ?? null,
-            removed: row.removedAt != null,
-          },
-        ]
-      : [],
-    [
-      {
-        userID: resident.key,
-        role: input.role,
-        description: input.description,
-      },
-    ],
-  );
   const guard = await assertCanEditForResidents(
     db,
     { userID: actorUserID },
@@ -218,18 +196,51 @@ export async function participationSet(
   };
   await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, activity.academicYear, guard);
-    if (!row) {
-      await tx.ccaActivityParticipant.create({
-        data: {
-          activityID: activity.id,
-          academicYear: activity.academicYear,
-          ccaID: activity.ccaID,
+    // Read here, not before: a retry, or a row someone created or removed
+    // meanwhile, decides between create, restore and update afresh.
+    const row = await tx.ccaActivityParticipant.findFirst({
+      where: { activityID: activity.id, userID: resident.key },
+    });
+    const planned = diffParticipants(
+      row
+        ? [
+            {
+              id: row.id,
+              userID: row.userID,
+              role: row.role ?? null,
+              description: row.description ?? null,
+              removed: row.removedAt != null,
+            },
+          ]
+        : [],
+      [
+        {
           userID: resident.key,
-          ...text,
-          addedBy: actorUserID,
-          addedAt: now,
+          role: input.role,
+          description: input.description,
         },
-      });
+      ],
+    );
+    if (!row) {
+      try {
+        await tx.ccaActivityParticipant.create({
+          data: {
+            activityID: activity.id,
+            academicYear: activity.academicYear,
+            ccaID: activity.ccaID,
+            userID: resident.key,
+            ...text,
+            addedBy: actorUserID,
+            addedAt: now,
+          },
+        });
+      } catch (error) {
+        // Added at the same moment (a double-submit): run again, as an update.
+        if ((error as { code?: unknown }).code === "P2002") {
+          throw retryableRace(error);
+        }
+        throw error;
+      }
     } else if (row.removedAt) {
       await tx.ccaActivityParticipant.update({
         where: { id: row.id },

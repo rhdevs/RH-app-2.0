@@ -1327,5 +1327,112 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await db.transcriptPeriod.deleteMany({ where: { academicYear: OLD } });
       });
     });
+
+    /* ---------------------------------------------------------------- */
+    describe("a create or restore decided inside the transaction (U5)", () => {
+      /** A db whose first transaction is preceded by `before` (a rival write). */
+      const withRivalBeforeFirstTransaction = (
+        before: () => Promise<unknown>,
+      ) => {
+        let started = 0;
+        return new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return async (
+                fn: (tx: unknown) => Promise<unknown>,
+                opts?: unknown,
+              ) => {
+                started += 1;
+                if (started === 1) await before();
+                return (
+                  target.$transaction as unknown as (
+                    f: (tx: unknown) => Promise<unknown>,
+                    o?: unknown,
+                  ) => Promise<unknown>
+                )(fn, opts);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+      };
+
+      it("a participation added by a double-submit is updated, not refused as a duplicate", async () => {
+        const { participationSet } = await import("../residentData");
+        const activity = await interHall();
+        const input = {
+          userID: R17.id,
+          academicYear: AY,
+          activityID: activity.id,
+          role: "Reserve",
+          description: "",
+        };
+        expect(
+          await db.ccaActivityParticipant.count({
+            where: { activityID: activity.id, userID: R17.id },
+          }),
+        ).toBe(0);
+
+        // The same save lands first, after this call has looked and found no row.
+        const racing = withRivalBeforeFirstTransaction(() =>
+          participationSet(db, JCRC.id, { ...input, role: "Striker" }),
+        );
+        await participationSet(racing, JCRC.id, input);
+
+        const rows = await db.ccaActivityParticipant.findMany({
+          where: { activityID: activity.id, userID: R17.id },
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.role).toBe("Reserve");
+      });
+
+      it("five identical saves at once leave one participation and no error", async () => {
+        const { participationSet } = await import("../residentData");
+        const activity = await interHall();
+        const input = {
+          userID: R17.id,
+          academicYear: AY,
+          activityID: activity.id,
+          role: "Reserve",
+          description: "",
+        };
+
+        const results = await Promise.allSettled(
+          Array.from({ length: 5 }, () => participationSet(db, JCRC.id, input)),
+        );
+
+        expect(results.filter((r) => r.status === "rejected")).toHaveLength(0);
+        expect(
+          await db.ccaActivityParticipant.count({
+            where: { activityID: activity.id, userID: R17.id },
+          }),
+        ).toBe(1);
+      });
+
+      it("a JCRC page removed meanwhile is not removed again", async () => {
+        const { jcrcRemove } = await import("../manageRecords");
+        const where = {
+          academicYear_userID: { academicYear: AY, userID: JCRC.id },
+        };
+        const racing = withRivalBeforeFirstTransaction(() =>
+          jcrcRemove(db, ADMIN.id, { userID: JCRC.id, academicYear: AY }),
+        );
+        const later = new Date(Date.now() + 3_600_000);
+
+        await jcrcRemove(
+          racing,
+          JCRC.id,
+          { userID: JCRC.id, academicYear: AY },
+          later,
+        );
+
+        const row = await db.jcrcService.findUniqueOrThrow({ where });
+        expect(row.removedBy).toBe(ADMIN.id);
+        expect(row.removedAt?.getTime()).not.toBe(later.getTime());
+      });
+    });
   },
 );

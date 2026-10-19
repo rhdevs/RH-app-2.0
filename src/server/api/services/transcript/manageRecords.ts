@@ -155,19 +155,25 @@ async function setJcrcRemoved(
     { userID: actorUserID },
     { academicYear: fields.academicYear, affectedUserIDs: [resident.key] },
   );
-  const row = await db.jcrcService.findUnique({
-    where: {
-      academicYear_userID: {
-        academicYear: fields.academicYear,
-        userID: resident.key,
-      },
+  const where = {
+    academicYear_userID: {
+      academicYear: fields.academicYear,
+      userID: resident.key,
     },
-  });
-  if (!row)
+  };
+  // A fast answer before the transaction...
+  if (!(await db.jcrcService.findUnique({ where }))) {
     throw new TRPCError({ code: "NOT_FOUND", message: "RECORD_NOT_FOUND" });
-  if (Boolean(row.removedAt) === removed) return { userID: resident.key };
+  }
   await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, fields.academicYear, guard);
+    // ...and the real one inside it: a retry, or a page someone removed or
+    // restored meanwhile, is judged by what is there now.
+    const row = await tx.jcrcService.findUnique({ where });
+    if (!row) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "RECORD_NOT_FOUND" });
+    }
+    if (Boolean(row.removedAt) === removed) return;
     await tx.jcrcService.update({
       where: { id: row.id },
       data: removed
