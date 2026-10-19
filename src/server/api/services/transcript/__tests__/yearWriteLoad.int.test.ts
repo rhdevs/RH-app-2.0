@@ -14,7 +14,7 @@ import { isLocalDevDatabase } from "./localDbGate";
  * and other saves of the year, in any CCA, failed after their few short
  * retries. Here 20 ordinary saves across the seed CCAs run at the same moment
  * as one large attendance save (4,000 cells: 2,000 new ticks and 2,000 hour
- * overrides, one write each), and every one must land. Then the same load runs
+ * overrides, written in batches since T9), and every one must land. Then the same load runs
  * with Open transcripts started in the middle of it: Open must complete, and
  * each save either landed or was refused because the year opened, never a
  * "busy" or raw error, and a refused save wrote nothing.
@@ -168,6 +168,35 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ].join(" ");
       console.info(line);
     };
+
+    it("one 4,000-cell attendance save on its own is a single attempt of under 3 s (T9)", async () => {
+      const grid = await bigGrid();
+      let attempts = 0;
+      const counted = new Proxy(db, {
+        get(target, prop, receiver) {
+          if (prop === "$transaction") {
+            attempts += 1;
+          }
+          const value: unknown = Reflect.get(target, prop, receiver);
+          return typeof value === "function"
+            ? (value as (...a: unknown[]) => unknown).bind(target)
+            : value;
+        },
+      }) as PrismaClient;
+      const outcome = await timed("attendance", () =>
+        volunteer.volunteerAttendanceSave(counted, ADMIN, {
+          activityID: grid.activityID,
+          ccaID: CHILDREN,
+          changes: grid.changes,
+        }),
+      );
+      console.info(
+        `[load] alone: large attendance save ${outcome.ms.toFixed(0)} ms in ${attempts} attempt(s) (${outcome.result})`,
+      );
+      expect(outcome.result).toBe("ok");
+      expect(attempts).toBe(1);
+      expect(outcome.ms).toBeLessThan(3_000);
+    });
 
     it("20 ordinary saves and one 4,000-cell attendance save at the same moment all land", async () => {
       const grid = await bigGrid();

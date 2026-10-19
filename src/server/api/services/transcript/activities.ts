@@ -25,6 +25,7 @@ import {
   logCorrections,
 } from "./residentRecords";
 import { actorLabels, lookupResidents, requireResidents } from "./residents";
+import { chunks, updateGrouped } from "./batchWrite";
 
 /**
  * A CCA's ACTIVITIES for one academic year, and who took part in each.
@@ -355,9 +356,11 @@ export async function participantsSet(
         description: d.description === "" ? null : d.description,
       });
 
-      for (const d of diff.add) {
-        await tx.ccaActivityParticipant.create({
-          data: {
+      // In batches (T9): additions in one createMany; restores and edits
+      // grouped by their new role and description; removals in id slices.
+      if (diff.add.length > 0) {
+        await tx.ccaActivityParticipant.createMany({
+          data: diff.add.map((d) => ({
             activityID: activity.id,
             academicYear: activity.academicYear,
             ccaID: activity.ccaID,
@@ -365,30 +368,30 @@ export async function participantsSet(
             ...text(d),
             addedBy: actorUserID,
             addedAt: now,
-          },
+          })),
         });
       }
-      for (const d of diff.restore) {
-        await tx.ccaActivityParticipant.update({
-          where: { id: d.id },
+      await updateGrouped(diff.restore, text, (ids, values) =>
+        tx.ccaActivityParticipant.updateMany({
+          where: { id: { in: ids } },
           data: {
-            ...text(d),
+            ...values,
             removedAt: null,
             removedBy: null,
             updatedBy: actorUserID,
             updatedAt: now,
           },
-        });
-      }
-      for (const d of diff.update) {
-        await tx.ccaActivityParticipant.update({
-          where: { id: d.id },
-          data: { ...text(d), updatedBy: actorUserID, updatedAt: now },
-        });
-      }
-      for (const r of diff.remove) {
-        await tx.ccaActivityParticipant.update({
-          where: { id: r.id },
+        }),
+      );
+      await updateGrouped(diff.update, text, (ids, values) =>
+        tx.ccaActivityParticipant.updateMany({
+          where: { id: { in: ids } },
+          data: { ...values, updatedBy: actorUserID, updatedAt: now },
+        }),
+      );
+      for (const slice of chunks(diff.remove)) {
+        await tx.ccaActivityParticipant.updateMany({
+          where: { id: { in: slice.map((r) => r.id) } },
           data: { removedAt: now, removedBy: actorUserID },
         });
       }

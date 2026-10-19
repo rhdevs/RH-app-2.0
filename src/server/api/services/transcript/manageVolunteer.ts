@@ -33,6 +33,7 @@ import {
 } from "./residentRecords";
 import { NOT_REMOVED } from "./loader";
 import { actorLabels, lookupResidents, requireResidents } from "./residents";
+import { chunks, updateGrouped } from "./batchWrite";
 
 /**
  * VOLUNTEER ACTIVITIES of a volunteering CCA (one tagged
@@ -708,39 +709,41 @@ export async function volunteerPeopleSet(
         where: { activityID: activity.id },
       });
       const byUser = new Map(existing.map((e) => [e.userID, e]));
-      let added = 0;
-      let removed = 0;
-      for (const key of keys) {
-        const row = byUser.get(key);
-        if (!row) {
-          await tx.volunteerPerson.create({
-            data: {
-              activityID: activity.id,
-              academicYear: activity.academicYear,
-              ccaID: activity.ccaID,
-              userID: key,
-              addedBy: actorUserID,
-              addedAt: now,
-            },
-          });
-          added += 1;
-        } else if (row.removedAt) {
-          await tx.volunteerPerson.update({
-            where: { id: row.id },
-            data: { removedAt: null, removedBy: null },
-          });
-          added += 1;
-        }
+      // In batches (T9): new people in one createMany, restores and
+      // removals each as updateMany over id slices.
+      const toAdd = keys.filter((key) => !byUser.has(key));
+      const toRestore = existing.filter(
+        (row) => row.removedAt && wanted.has(row.userID),
+      );
+      const toRemove = existing.filter(
+        (row) => !row.removedAt && !wanted.has(row.userID),
+      );
+      if (toAdd.length > 0) {
+        await tx.volunteerPerson.createMany({
+          data: toAdd.map((userID) => ({
+            activityID: activity.id,
+            academicYear: activity.academicYear,
+            ccaID: activity.ccaID,
+            userID,
+            addedBy: actorUserID,
+            addedAt: now,
+          })),
+        });
       }
-      for (const row of existing) {
-        if (!row.removedAt && !wanted.has(row.userID)) {
-          await tx.volunteerPerson.update({
-            where: { id: row.id },
-            data: { removedAt: now, removedBy: actorUserID },
-          });
-          removed += 1;
-        }
+      for (const slice of chunks(toRestore)) {
+        await tx.volunteerPerson.updateMany({
+          where: { id: { in: slice.map((r) => r.id) } },
+          data: { removedAt: null, removedBy: null },
+        });
       }
+      for (const slice of chunks(toRemove)) {
+        await tx.volunteerPerson.updateMany({
+          where: { id: { in: slice.map((r) => r.id) } },
+          data: { removedAt: now, removedBy: actorUserID },
+        });
+      }
+      const added = toAdd.length + toRestore.length;
+      const removed = toRemove.length;
       await tx.volunteerActivity.update({
         where: { id: activity.id },
         data: { updatedBy: actorUserID, updatedAt: now },
@@ -854,24 +857,23 @@ export async function volunteerAttendanceSave(
         }
       }
 
-      if (toDelete.length > 0) {
-        await tx.volunteerAttendance.deleteMany({
-          where: { id: { in: toDelete } },
-        });
+      // In batches (T9): un-ticks in id slices, new ticks in one
+      // createMany, and override changes grouped by their new hours.
+      for (const ids of chunks(toDelete)) {
+        await tx.volunteerAttendance.deleteMany({ where: { id: { in: ids } } });
       }
       if (toCreate.length > 0) {
         await tx.volunteerAttendance.createMany({ data: toCreate });
       }
-      for (const u of toUpdate) {
-        await tx.volunteerAttendance.update({
-          where: { id: u.id },
-          data: {
-            hoursOverride: u.hoursOverride,
-            markedBy: actorUserID,
-            markedAt: now,
-          },
-        });
-      }
+      await updateGrouped(
+        toUpdate,
+        (u) => u.hoursOverride,
+        (ids, hoursOverride) =>
+          tx.volunteerAttendance.updateMany({
+            where: { id: { in: ids } },
+            data: { hoursOverride, markedBy: actorUserID, markedAt: now },
+          }),
+      );
       const out = {
         created: toCreate.length,
         updated: toUpdate.length,
