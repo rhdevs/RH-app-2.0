@@ -24,7 +24,6 @@ import type {
 import { bulkResolver } from "~/server/api/routers/admin";
 import { awardTypeCreate, isUniqueViolation } from "./manageAwards";
 import { awardActiveKey } from "~/lib/transcript/awards";
-import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import { NOT_VOIDED } from "./loader";
 import { assertWritable } from "./manageAccess";
 import { correctionSummary } from "~/lib/transcript/corrections";
@@ -32,7 +31,7 @@ import {
   assertCanEditForResidents,
   assertStillCollecting,
   logCorrections,
-  yearTransaction,
+  yearWrite,
 } from "./residentRecords";
 import { lookupResidents } from "./residents";
 
@@ -362,23 +361,21 @@ export async function awardImportCommit(
     for (let i = 0; i < toWrite.length; i += IMPORT_CHUNK_SIZE) {
       const chunk = toWrite.slice(i, i + IMPORT_CHUNK_SIZE);
       try {
-        await retryWriteConflicts(() =>
-          yearTransaction(
-            db,
-            async (tx) => {
-              await assertStillCollecting(tx, input.academicYear, guard);
-              await tx.award.createMany({ data: chunk.map(rowFor) });
-              await logCorrections(
-                tx,
-                guard,
-                actorUserID,
-                input.academicYear,
-                chunk.map(lineFor),
-                now,
-              );
-            },
-            CHUNK_TX,
-          ),
+        await yearWrite(
+          db,
+          async (tx) => {
+            await assertStillCollecting(tx, input.academicYear, guard);
+            await tx.award.createMany({ data: chunk.map(rowFor) });
+            await logCorrections(
+              tx,
+              guard,
+              actorUserID,
+              input.academicYear,
+              chunk.map(lineFor),
+              now,
+            );
+          },
+          CHUNK_TX,
         );
         imported += chunk.length;
       } catch (error) {
@@ -388,23 +385,21 @@ export async function awardImportCommit(
         // row by row: that row is skipped, the others are imported.
         for (const a of chunk) {
           try {
-            await retryWriteConflicts(() =>
-              yearTransaction(
-                db,
-                async (tx) => {
-                  await assertStillCollecting(tx, input.academicYear, guard);
-                  await tx.award.create({ data: rowFor(a) });
-                  await logCorrections(
-                    tx,
-                    guard,
-                    actorUserID,
-                    input.academicYear,
-                    [lineFor(a)],
-                    now,
-                  );
-                },
-                CHUNK_TX,
-              ),
+            await yearWrite(
+              db,
+              async (tx) => {
+                await assertStillCollecting(tx, input.academicYear, guard);
+                await tx.award.create({ data: rowFor(a) });
+                await logCorrections(
+                  tx,
+                  guard,
+                  actorUserID,
+                  input.academicYear,
+                  [lineFor(a)],
+                  now,
+                );
+              },
+              CHUNK_TX,
             );
             imported += 1;
           } catch (error2) {

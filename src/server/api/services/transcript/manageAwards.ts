@@ -11,7 +11,6 @@ import {
   planAssignment,
   removedAwardKey,
 } from "~/lib/transcript/awards";
-import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import type {
   awardTypeCreateInput,
   awardTypeUpdateInput,
@@ -24,7 +23,6 @@ import { correctionSummary } from "~/lib/transcript/corrections";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
-  yearTransaction,
   yearWrite,
   logCorrections,
 } from "./residentRecords";
@@ -290,8 +288,9 @@ export async function awardsAssign(
     summary: correctionSummary("Awards", type.name, "assigned"),
   });
 
-  const attempt = async () => {
-    const existing = await db.award.findMany({
+  /** Who already has this award for the year, and so who is given it now. */
+  const planWith = async (client: Pick<PrismaClient, "award">) => {
+    const existing = await client.award.findMany({
       where: {
         academicYear: input.academicYear,
         userID: { in: recipients.map((r) => r.userID) },
@@ -299,7 +298,7 @@ export async function awardsAssign(
       },
       select: { userID: true, awardTypeID: true, title: true },
     });
-    const plan = planAssignment(
+    return planAssignment(
       existing.map((e) => ({
         userID: e.userID,
         awardTypeID: e.awardTypeID ?? null,
@@ -308,56 +307,60 @@ export async function awardsAssign(
       { id: type.id, name: type.name },
       recipients,
     );
-    let created = plan.create;
-    const raced: typeof recipients = [];
-    try {
-      await yearTransaction(db, async (tx) => {
-        await assertStillCollecting(tx, input.academicYear, guard);
-        if (plan.create.length > 0) {
-          await tx.award.createMany({ data: plan.create.map(rowFor) });
-        }
-        await logCorrections(
-          tx,
-          guard,
-          actorUserID,
-          input.academicYear,
-          plan.create.map(lineFor),
-          now,
-        );
-      });
-    } catch (e) {
-      if (!isUniqueViolation(e)) throw e;
-      // Someone gave one of these awards at the same moment (a double-submit,
-      // or another manager). A duplicate aborts the whole write, so go person by
-      // person: the ones who already have it are skipped, the rest are given it.
-      created = [];
-      for (const r of plan.create) {
-        try {
-          await retryWriteConflicts(() =>
-            yearTransaction(db, async (tx) => {
-              await assertStillCollecting(tx, input.academicYear, guard);
-              await tx.award.create({ data: rowFor(r) });
-              await logCorrections(
-                tx,
-                guard,
-                actorUserID,
-                input.academicYear,
-                [lineFor(r)],
-                now,
-              );
-            }),
-          );
-          created.push(r);
-        } catch (e2) {
-          if (!isUniqueViolation(e2)) throw e2;
-          raced.push(r);
-        }
-      }
-    }
-    return { created, skipped: [...plan.skipped, ...raced] };
   };
 
-  const result = await retryWriteConflicts(attempt);
+  // One transaction for everyone, retried by yearWrite when it loses a write
+  // conflict (the plan is read again inside it each time).
+  let result: { created: typeof recipients; skipped: typeof recipients };
+  try {
+    result = await yearWrite(db, async (tx) => {
+      await assertStillCollecting(tx, input.academicYear, guard);
+      const plan = await planWith(tx);
+      if (plan.create.length > 0) {
+        await tx.award.createMany({ data: plan.create.map(rowFor) });
+      }
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        input.academicYear,
+        plan.create.map(lineFor),
+        now,
+      );
+      return { created: plan.create, skipped: plan.skipped };
+    });
+  } catch (e) {
+    if (!isUniqueViolation(e)) throw e;
+    // Someone gave one of these awards at the same moment (a double-submit,
+    // or another manager). A duplicate aborts the whole write, so go person by
+    // person: the ones who already have it are skipped, the rest are given it.
+    // Each person is its own yearWrite, and nothing retries this loop as a
+    // whole, so an award given here is always reported as assigned.
+    const plan = await planWith(db);
+    const created: typeof recipients = [];
+    const raced: typeof recipients = [];
+    for (const r of plan.create) {
+      try {
+        await yearWrite(db, async (tx) => {
+          await assertStillCollecting(tx, input.academicYear, guard);
+          await tx.award.create({ data: rowFor(r) });
+          await logCorrections(
+            tx,
+            guard,
+            actorUserID,
+            input.academicYear,
+            [lineFor(r)],
+            now,
+          );
+        });
+        created.push(r);
+      } catch (e2) {
+        if (!isUniqueViolation(e2)) throw e2;
+        raced.push(r);
+      }
+    }
+    result = { created, skipped: [...plan.skipped, ...raced] };
+  }
   return {
     assigned: result.created.length,
     assignedNames: result.created.map((r) => r.displayName ?? r.userID),
@@ -550,38 +553,36 @@ export async function awardRestore(
   );
   if (!award.voidedAt) return { id };
   try {
-    await retryWriteConflicts(() =>
-      yearTransaction(db, async (tx) => {
-        await assertStillCollecting(tx, award.academicYear, guard);
-        await tx.award.update({
-          where: { id },
-          data: {
-            voidedAt: null,
-            voidedBy: null,
-            activeKey: keyOf(award),
-            updatedBy: actorUserID,
-            updatedAt: now,
+    await yearWrite(db, async (tx) => {
+      await assertStillCollecting(tx, award.academicYear, guard);
+      await tx.award.update({
+        where: { id },
+        data: {
+          voidedAt: null,
+          voidedBy: null,
+          activeKey: keyOf(award),
+          updatedBy: actorUserID,
+          updatedAt: now,
+        },
+      });
+      await logCorrections(
+        tx,
+        guard,
+        actorUserID,
+        award.academicYear,
+        [
+          {
+            userID: award.userID,
+            summary: correctionSummary(
+              "Awards",
+              award.title ?? "Award",
+              "restored",
+            ),
           },
-        });
-        await logCorrections(
-          tx,
-          guard,
-          actorUserID,
-          award.academicYear,
-          [
-            {
-              userID: award.userID,
-              summary: correctionSummary(
-                "Awards",
-                award.title ?? "Award",
-                "restored",
-              ),
-            },
-          ],
-          now,
-        );
-      }),
-    );
+        ],
+        now,
+      );
+    });
   } catch (e) {
     if (isUniqueViolation(e)) throw fail("CONFLICT", "ALREADY_HAS_AWARD");
     throw e;
@@ -762,20 +763,18 @@ export async function awardsBulkRestore(
       restored = 0;
       for (const r of restorable) {
         try {
-          await retryWriteConflicts(() =>
-            yearTransaction(db, async (tx) => {
-              await assertStillCollecting(
-                tx,
-                r.academicYear,
-                guards.get(r.academicYear)!,
-              );
-              await tx.award.update({
-                where: { id: r.id },
-                data: restoreData(r),
-              });
-              await logBulk(tx, actorUserID, guards, [r], "restored", now);
-            }),
-          );
+          await yearWrite(db, async (tx) => {
+            await assertStillCollecting(
+              tx,
+              r.academicYear,
+              guards.get(r.academicYear)!,
+            );
+            await tx.award.update({
+              where: { id: r.id },
+              data: restoreData(r),
+            });
+            await logBulk(tx, actorUserID, guards, [r], "restored", now);
+          });
           restored += 1;
         } catch (e2) {
           if (!isUniqueViolation(e2)) throw e2;

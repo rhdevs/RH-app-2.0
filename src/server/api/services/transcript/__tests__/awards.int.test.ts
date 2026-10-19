@@ -181,6 +181,65 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(1);
       });
 
+      it("after a duplicate, the person-by-person fallback reports every award it gave as assigned, even when a person's write had to be retried (T2)", async () => {
+        const { awardsAssign } = await import("../manageAwards");
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16", "SEED-R17"];
+        for (const p of people)
+          expect(await awardsOf(p, t.name)).toHaveLength(0);
+        // Transaction 1 (everyone at once) hits a duplicate; transactions 2
+        // and 3-5 are the first person and three conflicts for the second,
+        // more than the old three-try wrapper took before the whole assignment
+        // was rerun and the first person reported as skipped.
+        let started = 0;
+        const failing = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return (
+                fn: (tx: unknown) => Promise<unknown>,
+                opts?: unknown,
+              ) => {
+                started += 1;
+                if (started === 1) {
+                  return Promise.reject(
+                    Object.assign(new Error("dup"), { code: "P2002" }),
+                  );
+                }
+                if (started >= 3 && started <= 5) {
+                  return Promise.reject(
+                    Object.assign(new Error("conflict"), { code: "P2034" }),
+                  );
+                }
+                return (
+                  target.$transaction as unknown as (
+                    f: (tx: unknown) => Promise<unknown>,
+                    o?: unknown,
+                  ) => Promise<unknown>
+                )(fn, opts);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+
+        const result = await awardsAssign(failing, JCRC.id, {
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: [...people, "SEED-R13"].map((userID) => ({
+            userID,
+            citation: null,
+          })),
+        });
+
+        expect(result.assigned).toBe(3);
+        expect(result.skipped.map((s) => s.userID)).toEqual(["SEED-R13"]);
+        for (const p of people)
+          expect(await awardsOf(p, t.name)).toHaveLength(1);
+      });
+
       it("refuses to restore when an active twin exists: ALREADY_HAS_AWARD", async () => {
         const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
         await as(JCRC).awards.remove({ id: a.id });
