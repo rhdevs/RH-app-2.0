@@ -1074,6 +1074,62 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
         expect(await snapshot()).toEqual(before);
       });
+
+      it("manual CCA entries refuse too: save, remove and restore (S6)", async () => {
+        const manual = await import("../residentManual");
+        const refused = "PRECONDITION_FAILED:PERIOD_PUBLISHED";
+        const seeded = await db.manualMembership.findFirstOrThrow({
+          where: { academicYear: AY },
+        });
+        const before = await db.manualMembership.findMany({
+          where: { academicYear: AY },
+        });
+        const ref = {
+          userID: seeded.userID,
+          academicYear: AY,
+          ccaID: seeded.ccaID,
+        };
+        expect(
+          await errorOf(
+            manual.manualSave(openingDuring(), JCRC.id, {
+              userID: R20.id,
+              academicYear: AY,
+              ccaID: SOCCER,
+              duration: "full",
+            }),
+          ),
+        ).toBe(refused);
+        await backToCollecting();
+        expect(
+          await errorOf(
+            manual.manualSave(openingDuring(), JCRC.id, {
+              ...ref,
+              extraContribution: "Saved too late.",
+            }),
+          ),
+        ).toBe(refused);
+        await backToCollecting();
+        expect(
+          await errorOf(manual.manualRemove(openingDuring(), JCRC.id, ref)),
+        ).toBe(refused);
+        await backToCollecting();
+        expect(
+          await db.manualMembership.findMany({ where: { academicYear: AY } }),
+        ).toEqual(before);
+
+        // Restore: removed while collecting, then refused once the year opens.
+        await manual.manualRemove(db, JCRC.id, ref);
+        expect(
+          await errorOf(manual.manualRestore(openingDuring(), JCRC.id, ref)),
+        ).toBe(refused);
+        expect(
+          (
+            await db.manualMembership.findFirstOrThrow({
+              where: { id: seeded.id },
+            })
+          ).removedAt,
+        ).not.toBeNull();
+      });
     });
 
     /* ---- (D4) the in-transaction check is a WRITE (S2) -------------------- */

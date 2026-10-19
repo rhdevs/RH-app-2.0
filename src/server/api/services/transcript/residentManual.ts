@@ -22,7 +22,9 @@ import { requireCca } from "./manageAccess";
 import { rosterRowsFor, type RosterRow } from "./manageRoster";
 import {
   assertCanEditForResidents,
+  assertStillCollecting,
   recordResidentEvent,
+  yearWrite,
 } from "./residentRecords";
 import { actorLabels, keysOf, requireResident } from "./residents";
 
@@ -175,8 +177,8 @@ async function guardManual(
   actorUserID: string,
   scope: Scope,
   key: string,
-) {
-  await assertCanEditForResidents(
+): Promise<{ correction: boolean }> {
+  return assertCanEditForResidents(
     db,
     { userID: actorUserID },
     { academicYear: scope.academicYear, affectedUserIDs: [key] },
@@ -197,7 +199,7 @@ export async function manualSave(
 ) {
   const resident = await requireResident(db, input.userID);
   const cca = await requireCca(db, input.ccaID);
-  await guardManual(db, actorUserID, input, resident.key);
+  const guard = await guardManual(db, actorUserID, input, resident.key);
 
   const where = uniqueWhere(input.academicYear, resident.key, input.ccaID);
   const existing = await db.manualMembership.findUnique({ where });
@@ -225,7 +227,8 @@ export async function manualSave(
       extraContribution: input.extraContribution,
     }),
   };
-  await db.$transaction(async (tx) => {
+  await yearWrite(db, async (tx) => {
+    await assertStillCollecting(tx, input.academicYear, guard);
     if (existing) {
       await tx.manualMembership.update({
         where,
@@ -270,14 +273,15 @@ async function setManualRemoved(
 ) {
   const resident = await requireResident(db, input.userID);
   const cca = await requireCca(db, input.ccaID);
-  await guardManual(db, actorUserID, input, resident.key);
+  const guard = await guardManual(db, actorUserID, input, resident.key);
   const where = uniqueWhere(input.academicYear, resident.key, input.ccaID);
   const row = await db.manualMembership.findUnique({ where });
   if (!row) throw fail("NOT_FOUND", "RECORD_NOT_FOUND");
   if (Boolean(row.removedAt) === removed) {
     return { userID: resident.key, ccaID: input.ccaID };
   }
-  await db.$transaction(async (tx) => {
+  await yearWrite(db, async (tx) => {
+    await assertStillCollecting(tx, input.academicYear, guard);
     await tx.manualMembership.update({
       where,
       data: removed
