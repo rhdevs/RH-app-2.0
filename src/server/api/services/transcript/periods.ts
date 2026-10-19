@@ -78,8 +78,24 @@ export async function listPublishedYears(db: PrismaClient): Promise<string[]> {
   return rows.map((r) => r.academicYear).sort();
 }
 
+/**
+ * What the screens may see of a period row: never `lastWriteID`, the year
+ * check's internal write marker.
+ */
+export const PERIOD_FIELDS = {
+  id: true,
+  academicYear: true,
+  downloadBy: true,
+  status: true,
+  publishedAt: true,
+  publishedBy: true,
+} as const;
+
 export function listPeriods(db: PrismaClient) {
-  return db.transcriptPeriod.findMany({ orderBy: { academicYear: "desc" } });
+  return db.transcriptPeriod.findMany({
+    orderBy: { academicYear: "desc" },
+    select: PERIOD_FIELDS,
+  });
 }
 
 /**
@@ -121,12 +137,14 @@ export async function upsertDownloadBy(
         where: { academicYear },
         create: { academicYear, downloadBy, status: STATUS_COLLECTING },
         update: { downloadBy },
+        select: PERIOD_FIELDS,
       });
     } catch (error) {
       if ((error as { code?: unknown }).code !== "P2002") throw error;
       return db.transcriptPeriod.update({
         where: { academicYear },
         data: { downloadBy },
+        select: PERIOD_FIELDS,
       });
     }
   });

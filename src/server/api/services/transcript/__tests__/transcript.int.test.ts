@@ -137,6 +137,27 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
     /* ------------------------------------------------------------------ */
+    describe("what the year screens receive (T8)", () => {
+      it("never sends the period row's lastWriteID to the client", async () => {
+        await db.transcriptPeriod.update({
+          where: { academicYear: AY },
+          data: { lastWriteID: "internal-marker" },
+        });
+        const listed = await as(JCRC).transcript.periods.list();
+        const row = listed.periods.find((p) => p.academicYear === AY);
+        expect(row).toBeDefined();
+        expect(row).not.toHaveProperty("lastWriteID");
+        expect(JSON.stringify(listed)).not.toContain("internal-marker");
+
+        const saved = await as(JCRC).transcript.periods.setDownloadBy({
+          academicYear: AY,
+          downloadBy: "2027-07-15",
+        });
+        expect(saved).not.toHaveProperty("lastWriteID");
+        expect(saved.downloadBy).toBeInstanceOf(Date);
+      });
+    });
+
     describe("who may control a year", () => {
       it("lets only jcrc and admin list and open transcripts", async () => {
         for (const who of [RESIDENT, HEAD_4]) {

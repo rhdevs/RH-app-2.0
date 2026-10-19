@@ -89,6 +89,7 @@ describe("upsertDownloadBy", () => {
         status: "collecting",
       },
       update: { downloadBy: DAY },
+      select: periods.PERIOD_FIELDS,
     });
   });
 
@@ -117,6 +118,7 @@ describe("upsertDownloadBy", () => {
     expect(update).toHaveBeenCalledWith({
       where: { academicYear: "AY2026/27" },
       data: { downloadBy: DAY },
+      select: periods.PERIOD_FIELDS,
     });
   });
 
