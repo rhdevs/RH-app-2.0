@@ -53,11 +53,31 @@ describe("set-transcript-flag.mjs names the database it writes to", () => {
     expect(describeTarget("mongodb://user:pa/ss@host/db")).toBe(
       "host host, database db",
     );
+    // A "?" inside the password ends nothing: options start after the hosts.
     expect(describeTarget("mongodb://user:pa?ss@host/db")).toBe(
+      "host host, database db",
+    );
+    // "a@b/c@host": the credentials end at "a@", so "c@host" is an "@" the
+    // reading does not account for, and the target is not named (T7).
+    expect(describeTarget("mongodb://user:a@b/c@host:27017/db")).toBe(
       "(host not recognised)",
     );
-    expect(describeTarget("mongodb://user:a@b/c@host:27017/db")).toBe(
-      "host host:27017, database db",
+    // T7: a "?" and options-like text inside the password.
+    expect(
+      describeTarget("mongodb://admin:12345?x=1@prod.example.net/rhapp"),
+    ).toBe("host prod.example.net, database rhapp");
+    // T7: an "@" in the path after the hosts is never read as the boundary.
+    expect(describeTarget("mongodb://user:pw@prod.example.net/rhapp@x")).toBe(
+      "(host not recognised)",
+    );
+    expect(
+      describeTarget("mongodb://user:pw@prod.example.net/rhapp?appName=a@b"),
+    ).toBe("(host not recognised)");
+    expect(describeTarget("mongodb://user:pw@host?x=a@b")).toBe(
+      "(host not recognised)",
+    );
+    expect(describeTarget("mongodb://user:p@ss@host")).toBe(
+      "host host, database (none: the default)",
     );
     for (const url of [
       "mongodb://user:pa/ss@host/db",
