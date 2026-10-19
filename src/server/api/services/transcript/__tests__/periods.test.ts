@@ -92,6 +92,34 @@ describe("upsertDownloadBy", () => {
     });
   });
 
+  it("runs again when it loses a write conflict on the period row (T4)", async () => {
+    const { db, upsert } = dbWith(collecting);
+    upsert
+      .mockRejectedValueOnce(Object.assign(new Error("c"), { code: "P2034" }))
+      .mockResolvedValue({ academicYear: "AY2026/27" });
+
+    await upsertDownloadBy(db, "AY2026/27", DAY);
+
+    expect(upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it("sets the date on the row a head's first save created at the same moment (T4)", async () => {
+    const { db, upsert } = dbWith(null);
+    const update = vi.fn().mockResolvedValue({ academicYear: "AY2026/27" });
+    (db.transcriptPeriod as unknown as { update: typeof update }).update =
+      update;
+    upsert.mockRejectedValueOnce(
+      Object.assign(new Error("dup"), { code: "P2002" }),
+    );
+
+    await upsertDownloadBy(db, "AY2026/27", DAY);
+
+    expect(update).toHaveBeenCalledWith({
+      where: { academicYear: "AY2026/27" },
+      data: { downloadBy: DAY },
+    });
+  });
+
   it("refuses a year before transcripts began, and a malformed one", async () => {
     const { db, upsert } = dbWith(null);
 

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import { TRANSCRIPT_COLLECTIONS } from "../retention";
+import type { PrismaClient } from "@prisma/client";
+import { describe, expect, it, vi } from "vitest";
+import { TRANSCRIPT_COLLECTIONS, purgeAcademicYear } from "../retention";
 
 /**
  * The purge must know every collection that carries an academic year. This reads
@@ -53,5 +54,29 @@ describe("the purge registry", () => {
     const sample = `model Alpha {\n  id String\n  academicYear String\n}\n\nmodel Beta {\n  id String\n  note String // academicYear in a comment\n}\n`;
 
     expect(modelsWithAcademicYear(sample)).toEqual(["Alpha"]);
+  });
+});
+
+describe("purgeAcademicYear", () => {
+  it("runs the period status write again when it loses a write conflict (T4)", async () => {
+    const deleteMany = vi.fn().mockResolvedValue({ count: 0 });
+    const updateMany = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("c"), { code: "P2034" }))
+      .mockResolvedValue({ count: 1 });
+    const db = new Proxy(
+      {},
+      {
+        get: (_t, prop) =>
+          prop === "transcriptPeriod"
+            ? { updateMany, deleteMany }
+            : { deleteMany },
+      },
+    ) as PrismaClient;
+
+    await purgeAcademicYear(db, "AY2026/27");
+
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    expect(deleteMany).toHaveBeenCalled();
   });
 });

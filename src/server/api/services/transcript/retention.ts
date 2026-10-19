@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import { isValidAcademicYear } from "~/lib/transcript/academicYear";
+import { retryYearConflicts } from "./yearRetry";
 
 /**
  * DATA RETENTION: delete one academic year's transcript data.
@@ -106,10 +107,13 @@ export async function purgeAcademicYear(
     return counts;
   }
 
-  await db.transcriptPeriod.updateMany({
-    where: { academicYear, status: { not: "collecting" } },
-    data: { status: "collecting" },
-  });
+  // Retried like every other write to the period row.
+  await retryYearConflicts(() =>
+    db.transcriptPeriod.updateMany({
+      where: { academicYear, status: { not: "collecting" } },
+      data: { status: "collecting" },
+    }),
+  );
   const order = [
     ...TRANSCRIPT_COLLECTIONS.filter((n) => n !== "TranscriptPeriod"),
     "TranscriptPeriod" as const,

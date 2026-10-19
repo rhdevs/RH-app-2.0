@@ -111,10 +111,24 @@ export async function upsertDownloadBy(
   downloadBy: Date | null,
 ) {
   requireSupportedYear(academicYear);
-  return db.transcriptPeriod.upsert({
-    where: { academicYear },
-    create: { academicYear, downloadBy, status: STATUS_COLLECTING },
-    update: { downloadBy },
+  // A write to the period row like any other: retried when it loses a write
+  // conflict. Two upserts of a missing row (this and a head's first save in
+  // August) can both try to create it; the loser gets a duplicate, and the
+  // row is there now, so it only needs the date.
+  return retryYearConflicts(async () => {
+    try {
+      return await db.transcriptPeriod.upsert({
+        where: { academicYear },
+        create: { academicYear, downloadBy, status: STATUS_COLLECTING },
+        update: { downloadBy },
+      });
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== "P2002") throw error;
+      return db.transcriptPeriod.update({
+        where: { academicYear },
+        data: { downloadBy },
+      });
+    }
   });
 }
 
