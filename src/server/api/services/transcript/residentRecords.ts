@@ -126,6 +126,12 @@ export async function assertCanEditForResidents(
 }
 
 /**
+ * The guard result of a write only `assertCanEditCcaYear` admits (activities,
+ * volunteer activities and sessions): never a correction.
+ */
+export const ORDINARY_WRITE = { correction: false } as const;
+
+/**
  * The same question again, INSIDE the write's transaction: an ordinary write
  * (not a correction) needs the year still collecting. The guard above runs
  * before the transaction, so a head's save in flight while the JCRC presses
@@ -141,12 +147,6 @@ export async function assertCanEditForResidents(
  * it to the admin year lists. A correction is for an open year already, so it
  * is not checked here.
  */
-/**
- * The guard result of a write only `assertCanEditCcaYear` admits (activities,
- * volunteer activities and sessions): never a correction.
- */
-export const ORDINARY_WRITE = { correction: false } as const;
-
 export async function assertStillCollecting(
   tx: Pick<PrismaClient, "transcriptPeriod">,
   academicYear: string,

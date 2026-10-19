@@ -622,7 +622,6 @@ async function bulkTargets(
   return { rows, guards };
 }
 
-/** Log a bulk change's corrections, year by year. */
 /** The in-transaction year check for every year a bulk change touches. */
 async function assertYearsStillCollecting(
   tx: Pick<PrismaClient, "transcriptPeriod">,
@@ -633,6 +632,7 @@ async function assertYearsStillCollecting(
   }
 }
 
+/** Log a bulk change's corrections, year by year. */
 async function logBulk(
   db: Pick<PrismaClient, "residentEvent">,
   actorUserID: string,
