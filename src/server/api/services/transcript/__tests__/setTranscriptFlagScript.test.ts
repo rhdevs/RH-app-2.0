@@ -62,9 +62,13 @@ describe("set-transcript-flag.mjs names the database it writes to", () => {
     expect(describeTarget("mongodb://user:a@b/c@host:27017/db")).toBe(
       "(host not recognised)",
     );
-    // T7: a "?" and options-like text inside the password.
+    // U1: a lead that is a host with a port or a user with a numeric password
+    // cannot be told apart, so nothing is named.
     expect(
       describeTarget("mongodb://admin:12345?x=1@prod.example.net/rhapp"),
+    ).toBe("(host not recognised)");
+    expect(
+      describeTarget("mongodb://admin:pw?x=1@prod.example.net/rhapp"),
     ).toBe("host prod.example.net, database rhapp");
     // T7: an "@" in the path after the hosts is never read as the boundary.
     expect(describeTarget("mongodb://user:pw@prod.example.net/rhapp@x")).toBe(
@@ -88,6 +92,41 @@ describe("set-transcript-flag.mjs names the database it writes to", () => {
     ]) {
       const shown = describeTarget(url);
       for (const secret of ["user", "pa", "ss", "se cret", "a@b", "admin"]) {
+        expect(shown, url).not.toContain(secret);
+      }
+    }
+  });
+
+  it("reads an @ after the hosts as part of the path or options, not credentials (U1)", () => {
+    const cases: Array<[string, string]> = [
+      [
+        "mongodb://prod.example.net/rhapp?appName=a@b",
+        "host prod.example.net, database rhapp",
+      ],
+      ["mongodb://real.host/db?x=a@evil.host", "host real.host, database db"],
+      [
+        "mongodb://prod.example.net/rhapp@x",
+        "host prod.example.net, database (not recognised)",
+      ],
+      [
+        "mongodb://prod.example.net/rhapp?authSource=admin&tlsCertificateKeyFilePassword=sec@ret",
+        "host prod.example.net, database rhapp",
+      ],
+      ["mongodb://host#frag@x/db", "(host not recognised)"],
+      // A port makes the lead ambiguous with user:password: fail closed.
+      ["mongodb://host:27017/db?x=a@b", "(host not recognised)"],
+      ["mongodb://a:1,b:2/db?x=a@b", "(host not recognised)"],
+      [
+        "mongodb://a.example.net,b.example.net/db?x=a@b",
+        "host a.example.net,b.example.net, database db",
+      ],
+      // Options before any "/" never turn into a database name.
+      ["mongodb://host?x=a/b", "host host, database (none: the default)"],
+    ];
+    for (const [url, expected] of cases) {
+      const shown = describeTarget(url);
+      expect(shown, url).toBe(expected);
+      for (const secret of ["evil", "ret", "sec", "frag"]) {
         expect(shown, url).not.toContain(secret);
       }
     }
