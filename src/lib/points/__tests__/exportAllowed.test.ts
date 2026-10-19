@@ -20,14 +20,20 @@ const range = { meanMin: 12, meanMax: 14, sdMin: 2, sdMax: 3 };
 
 describe("exportAllowedNow", () => {
   it("allows an export when entry is open and the scores pass the fresh range", () => {
-    expect(exportAllowedNow(entries, { entryOpen: true, range, ihg: null })).toEqual({
+    expect(
+      exportAllowedNow(entries, { entryOpen: true, range, ihg: null }),
+    ).toEqual({
       allowed: true,
       blockers: [],
     });
   });
 
   it("blocks when JCRC has closed entry since the page loaded", () => {
-    const result = exportAllowedNow(entries, { entryOpen: false, range, ihg: null });
+    const result = exportAllowedNow(entries, {
+      entryOpen: false,
+      range,
+      ihg: null,
+    });
     expect(result.allowed).toBe(false);
     expect(result.blockers.map((b) => b.code)).toEqual(["NOT_OPEN"]);
   });

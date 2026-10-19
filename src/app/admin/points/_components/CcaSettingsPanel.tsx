@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "~/trpc/react";
 import { Checkbox } from "~/components/ui/checkbox";
@@ -14,12 +14,11 @@ import {
 } from "~/components/ui/select";
 import {
   CCA_TYPES,
-  IHG_CAP_MAX,
-  IHG_CAP_MIN,
   IHG_RESULTS,
   type CcaType,
   type IhgResult,
 } from "~/lib/points/constants";
+import { CAP_ERROR, decideCapCommit } from "./capInput";
 import { pointsErrorCopy } from "./errorCopy";
 
 /** One entry of `getConfig.ccas`. */
@@ -42,16 +41,8 @@ const IHG_LABELS: Record<IhgResult, string> = {
   "3rd": "3rd",
   "3rd4th_no_match": "3rd–4th, no placement match",
 };
-const CAP_ERROR = `Whole number ${IHG_CAP_MIN}–${IHG_CAP_MAX}`;
 
 type RowStatus = { kind: "saving" | "saved" | "error"; text: string };
-
-function parseCap(text: string): number | null {
-  const t = text.trim();
-  if (!/^\d+$/.test(t)) return null;
-  const n = Number(t);
-  return n >= IHG_CAP_MIN && n <= IHG_CAP_MAX ? n : null;
-}
 
 function errorText(err: unknown): string {
   const e = err as { message?: string; data?: { code?: string } | null };
@@ -79,48 +70,74 @@ function CcaSettingsRowItem({
   const setType = api.ccaPoints.setType.useMutation();
   const setIhg = api.ccaPoints.setIhg.useMutation();
   const setSport = api.ccaPoints.setSport.useMutation();
-  const pending = setType.isPending || setIhg.isPending || setSport.isPending;
+
+  // The whole row is locked from the start of a save until the reload has
+  // finished, so no control can write back a stale value of another field.
+  // The ref is the synchronous guard (Enter then blur); the state drives the UI.
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
 
   const save = async (write: () => Promise<unknown>): Promise<boolean> => {
+    if (busyRef.current) return false;
+    busyRef.current = true;
+    setBusy(true);
     setStatus({ kind: "saving", text: "Saving…" });
     try {
-      await write();
-    } catch (err) {
-      setStatus({ kind: "error", text: errorText(err) });
-      return false;
+      try {
+        await write();
+      } catch (err) {
+        setStatus({ kind: "error", text: errorText(err) });
+        return false;
+      }
+      const reloaded = await onChanged();
+      setStatus(
+        reloaded
+          ? { kind: "saved", text: "Saved" }
+          : {
+              kind: "error",
+              text: "Saved, but couldn't reload the current settings. Reload the page.",
+            },
+      );
+      return true;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
-    const reloaded = await onChanged();
-    setStatus(
-      reloaded
-        ? { kind: "saved", text: "Saved" }
-        : {
-            kind: "error",
-            text: "Saved, but couldn't reload the current settings. Reload the page.",
-          },
-    );
-    return true;
   };
 
-  const saveIhg = async (result: IhgResult | null, cap: number | null) => {
+  const saveIhg = async (
+    result: IhgResult | null,
+    cap: number | null,
+  ): Promise<boolean> => {
     const lowered = cap !== null && cca.ihgCap !== null && cap < cca.ihgCap;
-    if (await save(() => setIhg.mutateAsync({ ccaID: cca.ccaID, result, cap }))) {
+    const saved = await save(() =>
+      setIhg.mutateAsync({ ccaID: cca.ccaID, result, cap }),
+    );
+    if (saved) {
       setCapLowered(lowered);
+    } else {
+      // Never leave the box showing a number that wasn't stored.
+      setCapText(cca.ihgCap?.toString() ?? "");
+      setCapInvalid(false);
     }
+    return saved;
   };
 
-  const commitCap = () => {
-    const trimmed = capText.trim();
-    if (trimmed === (cca.ihgCap?.toString() ?? "")) {
-      setCapInvalid(false);
-      return;
-    }
-    const cap = trimmed === "" ? null : parseCap(trimmed);
-    if (trimmed !== "" && cap === null) {
+  const commitCap = async () => {
+    if (busyRef.current) return;
+    const decision = decideCapCommit(capText, cca.ihgCap);
+    if (decision.kind === "invalid") {
       setCapInvalid(true);
       return;
     }
     setCapInvalid(false);
-    void saveIhg(cca.ihgResult, cap);
+    if (decision.kind === "noop") {
+      setCapText(cca.ihgCap?.toString() ?? "");
+      return;
+    }
+    if (await saveIhg(cca.ihgResult, decision.cap)) {
+      setCapText(decision.cap === null ? "" : String(decision.cap));
+    }
   };
 
   const idBase = `cca-settings-${cca.ccaID}`;
@@ -139,7 +156,7 @@ function CcaSettingsRowItem({
         <Checkbox
           id={`${idBase}-sport`}
           checked={cca.isSport}
-          disabled={cca.isFlat || pending}
+          disabled={cca.isFlat || busy}
           onCheckedChange={(v) =>
             void save(() =>
               setSport.mutateAsync({ ccaID: cca.ccaID, isSport: v === true }),
@@ -156,7 +173,7 @@ function CcaSettingsRowItem({
 
       <Select
         value={cca.type ?? NOT_SET}
-        disabled={cca.isFlat || pending}
+        disabled={cca.isFlat || busy}
         onValueChange={(v) =>
           void save(() =>
             setType.mutateAsync({
@@ -190,7 +207,7 @@ function CcaSettingsRowItem({
             <div className="w-full min-w-0 sm:w-56">
               <Select
                 value={cca.ihgResult ?? NOT_SET}
-                disabled={pending}
+                disabled={busy}
                 onValueChange={(v) =>
                   void saveIhg(
                     v === NOT_SET ? null : (v as IhgResult),
@@ -218,11 +235,11 @@ function CcaSettingsRowItem({
                 aria-label={`IHG cap for ${cca.ccaName}`}
                 aria-invalid={capInvalid}
                 value={capText}
-                disabled={pending}
+                disabled={busy}
                 onChange={(e) => setCapText(e.target.value)}
-                onBlur={commitCap}
+                onBlur={() => void commitCap()}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") commitCap();
+                  if (e.key === "Enter") void commitCap();
                 }}
                 className="h-9"
               />

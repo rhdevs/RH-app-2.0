@@ -56,9 +56,7 @@ export type BundleCca = {
   ihgCap: number | null;
 };
 
-type BundleRow = Partial<
-  Record<(typeof BUNDLE_EXPORT_HEADER)[number], string>
->;
+type BundleRow = Partial<Record<(typeof BUNDLE_EXPORT_HEADER)[number], string>>;
 
 const byCcaID = <T extends { ccaID: number }>(a: T, b: T): number =>
   a.ccaID - b.ccaID;

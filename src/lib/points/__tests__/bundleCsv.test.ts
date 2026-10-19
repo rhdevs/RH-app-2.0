@@ -154,7 +154,9 @@ describe("buildBundleCsv", () => {
         },
       ],
     });
-    expect(csv).toContain(`1,settings,waiver,9101,Drama,,,,,,,,10,15,2,5,,${STAMP}`);
+    expect(csv).toContain(
+      `1,settings,waiver,9101,Drama,,,,,,,,10,15,2,5,,${STAMP}`,
+    );
   });
 
   it("sorts ccas and flat groups by ccaID and keeps member order", () => {
@@ -168,7 +170,12 @@ describe("buildBundleCsv", () => {
 
   it("throws on a bad matric", () => {
     const bad: FlatCsvCca[] = [
-      { ccaID: 9001, ccaName: "Hall Choir", flatPoints: 12, members: [{ matric: "nope", name: "X" }] },
+      {
+        ccaID: 9001,
+        ccaName: "Hall Choir",
+        flatPoints: 12,
+        members: [{ matric: "nope", name: "X" }],
+      },
     ];
     expect(() => build({ flat: bad })).toThrow(/matric/);
   });
@@ -176,11 +183,24 @@ describe("buildBundleCsv", () => {
   it("guards only ccaName, name and note", () => {
     const csv = build({
       waivers: [
-        { ccaID: 9101, ccaName: "=w", meanMin: null, meanMax: null, sdMin: null, sdMax: null, note: "+n" },
+        {
+          ccaID: 9101,
+          ccaName: "=w",
+          meanMin: null,
+          meanMax: null,
+          sdMin: null,
+          sdMax: null,
+          note: "+n",
+        },
       ],
       ccas: [cca(9001, "-c", { flatPoints: 1, type: "1x" })],
       flat: [
-        { ccaID: 9001, ccaName: "-c", flatPoints: 1, members: [{ matric: "A9910101X", name: "@m" }] },
+        {
+          ccaID: 9001,
+          ccaName: "-c",
+          flatPoints: 1,
+          members: [{ matric: "A9910101X", name: "@m" }],
+        },
       ],
     });
     expect(csv).toContain(",9101,'=w,");
@@ -199,7 +219,14 @@ describe("buildBundleCsv", () => {
 
   it("writes blank IHG cells when isSport is false, even if values are given", () => {
     const csv = build({
-      ccas: [cca(9301, "Chess", { type: "1x", isSport: false, ihgResult: "2nd", ihgCap: 5 })],
+      ccas: [
+        cca(9301, "Chess", {
+          type: "1x",
+          isSport: false,
+          ihgResult: "2nd",
+          ihgCap: 5,
+        }),
+      ],
       flat: [],
       waivers: [],
     });
@@ -210,10 +237,15 @@ describe("buildBundleCsv", () => {
     const frozenCcas = Object.freeze(CCAS.map((c) => Object.freeze({ ...c })));
     const frozenFlat = Object.freeze(
       FLAT.map((f) =>
-        Object.freeze({ ...f, members: Object.freeze(f.members.map((m) => Object.freeze({ ...m }))) }),
+        Object.freeze({
+          ...f,
+          members: Object.freeze(f.members.map((m) => Object.freeze({ ...m }))),
+        }),
       ),
     );
-    const frozenWaivers = Object.freeze(WAIVERS.map((w) => Object.freeze({ ...w })));
+    const frozenWaivers = Object.freeze(
+      WAIVERS.map((w) => Object.freeze({ ...w })),
+    );
     expect(() =>
       build({
         ccas: frozenCcas,
@@ -222,7 +254,9 @@ describe("buildBundleCsv", () => {
         defaultRange: Object.freeze({ ...DEFAULT_RANGE }),
       }),
     ).not.toThrow();
-    expect(frozenCcas.map((c) => c.ccaID)).toEqual([9202, 9101, 9001, 9201, 9002]);
+    expect(frozenCcas.map((c) => c.ccaID)).toEqual([
+      9202, 9101, 9001, 9201, 9002,
+    ]);
   });
 
   it("has 18 cells on every line", () => {
@@ -256,7 +290,12 @@ describe("bundleGaps", () => {
 
   it("lists a sport with a result but no cap, in ccaID order", () => {
     const ccas = [
-      cca(9300, "B", { type: "1x", isSport: true, ihgResult: "1st", ihgCap: null }),
+      cca(9300, "B", {
+        type: "1x",
+        isSport: true,
+        ihgResult: "1st",
+        ihgCap: null,
+      }),
       cca(9200, "A", { type: "1x", isSport: true }),
     ];
     expect(bundleGaps(ccas)).toEqual({ type: [], ihg: [9200, 9300] });
