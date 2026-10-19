@@ -8,6 +8,7 @@ import {
   openAvailability,
   WRITES_LOCKED_NOTE,
   errorText,
+  stoppedLine,
   fieldError,
   isWritable,
   lockFailureText,
@@ -243,5 +244,17 @@ describe("validation messages", () => {
     expect(fieldError(zodError, "citation")).toBeNull();
     expect(fieldError(null, "title")).toBeNull();
     expect(fieldError(undefined, "title")).toBeNull();
+  });
+});
+
+describe("stoppedLine (U4)", () => {
+  it("says how many were done, why it stopped and what to do", () => {
+    expect(stoppedLine(3, "RECORDS_BUSY")).toBe(
+      "3 were done before it stopped: Someone else is saving right now. Please try again. Submit again to finish; anyone already done will be skipped.",
+    );
+    expect(stoppedLine(1, "UNKNOWN")).toMatch(
+      /^1 was done before it stopped: /,
+    );
+    expect(stoppedLine(0, "PERIOD_PUBLISHED")).toMatch(/^0 were done/);
   });
 });

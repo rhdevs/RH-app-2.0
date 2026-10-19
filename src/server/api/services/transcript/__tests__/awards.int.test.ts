@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
+import { TRPCError } from "@trpc/server";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { awardActiveKey } from "~/lib/transcript/awards";
@@ -476,6 +477,177 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     /* ---------------------------------------------------------------- */
+    describe("retried and partial bulk writes (U3, U4)", () => {
+      /**
+       * A db whose n-th transaction (1-based) is replaced: `before` runs first
+       * (a rival write), then the transaction fails with `error` when one is
+       * given, else it runs as usual.
+       */
+      const interfering = (
+        plan: Record<
+          number,
+          { before?: () => Promise<unknown>; error?: Error }
+        >,
+      ) => {
+        let started = 0;
+        return new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return async (
+                fn: (tx: unknown) => Promise<unknown>,
+                opts?: unknown,
+              ) => {
+                started += 1;
+                const step = plan[started];
+                await step?.before?.();
+                if (step?.error) throw step.error;
+                return (
+                  target.$transaction as unknown as (
+                    f: (tx: unknown) => Promise<unknown>,
+                    o?: unknown,
+                  ) => Promise<unknown>
+                )(fn, opts);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+      };
+      const conflict = () =>
+        Object.assign(new Error("conflict"), { code: "P2034" });
+      const duplicate = () =>
+        Object.assign(new Error("dup"), { code: "P2002" });
+
+      it("a bulk restore that is retried does not write over a row someone restored and renamed meanwhile (U3)", async () => {
+        const { awardsBulkRestore } = await import("../manageAwards");
+        const old = await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "Old Plaque",
+            activeKey: `${AY}|SEED-R20|title:old plaque`,
+          },
+        });
+        await as(JCRC).awards.remove({ id: old.id });
+
+        // The first attempt loses a write conflict; before the retry another
+        // manager restores the award and renames it.
+        const racing = interfering({
+          1: {
+            error: conflict(),
+            before: async () => {
+              await as(JCRC).awards.restore({ id: old.id });
+              await as(JCRC).awards.update({
+                id: old.id,
+                title: "Third Plaque",
+                citation: null,
+              });
+            },
+          },
+        });
+
+        const result = await awardsBulkRestore(racing, JCRC.id, [old.id]);
+
+        expect(result.restored).toBe(0);
+        const row = await db.award.findUniqueOrThrow({ where: { id: old.id } });
+        expect(row.title).toBe("Third Plaque");
+        expect(row.activeKey).toBe(`${AY}|SEED-R20|title:third plaque`);
+        expect(row.voidedAt ?? null).toBeNull();
+      });
+
+      it("a bulk remove that is retried leaves alone a row someone removed meanwhile, and counts only what it removed (U3)", async () => {
+        const { awardsBulkRemove } = await import("../manageAwards");
+        const [a, b] = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 2,
+        });
+        const racing = interfering({
+          1: {
+            error: conflict(),
+            before: () => as(JCRC).awards.remove({ id: a!.id }),
+          },
+        });
+
+        const result = await awardsBulkRemove(racing, JCRC.id, [a!.id, b!.id]);
+
+        expect(result.removed).toBe(1);
+        // Both are removed, and the one removed first was not counted again.
+        const rows = await db.award.findMany({
+          where: { id: { in: [a!.id, b!.id] } },
+        });
+        expect(rows.every((r) => r.voidedAt != null)).toBe(true);
+        expect(rows.map((r) => r.activeKey).sort()).toEqual(
+          [a!, b!].map((r) => `${r.activeKey}|removed|${r.id}`).sort(),
+        );
+      });
+
+      it("an assignment whose fallback fails part way returns who is done and the error code (U4)", async () => {
+        const { awardsAssign } = await import("../manageAwards");
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16", "SEED-R17"];
+        const busy = new TRPCError({
+          code: "CONFLICT",
+          message: "RECORDS_BUSY",
+        });
+        // 1: everyone at once hits a duplicate; 2: first person; 3: second fails.
+        const racing = interfering({
+          1: { error: duplicate() },
+          3: { error: busy },
+        });
+
+        const result = await awardsAssign(racing, JCRC.id, {
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: people.map((userID) => ({ userID, citation: null })),
+        });
+
+        expect(result.stopped).toBe("RECORDS_BUSY");
+        expect(result.assigned).toBe(1);
+        expect(result.assignedUserIDs).toEqual([people[0]]);
+        expect(await awardsOf(people[0]!, t.name)).toHaveLength(1);
+        expect(await awardsOf(people[1]!, t.name)).toHaveLength(0);
+        // Submitting again finishes the rest and skips the one already done.
+        const again = await awardsAssign(db, JCRC.id, {
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: people.map((userID) => ({ userID, citation: null })),
+        });
+        expect(again.stopped).toBeNull();
+        expect(again.assigned).toBe(2);
+        expect(again.skipped.map((x) => x.userID)).toEqual([people[0]]);
+      });
+
+      it("a bulk restore whose fallback fails part way returns who is done and the error code (U4)", async () => {
+        const { awardsBulkRestore } = await import("../manageAwards");
+        const mine = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 3,
+        });
+        const ids = mine.map((m) => m.id);
+        for (const id of ids) await as(JCRC).awards.remove({ id });
+        const unknown = new Error("Transaction already closed (timeout)");
+        const racing = interfering({
+          1: { error: duplicate() },
+          3: { error: unknown },
+        });
+
+        const result = await awardsBulkRestore(racing, JCRC.id, ids);
+
+        expect(result.stopped).toBe("UNKNOWN");
+        expect(result.restored).toBe(1);
+        const active = await db.award.findMany({
+          where: { id: { in: ids }, ...live },
+        });
+        expect(active).toHaveLength(1);
+        // Submitting again restores the rest; the one already done is not touched.
+        const again = await awardsBulkRestore(db, JCRC.id, ids);
+        expect(again).toMatchObject({ restored: 2, stopped: null });
+      });
+    });
+
     describe("self-recorded awards (F25a)", () => {
       it("flags an award a manager recorded for themselves, and only that", async () => {
         const t = await fullColours();
@@ -942,7 +1114,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(0);
 
         const back = await as(JCRC).awards.bulkRestore({ ids });
-        expect(back).toEqual({ restored: 3, skipped: [] });
+        expect(back).toEqual({ restored: 3, skipped: [], stopped: null });
         expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(1);
       });
 

@@ -14,7 +14,7 @@ import {
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { errorText, fieldError } from "~/lib/transcript/adminView";
+import { errorText, fieldError, stoppedLine } from "~/lib/transcript/adminView";
 import {
   AWARD_CITATION_MAX,
   AWARD_NAME_MAX,
@@ -536,10 +536,14 @@ export default function AwardsList({
     onSuccess: async (result) => {
       setConfirm(null);
       setSelection(EMPTY_SELECTION);
-      setNotice(
+      const line =
         result.skipped.length > 0
           ? `${result.restored} restored. Skipped (already have it): ${result.skipped.join(", ")}.`
-          : `${result.restored} restored.`,
+          : `${result.restored} restored.`;
+      setNotice(
+        result.stopped
+          ? `${line} ${stoppedLine(result.restored, result.stopped)}`
+          : line,
       );
       await refresh();
     },

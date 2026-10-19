@@ -115,7 +115,12 @@ async function inChunks<T>(
   }
 }
 
-/** Soft-remove awards, freeing each one's unique key in the same write. */
+/**
+ * Soft-remove awards, freeing each one's unique key in the same write. The
+ * write is filtered to rows that are still active, so a row someone removed
+ * meanwhile is left alone. `rows` must be read in the same transaction (a
+ * retried body reads them again), or `activeKey` could be stale.
+ */
 async function voidAwards(
   tx: Pick<PrismaClient, "award">,
   rows: ReadonlyArray<{ id: string; activeKey: string }>,
@@ -123,8 +128,8 @@ async function voidAwards(
   now: Date,
 ) {
   await inChunks(rows, (r) =>
-    tx.award.update({
-      where: { id: r.id },
+    tx.award.updateMany({
+      where: { id: r.id, ...NOT_VOIDED },
       data: {
         voidedAt: now,
         voidedBy: actorUserID,
@@ -132,6 +137,22 @@ async function voidAwards(
       },
     }),
   );
+}
+
+/** The awards among `ids` that are active right now (read it in the transaction). */
+const activeAmong = (tx: Pick<PrismaClient, "award">, ids: readonly string[]) =>
+  tx.award.findMany({ where: { id: { in: [...ids] }, ...NOT_VOIDED } });
+
+/** Removed right now: the state filter of a restore. */
+const REMOVED = { voidedAt: { not: null } } as const;
+
+/**
+ * Why a person-by-person loop stopped: a TRPC message such as RECORDS_BUSY or
+ * PERIOD_PUBLISHED, else UNKNOWN (a timeout, a lost connection).
+ */
+export function stopReason(e: unknown): string {
+  if (e instanceof TRPCError) return e.message;
+  return "UNKNOWN";
 }
 
 export async function awardTypeCreate(
@@ -312,6 +333,7 @@ export async function awardsAssign(
   // One transaction for everyone, retried by yearWrite when it loses a write
   // conflict (the plan is read again inside it each time).
   let result: { created: typeof recipients; skipped: typeof recipients };
+  let stopped: string | null = null;
   try {
     result = await yearWrite(db, async (tx) => {
       await assertStillCollecting(tx, input.academicYear, guard);
@@ -355,8 +377,14 @@ export async function awardsAssign(
         });
         created.push(r);
       } catch (e2) {
-        if (!isUniqueViolation(e2)) throw e2;
-        raced.push(r);
+        if (isUniqueViolation(e2)) {
+          raced.push(r);
+          continue;
+        }
+        // Not a duplicate (busy, published, a timeout): stop here and report
+        // who is already done; submitting again skips them.
+        stopped = stopReason(e2);
+        break;
       }
     }
     result = { created, skipped: [...plan.skipped, ...raced] };
@@ -364,10 +392,13 @@ export async function awardsAssign(
   return {
     assigned: result.created.length,
     assignedNames: result.created.map((r) => r.displayName ?? r.userID),
+    assignedUserIDs: result.created.map((r) => r.userID),
     skipped: result.skipped.map((r) => ({
       userID: r.userID,
       displayName: r.displayName,
     })),
+    /** Set (an error code) when the person-by-person fallback stopped early. */
+    stopped,
   };
 }
 
@@ -438,17 +469,20 @@ export async function awardUpdate(
   if (award.voidedAt) throw fail("CONFLICT", "AWARD_REMOVED");
   // An award with no catalogue entry is unique by its title, so renaming it
   // moves its key; one with an entry keeps its key whatever the title says.
-  const activeKey = award.awardTypeID
-    ? award.activeKey
-    : awardActiveKey({
-        academicYear: award.academicYear,
-        userID: award.userID,
-        awardTypeID: null,
-        title: input.title,
-      });
   try {
     await yearWrite(db, async (tx) => {
       await assertStillCollecting(tx, award.academicYear, guard);
+      // Read again here: a retry must not write the key of an earlier read.
+      const [current] = await activeAmong(tx, [award.id]);
+      if (!current) throw fail("CONFLICT", "AWARD_REMOVED");
+      const activeKey = current.awardTypeID
+        ? current.activeKey
+        : awardActiveKey({
+            academicYear: current.academicYear,
+            userID: current.userID,
+            awardTypeID: null,
+            title: input.title,
+          });
       // The check and the write are one step: an edit that lost a race with a
       // remove changes nothing, so it cannot put the active key back.
       const written = await tx.award.updateMany({
@@ -498,7 +532,10 @@ export async function awardRemove(
   if (!award.voidedAt) {
     await yearWrite(db, async (tx) => {
       await assertStillCollecting(tx, award.academicYear, guard);
-      await voidAwards(tx, [award], actorUserID, now);
+      // Still active now? A remove that lost a race writes and logs nothing.
+      const live = await activeAmong(tx, [award.id]);
+      if (live.length === 0) return;
+      await voidAwards(tx, live, actorUserID, now);
       await logCorrections(
         tx,
         guard,
@@ -555,12 +592,16 @@ export async function awardRestore(
   try {
     await yearWrite(db, async (tx) => {
       await assertStillCollecting(tx, award.academicYear, guard);
-      await tx.award.update({
-        where: { id },
+      // Removed right now? One restored by someone else meanwhile changes
+      // nothing and logs nothing; the key is built from the row as it is now.
+      const current = await tx.award.findFirst({ where: { id, ...REMOVED } });
+      if (!current) return;
+      await tx.award.updateMany({
+        where: { id, ...REMOVED },
         data: {
           voidedAt: null,
           voidedBy: null,
-          activeKey: keyOf(award),
+          activeKey: keyOf(current),
           updatedBy: actorUserID,
           updatedAt: now,
         },
@@ -671,25 +712,33 @@ export async function awardsBulkRemove(
   now: Date = new Date(),
 ) {
   const { rows, guards } = await bulkTargets(db, actorUserID, ids);
-  const live = rows.filter((r) => !r.voidedAt);
-  if (live.length > 0) {
-    await yearWrite(
-      db,
-      async (tx) => {
-        await assertYearsStillCollecting(tx, guards);
-        await voidAwards(tx, live, actorUserID, now);
-        await logBulk(tx, actorUserID, guards, live, "removed", now);
-      },
-      BULK_TX,
-    );
-  }
-  return { removed: live.length };
+  if (!rows.some((r) => !r.voidedAt)) return { removed: 0 };
+  const removed = await yearWrite(
+    db,
+    async (tx) => {
+      await assertYearsStillCollecting(tx, guards);
+      // The rows to remove are read here, so a retry never touches one that
+      // someone restored or removed meanwhile.
+      const live = await activeAmong(
+        tx,
+        rows.map((r) => r.id),
+      );
+      await voidAwards(tx, live, actorUserID, now);
+      await logBulk(tx, actorUserID, guards, live, "removed", now);
+      return live.length;
+    },
+    BULK_TX,
+  );
+  return { removed };
 }
 
 /**
  * Restore each removed award that would not duplicate an active one; name the
- * rest. The people's active awards are read ONCE and compared in memory; the
- * unique key still settles a race, and then that award alone is skipped.
+ * rest. The people's active awards are read ONCE per attempt, inside the
+ * transaction, and compared in memory; the unique key still settles a race,
+ * and then that award alone is skipped. If a later step of the person-by-person
+ * fallback fails for another reason, the people already done are reported with
+ * `stopped` set to the error code (nothing already committed is lost).
  */
 export async function awardsBulkRestore(
   db: PrismaClient,
@@ -698,92 +747,121 @@ export async function awardsBulkRestore(
   now: Date = new Date(),
 ) {
   const { rows, guards } = await bulkTargets(db, actorUserID, ids);
-  const removed = rows.filter((r) => r.voidedAt);
-  const skipped: string[] = [];
+  if (!rows.some((r) => r.voidedAt)) {
+    return { restored: 0, skipped: [] as string[], stopped: null };
+  }
   const names = await lookupResidents(
     db,
-    removed.map((r) => r.userID),
+    rows.map((r) => r.userID),
   );
-  const heldNow =
-    removed.length === 0
-      ? []
-      : await db.award.findMany({
-          where: {
-            academicYear: {
-              in: [...new Set(removed.map((r) => r.academicYear))],
-            },
-            userID: { in: [...new Set(removed.map((r) => r.userID))] },
-            ...NOT_VOIDED,
-          },
-          select: {
-            academicYear: true,
-            userID: true,
-            awardTypeID: true,
-            title: true,
-          },
-        });
-  const taken = new Set(heldNow.map(keyOf));
-  const label = (r: (typeof removed)[number]) =>
+  const label = (r: (typeof rows)[number]) =>
     `${names.get(r.userID)?.displayName ?? r.userID} (${r.title ?? "Award"})`;
-  const restorable: typeof removed = [];
-  for (const r of removed) {
-    const key = keyOf(r);
-    if (taken.has(key)) {
-      skipped.push(label(r));
-    } else {
-      taken.add(key);
-      restorable.push(r);
-    }
-  }
 
-  const restoreData = (r: (typeof removed)[number]) => ({
+  /** What can be restored now: removed rows that would not duplicate an active one. */
+  const planWith = async (client: Pick<PrismaClient, "award">) => {
+    const removed = await client.award.findMany({
+      where: { id: { in: rows.map((r) => r.id) }, ...REMOVED },
+    });
+    const skipped: string[] = [];
+    const restorable: typeof removed = [];
+    if (removed.length === 0) return { restorable, skipped };
+    const heldNow = await client.award.findMany({
+      where: {
+        academicYear: {
+          in: [...new Set(removed.map((r) => r.academicYear))],
+        },
+        userID: { in: [...new Set(removed.map((r) => r.userID))] },
+        ...NOT_VOIDED,
+      },
+      select: {
+        academicYear: true,
+        userID: true,
+        awardTypeID: true,
+        title: true,
+      },
+    });
+    const taken = new Set(heldNow.map(keyOf));
+    for (const r of removed) {
+      const key = keyOf(r);
+      if (taken.has(key)) {
+        skipped.push(label(r));
+      } else {
+        taken.add(key);
+        restorable.push(r);
+      }
+    }
+    return { restorable, skipped };
+  };
+
+  const restoreData = (r: (typeof rows)[number]) => ({
     voidedAt: null,
     voidedBy: null,
     activeKey: keyOf(r),
     updatedBy: actorUserID,
     updatedAt: now,
   });
-  let restored = restorable.length;
-  if (restorable.length > 0) {
+  try {
+    const done = await yearWrite(
+      db,
+      async (tx) => {
+        await assertYearsStillCollecting(tx, guards);
+        const plan = await planWith(tx);
+        await inChunks(plan.restorable, (r) =>
+          tx.award.updateMany({
+            where: { id: r.id, ...REMOVED },
+            data: restoreData(r),
+          }),
+        );
+        await logBulk(
+          tx,
+          actorUserID,
+          guards,
+          plan.restorable,
+          "restored",
+          now,
+        );
+        return { restored: plan.restorable.length, skipped: plan.skipped };
+      },
+      BULK_TX,
+    );
+    return { ...done, stopped: null };
+  } catch (e) {
+    if (!isUniqueViolation(e)) throw e;
+  }
+  // Someone restored or gave one of them meanwhile: go one by one.
+  const plan = await planWith(db);
+  const skipped = [...plan.skipped];
+  let restored = 0;
+  for (const r of plan.restorable) {
     try {
-      await yearWrite(
-        db,
-        async (tx) => {
-          await assertYearsStillCollecting(tx, guards);
-          await inChunks(restorable, (r) =>
-            tx.award.update({ where: { id: r.id }, data: restoreData(r) }),
-          );
-          await logBulk(tx, actorUserID, guards, restorable, "restored", now);
-        },
-        BULK_TX,
-      );
-    } catch (e) {
-      if (!isUniqueViolation(e)) throw e;
-      // Someone restored or gave one of them meanwhile: go one by one.
-      restored = 0;
-      for (const r of restorable) {
-        try {
-          await yearWrite(db, async (tx) => {
-            await assertStillCollecting(
-              tx,
-              r.academicYear,
-              guards.get(r.academicYear)!,
-            );
-            await tx.award.update({
-              where: { id: r.id },
-              data: restoreData(r),
-            });
-            await logBulk(tx, actorUserID, guards, [r], "restored", now);
-          });
-          restored += 1;
-        } catch (e2) {
-          if (!isUniqueViolation(e2)) throw e2;
-          skipped.push(label(r));
-        }
+      await yearWrite(db, async (tx) => {
+        await assertStillCollecting(
+          tx,
+          r.academicYear,
+          guards.get(r.academicYear)!,
+        );
+        // Removed right now? One restored meanwhile is not written or logged.
+        const current = await tx.award.findFirst({
+          where: { id: r.id, ...REMOVED },
+        });
+        if (!current) return;
+        await tx.award.updateMany({
+          where: { id: r.id, ...REMOVED },
+          data: restoreData(current),
+        });
+        await logBulk(tx, actorUserID, guards, [current], "restored", now);
+      });
+      restored += 1;
+    } catch (e2) {
+      if (isUniqueViolation(e2)) {
+        skipped.push(label(r));
+        continue;
       }
+      // Not a duplicate (busy, published, a timeout): keep what is done.
+      return { restored, skipped, stopped: stopReason(e2) };
     }
   }
-  return { restored, skipped };
+  return { restored, skipped, stopped: null };
 }
 
 /* ---- upload history ------------------------------------------------------------------------ */
@@ -871,17 +949,18 @@ export async function awardBatchUndo(
   ) {
     throw fail("CONFLICT", "BATCH_IN_PROGRESS");
   }
-  // Who the undo touches: everyone still holding an active award of the upload.
-  const active = await db.award.findMany({
+  // Who the undo touches: everyone still holding an active award of the upload
+  // (only ever fewer by the time of the write: an upload is not growing).
+  const holders = await db.award.findMany({
     where: { importBatchID: batchId, ...NOT_VOIDED },
-    select: { id: true, activeKey: true, userID: true, title: true },
+    select: { userID: true },
   });
   const guard = await assertCanEditForResidents(
     db,
     { userID: actorUserID },
     {
       academicYear: batch.academicYear,
-      affectedUserIDs: active.map((a) => a.userID),
+      affectedUserIDs: holders.map((a) => a.userID),
     },
   );
   const undone = await yearWrite(
@@ -896,7 +975,12 @@ export async function awardBatchUndo(
         data: { undoneAt: now, undoneBy: actorUserID },
       });
       if (claimed.count !== 1) throw fail("CONFLICT", "BATCH_ALREADY_UNDONE");
-      // Each award gives back its unique key as it is removed.
+      // Each award gives back its unique key as it is removed. They are read
+      // again here: a retry must not use the rows of the first read.
+      const active = await tx.award.findMany({
+        where: { importBatchID: batchId, ...NOT_VOIDED },
+        select: { id: true, activeKey: true, userID: true, title: true },
+      });
       await voidAwards(tx, active, actorUserID, now);
       await logCorrections(
         tx,

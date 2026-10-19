@@ -232,6 +232,16 @@ export function fieldError(
   return first ? errorText(first) : null;
 }
 
+/**
+ * "3 were done before it stopped: <reason>. Submit again to finish; anyone
+ * already done will be skipped." For a person-by-person write that stopped
+ * early; `reason` is the error code the server returned.
+ */
+export function stoppedLine(done: number, reason: string): string {
+  const why = errorText(reason).replace(/\.$/, "");
+  return `${done} ${done === 1 ? "was" : "were"} done before it stopped: ${why}. Submit again to finish; anyone already done will be skipped.`;
+}
+
 /** A readable message for an API error; unknown codes get a generic line, never a stack. */
 export function errorText(message: string | null | undefined): string {
   if (!message) return "Something went wrong. Try again.";

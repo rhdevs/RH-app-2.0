@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { errorText, fieldError } from "~/lib/transcript/adminView";
+import { errorText, fieldError, stoppedLine } from "~/lib/transcript/adminView";
 import {
   AWARD_CITATION_MAX,
   AWARD_NAME_MAX,
@@ -259,13 +259,20 @@ export default function AssignAward({
           citation: r.citation.trim() === "" ? null : r.citation,
         })),
       });
-      setRecipients([]);
-      setResult(
-        assignResultLine(
-          done.assigned,
-          done.skipped.map((s) => s.displayName ?? s.userID),
-        ),
+      const line = assignResultLine(
+        done.assigned,
+        done.skipped.map((s) => s.displayName ?? s.userID),
       );
+      if (done.stopped) {
+        // Keep the people not done yet, so Submit again finishes the rest.
+        const doneIDs = new Set(done.assignedUserIDs);
+        setRecipients((cur) => cur.filter((r) => !doneIDs.has(r.userID)));
+        setResult(null);
+        setError(`${line} ${stoppedLine(done.assigned, done.stopped)}`);
+      } else {
+        setRecipients([]);
+        setResult(line);
+      }
       await Promise.all([
         utils.transcriptManage.awards.list.invalidate(),
         utils.transcriptManage.awardTypes.list.invalidate(),
