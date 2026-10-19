@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   WRITE_CONFLICT_ATTEMPTS,
   YEAR_WRITE_BUDGET_MS,
+  YEAR_WRITE_HARD_CAP_MS,
   YEAR_WRITE_MAX_ATTEMPTS,
   YEAR_WRITE_MIN_ATTEMPTS,
   isWriteConflict,
@@ -147,6 +148,22 @@ describe("retryWithinBudget (year-scoped writes)", () => {
       retryWithinBudget(write, { clock: () => now, wait: noWait }),
     ).rejects.toMatchObject({ code: "P2034" });
     expect(write).toHaveBeenCalledTimes(YEAR_WRITE_MIN_ATTEMPTS);
+  });
+
+  it("stops under the minimum when a slow save would pass the wall-clock cap", async () => {
+    let now = 0;
+    // Every try takes 15 s: after two, 30 s are spent and a third would end
+    // past 40 s, so it is not started although the minimum is three.
+    const write = vi.fn(() => {
+      now += 15_000;
+      return Promise.reject(conflict());
+    });
+
+    await expect(
+      retryWithinBudget(write, { clock: () => now, wait: noWait }),
+    ).rejects.toMatchObject({ code: "P2034" });
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(now).toBeLessThanOrEqual(YEAR_WRITE_HARD_CAP_MS);
   });
 
   it("never runs more than the hard cap, even with no time passing", async () => {
