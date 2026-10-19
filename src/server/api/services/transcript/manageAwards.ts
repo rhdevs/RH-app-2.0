@@ -19,7 +19,10 @@ import type {
   awardsListInput,
 } from "~/lib/transcript/manageInput";
 import { NOT_VOIDED } from "./loader";
-import { correctionSummary } from "~/lib/transcript/corrections";
+import {
+  ONLY_UNLOCKED_RESIDENTS,
+  correctionSummary,
+} from "~/lib/transcript/corrections";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
@@ -38,7 +41,7 @@ import { actorLabels, lookupResidents, requireResidents } from "./residents";
  */
 
 const fail = (
-  code: "BAD_REQUEST" | "NOT_FOUND" | "CONFLICT",
+  code: "BAD_REQUEST" | "NOT_FOUND" | "CONFLICT" | "FORBIDDEN",
   message: string,
 ) => new TRPCError({ code, message });
 
@@ -997,6 +1000,13 @@ export async function awardBatchUndo(
         where: { importBatchID: batchId, ...NOT_VOIDED },
         select: { id: true, activeKey: true, userID: true, title: true },
       });
+      // The guard above covered the holders read before this transaction. A
+      // row of anyone else (restored meanwhile) was not checked: refuse, and the
+      // guard runs again on the next attempt.
+      const guarded = new Set(holders.map((h) => h.userID));
+      if (active.some((a) => !guarded.has(a.userID))) {
+        throw fail("FORBIDDEN", ONLY_UNLOCKED_RESIDENTS);
+      }
       await voidAwards(tx, active, actorUserID, now);
       await logCorrections(
         tx,

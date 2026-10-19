@@ -647,6 +647,35 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(active).toHaveLength(3);
       });
 
+      it("an upload undo refuses when a row of someone the guard did not check turns up before the write (V4)", async () => {
+        const { awardBatchUndo } = await import("../manageAwards");
+        const b = await db.awardImportBatch.findFirstOrThrow();
+        const late = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await as(JCRC).awards.remove({ id: late.id }); // not a holder at the guard
+        // After the guard has read the holders, another manager restores it.
+        const racing = interfering({
+          1: { before: () => as(JCRC).awards.restore({ id: late.id }) },
+        });
+
+        const refused = await awardBatchUndo(racing, JCRC.id, b.id).then(
+          () => "ok",
+          (e: { code?: string; message?: string }) => `${e.code}:${e.message}`,
+        );
+
+        expect(refused).toBe("FORBIDDEN:ONLY_UNLOCKED_RESIDENTS");
+        // Nothing was written: the batch is not undone and every award stays.
+        const row = await db.awardImportBatch.findUniqueOrThrow({
+          where: { id: b.id },
+        });
+        expect(row.undoneAt ?? null).toBeNull();
+        for (const u of ["SEED-R13", "SEED-R14", "SEED-R15"]) {
+          expect(await awardsOf(u, "Full Colours")).toHaveLength(1);
+        }
+        // The next attempt runs the guard again, over all three, and succeeds.
+        const again = await awardBatchUndo(db, JCRC.id, b.id);
+        expect(again.removed).toBe(3);
+      });
+
       it("a bulk restore whose fallback fails part way returns who is done and the error code (U4)", async () => {
         const { awardsBulkRestore } = await import("../manageAwards");
         const mine = await db.award.findMany({
