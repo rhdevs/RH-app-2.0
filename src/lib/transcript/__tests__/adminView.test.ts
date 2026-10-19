@@ -8,6 +8,7 @@ import {
   openAvailability,
   WRITES_LOCKED_NOTE,
   errorText,
+  bulkRestoreStoppedLine,
   stoppedLine,
   fieldError,
   isWritable,
@@ -256,5 +257,16 @@ describe("stoppedLine (U4)", () => {
       /^1 was done before it stopped: /,
     );
     expect(stoppedLine(0, "PERIOD_PUBLISHED")).toMatch(/^0 were done/);
+  });
+});
+
+describe("bulkRestoreStoppedLine (V2)", () => {
+  it("says how many were restored, why it stopped and that the rest are still selected", () => {
+    expect(bulkRestoreStoppedLine(3, "RECORDS_BUSY")).toBe(
+      "3 were restored before it stopped: Someone else is saving right now. Please try again. The rest are still selected; try again to finish.",
+    );
+    expect(bulkRestoreStoppedLine(1, "UNKNOWN")).toMatch(
+      /^1 was restored before it stopped: /,
+    );
   });
 });

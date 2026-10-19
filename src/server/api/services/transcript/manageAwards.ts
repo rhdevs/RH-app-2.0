@@ -748,7 +748,12 @@ export async function awardsBulkRestore(
 ) {
   const { rows, guards } = await bulkTargets(db, actorUserID, ids);
   if (!rows.some((r) => r.voidedAt)) {
-    return { restored: 0, skipped: [] as string[], stopped: null };
+    return {
+      restored: 0,
+      restoredIDs: [] as string[],
+      skipped: [] as string[],
+      stopped: null,
+    };
   }
   const names = await lookupResidents(
     db,
@@ -820,7 +825,11 @@ export async function awardsBulkRestore(
           "restored",
           now,
         );
-        return { restored: plan.restorable.length, skipped: plan.skipped };
+        return {
+          restored: plan.restorable.length,
+          restoredIDs: plan.restorable.map((r) => r.id),
+          skipped: plan.skipped,
+        };
       },
       BULK_TX,
     );
@@ -831,7 +840,7 @@ export async function awardsBulkRestore(
   // Someone restored or gave one of them meanwhile: go one by one.
   const plan = await planWith(db);
   const skipped = [...plan.skipped];
-  let restored = 0;
+  const restoredIDs: string[] = [];
   for (const r of plan.restorable) {
     try {
       const changed = await yearWrite(db, async (tx) => {
@@ -853,17 +862,22 @@ export async function awardsBulkRestore(
         return true;
       });
       // Only a row this call really restored is counted.
-      if (changed) restored += 1;
+      if (changed) restoredIDs.push(r.id);
     } catch (e2) {
       if (isUniqueViolation(e2)) {
         skipped.push(label(r));
         continue;
       }
       // Not a duplicate (busy, published, a timeout): keep what is done.
-      return { restored, skipped, stopped: stopReason(e2) };
+      return {
+        restored: restoredIDs.length,
+        restoredIDs,
+        skipped,
+        stopped: stopReason(e2),
+      };
     }
   }
-  return { restored, skipped, stopped: null };
+  return { restored: restoredIDs.length, restoredIDs, skipped, stopped: null };
 }
 
 /* ---- upload history ------------------------------------------------------------------------ */

@@ -14,6 +14,7 @@ import {
   normalizeAwardName,
   planAssignment,
   pruneSelection,
+  selectionAfterRestore,
   selectionSplit,
   toggleMany,
   toggleSelected,
@@ -212,6 +213,16 @@ describe("selecting awards", () => {
   it("drops ids that are no longer listed", () => {
     const s = toggleMany(EMPTY_SELECTION, ["a", "b", "c"]);
     expect([...pruneSelection(s, ["b", "z"])]).toEqual(["b"]);
+  });
+
+  it("after a bulk restore that stopped, keeps the awards not restored selected (V2)", () => {
+    const ids = ["a", "b", "c"];
+    expect([...selectionAfterRestore(ids, ["a"], true)]).toEqual(["b", "c"]);
+    expect([...selectionAfterRestore(ids, [], true)]).toEqual(ids);
+  });
+
+  it("after a bulk restore that finished, clears the selection (V2)", () => {
+    expect([...selectionAfterRestore(["a", "b"], ["a"], false)]).toEqual([]);
   });
 
   it("splits the selection into what can be removed and what can be restored", () => {

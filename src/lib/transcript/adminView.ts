@@ -242,6 +242,15 @@ export function stoppedLine(done: number, reason: string): string {
   return `${done} ${done === 1 ? "was" : "were"} done before it stopped: ${why}. Submit again to finish; anyone already done will be skipped.`;
 }
 
+/**
+ * The bulk-restore version: "3 were restored before it stopped: <reason>. The
+ * rest are still selected; try again to finish."
+ */
+export function bulkRestoreStoppedLine(done: number, reason: string): string {
+  const why = errorText(reason).replace(/\.$/, "");
+  return `${done} ${done === 1 ? "was" : "were"} restored before it stopped: ${why}. The rest are still selected; try again to finish.`;
+}
+
 /** A readable message for an API error; unknown codes get a generic line, never a stack. */
 export function errorText(message: string | null | undefined): string {
   if (!message) return "Something went wrong. Try again.";

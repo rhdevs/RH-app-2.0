@@ -638,6 +638,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const result = await awardsBulkRestore(racing, JCRC.id, ids);
 
         expect(result).toMatchObject({ restored: 2, stopped: null });
+        expect([...result.restoredIDs].sort()).toEqual(
+          [ids[1]!, ids[2]!].sort(),
+        );
         const active = await db.award.findMany({
           where: { id: { in: ids }, ...live },
         });
@@ -1138,7 +1141,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(0);
 
         const back = await as(JCRC).awards.bulkRestore({ ids });
-        expect(back).toEqual({ restored: 3, skipped: [], stopped: null });
+        expect(back).toMatchObject({ restored: 3, skipped: [], stopped: null });
         expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(1);
       });
 

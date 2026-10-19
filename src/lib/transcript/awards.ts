@@ -239,6 +239,20 @@ export function pruneSelection(
   return new Set([...selection].filter((id) => visible.has(id)));
 }
 
+/**
+ * What stays selected after a bulk restore: nothing when it finished, else the
+ * awards it did not restore, so the person can simply try again.
+ */
+export function selectionAfterRestore(
+  ids: readonly string[],
+  restoredIDs: readonly string[],
+  stopped: boolean,
+): Selection {
+  if (!stopped) return EMPTY_SELECTION;
+  const done = new Set(restoredIDs);
+  return new Set(ids.filter((id) => !done.has(id)));
+}
+
 /** The selected awards that can be removed, and the ones that can be restored. */
 export function selectionSplit<T extends { id: string; removed: boolean }>(
   selection: Selection,

@@ -14,7 +14,11 @@ import {
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { errorText, fieldError, stoppedLine } from "~/lib/transcript/adminView";
+import {
+  bulkRestoreStoppedLine,
+  errorText,
+  fieldError,
+} from "~/lib/transcript/adminView";
 import {
   AWARD_CITATION_MAX,
   AWARD_NAME_MAX,
@@ -22,6 +26,7 @@ import {
   REMOVE_AWARDS_CONFIRMATION,
   groupByAward,
   groupLine,
+  selectionAfterRestore,
   pruneSelection,
   selectionSplit,
   toggleMany,
@@ -533,16 +538,22 @@ export default function AwardsList({
     },
   });
   const bulkRestore = api.transcriptManage.awards.bulkRestore.useMutation({
-    onSuccess: async (result) => {
+    onSuccess: async (result, variables) => {
       setConfirm(null);
-      setSelection(EMPTY_SELECTION);
+      setSelection(
+        selectionAfterRestore(
+          variables.ids,
+          result.restoredIDs,
+          result.stopped !== null,
+        ),
+      );
       const line =
         result.skipped.length > 0
           ? `${result.restored} restored. Skipped (already have it): ${result.skipped.join(", ")}.`
           : `${result.restored} restored.`;
       setNotice(
         result.stopped
-          ? `${line} ${stoppedLine(result.restored, result.stopped)}`
+          ? `${line} ${bulkRestoreStoppedLine(result.restored, result.stopped)}`
           : line,
       );
       await refresh();
