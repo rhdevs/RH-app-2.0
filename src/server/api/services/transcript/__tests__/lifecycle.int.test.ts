@@ -1354,6 +1354,71 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(rows[0]?.lastWriteID).toBeTruthy();
       });
 
+      it("a retried roster save diffs its history line against what is there at the retry (T5)", async () => {
+        const roster = await import("../manageRoster");
+        const key = {
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          ccaID: SOCCER,
+        };
+        const { database, state } = pausedAtCheck({
+          // Someone saves the same text for the head's own entry meanwhile,
+          // so this save conflicts and runs again.
+          afterRead: async () => {
+            await db.transcriptRosterEntry.upsert({
+              where: { academicYear_userID_ccaID: key },
+              create: { ...key, frozen: false, extraContribution: "Same." },
+              update: { extraContribution: "Same." },
+            });
+          },
+        });
+        await roster.rosterUpsert(database, SOCCER_HEAD.id, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          extraContribution: "Same.",
+        });
+        expect(state.attempts).toBe(2);
+        const line = await db.residentEvent.findFirst({
+          where: { academicYear: AY, userID: SOCCER_HEAD.id },
+          orderBy: { at: "desc" },
+        });
+        // Against the entry as it was before the retry, nothing changed.
+        expect(line?.summary).toMatch(/saved$/);
+      });
+
+      it("a manual entry created at the same moment is edited, not created twice (T5)", async () => {
+        const manual = await import("../residentManual");
+        const key = { academicYear: AY, userID: R12.id, ccaID: SOCCER };
+        await db.manualMembership.deleteMany({ where: key });
+        const { database, state } = pausedAtCheck({
+          afterRead: async () => {
+            await db.manualMembership.create({
+              data: { ...key, extraContribution: "First.", createdBy: JCRC.id },
+            });
+          },
+        });
+        await manual.manualSave(database, JCRC.id, {
+          academicYear: AY,
+          userID: R12.id,
+          ccaID: SOCCER,
+          roleLabel: "Captain",
+        });
+        expect(state.attempts).toBe(2);
+        const rows = await db.manualMembership.findMany({ where: key });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          extraContribution: "First.",
+          roleLabel: "Captain",
+        });
+        const line = await db.residentEvent.findFirst({
+          where: { academicYear: AY, userID: R12.id },
+          orderBy: { at: "desc" },
+        });
+        expect(line?.action).toBe("manual_edit");
+        await db.manualMembership.deleteMany({ where: key });
+      });
+
       it("Open's claim that loses a write conflict is run again and opens the year (T3)", async () => {
         let conflicts = 0;
         const database = new Proxy(db, {

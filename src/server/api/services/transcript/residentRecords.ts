@@ -210,7 +210,7 @@ export async function touchYear(
     } catch (error) {
       // Created at the same moment (by Open, or another write): run again.
       if ((error as { code?: unknown }).code === "P2002") {
-        throw transientConflict(error);
+        throw retryableRace(error);
       }
       throw error;
     }
@@ -229,7 +229,7 @@ export async function touchYear(
 }
 
 /** A race lost to a write at the same moment, retried like a write conflict. */
-function transientConflict(cause: unknown): Error {
+export function retryableRace(cause: unknown): Error {
   return Object.assign(
     new Error("YEAR_ROW_RACE: the year's row was created meanwhile"),
     { errorLabels: ["TransientTransactionError"], cause },

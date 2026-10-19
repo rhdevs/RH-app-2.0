@@ -24,6 +24,7 @@ import {
   assertCanEditForResidents,
   assertStillCollecting,
   recordResidentEvent,
+  retryableRace,
   yearWrite,
 } from "./residentRecords";
 import { actorLabels, keysOf, requireResident } from "./residents";
@@ -202,21 +203,6 @@ export async function manualSave(
   const guard = await guardManual(db, actorUserID, input, resident.key);
 
   const where = uniqueWhere(input.academicYear, resident.key, input.ccaID);
-  const existing = await db.manualMembership.findUnique({ where });
-  if (existing?.removedAt) throw fail("CONFLICT", "MANUAL_REMOVED");
-
-  const problem = manualProblem({
-    duration:
-      input.duration !== undefined
-        ? input.duration
-        : asDuration(existing?.duration),
-    roleDuration:
-      input.roleDuration !== undefined
-        ? input.roleDuration
-        : asDuration(existing?.roleDuration),
-  });
-  if (problem) throw fail("BAD_REQUEST", problem);
-
   const changes = {
     ...(input.duration !== undefined && { duration: input.duration }),
     ...(input.roleLabel !== undefined && { roleLabel: input.roleLabel }),
@@ -227,24 +213,56 @@ export async function manualSave(
       extraContribution: input.extraContribution,
     }),
   };
+  /** Refuse a removed entry, or a role period that would not fit. */
+  const check = (existing: Awaited<ReturnType<typeof findEntry>>) => {
+    if (existing?.removedAt) throw fail("CONFLICT", "MANUAL_REMOVED");
+    const problem = manualProblem({
+      duration:
+        input.duration !== undefined
+          ? input.duration
+          : asDuration(existing?.duration),
+      roleDuration:
+        input.roleDuration !== undefined
+          ? input.roleDuration
+          : asDuration(existing?.roleDuration),
+    });
+    if (problem) throw fail("BAD_REQUEST", problem);
+  };
+  const findEntry = (client: Pick<PrismaClient, "manualMembership">) =>
+    client.manualMembership.findUnique({ where });
+  // A fast answer before the transaction...
+  check(await findEntry(db));
+
   await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, input.academicYear, guard);
+    // ...and the real one inside it: a retry, or an entry someone created
+    // meanwhile, is edited, never created twice.
+    const existing = await findEntry(tx);
+    check(existing);
     if (existing) {
       await tx.manualMembership.update({
         where,
         data: { ...changes, updatedBy: actorUserID, updatedAt: now },
       });
     } else {
-      await tx.manualMembership.create({
-        data: {
-          academicYear: input.academicYear,
-          userID: resident.key,
-          ccaID: input.ccaID,
-          ...changes,
-          createdBy: actorUserID,
-          createdAt: now,
-        },
-      });
+      try {
+        await tx.manualMembership.create({
+          data: {
+            academicYear: input.academicYear,
+            userID: resident.key,
+            ccaID: input.ccaID,
+            ...changes,
+            createdBy: actorUserID,
+            createdAt: now,
+          },
+        });
+      } catch (error) {
+        // Created at the same moment: run again, and edit it.
+        if ((error as { code?: unknown }).code === "P2002") {
+          throw retryableRace(error);
+        }
+        throw error;
+      }
     }
     await recordResidentEvent(tx, {
       academicYear: input.academicYear,

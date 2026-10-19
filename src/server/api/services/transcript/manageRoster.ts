@@ -503,23 +503,24 @@ export async function rosterUpsert(
   };
   const stamp = { updatedBy: actorUserID, updatedAt: now };
 
-  // Before the write, so the history can say what really changed.
   // Logged when it is a correction, or the actor's change to their own entry.
   const logged = guard.correction || target.key === actorUserID;
-  const before = logged
-    ? await db.transcriptRosterEntry.findUnique({
-        where: {
-          academicYear_userID_ccaID: {
-            academicYear: input.academicYear,
-            userID: target.key,
-            ccaID: input.ccaID,
-          },
-        },
-      })
-    : null;
 
   const row = await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, input.academicYear, guard);
+    // Before the write, so the history can say what really changed. Read in
+    // the transaction, so a retry diffs against what is there now.
+    const before = logged
+      ? await tx.transcriptRosterEntry.findUnique({
+          where: {
+            academicYear_userID_ccaID: {
+              academicYear: input.academicYear,
+              userID: target.key,
+              ccaID: input.ccaID,
+            },
+          },
+        })
+      : null;
     // Read in the transaction, so a lock written since the checks above is seen.
     const current = await tx.transcriptRosterEntry.findUnique({
       where: {
