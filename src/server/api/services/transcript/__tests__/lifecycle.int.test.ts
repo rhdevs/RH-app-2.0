@@ -1354,6 +1354,53 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(rows[0]?.lastWriteID).toBeTruthy();
       });
 
+      it("Open's claim that loses a write conflict is run again and opens the year (T3)", async () => {
+        let conflicts = 0;
+        const database = new Proxy(db, {
+          get(target, prop, receiver) {
+            const value: unknown = Reflect.get(target, prop, receiver);
+            if (prop !== "transcriptPeriod") {
+              return typeof value === "function"
+                ? (value as (...a: unknown[]) => unknown).bind(target)
+                : value;
+            }
+            const period = value as PrismaClient["transcriptPeriod"];
+            return new Proxy(period, {
+              get(t, p, r) {
+                if (p !== "updateMany") return Reflect.get(t, p, r);
+                return (args: Parameters<typeof period.updateMany>[0]) => {
+                  const claiming =
+                    (args?.data as { status?: unknown })?.status ===
+                    "published";
+                  if (claiming && conflicts < 2) {
+                    conflicts += 1;
+                    return Promise.reject(
+                      Object.assign(new Error("conflict"), { code: "P2034" }),
+                    );
+                  }
+                  return period.updateMany(args);
+                };
+              },
+            });
+          },
+        }) as PrismaClient;
+        const result = await periods.openTranscripts(
+          database,
+          AY,
+          JCRC.id,
+          APR_2027,
+        );
+        expect(result.opened).toBe(true);
+        expect(conflicts).toBe(2);
+        expect(
+          (
+            await db.transcriptPeriod.findUnique({
+              where: { academicYear: AY },
+            })
+          )?.status,
+        ).toBe("published");
+      });
+
       it("the year check refuses to run outside yearWrite, where nothing would touch the year (T1)", async () => {
         const records = await import("../residentRecords");
         await expect(

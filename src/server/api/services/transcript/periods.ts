@@ -8,6 +8,7 @@ import {
   type OpenBlocker,
 } from "~/lib/transcript/lifecycle";
 import { freezeCca } from "./freeze";
+import { retryYearConflicts } from "./yearRetry";
 
 /**
  * THE ACADEMIC YEAR, ONE STEP: collecting -> published ("Open"), driven only by
@@ -264,7 +265,11 @@ async function claimYear(
   now: Date,
 ): Promise<void> {
   try {
-    await claimYearOnce(db, academicYear, actorUserID, now);
+    // Idempotent, so a claim that loses a write conflict (to a save's final
+    // touch of the row) is simply run again, with the year-write bounds.
+    await retryYearConflicts(() =>
+      claimYearOnce(db, academicYear, actorUserID, now),
+    );
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     // Logged without the error's message (which can carry names), then a coded
