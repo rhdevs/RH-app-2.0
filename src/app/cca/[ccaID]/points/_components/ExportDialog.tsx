@@ -15,9 +15,9 @@ import {
 import type { IhgContext, Range } from "~/lib/points/constants";
 import { downloadCsvFile } from "~/lib/points/download";
 import { withoutStaleIhg, type PointsEntry } from "~/lib/points/entries";
-import { buildPointsCsv, pointsCsvFilename } from "~/lib/points/exportCsv";
 import { formatStat } from "~/lib/points/hints";
 import {
+  buildExportFile,
   checkAfterOpenChange,
   downloadVerdict,
   type ExportCheck,
@@ -83,19 +83,19 @@ export default function ExportDialog({
   const verdict = downloadVerdict(check, entries, live);
   const stale = withoutStaleIhg(entries, live.ihg);
   const download = () => {
-    if (!downloadVerdict(check, entries, live).allowed) return;
     try {
-      const now = new Date();
-      const fileName = pointsCsvFilename(ccaID, now);
-      const csv = buildPointsCsv({
+      const file = buildExportFile({
+        check,
+        entries,
+        live,
         ccaID,
         ccaName,
-        entries: withoutStaleIhg(entries, live.ihg).entries,
-        exportedAt: now,
+        now: new Date(),
       });
-      downloadCsvFile(fileName, csv);
+      if (!file.allowed) return;
+      downloadCsvFile(file.fileName, file.csv);
       onOpenChange(false);
-      onExported(fileName);
+      onExported(file.fileName);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     }

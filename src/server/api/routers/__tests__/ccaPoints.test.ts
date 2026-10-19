@@ -721,6 +721,29 @@ describe("ccaPoints.startNewPointsYear", () => {
     });
     expect(entry).not.toHaveProperty("targetCcaID");
   });
+
+  it("audits one 'failed partway' row and rethrows when the service throws", async () => {
+    const db = pointsDb();
+    const boom = new Error("db down");
+    db.ccaPointsConfig.updateMany.mockRejectedValueOnce(boom);
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      caller(db, ["jcrc"]).startNewPointsYear(),
+    ).rejects.toMatchObject({
+      code: "INTERNAL_SERVER_ERROR",
+      cause: { cause: boom },
+    });
+    log.mockRestore();
+    expect(mockedAudit).toHaveBeenCalledTimes(1);
+    expect(auditOf()).toEqual({
+      actorUserID: USER,
+      actorRoles: ["jcrc"],
+      action: "ccaPoints.year.start",
+      rolesAfter: ["closed"],
+      reason:
+        "failed partway: entry closed first; IHG results may not be cleared",
+    });
+  });
 });
 
 /* ------------------------ D20 = C: the entry-open gate --------------------- */

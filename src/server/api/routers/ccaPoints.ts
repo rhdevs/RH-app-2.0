@@ -25,6 +25,7 @@ import {
   isFlatRow,
   isIhgComplete,
   listOverrideRows,
+  NEW_YEAR_FAILED_REASON,
   newYearReason,
   rangeProblem,
   readDefaultRow,
@@ -711,7 +712,20 @@ export const ccaPointsRouter = createTRPCRouter({
   startNewPointsYear: roleManagerProcedure.mutation(async ({ ctx }) => {
     const actorUserID = ctx.session.user.userID;
     const roles = await requirePointsCapability(ctx.db, actorUserID);
-    const cleared = await resetPointsYear(ctx.db, actorUserID, new Date());
+    let cleared: number;
+    try {
+      cleared = await resetPointsYear(ctx.db, actorUserID, new Date());
+    } catch (err) {
+      // Entry is closed first, so a failure can leave results uncleared: leave a trace.
+      await audit(ctx.db, {
+        actorUserID,
+        actorRoles: roles,
+        action: "ccaPoints.year.start",
+        rolesAfter: ["closed"],
+        reason: NEW_YEAR_FAILED_REASON,
+      });
+      throw err;
+    }
     await audit(ctx.db, {
       actorUserID,
       actorRoles: roles,

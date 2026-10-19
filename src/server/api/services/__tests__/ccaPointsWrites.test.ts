@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   CCA_TYPES,
@@ -28,6 +28,7 @@ import {
   sportsMissingIhg,
   startNewPointsYear,
   typeReason,
+  validConfigValue,
   waiversBrokenByDefault,
   writeFlat,
   writeIhg,
@@ -36,6 +37,31 @@ import {
   writeType,
   type ConfigRowLike,
 } from "~/server/api/services/ccaPointsConfig";
+
+describe("validConfigValue log truncation (F25)", () => {
+  afterEach(() => vi.restoreAllMocks());
+  const never = (_v: unknown): _v is string => false;
+
+  it("cuts a long stored string to 64 characters plus an ellipsis and still returns null", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(validConfigValue(4, "ihgResult", "x".repeat(200), never)).toBeNull();
+    const logged = JSON.parse(String(spy.mock.calls[0]?.[0])) as {
+      value: string;
+    };
+    expect(logged.value).toBe(`${"x".repeat(64)}…`);
+    expect(logged.value.length).toBeLessThanOrEqual(65);
+  });
+
+  it("logs short strings and non-strings as they are", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    validConfigValue(4, "ihgResult", "bad", never);
+    validConfigValue(4, "ihgCap", 99, never);
+    const values = spy.mock.calls.map(
+      (c) => (JSON.parse(String(c[0])) as { value: unknown }).value,
+    );
+    expect(values).toEqual(["bad", 99]);
+  });
+});
 
 /* ------------------------------ F1: waivers ------------------------------ */
 

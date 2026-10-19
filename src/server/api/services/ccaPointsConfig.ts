@@ -76,6 +76,9 @@ export function resolveRange(
 
 export { rangeProblem };
 
+/** Longest stored string written to the log in full. */
+const LOGGED_VALUE_MAX = 64;
+
 /**
  * A stored config value, or null when it is blank or not valid. A non-blank
  * invalid value should never be in the table; if one is, say so in the log
@@ -89,8 +92,17 @@ export function validConfigValue<T>(
 ): T | null {
   if (value === null || value === undefined) return null;
   if (isValid(value)) return value;
+  const logged =
+    typeof value === "string" && value.length > LOGGED_VALUE_MAX
+      ? `${value.slice(0, LOGGED_VALUE_MAX)}…`
+      : value;
   console.error(
-    JSON.stringify({ evt: "points_config_invalid_value", ccaID, field, value }),
+    JSON.stringify({
+      evt: "points_config_invalid_value",
+      ccaID,
+      field,
+      value: logged,
+    }),
   );
   return null;
 }
@@ -208,6 +220,10 @@ export const typeReason = (type: string | null): string =>
   `type ${type ?? "blank"}`;
 export const ihgReason = (result: string | null, cap: number | null): string =>
   `IHG ${result ?? "blank"}; cap ${cap ?? "blank"}`;
+/** The audit reason when starting a new year throws after entry was closed. */
+export const NEW_YEAR_FAILED_REASON =
+  "failed partway: entry closed first; IHG results may not be cleared";
+
 export const newYearReason = (cleared: number): string =>
   `${cleared} IHG result(s) cleared; entry closed`;
 export const sportReason = (isSport: boolean | null): string =>

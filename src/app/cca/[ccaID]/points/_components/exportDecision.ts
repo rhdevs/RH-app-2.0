@@ -1,9 +1,11 @@
 import type { IhgContext, Range } from "~/lib/points/constants";
 import {
   exportAllowedNow,
+  withoutStaleIhg,
   type ExportBlocker,
   type PointsEntry,
 } from "~/lib/points/entries";
+import { buildPointsCsv, pointsCsvFilename } from "~/lib/points/exportCsv";
 
 /** The progress of the "check JCRC's latest settings" step when the dialog opens. */
 export type ExportCheck =
@@ -48,4 +50,43 @@ export function downloadVerdict(
   return now.allowed
     ? { allowed: true }
     : { allowed: false, reason: "blocked", blockers: now.blockers };
+}
+
+export type ExportFile =
+  | { allowed: false }
+  | { allowed: true; fileName: string; csv: string; droppedIhg: number };
+
+/**
+ * Re-judges the export against the LIVE settings and, if it still passes, builds
+ * the file: IHG ticks on a CCA that is no longer a sport are left out. Pure, so the
+ * "left out" rule is tested without the dialog.
+ */
+export function buildExportFile({
+  check,
+  entries,
+  live,
+  ccaID,
+  ccaName,
+  now,
+}: {
+  check: ExportCheck;
+  entries: readonly PointsEntry[];
+  live: Parameters<typeof downloadVerdict>[2];
+  ccaID: number;
+  ccaName: string;
+  now: Date;
+}): ExportFile {
+  if (!downloadVerdict(check, entries, live).allowed) return { allowed: false };
+  const stale = withoutStaleIhg(entries, live.ihg);
+  return {
+    allowed: true,
+    fileName: pointsCsvFilename(ccaID, now),
+    csv: buildPointsCsv({
+      ccaID,
+      ccaName,
+      entries: stale.entries,
+      exportedAt: now,
+    }),
+    droppedIhg: stale.dropped,
+  };
 }

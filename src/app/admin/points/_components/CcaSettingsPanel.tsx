@@ -42,6 +42,10 @@ const IHG_LABELS: Record<IhgResult, string> = {
   "3rd4th_no_match": "3rd–4th, no placement match",
 };
 
+/** "busy" means another save on this row was still running, so nothing was sent. */
+type SaveOutcome = "saved" | "failed" | "busy";
+const STILL_SAVING = "Still saving — try again in a moment.";
+
 type RowStatus = { kind: "saving" | "saved" | "error"; text: string };
 
 function errorText(err: unknown): string {
@@ -77,8 +81,12 @@ function CcaSettingsRowItem({
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
 
-  const save = async (write: () => Promise<unknown>): Promise<boolean> => {
-    if (busyRef.current) return false;
+  const save = async (write: () => Promise<unknown>): Promise<SaveOutcome> => {
+    if (busyRef.current) {
+      // Another save is in flight: touch nothing else, just say so.
+      setStatus({ kind: "saving", text: STILL_SAVING });
+      return "busy";
+    }
     busyRef.current = true;
     setBusy(true);
     setStatus({ kind: "saving", text: "Saving…" });
@@ -87,7 +95,7 @@ function CcaSettingsRowItem({
         await write();
       } catch (err) {
         setStatus({ kind: "error", text: errorText(err) });
-        return false;
+        return "failed";
       }
       const reloaded = await onChanged();
       setStatus(
@@ -98,7 +106,7 @@ function CcaSettingsRowItem({
               text: "Saved, but couldn't reload the current settings. Reload the page.",
             },
       );
-      return true;
+      return "saved";
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -108,19 +116,19 @@ function CcaSettingsRowItem({
   const saveIhg = async (
     result: IhgResult | null,
     cap: number | null,
-  ): Promise<boolean> => {
+  ): Promise<SaveOutcome> => {
     const lowered = cap !== null && cca.ihgCap !== null && cap < cca.ihgCap;
-    const saved = await save(() =>
+    const outcome = await save(() =>
       setIhg.mutateAsync({ ccaID: cca.ccaID, result, cap }),
     );
-    if (saved) {
+    if (outcome === "saved") {
       setCapLowered(lowered);
-    } else {
+    } else if (outcome === "failed") {
       // Never leave the box showing a number that wasn't stored.
       setCapText(cca.ihgCap?.toString() ?? "");
       setCapInvalid(false);
     }
-    return saved;
+    return outcome;
   };
 
   const commitCap = async () => {
@@ -135,7 +143,7 @@ function CcaSettingsRowItem({
       setCapText(cca.ihgCap?.toString() ?? "");
       return;
     }
-    if (await saveIhg(cca.ihgResult, decision.cap)) {
+    if ((await saveIhg(cca.ihgResult, decision.cap)) === "saved") {
       setCapText(decision.cap === null ? "" : String(decision.cap));
     }
   };
