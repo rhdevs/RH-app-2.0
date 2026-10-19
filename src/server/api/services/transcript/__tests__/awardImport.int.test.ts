@@ -18,6 +18,7 @@ import {
   type Decision,
   type ImportRow,
 } from "~/lib/transcript/awardImport";
+import { isLocalDevDatabase } from "./localDbGate";
 
 /**
  * INTEGRATION TESTS of the awards CSV import against the LOCAL development
@@ -26,21 +27,6 @@ import {
  * test. The sample file (scripts/dev/sample-awards.csv) is built to give 8 Ready,
  * 1 Not found, 2 Duplicate and 1 Invalid row against the seeded data.
  */
-
-const REQUIRED_DB = "rhapp_transcript_dev";
-
-function isLocalDevDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname === `/${REQUIRED_DB}`
-    );
-  } catch {
-    return false;
-  }
-}
 
 const AY = "AY2026/27";
 const NOW = new Date("2026-10-16T04:00:00Z");

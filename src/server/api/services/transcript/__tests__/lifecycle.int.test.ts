@@ -12,6 +12,7 @@ import {
   vi,
 } from "vitest";
 import { useAy2026Clock } from "./ayClock";
+import { isLocalDevDatabase } from "./localDbGate";
 
 /**
  * INTEGRATION TESTS of the one-step year (collecting -> Open transcripts)
@@ -20,21 +21,6 @@ import { useAy2026Clock } from "./ayClock";
  * `npm run test:db`). The seed is re-run before every test, so each starts
  * from the same baseline and head changes cannot leak.
  */
-
-const REQUIRED_DB = "rhapp_transcript_dev";
-
-function isLocalDevDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname === `/${REQUIRED_DB}`
-    );
-  } catch {
-    return false;
-  }
-}
 
 const AY = "AY2026/27";
 const NEXT = "AY2027/28";

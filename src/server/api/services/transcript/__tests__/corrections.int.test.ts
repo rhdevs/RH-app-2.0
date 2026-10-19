@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { useAy2026Clock } from "./ayClock";
+import { isLocalDevDatabase } from "./localDbGate";
 
 /**
  * INTEGRATION TESTS of per-resident corrections against the LOCAL development
@@ -11,21 +12,6 @@ import { useAy2026Clock } from "./ayClock";
  * test. Each test closes and publishes the seeded year itself, with the same
  * procedures the admin buttons call, then works on a PUBLISHED year.
  */
-
-const REQUIRED_DB = "rhapp_transcript_dev";
-
-function isLocalDevDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname === `/${REQUIRED_DB}`
-    );
-  } catch {
-    return false;
-  }
-}
 
 const AY = "AY2026/27";
 const NOW = new Date("2026-10-16T04:00:00Z");

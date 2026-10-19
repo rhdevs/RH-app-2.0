@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { awardActiveKey } from "~/lib/transcript/awards";
+import { isLocalDevDatabase } from "./localDbGate";
 
 /**
  * INTEGRATION TESTS of awards (catalogue, assignment, bulk edits, upload
@@ -14,21 +15,6 @@ import { awardActiveKey } from "~/lib/transcript/awards";
  * Newcomer"; SEED-R13 to R15 hold "Full Colours" from the upload
  * "colours-2026.csv".
  */
-
-const REQUIRED_DB = "rhapp_transcript_dev";
-
-function isLocalDevDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname === `/${REQUIRED_DB}`
-    );
-  } catch {
-    return false;
-  }
-}
 
 const AY = "AY2026/27";
 const OLD = "AY2025/26";

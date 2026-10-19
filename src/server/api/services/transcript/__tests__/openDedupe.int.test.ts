@@ -1,27 +1,13 @@
 import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { isLocalDevDatabase } from "./localDbGate";
 
 /**
  * INTEGRATION TEST (local database only, `npm run test:db`) of how Open
  * transcripts counts people (F26): one person reached through two accounts
  * is saved once, and the extra account is counted as not matched.
  */
-
-const REQUIRED_DB = "rhapp_transcript_dev";
-
-function isLocalDevDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname === `/${REQUIRED_DB}`
-    );
-  } catch {
-    return false;
-  }
-}
 
 const AY = "AY2026/27";
 const SOCCER = 9005;

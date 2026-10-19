@@ -4,6 +4,7 @@ import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { useAy2026Clock } from "./ayClock";
 import { proceduresOf } from "./procedureAccess";
+import { isLocalDevDatabase } from "./localDbGate";
 
 /**
  * AUTHORIZATION, procedure by procedure, against the LOCAL development database
@@ -15,21 +16,6 @@ import { proceduresOf } from "./procedureAccess";
  * that test until it has a class, and then is checked here against every kind
  * of caller.
  */
-
-const REQUIRED_DB = "rhapp_transcript_dev";
-
-function isLocalDevDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname === `/${REQUIRED_DB}`
-    );
-  } catch {
-    return false;
-  }
-}
 
 const AY = "AY2026/27";
 const SOCCER = 9005;

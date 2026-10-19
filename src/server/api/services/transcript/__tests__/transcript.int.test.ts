@@ -8,6 +8,7 @@ import {
   restoreFreezes,
   type FreezeBaseline,
 } from "./intHelpers";
+import { isLocalDevDatabase } from "./localDbGate";
 
 /**
  * INTEGRATION TESTS against the LOCAL development database. They run ONLY when
@@ -20,21 +21,6 @@ import {
  * every test. It touches only SEED- data (and puts back the two seeded
  * membership/head rows it temporarily edits).
  */
-
-const REQUIRED_DB = "rhapp_transcript_dev";
-
-function isLocalDevDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname === `/${REQUIRED_DB}`
-    );
-  } catch {
-    return false;
-  }
-}
 
 const AY = "AY2026/27";
 const MEMBERS_SEEDED = 64; // UserCCA rows written by the seed (heads are members)

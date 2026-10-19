@@ -9,6 +9,7 @@ import {
   type FreezeBaseline,
 } from "./intHelpers";
 import type { createCaller as CreateCaller } from "~/server/api/root";
+import { isLocalDevDatabase } from "./localDbGate";
 
 /**
  * INTEGRATION TESTS for the management API, against the LOCAL development
@@ -20,21 +21,6 @@ import type { createCaller as CreateCaller } from "~/server/api/root";
  * issued, roster/awards/volunteering/JCRC/CcaProfile as seeded). It leaves the
  * database exactly as the seed script does.
  */
-
-const REQUIRED_DB = "rhapp_transcript_dev";
-
-function isLocalDevDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname === `/${REQUIRED_DB}`
-    );
-  } catch {
-    return false;
-  }
-}
 
 const AY = "AY2026/27";
 const CCA_IDS = Array.from({ length: 14 }, (_, i) => 9001 + i);

@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { useAy2026Clock } from "./ayClock";
+import { isLocalDevDatabase } from "./localDbGate";
 
 /**
  * INTEGRATION TESTS of CCA activities against the LOCAL development database
@@ -12,21 +13,6 @@ import { useAy2026Clock } from "./ayClock";
  * (9005, head R04) one activity ("Inter-hall league": R04, R12 and R20, who is
  * not in Soccer), 9007 a semester 2 one, and 9002 one live and one removed.
  */
-
-const REQUIRED_DB = "rhapp_transcript_dev";
-
-function isLocalDevDatabase(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname === `/${REQUIRED_DB}`
-    );
-  } catch {
-    return false;
-  }
-}
 
 const AY = "AY2026/27";
 const OLD = "AY2025/26";
