@@ -620,6 +620,30 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(again.skipped.map((x) => x.userID)).toEqual([people[0]]);
       });
 
+      it("a bulk restore's person-by-person fallback does not count a row someone restored meanwhile (V1)", async () => {
+        const { awardsBulkRestore } = await import("../manageAwards");
+        const mine = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 3,
+        });
+        const ids = mine.map((m) => m.id);
+        for (const id of ids) await as(JCRC).awards.remove({ id });
+        // 1: everyone at once hits a duplicate; 2: before the first person's
+        // write another manager restores that very award.
+        const racing = interfering({
+          1: { error: duplicate() },
+          2: { before: () => as(JCRC).awards.restore({ id: ids[0]! }) },
+        });
+
+        const result = await awardsBulkRestore(racing, JCRC.id, ids);
+
+        expect(result).toMatchObject({ restored: 2, stopped: null });
+        const active = await db.award.findMany({
+          where: { id: { in: ids }, ...live },
+        });
+        expect(active).toHaveLength(3);
+      });
+
       it("a bulk restore whose fallback fails part way returns who is done and the error code (U4)", async () => {
         const { awardsBulkRestore } = await import("../manageAwards");
         const mine = await db.award.findMany({

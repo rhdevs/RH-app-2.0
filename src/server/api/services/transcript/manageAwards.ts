@@ -834,7 +834,7 @@ export async function awardsBulkRestore(
   let restored = 0;
   for (const r of plan.restorable) {
     try {
-      await yearWrite(db, async (tx) => {
+      const changed = await yearWrite(db, async (tx) => {
         await assertStillCollecting(
           tx,
           r.academicYear,
@@ -844,14 +844,16 @@ export async function awardsBulkRestore(
         const current = await tx.award.findFirst({
           where: { id: r.id, ...REMOVED },
         });
-        if (!current) return;
+        if (!current) return false;
         await tx.award.updateMany({
           where: { id: r.id, ...REMOVED },
           data: restoreData(current),
         });
         await logBulk(tx, actorUserID, guards, [current], "restored", now);
+        return true;
       });
-      restored += 1;
+      // Only a row this call really restored is counted.
+      if (changed) restored += 1;
     } catch (e2) {
       if (isUniqueViolation(e2)) {
         skipped.push(label(r));
