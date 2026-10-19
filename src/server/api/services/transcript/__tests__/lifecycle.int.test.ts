@@ -1127,6 +1127,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         beforeCheck?: (tx: PrismaClient) => Promise<void>;
         /** Runs inside the write's transaction, after the final touch. */
         afterCheck?: () => Promise<void>;
+        /**
+         * Runs inside the write's transaction right before the touch CREATES
+         * the missing year row; `createError` gets what that create threw.
+         */
+        beforeCreate?: () => Promise<void>;
+        createError?: (error: unknown) => void;
       };
       /**
        * The database, except that in the FIRST transaction the opening read
@@ -1153,6 +1159,19 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
                       const out = await period.findUnique(args);
                       await hooks.afterRead?.();
                       return out;
+                    };
+                  }
+                  if (p === "create" && hooks.beforeCreate) {
+                    return async (
+                      args: Parameters<typeof period.create>[0],
+                    ) => {
+                      await hooks.beforeCreate?.();
+                      try {
+                        return await period.create(args);
+                      } catch (error) {
+                        hooks.createError?.(error);
+                        throw error;
+                      }
                     };
                   }
                   if (p !== "updateMany") return Reflect.get(t, p, r);
@@ -1417,6 +1436,127 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
         expect(line?.action).toBe("manual_edit");
         await db.manualMembership.deleteMany({ where: key });
+      });
+
+      it("the year row created by someone else between the touch's update and its create: the save runs again and lands (T6)", async () => {
+        const roster = await import("../manageRoster");
+        await db.transcriptPeriod.deleteMany({ where: { academicYear: AY } });
+        const codes: unknown[] = [];
+        const { database, state } = pausedAtCheck({
+          // Another save creates the row, as collecting, at that moment.
+          beforeCreate: async () => {
+            await db.transcriptPeriod.create({
+              data: { academicYear: AY, status: "collecting" },
+            });
+          },
+          createError: (e) => codes.push((e as { code?: unknown }).code),
+        });
+        await roster.rosterUpsert(database, SOCCER_HEAD.id, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: R12.id,
+          extraContribution: "After the row race.",
+        });
+        expect(state.attempts).toBe(2);
+        expect(codes).toHaveLength(1);
+        // On this MongoDB the insert of a key committed after the snapshot is
+        // a write conflict; the P2002 branch is covered by the next test.
+        expect(codes[0]).toBe("P2034");
+        expect(await r12Contribution()).toBe("After the row race.");
+        const rows = await db.transcriptPeriod.findMany({
+          where: { academicYear: AY },
+        });
+        expect(rows.map((r) => r.status)).toEqual(["collecting"]);
+      });
+
+      it("a duplicate (P2002) from the touch's create is retried like a write conflict (T6)", async () => {
+        const roster = await import("../manageRoster");
+        await db.transcriptPeriod.deleteMany({ where: { academicYear: AY } });
+        const { database, state } = pausedAtCheck({
+          // The row appears, and the create reports a duplicate key.
+          beforeCreate: async () => {
+            await db.transcriptPeriod.create({
+              data: { academicYear: AY, status: "collecting" },
+            });
+            throw Object.assign(new Error("duplicate"), { code: "P2002" });
+          },
+        });
+        await roster.rosterUpsert(database, SOCCER_HEAD.id, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: R12.id,
+          extraContribution: "After a duplicate.",
+        });
+        expect(state.attempts).toBe(2);
+        expect(await r12Contribution()).toBe("After a duplicate.");
+      });
+
+      it("Open claiming the year while a save creates the first year row: the save runs again and is refused (T6)", async () => {
+        const roster = await import("../manageRoster");
+        await db.transcriptPeriod.deleteMany({ where: { academicYear: AY } });
+        const { database, state } = pausedAtCheck({
+          // Open's claim creates the missing row, already published.
+          beforeCreate: async () => {
+            await db.transcriptPeriod.create({
+              data: {
+                academicYear: AY,
+                status: "published",
+                publishedAt: APR_2027,
+                publishedBy: JCRC.id,
+              },
+            });
+          },
+        });
+        expect(
+          await errorOf(
+            roster.rosterUpsert(database, SOCCER_HEAD.id, {
+              ccaID: SOCCER,
+              academicYear: AY,
+              userID: R12.id,
+              extraContribution: "Raced the claim.",
+            }),
+          ),
+        ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+        expect(state.attempts).toBe(2);
+        expect(await r12Contribution()).not.toBe("Raced the claim.");
+      });
+
+      it("a save that loses every retry inside the budget fails with CONFLICT RECORDS_BUSY, not a raw error (T6)", async () => {
+        const roster = await import("../manageRoster");
+        let tries = 0;
+        const busy = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return () => {
+                tries += 1;
+                return Promise.reject(
+                  Object.assign(new Error("conflict"), { code: "P2034" }),
+                );
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+        const started = Date.now();
+        expect(
+          await errorOf(
+            roster.rosterUpsert(busy, SOCCER_HEAD.id, {
+              ccaID: SOCCER,
+              academicYear: AY,
+              userID: R12.id,
+              extraContribution: "Never saved.",
+            }),
+          ),
+        ).toBe("CONFLICT:RECORDS_BUSY");
+        expect(tries).toBeGreaterThanOrEqual(3);
+        expect(Date.now() - started).toBeLessThan(7_000);
+        const { errorText } = await import("~/lib/transcript/adminView");
+        expect(errorText("RECORDS_BUSY")).toBe(
+          "Someone else is saving right now. Please try again.",
+        );
       });
 
       it("Open's claim that loses a write conflict is run again and opens the year (T3)", async () => {
