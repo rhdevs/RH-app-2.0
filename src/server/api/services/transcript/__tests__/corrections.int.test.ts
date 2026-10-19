@@ -1412,6 +1412,31 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe(1);
       });
 
+      it("a manual entry removed meanwhile is not removed or logged again (V3)", async () => {
+        const { manualRemove } = await import("../residentManual");
+        const where = {
+          academicYear_userID_ccaID: {
+            academicYear: AY,
+            userID: R17.id,
+            ccaID: DANCE,
+          },
+        };
+        const input = { userID: R17.id, academicYear: AY, ccaID: DANCE };
+        const racing = withRivalBeforeFirstTransaction(() =>
+          manualRemove(db, ADMIN.id, input),
+        );
+        const later = new Date(Date.now() + 3_600_000);
+
+        await manualRemove(racing, JCRC.id, input, later);
+
+        const row = await db.manualMembership.findUniqueOrThrow({ where });
+        expect(row.removedBy).toBe(ADMIN.id);
+        expect(row.removedAt?.getTime()).not.toBe(later.getTime());
+        expect(
+          (await events(R17)).filter((e) => e.action === "manual_remove"),
+        ).toHaveLength(1);
+      });
+
       it("a JCRC page removed meanwhile is not removed again", async () => {
         const { jcrcRemove } = await import("../manageRecords");
         const where = {

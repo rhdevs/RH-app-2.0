@@ -293,13 +293,19 @@ async function setManualRemoved(
   const cca = await requireCca(db, input.ccaID);
   const guard = await guardManual(db, actorUserID, input, resident.key);
   const where = uniqueWhere(input.academicYear, resident.key, input.ccaID);
-  const row = await db.manualMembership.findUnique({ where });
-  if (!row) throw fail("NOT_FOUND", "RECORD_NOT_FOUND");
-  if (Boolean(row.removedAt) === removed) {
-    return { userID: resident.key, ccaID: input.ccaID };
-  }
+  const done = { userID: resident.key, ccaID: input.ccaID };
+  // A fast answer before the transaction...
+  const first = await db.manualMembership.findUnique({ where });
+  if (!first) throw fail("NOT_FOUND", "RECORD_NOT_FOUND");
+  if (Boolean(first.removedAt) === removed) return done;
+
   await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, input.academicYear, guard);
+    // ...and the real one inside it: an entry someone removed or restored
+    // meanwhile is not written or logged again.
+    const row = await tx.manualMembership.findUnique({ where });
+    if (!row) throw fail("NOT_FOUND", "RECORD_NOT_FOUND");
+    if (Boolean(row.removedAt) === removed) return;
     await tx.manualMembership.update({
       where,
       data: removed
@@ -324,7 +330,7 @@ async function setManualRemoved(
       at: now,
     });
   });
-  return { userID: resident.key, ccaID: input.ccaID };
+  return done;
 }
 
 export const manualRemove = (
