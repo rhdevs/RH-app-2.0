@@ -70,6 +70,7 @@ const LOCK_FAILURE_TEXT: Record<string, string> = {
   PERIOD_PUBLISHED: "year already open",
   FREEZE_RACE: "list changed while saving",
   P2034: "busy, try again",
+  RECORDS_BUSY: "busy, try again",
 };
 export const lockFailureText = (code: string) =>
   LOCK_FAILURE_TEXT[code] ?? code;
@@ -142,6 +143,7 @@ const ERROR_TEXT: Record<string, string> = {
   PERIOD_PUBLISHED: WRITES_LOCKED_NOTE,
   PERIOD_CHANGING:
     "Someone else is changing this academic year. Reload and try again.",
+  RECORDS_BUSY: "Someone else is saving right now. Please try again.",
   RESIDENT_NOT_FOUND: "No resident was found for that selection.",
   INVALID_USER_ID: "No resident was found for that selection.",
   CCA_NOT_FOUND: "That CCA no longer exists.",

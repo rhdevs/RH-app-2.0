@@ -24,6 +24,7 @@ import { correctionSummary } from "~/lib/transcript/corrections";
 import {
   assertCanEditForResidents,
   assertStillCollecting,
+  yearTransaction,
   yearWrite,
   logCorrections,
 } from "./residentRecords";
@@ -310,7 +311,7 @@ export async function awardsAssign(
     let created = plan.create;
     const raced: typeof recipients = [];
     try {
-      await db.$transaction(async (tx) => {
+      await yearTransaction(db, async (tx) => {
         await assertStillCollecting(tx, input.academicYear, guard);
         if (plan.create.length > 0) {
           await tx.award.createMany({ data: plan.create.map(rowFor) });
@@ -333,7 +334,7 @@ export async function awardsAssign(
       for (const r of plan.create) {
         try {
           await retryWriteConflicts(() =>
-            db.$transaction(async (tx) => {
+            yearTransaction(db, async (tx) => {
               await assertStillCollecting(tx, input.academicYear, guard);
               await tx.award.create({ data: rowFor(r) });
               await logCorrections(
@@ -550,7 +551,7 @@ export async function awardRestore(
   if (!award.voidedAt) return { id };
   try {
     await retryWriteConflicts(() =>
-      db.$transaction(async (tx) => {
+      yearTransaction(db, async (tx) => {
         await assertStillCollecting(tx, award.academicYear, guard);
         await tx.award.update({
           where: { id },
@@ -762,7 +763,7 @@ export async function awardsBulkRestore(
       for (const r of restorable) {
         try {
           await retryWriteConflicts(() =>
-            db.$transaction(async (tx) => {
+            yearTransaction(db, async (tx) => {
               await assertStillCollecting(
                 tx,
                 r.academicYear,

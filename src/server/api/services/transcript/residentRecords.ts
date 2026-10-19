@@ -14,10 +14,7 @@ import {
 import { accessFor } from "~/lib/transcript/permissions";
 import { getUserRoles } from "~/server/api/services/access";
 import { editRefusalFor } from "./editRights";
-import {
-  YEAR_WRITE_ATTEMPTS,
-  retryWriteConflicts,
-} from "~/lib/transcript/writeConflict";
+import { retryYearConflicts } from "./yearRetry";
 import { getPeriod, STATUS_COLLECTING } from "./periods";
 
 /**
@@ -135,19 +132,63 @@ export const ORDINARY_WRITE = { correction: false } as const;
  * The same question again, INSIDE the write's transaction: an ordinary write
  * (not a correction) needs the year still collecting. The guard above runs
  * before the transaction, so a head's save in flight while the JCRC presses
- * Open transcripts could otherwise land after the year opened. Reading the year
- * is not enough: a read does not conflict with Open claiming the year, so a
- * write that read "collecting" could still commit just after the claim. So the
- * check WRITES the year's period row (a fresh `lastWriteID`) in the
- * transaction: Open's claim and this write then genuinely conflict, and
- * whichever comes second either waits (the claim) or is aborted and run again
- * (the write, see `yearWrite`), and the rerun sees the year open and refuses.
- * The row is created as "collecting" when missing, for the CURRENT year only:
- * only the current year can be opened, and a row for any other year would add
- * it to the admin year lists. A correction is for an open year already, so it
- * is not checked here.
+ * Open transcripts could otherwise land after the year opened.
+ *
+ * Two halves (S2, then T1 of the re-review):
+ *  - HERE, the first statement of the body, a READ: refuse at once when the
+ *    year is open. It also starts the transaction's snapshot.
+ *  - At the END of the transaction, a WRITE (`touchYear`, run by `yearWrite`
+ *    after the body): a fresh `lastWriteID` on the year's period row. A read
+ *    alone does not conflict with Open claiming the year, so a write that read
+ *    "collecting" could commit just after the claim. The final write does: a
+ *    claim committed after the snapshot makes it lose a write conflict (MongoDB
+ *    detects conflicts against the snapshot), so the write runs again, reads the
+ *    year open and refuses; a claim that comes while the touch is uncommitted
+ *    waits for the commit. Writing the row LAST holds it for the few
+ *    milliseconds before the commit, not for the whole save, so one long save
+ *    no longer makes every other save of the year fail.
+ * A correction is for an open year already, so it is checked by neither half.
+ * It must run inside `yearWrite`: anywhere else nothing would write the row.
  */
 export async function assertStillCollecting(
+  tx: Pick<PrismaClient, "transcriptPeriod">,
+  academicYear: string,
+  guard: { correction: boolean },
+  now: Date = new Date(),
+): Promise<void> {
+  if (guard.correction) return;
+  const pending = pendingTouches.get(tx);
+  if (!pending) {
+    throw new Error("YEAR_WRITE_REQUIRED: the year check runs in yearWrite");
+  }
+  const period = await tx.transcriptPeriod.findUnique({
+    where: { academicYear },
+    select: { status: true },
+  });
+  if (normaliseYearStatus(period?.status) === "published") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: PUBLISHED_REFUSAL,
+    });
+  }
+  if (!pending.has(academicYear)) pending.set(academicYear, now);
+}
+
+/**
+ * The years each open `yearWrite` transaction checked, to touch when its body
+ * is done (with the time of the check, for "is this the current year").
+ */
+const pendingTouches = new WeakMap<object, Map<string, Date>>();
+
+/**
+ * The write half of the year check, the LAST statement of every year-scoped
+ * write transaction (see assertStillCollecting): a fresh `lastWriteID` on the
+ * year's period row. Still refuses when the row is published. The row is
+ * created as "collecting" when missing, for the CURRENT year only: only the
+ * current year can be opened, and a row for any other year would add it to the
+ * admin year lists.
+ */
+export async function touchYear(
   tx: Pick<PrismaClient, "transcriptPeriod">,
   academicYear: string,
   guard: { correction: boolean },
@@ -196,23 +237,42 @@ function transientConflict(cause: unknown): Error {
 }
 
 /**
+ * ONE try of a year-scoped write: the body in a transaction, then the period
+ * row of every year the body checked (`assertStillCollecting`) is touched, as
+ * the transaction's last statements. Use `yearWrite`, which retries it.
+ */
+export function yearTransaction<T>(
+  db: PrismaClient,
+  body: (tx: Prisma.TransactionClient) => Promise<T>,
+  options?: { maxWait?: number; timeout?: number },
+): Promise<T> {
+  return db.$transaction(async (tx) => {
+    const pending = new Map<string, Date>();
+    pendingTouches.set(tx, pending);
+    const result = await body(tx);
+    for (const [academicYear, at] of pending) {
+      await touchYear(tx, academicYear, ORDINARY_WRITE, at);
+    }
+    return result;
+  }, options);
+}
+
+/**
  * The transaction of a year-scoped write that calls `assertStillCollecting`,
  * run again from the start when it loses a write conflict: every such write
- * touches the year's period row, so two saves at the same moment conflict with
- * each other (and with Open transcripts), and the loser is retried
- * transparently, up to YEAR_WRITE_ATTEMPTS times in all. The body must re-read
- * what it depends on: a retry starts afresh.
+ * ends by touching the year's period row, so two saves whose transactions
+ * overlap conflict there (and with Open transcripts), and the loser is retried
+ * transparently, with exponential, jittered waits inside a total budget of
+ * about 5 s (`retryYearConflicts`). When that runs out the save fails with
+ * CONFLICT "RECORDS_BUSY". The body must re-read what it depends on: a retry
+ * starts afresh.
  */
 export function yearWrite<T>(
   db: PrismaClient,
   body: (tx: Prisma.TransactionClient) => Promise<T>,
   options?: { maxWait?: number; timeout?: number },
 ): Promise<T> {
-  return retryWriteConflicts(
-    () => db.$transaction(body, options),
-    undefined,
-    YEAR_WRITE_ATTEMPTS,
-  );
+  return retryYearConflicts(() => yearTransaction(db, body, options));
 }
 
 /* ---- the history ---------------------------------------------------------- */

@@ -1118,21 +1118,25 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
     });
 
-    /* ---- (D4) the in-transaction check is a WRITE (S2) -------------------- */
+    /* ---- (D4) the in-transaction check reads first, writes LAST (S2, T1) --- */
     describe("a write in flight while Open claims the year (S2)", () => {
       type Hooks = {
-        /** Runs inside the write's transaction, before the check's write. */
+        /** Runs inside the write's transaction, after the opening read check. */
+        afterRead?: () => Promise<void>;
+        /** Runs inside the write's transaction, before the final touch. */
         beforeCheck?: (tx: PrismaClient) => Promise<void>;
-        /** Runs inside the write's transaction, after the check's write. */
+        /** Runs inside the write's transaction, after the final touch. */
         afterCheck?: () => Promise<void>;
       };
       /**
-       * The database, except that in the FIRST transaction the year check
-       * (the period row's updateMany) runs between the hooks; a retry runs
-       * untouched. `attempts` counts the transactions started.
+       * The database, except that in the FIRST transaction the opening read
+       * check (the period row's first findUnique) is followed by `afterRead`,
+       * and the final touch (the period row's updateMany) runs between the
+       * other hooks; a retry runs untouched. `attempts` counts the
+       * transactions started.
        */
       const pausedAtCheck = (hooks: Hooks) => {
-        const state = { attempts: 0 };
+        const state = { attempts: 0, read: false };
         const wrapTx = (tx: PrismaClient, first: boolean): PrismaClient =>
           new Proxy(tx, {
             get(target, prop, receiver) {
@@ -1141,6 +1145,16 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               const period = value as PrismaClient["transcriptPeriod"];
               return new Proxy(period, {
                 get(t, p, r) {
+                  if (p === "findUnique" && hooks.afterRead && !state.read) {
+                    return async (
+                      args: Parameters<typeof period.findUnique>[0],
+                    ) => {
+                      state.read = true;
+                      const out = await period.findUnique(args);
+                      await hooks.afterRead?.();
+                      return out;
+                    };
+                  }
                   if (p !== "updateMany") return Reflect.get(t, p, r);
                   return async (
                     args: Parameters<typeof period.updateMany>[0],
@@ -1208,13 +1222,13 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const roster = await import("../manageRoster");
         const { database, state } = pausedAtCheck({
           beforeCheck: async (tx) => {
-            // What the old check did: the transaction reads the year as
-            // collecting (its snapshot starts here)...
+            // The body is done and sees the year as collecting (its snapshot
+            // started at the opening read check)...
             const seen = await tx.transcriptPeriod.findUnique({
               where: { academicYear: AY },
             });
             expect(seen?.status).toBe("collecting");
-            // ...then Open claims the year and commits before the check writes.
+            // ...then Open claims the year and commits before the final touch.
             expect((await claim()).count).toBe(1);
           },
         });
@@ -1233,7 +1247,31 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await r12Contribution()).not.toBe("Saved too late.");
       });
 
-      it("Open cannot commit while a write that passed the check is in flight: it waits, and the write lands before the year opens", async () => {
+      it("Open committing while a save is still writing (after its read check, before its records): the final touch conflicts, the save is retried and refused (T1)", async () => {
+        const roster = await import("../manageRoster");
+        const { database, state } = pausedAtCheck({
+          // The read check passed; Open claims and commits while the body has
+          // written nothing yet. The claim does not wait: nothing holds the
+          // period row until the touch at the end.
+          afterRead: async () => {
+            expect((await claim()).count).toBe(1);
+          },
+        });
+        expect(
+          await errorOf(
+            roster.rosterUpsert(database, SOCCER_HEAD.id, {
+              ccaID: SOCCER,
+              academicYear: AY,
+              userID: R12.id,
+              extraContribution: "Written while Open ran.",
+            }),
+          ),
+        ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+        expect(state.attempts).toBe(2);
+        expect(await r12Contribution()).not.toBe("Written while Open ran.");
+      });
+
+      it("Open cannot commit while a write that has touched the year is in flight: it waits, and the write lands before the year opens", async () => {
         const roster = await import("../manageRoster");
         let writeDone = false;
         let claimedDuringWrite = false;
@@ -1301,10 +1339,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await db.transcriptPeriod.deleteMany({
           where: { academicYear: { in: [AY, NEXT] } },
         });
-        await db.$transaction((tx) =>
+        await records.yearWrite(db, (tx) =>
           records.assertStillCollecting(tx, AY, records.ORDINARY_WRITE),
         );
-        await db.$transaction((tx) =>
+        await records.yearWrite(db, (tx) =>
           records.assertStillCollecting(tx, NEXT, records.ORDINARY_WRITE),
         );
         const rows = await db.transcriptPeriod.findMany({
@@ -1314,6 +1352,76 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           [AY, "collecting"],
         ]);
         expect(rows[0]?.lastWriteID).toBeTruthy();
+      });
+
+      it("the year check refuses to run outside yearWrite, where nothing would touch the year (T1)", async () => {
+        const records = await import("../residentRecords");
+        await expect(
+          db.$transaction((tx) =>
+            records.assertStillCollecting(tx, AY, records.ORDINARY_WRITE),
+          ),
+        ).rejects.toThrow(/YEAR_WRITE_REQUIRED/);
+      });
+
+      it("the year row is read first and written last, after the records (T1)", async () => {
+        const roster = await import("../manageRoster");
+        const order: string[] = [];
+        const logged = (tx: PrismaClient): PrismaClient =>
+          new Proxy(tx, {
+            get(t, p, r) {
+              const model: unknown = Reflect.get(t, p, r);
+              if (typeof p !== "string" || p.startsWith("$") || !model) {
+                return model;
+              }
+              return new Proxy(model as object, {
+                get(m, op, mr) {
+                  const call: unknown = Reflect.get(m, op, mr);
+                  if (typeof call !== "function") return call;
+                  return (...args: unknown[]) => {
+                    order.push(`${p}.${String(op)}`);
+                    return (call as (...a: unknown[]) => unknown).apply(
+                      m,
+                      args,
+                    );
+                  };
+                },
+              });
+            },
+          });
+        const database = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return (
+                fn: (tx: PrismaClient) => Promise<unknown>,
+                opts?: unknown,
+              ) =>
+                (
+                  target.$transaction as unknown as (
+                    f: (tx: PrismaClient) => Promise<unknown>,
+                    o?: unknown,
+                  ) => Promise<unknown>
+                )((tx) => fn(logged(tx)), opts);
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+        await roster.rosterUpsert(database, SOCCER_HEAD.id, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: R12.id,
+          extraContribution: "In order.",
+        });
+        expect(order[0]).toBe("transcriptPeriod.findUnique");
+        const writes = order.filter((o) =>
+          /\.(create|createMany|update|updateMany|upsert|delete|deleteMany)$/.test(
+            o,
+          ),
+        );
+        expect(writes.length).toBeGreaterThan(1);
+        expect(writes.at(-1)).toBe("transcriptPeriod.updateMany");
       });
     });
 

@@ -32,6 +32,7 @@ import {
   assertCanEditForResidents,
   assertStillCollecting,
   logCorrections,
+  yearTransaction,
 } from "./residentRecords";
 import { lookupResidents } from "./residents";
 
@@ -362,18 +363,22 @@ export async function awardImportCommit(
       const chunk = toWrite.slice(i, i + IMPORT_CHUNK_SIZE);
       try {
         await retryWriteConflicts(() =>
-          db.$transaction(async (tx) => {
-            await assertStillCollecting(tx, input.academicYear, guard);
-            await tx.award.createMany({ data: chunk.map(rowFor) });
-            await logCorrections(
-              tx,
-              guard,
-              actorUserID,
-              input.academicYear,
-              chunk.map(lineFor),
-              now,
-            );
-          }, CHUNK_TX),
+          yearTransaction(
+            db,
+            async (tx) => {
+              await assertStillCollecting(tx, input.academicYear, guard);
+              await tx.award.createMany({ data: chunk.map(rowFor) });
+              await logCorrections(
+                tx,
+                guard,
+                actorUserID,
+                input.academicYear,
+                chunk.map(lineFor),
+                now,
+              );
+            },
+            CHUNK_TX,
+          ),
         );
         imported += chunk.length;
       } catch (error) {
@@ -384,18 +389,22 @@ export async function awardImportCommit(
         for (const a of chunk) {
           try {
             await retryWriteConflicts(() =>
-              db.$transaction(async (tx) => {
-                await assertStillCollecting(tx, input.academicYear, guard);
-                await tx.award.create({ data: rowFor(a) });
-                await logCorrections(
-                  tx,
-                  guard,
-                  actorUserID,
-                  input.academicYear,
-                  [lineFor(a)],
-                  now,
-                );
-              }, CHUNK_TX),
+              yearTransaction(
+                db,
+                async (tx) => {
+                  await assertStillCollecting(tx, input.academicYear, guard);
+                  await tx.award.create({ data: rowFor(a) });
+                  await logCorrections(
+                    tx,
+                    guard,
+                    actorUserID,
+                    input.academicYear,
+                    [lineFor(a)],
+                    now,
+                  );
+                },
+                CHUNK_TX,
+              ),
             );
             imported += 1;
           } catch (error2) {

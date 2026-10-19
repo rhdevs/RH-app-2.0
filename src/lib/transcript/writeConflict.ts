@@ -18,11 +18,33 @@ export function isWriteConflict(error: unknown): boolean {
 export const WRITE_CONFLICT_ATTEMPTS = 3;
 
 /**
- * The bound for a year-scoped write (see yearWrite): every such write touches
- * the year's period row, so saves at the same moment conflict for as long as
- * a transaction runs, and the loser needs more, longer waits to get through.
+ * The bounds for a year-scoped write (see yearWrite). Every such write ends by
+ * touching the year's period row, so two saves that overlap conflict there and
+ * the loser runs again. It is tried at least YEAR_WRITE_MIN_ATTEMPTS times, then
+ * again while the time since the first try stays inside YEAR_WRITE_BUDGET_MS, never more
+ * than YEAR_WRITE_MAX_ATTEMPTS times in all.
  */
-export const YEAR_WRITE_ATTEMPTS = 8;
+export const YEAR_WRITE_MIN_ATTEMPTS = 3;
+export const YEAR_WRITE_MAX_ATTEMPTS = 40;
+export const YEAR_WRITE_BUDGET_MS = 5_000;
+const YEAR_BACKOFF_BASE_MS = 20;
+const YEAR_BACKOFF_CAP_MS = 800;
+
+/**
+ * The wait before attempt `n + 1` of a year-scoped write: exponential (20, 40,
+ * 80 ... ms, at most 800 ms), with half of it random so that writers that lost
+ * to the same save do not all come back at the same moment.
+ */
+export function yearBackoff(
+  attempt: number,
+  random: () => number = Math.random,
+): number {
+  const ceiling = Math.min(
+    YEAR_BACKOFF_CAP_MS,
+    YEAR_BACKOFF_BASE_MS * 2 ** (attempt - 1),
+  );
+  return ceiling / 2 + random() * (ceiling / 2);
+}
 
 const pause = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
@@ -49,6 +71,42 @@ export async function retryWriteConflicts<T>(
         throw error;
       }
       await wait(backoff(attempt));
+    }
+  }
+}
+
+export interface BudgetOptions {
+  wait?: (ms: number) => Promise<void>;
+  /** Milliseconds, for the budget; Date.now by default. */
+  clock?: () => number;
+  random?: () => number;
+}
+
+/**
+ * Run `write` again when it loses a write conflict, with the year-write bounds
+ * above: at least YEAR_WRITE_MIN_ATTEMPTS tries, more while the time since the
+ * first try plus the next wait stays inside YEAR_WRITE_BUDGET_MS, at most
+ * YEAR_WRITE_MAX_ATTEMPTS. Any other error, or the last conflict, is thrown as
+ * it is. `write` must re-read what it depends on each time it runs.
+ */
+export async function retryWithinBudget<T>(
+  write: () => Promise<T>,
+  options: BudgetOptions = {},
+): Promise<T> {
+  const wait = options.wait ?? pause;
+  const clock = options.clock ?? Date.now;
+  const started = clock();
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await write();
+    } catch (error) {
+      if (!isWriteConflict(error) || attempt >= YEAR_WRITE_MAX_ATTEMPTS) {
+        throw error;
+      }
+      const delay = yearBackoff(attempt, options.random);
+      const outOfTime = clock() - started + delay > YEAR_WRITE_BUDGET_MS;
+      if (attempt >= YEAR_WRITE_MIN_ATTEMPTS && outOfTime) throw error;
+      await wait(delay);
     }
   }
 }
