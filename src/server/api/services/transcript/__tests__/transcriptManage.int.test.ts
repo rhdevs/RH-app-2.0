@@ -804,6 +804,45 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       });
 
+      it("accepts a role period outside the membership when no role will show, but not for a current head (F62)", async () => {
+        const soccer = as(SOCCER_HEAD).transcriptManage;
+        const stored = (userID: string) =>
+          db.transcriptRosterEntry.findFirstOrThrow({
+            where: { academicYear: AY, ccaID: SOCCER, userID },
+          });
+        // A plain member: no role shows, so the period is dropped, not checked.
+        expect(
+          await errorOf(
+            soccer.roster.upsert({
+              ccaID: SOCCER,
+              academicYear: AY,
+              userID: R12.id,
+              duration: "sem2",
+              roleLabel: null,
+              roleDuration: "sem1",
+            }),
+          ),
+        ).toBe("ok");
+        expect(await stored(R12.id)).toMatchObject({
+          duration: "sem2",
+          roleLabel: null,
+          roleDuration: null,
+        });
+        // A current head: a blank role is the "Head" default, which is a role.
+        expect(
+          await errorOf(
+            soccer.roster.upsert({
+              ccaID: SOCCER,
+              academicYear: AY,
+              userID: SOCCER_HEAD.id,
+              duration: "sem2",
+              roleLabel: null,
+              roleDuration: "sem1",
+            }),
+          ),
+        ).toBe("BAD_REQUEST:ROLE_PERIOD_OUTSIDE_MEMBERSHIP");
+      });
+
       it("stores an explicit Head for a current head who saves only a part-year membership (F2)", async () => {
         const soccer = as(SOCCER_HEAD).transcriptManage;
         const stored = () =>

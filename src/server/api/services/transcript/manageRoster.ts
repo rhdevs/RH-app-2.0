@@ -26,6 +26,7 @@ import {
 } from "~/lib/transcript/corrections";
 import {
   assertCanEditForResidents,
+  assertCheckedResidents,
   assertStillCollecting,
   yearWrite,
   logCorrections,
@@ -350,7 +351,7 @@ async function findTarget(
 async function assertRoleFitsMembership(
   db: PrismaClient,
   input: UpsertInput,
-  target: { key: string; frozen: boolean },
+  target: { key: string; frozen: boolean; isHead: boolean },
 ) {
   const row = await db.transcriptRosterEntry.findUnique({
     where: {
@@ -374,7 +375,13 @@ async function assertRoleFitsMembership(
   // No stored choice means a full year.
   const membership = duration ?? "full";
 
-  if (roleDuration && !roleFits(membership, roleDuration)) {
+  // With no role to show, no role period is stored, so there is nothing to fit.
+  const shown = shownRole(
+    target,
+    row,
+    input.roleLabel !== undefined ? { roleLabel: input.roleLabel } : {},
+  );
+  if (shown && roleDuration && !roleFits(membership, roleDuration)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "ROLE_PERIOD_OUTSIDE_MEMBERSHIP",
@@ -385,23 +392,35 @@ async function assertRoleFitsMembership(
 type RosterChanges = Partial<RosterAnnotation>;
 
 /**
+ * The role the entry will show after this change, or null: the one the
+ * transcript would show. A current head's blank role is the "Head" default;
+ * in an open year, it is the locked entry's own role.
+ */
+function shownRole(
+  target: { frozen: boolean; isHead: boolean },
+  current: RosterAnnotation | null,
+  changes: RosterChanges,
+) {
+  const base = target.frozen ? current : savedChoices(current);
+  const merged = { ...base, ...changes };
+  return target.frozen
+    ? blankToNull(merged.roleLabel)
+    : resolveEntry(merged, { isHead: target.isHead }).roleLabel;
+}
+
+/**
  * A role period is stored only beside a role: when the role the entry will
- * have after this change is blank, its role period is stored as null. The role
- * is the one the transcript would show: a current head's blank role is the
- * "Head" default, so their role period stays; in an open year, the locked
- * entry's own role.
+ * have after this change is blank, its role period is stored as null. A
+ * current head's blank role is the "Head" default, so their role period stays.
  */
 function withoutOrphanRolePeriod(
   target: { frozen: boolean; isHead: boolean },
   current: RosterAnnotation | null,
   changes: RosterChanges,
 ): RosterChanges {
-  const base = target.frozen ? current : savedChoices(current);
-  const merged = { ...base, ...changes };
-  const role = target.frozen
-    ? blankToNull(merged.roleLabel)
-    : resolveEntry(merged, { isHead: target.isHead }).roleLabel;
-  return role ? changes : { ...changes, roleDuration: null };
+  return shownRole(target, current, changes)
+    ? changes
+    : { ...changes, roleDuration: null };
 }
 
 /**
@@ -509,6 +528,7 @@ export async function rosterUpsert(
 
   const row = await yearWrite(db, async (tx) => {
     await assertStillCollecting(tx, input.academicYear, guard);
+    assertCheckedResidents(guard, [target.key]);
     // Before the write, so the history can say what really changed. Read in
     // the transaction, so a retry diffs against what is there now.
     const before = logged
