@@ -77,7 +77,10 @@ export function unmatchedLine(
   const who = members
     .map((m) => (m.names.length > 0 ? m.names.join(" or ") : m.key))
     .join(", ");
-  return who ? `${unresolvedNote(count)}: ${who}` : unresolvedNote(count);
+  if (!who) return unresolvedNote(count);
+  const more = count - members.length;
+  const rest = more > 0 ? `, and ${more} more not named` : "";
+  return `${unresolvedNote(count)}: ${who}${rest}`;
 }
 
 /** While Open transcripts runs: how far it has got. */

@@ -290,6 +290,9 @@ export interface OpenStep {
   unresolved: number;
 }
 
+const OPEN_MAX_REQUESTS = 50;
+const OPEN_UNFINISHED = "Open transcripts did not finish. Press it again.";
+
 /**
  * ONE PRESS of Open transcripts: starts a run and continues it with its runID
  * until the year opens, a CCA fails, or a request errors, reporting progress
@@ -306,8 +309,10 @@ export async function runOpen(
   let lockedNow = 0;
   let relocked = 0;
   let unresolved = 0;
+  let stalled = 0;
+  let lastInRun = 0;
   try {
-    for (;;) {
+    for (let requests = 0; requests < OPEN_MAX_REQUESTS; requests++) {
       const r = await step({ academicYear, runID });
       runID = r.runID;
       lockedNow += r.lockedNow;
@@ -316,8 +321,13 @@ export async function runOpen(
       if (r.opened || r.failures.length > 0) {
         return { result: { ...r, lockedNow, relocked, unresolved } };
       }
+      stalled =
+        r.lockedNow === 0 && r.lockedInRun <= lastInRun ? stalled + 1 : 0;
+      if (stalled >= 2) break;
+      lastInRun = r.lockedInRun;
       onProgress(openProgress(r.lockedInRun, r.totalCcas));
     }
+    return { error: OPEN_UNFINISHED };
   } catch (error) {
     return { error: errorText(error instanceof Error ? error.message : null) };
   } finally {

@@ -266,6 +266,31 @@ describe("one press of Open transcripts", () => {
     expect(html).not.toContain("socket");
   });
 
+  it("stops after two responses with no progress, says so, and refreshes (F53)", async () => {
+    const call = vi.fn().mockResolvedValue(step({}));
+    const refresh = vi.fn(async () => undefined);
+
+    const outcome = await runOpen("AY2026/27", call, noop, refresh);
+
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(outcome).toEqual({
+      error: "Open transcripts did not finish. Press it again.",
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops after 50 requests in one press even if each makes progress (F53)", async () => {
+    let n = 0;
+    const call = vi.fn(async () => step({ lockedInRun: ++n, lockedNow: 1 }));
+
+    const outcome = await runOpen("AY2026/27", call, noop, async () => noop());
+
+    expect(call).toHaveBeenCalledTimes(50);
+    expect(outcome).toEqual({
+      error: "Open transcripts did not finish. Press it again.",
+    });
+  });
+
   it("keeps the coded refusals in plain words", async () => {
     const call = vi.fn().mockRejectedValue(new Error("ALREADY_PUBLISHED"));
     const outcome = await runOpen("AY2026/27", call, noop, async () => noop());

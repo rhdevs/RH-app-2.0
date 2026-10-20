@@ -177,7 +177,10 @@ export interface OpenResult {
 }
 
 /** How long one request of Open transcripts keeps locking CCAs (the route allows 60 s). */
-export const OPEN_STEP_BUDGET_MS = 30_000;
+export const OPEN_STEP_BUDGET_MS = 20_000;
+
+/** A runID whose first lock is older than this is not continued: a new run starts. */
+export const OPEN_RUN_MAX_AGE_MS = 10 * 60_000;
 
 /** A short, loggable reason a lock failed: a code-shaped word, never free text. */
 function failureCode(error: unknown): string {
@@ -215,6 +218,7 @@ async function runCoverage(
   const since = Math.min(...mine.map((l) => l.frozenAt.getTime()));
   return {
     ccas,
+    since,
     locked: new Set(mine.map((l) => l.ccaID)),
     covered: new Set(
       locks
@@ -262,8 +266,17 @@ export async function openTranscripts(
 
   const started = Date.now();
   const budgetMs = options.budgetMs ?? OPEN_STEP_BUDGET_MS;
-  const runID = options.runID ?? randomUUID();
-  const { ccas, locked } = await runCoverage(db, academicYear, runID);
+  let runID = options.runID ?? randomUUID();
+  const first = await runCoverage(db, academicYear, runID);
+  const { ccas } = first;
+  let { locked } = first;
+  if (
+    options.runID &&
+    (locked.size === 0 || now.getTime() - first.since > OPEN_RUN_MAX_AGE_MS)
+  ) {
+    runID = randomUUID();
+    locked = new Set();
+  }
   // The CCAs THIS run has not locked yet. Locks from an earlier run do not
   // count: every CCA is locked again from its current list.
   const todo = ccas.filter((c) => !locked.has(c.ccaID));

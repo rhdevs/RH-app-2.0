@@ -16,6 +16,7 @@ import {
   normaliseStatus,
   openSummary,
   statusLabel,
+  unmatchedLine,
   unresolvedNote,
   yearOptions,
 } from "../adminView";
@@ -269,6 +270,25 @@ describe("bulkRestoreStoppedLine (V2)", () => {
     );
     expect(bulkRestoreStoppedLine(1, "UNKNOWN")).toMatch(
       /^1 was restored before it stopped: /,
+    );
+  });
+});
+
+describe("unmatchedLine names what it can and counts the rest (F54)", () => {
+  const two = [
+    { key: "E0123456", names: [] },
+    { key: "x", names: ["Alice Tan"] },
+  ];
+
+  it("says how many are not named when fewer are listed than counted", () => {
+    expect(unmatchedLine(5, two)).toBe(
+      "5 members could not be matched: E0123456, Alice Tan, and 3 more not named",
+    );
+  });
+
+  it("adds nothing when every one is named", () => {
+    expect(unmatchedLine(2, two)).toBe(
+      "2 members could not be matched: E0123456, Alice Tan",
     );
   });
 });
