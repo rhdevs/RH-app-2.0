@@ -271,6 +271,28 @@ describe("running the index script (against a fake database)", () => {
     vi.restoreAllMocks();
   });
 
+  it("prints the target database before reading or planning anything", async () => {
+    const events: string[] = [];
+    vi.mocked(console.log).mockImplementation((msg?: unknown) => {
+      events.push(`log:${String(msg)}`);
+    });
+    const { db } = fakeDb({ Thing: { absent: true, indexes: [] } });
+    const read = db.$runCommandRaw;
+    db.$runCommandRaw = (cmd) => {
+      events.push("db");
+      return read(cmd);
+    };
+
+    await apply(db, false, SMALL);
+
+    const target = events.findIndex((e) => e.startsWith("log:target: "));
+    expect(target).toBeGreaterThan(-1);
+    expect(target).toBeLessThan(events.indexOf("db"));
+    expect(target).toBeLessThan(
+      events.findIndex((e) => e.includes("--- plan")),
+    );
+  });
+
   it("a dry run writes nothing, and says what it would create", async () => {
     const { db, writes } = fakeDb({ Thing: { absent: true, indexes: [] } });
 

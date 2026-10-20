@@ -19,6 +19,24 @@ const LIB = join(
   "lib",
   "dbTarget.mjs",
 );
+const INDEX_LIB = join(
+  process.cwd(),
+  "scripts",
+  "remediation",
+  "lib",
+  "transcriptIndexes.mjs",
+);
+const { checkUniqueIndexes } = (await import(
+  /* @vite-ignore */ pathToFileURL(INDEX_LIB).href
+)) as {
+  checkUniqueIndexes: (
+    db: { $runCommandRaw: (cmd: Record<string, unknown>) => Promise<unknown> },
+    targets: Record<
+      string,
+      Array<{ name: string; key: Record<string, number>; unique: boolean }>
+    >,
+  ) => Promise<{ ok: boolean; problems: string[] }>;
+};
 const { describeTarget } = (await import(
   /* @vite-ignore */ pathToFileURL(LIB).href
 )) as { describeTarget: (url: string | undefined) => string };
@@ -166,5 +184,76 @@ describe("set-transcript-flag.mjs names the database it writes to", () => {
     const write = main.search(/\$runCommandRaw\(\{\s*update/);
     expect(write).toBeGreaterThan(-1);
     expect(target).toBeLessThan(write);
+  });
+});
+
+describe("set-transcript-flag.mjs refuses to turn the feature on without its unique indexes (F24)", () => {
+  const TARGETS = {
+    Thing: [
+      { name: "thing_u", key: { x: 1 }, unique: true },
+      { name: "thing_i", key: { y: 1 }, unique: false },
+    ],
+    Other: [{ name: "other_u", key: { a: 1, b: 1 }, unique: true }],
+  };
+  const present = {
+    Thing: [{ name: "thing_u", key: { x: 1 }, unique: true }],
+    Other: [{ name: "other_u", key: { a: 1, b: 1 }, unique: true }],
+  } as Record<string, Array<Record<string, unknown>>>;
+  const fake = (state: typeof present) => ({
+    $runCommandRaw: (cmd: Record<string, unknown>) => {
+      const coll = cmd.listIndexes as string;
+      if (!state[coll]) return Promise.resolve({ ok: 0, code: 26 });
+      return Promise.resolve({
+        ok: 1,
+        cursor: {
+          firstBatch: [{ name: "_id_", key: { _id: 1 } }, ...state[coll]!],
+        },
+      });
+    },
+  });
+
+  it("passes when every unique index is present", async () => {
+    expect(await checkUniqueIndexes(fake(present), TARGETS)).toEqual({
+      ok: true,
+      problems: [],
+    });
+  });
+
+  it("refuses, naming the index, when one is missing", async () => {
+    const res = await checkUniqueIndexes(
+      fake({ ...present, Thing: [] }),
+      TARGETS,
+    );
+    expect(res.ok).toBe(false);
+    expect(res.problems).toHaveLength(1);
+    expect(res.problems[0]).toContain("Thing.thing_u");
+  });
+
+  it("refuses an index with the same name but a different key or not unique, and an absent collection", async () => {
+    const res = await checkUniqueIndexes(
+      fake({
+        Thing: [{ name: "thing_u", key: { x: 1 }, unique: false }],
+        Other: [{ name: "other_u", key: { b: 1, a: 1 }, unique: true }],
+      }),
+      TARGETS,
+    );
+    expect(res.problems).toHaveLength(2);
+    const absent = await checkUniqueIndexes(
+      fake({ Thing: present.Thing! }),
+      TARGETS,
+    );
+    expect(absent.problems.join()).toContain("Other.other_u");
+  });
+
+  it("runs the check for mode on only, before the dry-run line and the write", () => {
+    const source = readFileSync(SCRIPT, "utf8");
+    const main = source.slice(source.indexOf("async function main()"));
+    const check = main.indexOf("checkUniqueIndexes(db, TARGETS)");
+    expect(check).toBeGreaterThan(-1);
+    expect(main.slice(main.lastIndexOf("if (", check), check)).toContain(
+      'MODE === "on"',
+    );
+    expect(check).toBeLessThan(main.indexOf("DRY RUN"));
+    expect(check).toBeLessThan(main.search(/\$runCommandRaw\(\{\s*update/));
   });
 });

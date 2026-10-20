@@ -51,6 +51,7 @@
 import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { numify, isCommit, banner, abort, aggregateAll } from "./lib/rbac.mjs";
+import { describeTarget } from "./lib/dbTarget.mjs";
 
 /**
  * Collection (the Prisma model name) -> the indexes it must have, besides
@@ -344,6 +345,7 @@ export async function apply(db, commit, targets = TARGETS) {
 
   {
     banner("create-transcript-indexes.mjs", COMMIT);
+    console.log(`target: ${describeTarget(process.env.DATABASE_URL)}`);
     const total = Object.values(targets).reduce(
       (n, list) => n + list.length,
       0,

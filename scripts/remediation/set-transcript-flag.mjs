@@ -22,6 +22,8 @@
 import { PrismaClient } from "@prisma/client";
 import { inspectWriteReply, isCommit, abort, nowExt } from "./lib/rbac.mjs";
 import { describeTarget } from "./lib/dbTarget.mjs";
+import { checkUniqueIndexes } from "./lib/transcriptIndexes.mjs";
+import { TARGETS } from "./create-transcript-indexes.mjs";
 
 const db = new PrismaClient();
 
@@ -62,6 +64,16 @@ async function main() {
     return abort(
       `mode must be one of ${MODES.join(" | ")} — got ${JSON.stringify(MODE)}`,
     );
+  }
+
+  if (MODE === "on") {
+    const indexes = await checkUniqueIndexes(db, TARGETS);
+    if (!indexes.ok) {
+      for (const p of indexes.problems) console.error(`  RED  ${p}`);
+      return abort(
+        `the unique indexes are not all in place, so the flag was NOT changed. Run create-transcript-indexes.mjs --commit first.`,
+      );
+    }
   }
 
   console.log(
