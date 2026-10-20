@@ -325,7 +325,7 @@ describe("Open transcripts runs in steps (F1)", () => {
     expect(claim).toHaveBeenCalledTimes(1);
   });
 
-  it("does not continue a run whose first lock is 11 minutes old: a new run locks every CCA (F52)", async () => {
+  it("does not continue a run idle for 11 minutes: a new run locks every CCA (F52)", async () => {
     const { db, locks, lockedAt } = runDb([1, 2, 3]);
     locks.set(1, "run-a").set(2, "run-a");
     for (const id of [1, 2])
@@ -341,7 +341,7 @@ describe("Open transcripts runs in steps (F1)", () => {
     expect([...locks.values()]).toEqual([r.runID, r.runID, r.runID]);
   });
 
-  it("still continues a run whose first lock is 5 minutes old (F52)", async () => {
+  it("still continues a run idle for only 5 minutes (F52)", async () => {
     const { db, locks, lockedAt } = runDb([1, 2, 3]);
     locks.set(1, "run-a").set(2, "run-a");
     for (const id of [1, 2])
@@ -353,6 +353,35 @@ describe("Open transcripts runs in steps (F1)", () => {
 
     expect(r.runID).toBe("run-a");
     expect(lockedIDs()).toEqual([3]);
+  });
+
+  it("continues a long run that is still live: first lock 15 minutes old, latest 1 minute old (F56)", async () => {
+    const { db, locks, lockedAt } = runDb([1, 2, 3]);
+    locks.set(1, "run-a").set(2, "run-a");
+    lockedAt.set(1, new Date(NOW.getTime() - 15 * 60_000));
+    lockedAt.set(2, new Date(NOW.getTime() - 60_000));
+
+    const r = await openTranscripts(db, "AY2026/27", "SEED-R02", NOW, {
+      runID: "run-a",
+    });
+
+    expect(r.runID).toBe("run-a");
+    expect(lockedIDs()).toEqual([3]);
+    expect(r).toMatchObject({ opened: true, lockedInRun: 3 });
+  });
+
+  it("starts a new run when even the latest lock is 11 minutes old (F56)", async () => {
+    const { db, locks, lockedAt } = runDb([1, 2, 3]);
+    locks.set(1, "run-a").set(2, "run-a");
+    lockedAt.set(1, new Date(NOW.getTime() - 15 * 60_000));
+    lockedAt.set(2, new Date(NOW.getTime() - 11 * 60_000));
+
+    const r = await openTranscripts(db, "AY2026/27", "SEED-R02", NOW, {
+      runID: "run-a",
+    });
+
+    expect(r.runID).not.toBe("run-a");
+    expect(lockedIDs()).toEqual([1, 2, 3]);
   });
 
   it("stops the run when one CCA fails: opened false, the failure returned, no claim", async () => {

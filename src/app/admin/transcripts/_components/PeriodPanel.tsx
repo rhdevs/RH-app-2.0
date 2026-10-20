@@ -290,7 +290,7 @@ export interface OpenStep {
   unresolved: number;
 }
 
-const OPEN_MAX_REQUESTS = 50;
+const OPEN_MAX_REQUESTS = 200;
 const OPEN_UNFINISHED = "Open transcripts did not finish. Press it again.";
 
 /**

@@ -179,7 +179,7 @@ export interface OpenResult {
 /** How long one request of Open transcripts keeps locking CCAs (the route allows 60 s). */
 export const OPEN_STEP_BUDGET_MS = 20_000;
 
-/** A runID whose first lock is older than this is not continued: a new run starts. */
+/** A runID idle this long (its latest lock this old) is not continued: a new run starts. */
 export const OPEN_RUN_MAX_AGE_MS = 10 * 60_000;
 
 /** A short, loggable reason a lock failed: a code-shaped word, never free text. */
@@ -216,9 +216,11 @@ async function runCoverage(
   ]);
   const mine = locks.filter((l) => l.openRunID === runID);
   const since = Math.min(...mine.map((l) => l.frozenAt.getTime()));
+  const latest = Math.max(...mine.map((l) => l.frozenAt.getTime()));
   return {
     ccas,
     since,
+    latest,
     locked: new Set(mine.map((l) => l.ccaID)),
     covered: new Set(
       locks
@@ -272,7 +274,7 @@ export async function openTranscripts(
   let { locked } = first;
   if (
     options.runID &&
-    (locked.size === 0 || now.getTime() - first.since > OPEN_RUN_MAX_AGE_MS)
+    (locked.size === 0 || now.getTime() - first.latest > OPEN_RUN_MAX_AGE_MS)
   ) {
     runID = randomUUID();
     locked = new Set();

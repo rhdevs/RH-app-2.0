@@ -279,13 +279,13 @@ describe("one press of Open transcripts", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("stops after 50 requests in one press even if each makes progress (F53)", async () => {
+  it("stops after 200 requests in one press even if each makes progress (F53)", async () => {
     let n = 0;
     const call = vi.fn(async () => step({ lockedInRun: ++n, lockedNow: 1 }));
 
     const outcome = await runOpen("AY2026/27", call, noop, async () => noop());
 
-    expect(call).toHaveBeenCalledTimes(50);
+    expect(call).toHaveBeenCalledTimes(200);
     expect(outcome).toEqual({
       error: "Open transcripts did not finish. Press it again.",
     });
