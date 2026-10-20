@@ -771,6 +771,50 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await soccerRole(SOCCER_HEAD.id)).toBe("Head (Sem 1)");
       });
 
+      it("keeps an outgoing head who saved only a Semester 1 membership as Head (F2)", async () => {
+        // Clear the seeded "Captain", then save only the membership period.
+        await as(SOCCER_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          roleLabel: null,
+          roleDuration: null,
+        });
+        await as(SOCCER_HEAD).transcriptManage.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          duration: "sem1",
+        });
+        // Hands over and leaves the CCA altogether.
+        await as(SOCCER_HEAD).cca.handoverHeads({
+          ccaID: SOCCER,
+          newHeadUserIDs: [R09.id],
+        });
+        await db.userCCA.deleteMany({
+          where: { ccaID: SOCCER, userID: SOCCER_HEAD.id },
+        });
+        await db.ccaHead.deleteMany({
+          where: { ccaID: SOCCER, userID: SOCCER_HEAD.id },
+        });
+        expect(await heads(SOCCER)).toEqual([R09.id]);
+
+        const result = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        expect(result.opened).toBe(true);
+        expect(await frozenKeys(SOCCER, AY)).toContain(SOCCER_HEAD.id);
+        const r = await as(JCRC).transcript.preview({
+          userID: SOCCER_HEAD.id,
+          academicYear: AY,
+        });
+        const row = r.transcript.pages
+          .flatMap((p) => (p.kind === "main" ? p.sections : []))
+          .flatMap((s) => (s.kind === "involvements" ? s.rows : []))
+          .find((x) => x.ccaName === "Soccer (MALE)");
+        expect(row).toBeDefined();
+        expect(row!.role).toBe("Head (Sem 1)");
+        expect(row!.year).toBe("2026/27 Sem 1");
+      });
+
       it("drops a leaver once their saved role and semester are cleared", async () => {
         await db.userCCA.deleteMany({
           where: { ccaID: SOCCER, userID: SOCCER_HEAD.id },

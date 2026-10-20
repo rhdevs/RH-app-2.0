@@ -405,12 +405,12 @@ function withoutOrphanRolePeriod(
 }
 
 /**
- * A current head who saves only a Semester 1 or Semester 2 role period, with
- * the role left blank, has "Head" stored as the role, explicitly. Their role
- * is the "Head" default only while they head the CCA; after a handover the
- * default is gone, and "Head (Semester 1)" with it. A stored "Head" stays if
- * the period later goes back to a full year; clearing the role and the period
- * together (Reset) stores neither.
+ * A current head who saves only a Semester 1 or Semester 2 role period or
+ * membership period, with the role left blank, has "Head" stored as the role,
+ * explicitly. Their role is the "Head" default only while they head the CCA;
+ * after a handover the default is gone, and "Head (Semester 1)" with it. A
+ * stored "Head" stays if the period later goes back to a full year; clearing
+ * the role and the periods together (Reset) stores neither.
  */
 function withHeadRoleStored(
   target: { frozen: boolean; isHead: boolean },
@@ -419,8 +419,9 @@ function withHeadRoleStored(
 ): RosterChanges {
   if (target.frozen || !target.isHead) return changes;
   const merged = { ...savedChoices(current), ...changes };
-  const partYear =
-    merged.roleDuration === "sem1" || merged.roleDuration === "sem2";
+  const partYear = [merged.roleDuration, merged.duration].some(
+    (d) => d === "sem1" || d === "sem2",
+  );
   return partYear && !blankToNull(merged.roleLabel)
     ? { ...changes, roleLabel: HEAD_ROLE }
     : changes;

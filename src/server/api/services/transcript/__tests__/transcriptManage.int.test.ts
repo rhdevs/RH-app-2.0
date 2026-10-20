@@ -804,6 +804,45 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       });
 
+      it("stores an explicit Head for a current head who saves only a part-year membership (F2)", async () => {
+        const soccer = as(SOCCER_HEAD).transcriptManage;
+        const stored = () =>
+          db.transcriptRosterEntry.findFirstOrThrow({
+            where: { academicYear: AY, ccaID: SOCCER, userID: SOCCER_HEAD.id },
+          });
+        // Clear the seeded role, then save only the membership period.
+        await soccer.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          roleLabel: null,
+          roleDuration: null,
+        });
+        await soccer.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          duration: "sem1",
+        });
+        expect(await stored()).toMatchObject({
+          duration: "sem1",
+          roleLabel: "Head",
+        });
+        // Reset (everything cleared together) clears it again.
+        await soccer.roster.upsert({
+          ccaID: SOCCER,
+          academicYear: AY,
+          userID: SOCCER_HEAD.id,
+          duration: null,
+          roleLabel: "",
+          roleDuration: null,
+        });
+        expect(await stored()).toMatchObject({
+          duration: null,
+          roleLabel: null,
+        });
+      });
+
       it("refuses a role period that sticks out of the membership period", async () => {
         const soccer = as(SOCCER_HEAD).transcriptManage;
         const base = { ccaID: SOCCER, academicYear: AY, userID: R12.id };
