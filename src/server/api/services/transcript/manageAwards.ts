@@ -18,6 +18,7 @@ import type {
   awardsAssignInput,
   awardsListInput,
 } from "~/lib/transcript/manageInput";
+import { YEAR_WRITE_HARD_CAP_MS } from "~/lib/transcript/writeConflict";
 import { NOT_VOIDED } from "./loader";
 import {
   ONLY_UNLOCKED_RESIDENTS,
@@ -107,7 +108,7 @@ export const isUniqueViolation = (e: unknown) =>
 
 /** A big bulk write is a few awards at a time, so no transaction runs long. */
 const ROW_CHUNK = 50;
-const BULK_TX = { timeout: 60_000, maxWait: 10_000 } as const;
+const BULK_TX = { timeout: 40_000, maxWait: 10_000 } as const;
 
 async function inChunks<T>(
   items: readonly T[],
@@ -156,6 +157,32 @@ const REMOVED = { voidedAt: { not: null } } as const;
 export function stopReason(e: unknown): string {
   if (e instanceof TRPCError) return e.message;
   return "UNKNOWN";
+}
+
+/**
+ * Log why a person-by-person loop stopped, as code and name only: never the
+ * message text, which can carry names or member ids.
+ */
+function logStopped(evt: string, academicYear: string, e: unknown) {
+  const code = (e as { code?: unknown } | null)?.code;
+  console.error(
+    JSON.stringify({
+      evt,
+      academicYear,
+      code:
+        e instanceof TRPCError
+          ? e.message
+          : typeof code === "string"
+            ? code
+            : "UNKNOWN",
+      name: e instanceof Error ? e.name : typeof e,
+    }),
+  );
+}
+
+/** Test seam: the clock the person-by-person fallbacks measure their time with. */
+export interface FallbackOptions {
+  clock?: () => number;
 }
 
 export async function awardTypeCreate(
@@ -266,6 +293,7 @@ export async function awardsAssign(
   actorUserID: string,
   input: z.infer<typeof awardsAssignInput>,
   now: Date = new Date(),
+  { clock = Date.now }: FallbackOptions = {},
 ) {
   const type = await requireType(db, input.awardTypeID);
   if (type.archivedAt) throw fail("CONFLICT", "AWARD_TYPE_ARCHIVED");
@@ -338,22 +366,26 @@ export async function awardsAssign(
   let result: { created: typeof recipients; skipped: typeof recipients };
   let stopped: string | null = null;
   try {
-    result = await yearWrite(db, async (tx) => {
-      await assertStillCollecting(tx, input.academicYear, guard);
-      const plan = await planWith(tx);
-      if (plan.create.length > 0) {
-        await tx.award.createMany({ data: plan.create.map(rowFor) });
-      }
-      await logCorrections(
-        tx,
-        guard,
-        actorUserID,
-        input.academicYear,
-        plan.create.map(lineFor),
-        now,
-      );
-      return { created: plan.create, skipped: plan.skipped };
-    });
+    result = await yearWrite(
+      db,
+      async (tx) => {
+        await assertStillCollecting(tx, input.academicYear, guard);
+        const plan = await planWith(tx);
+        if (plan.create.length > 0) {
+          await tx.award.createMany({ data: plan.create.map(rowFor) });
+        }
+        await logCorrections(
+          tx,
+          guard,
+          actorUserID,
+          input.academicYear,
+          plan.create.map(lineFor),
+          now,
+        );
+        return { created: plan.create, skipped: plan.skipped };
+      },
+      BULK_TX,
+    );
   } catch (e) {
     if (!isUniqueViolation(e)) throw e;
     // Someone gave one of these awards at the same moment (a double-submit,
@@ -364,7 +396,12 @@ export async function awardsAssign(
     const plan = await planWith(db);
     const created: typeof recipients = [];
     const raced: typeof recipients = [];
+    const fallbackStart = clock();
     for (const r of plan.create) {
+      if (clock() - fallbackStart > YEAR_WRITE_HARD_CAP_MS) {
+        stopped = "RECORDS_BUSY";
+        break;
+      }
       try {
         await yearWrite(db, async (tx) => {
           await assertStillCollecting(tx, input.academicYear, guard);
@@ -386,6 +423,7 @@ export async function awardsAssign(
         }
         // Not a duplicate (busy, published, a timeout): stop here and report
         // who is already done; submitting again skips them.
+        logStopped("award_assign_stopped", input.academicYear, e2);
         stopped = stopReason(e2);
         break;
       }
@@ -748,6 +786,7 @@ export async function awardsBulkRestore(
   actorUserID: string,
   ids: readonly string[],
   now: Date = new Date(),
+  { clock = Date.now }: FallbackOptions = {},
 ) {
   const { rows, guards } = await bulkTargets(db, actorUserID, ids);
   if (!rows.some((r) => r.voidedAt)) {
@@ -844,7 +883,16 @@ export async function awardsBulkRestore(
   const plan = await planWith(db);
   const skipped = [...plan.skipped];
   const restoredIDs: string[] = [];
+  const fallbackStart = clock();
   for (const r of plan.restorable) {
+    if (clock() - fallbackStart > YEAR_WRITE_HARD_CAP_MS) {
+      return {
+        restored: restoredIDs.length,
+        restoredIDs,
+        skipped,
+        stopped: "RECORDS_BUSY",
+      };
+    }
     try {
       const changed = await yearWrite(db, async (tx) => {
         await assertStillCollecting(
@@ -872,6 +920,7 @@ export async function awardsBulkRestore(
         continue;
       }
       // Not a duplicate (busy, published, a timeout): keep what is done.
+      logStopped("award_restore_stopped", r.academicYear, e2);
       return {
         restored: restoredIDs.length,
         restoredIDs,

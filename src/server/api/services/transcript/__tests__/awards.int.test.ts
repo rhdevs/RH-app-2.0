@@ -2,8 +2,18 @@ import { execFileSync } from "node:child_process";
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import type { createCaller as CreateCaller } from "~/server/api/root";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { awardActiveKey } from "~/lib/transcript/awards";
+import { YEAR_WRITE_HARD_CAP_MS } from "~/lib/transcript/writeConflict";
 import { isLocalDevDatabase } from "./localDbGate";
 
 /**
@@ -478,6 +488,16 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /* ---------------------------------------------------------------- */
     describe("retried and partial bulk writes (U3, U4)", () => {
+      const logged = vi.spyOn(console, "error");
+      beforeEach(() => {
+        logged.mockReset();
+        logged.mockImplementation(() => undefined);
+      });
+      afterEach(() => logged.mockReset());
+      const lineFor = (evt: string) =>
+        logged.mock.calls
+          .map((c) => String(c[0]))
+          .find((l) => l.includes(`"evt":"${evt}"`));
       /**
        * A db whose n-th transaction (1-based) is replaced: `before` runs first
        * (a rival write), then the transaction fails with `error` when one is
@@ -605,6 +625,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
 
         expect(result.stopped).toBe("RECORDS_BUSY");
+        expect(JSON.parse(lineFor("award_assign_stopped")!)).toEqual({
+          evt: "award_assign_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
         expect(result.assigned).toBe(1);
         expect(result.assignedUserIDs).toEqual([people[0]]);
         expect(await awardsOf(people[0]!, t.name)).toHaveLength(1);
@@ -693,6 +719,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const result = await awardsBulkRestore(racing, JCRC.id, ids);
 
         expect(result.stopped).toBe("UNKNOWN");
+        const line = lineFor("award_restore_stopped");
+        expect(JSON.parse(line!)).toEqual({
+          evt: "award_restore_stopped",
+          academicYear: AY,
+          code: "UNKNOWN",
+          name: "Error",
+        });
+        expect(line).not.toContain("Transaction already closed");
         expect(result.restored).toBe(1);
         const active = await db.award.findMany({
           where: { id: { in: ids }, ...live },
@@ -701,6 +735,102 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         // Submitting again restores the rest; the one already done is not touched.
         const again = await awardsBulkRestore(db, JCRC.id, ids);
         expect(again).toMatchObject({ restored: 2, stopped: null });
+      });
+
+      it("an assignment whose fallback stops on an unknown error logs only its code and name (F9)", async () => {
+        const { awardsAssign } = await import("../manageAwards");
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16"];
+        const unknown = new Error("Transaction already closed (timeout)");
+        const racing = interfering({
+          1: { error: duplicate() },
+          2: { error: unknown },
+        });
+
+        const result = await awardsAssign(racing, JCRC.id, {
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: people.map((userID) => ({ userID, citation: null })),
+        });
+
+        expect(result).toMatchObject({ stopped: "UNKNOWN", assigned: 0 });
+        const line = lineFor("award_assign_stopped");
+        expect(JSON.parse(line!)).toEqual({
+          evt: "award_assign_stopped",
+          academicYear: AY,
+          code: "UNKNOWN",
+          name: "Error",
+        });
+        expect(line).not.toContain("Transaction already closed");
+      });
+
+      it("an assignment's fallback stops before the next person once it has run past the time cap (F41)", async () => {
+        const { awardsAssign } = await import("../manageAwards");
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16", "SEED-R17"];
+        let elapsed = 0;
+        // 1: everyone at once hits a duplicate; during the first person's write
+        // the clock passes the cap, so the second person is not started.
+        const racing = interfering({
+          1: { error: duplicate() },
+          2: {
+            before: async () => {
+              elapsed = YEAR_WRITE_HARD_CAP_MS + 1;
+            },
+          },
+        });
+
+        const result = await awardsAssign(
+          racing,
+          JCRC.id,
+          {
+            academicYear: AY,
+            awardTypeID: t.id,
+            recipients: people.map((userID) => ({ userID, citation: null })),
+          },
+          undefined,
+          { clock: () => elapsed },
+        );
+
+        expect(result.stopped).toBe("RECORDS_BUSY");
+        expect(result.assignedUserIDs).toEqual([people[0]]);
+        expect(await awardsOf(people[1]!, t.name)).toHaveLength(0);
+      });
+
+      it("a restore's fallback stops before the next person once it has run past the time cap (F41)", async () => {
+        const { awardsBulkRestore } = await import("../manageAwards");
+        const mine = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 3,
+        });
+        const ids = mine.map((m) => m.id);
+        for (const id of ids) await as(JCRC).awards.remove({ id });
+        let elapsed = 0;
+        const racing = interfering({
+          1: { error: duplicate() },
+          2: {
+            before: async () => {
+              elapsed = YEAR_WRITE_HARD_CAP_MS + 1;
+            },
+          },
+        });
+
+        const result = await awardsBulkRestore(
+          racing,
+          JCRC.id,
+          ids,
+          undefined,
+          {
+            clock: () => elapsed,
+          },
+        );
+
+        expect(result).toMatchObject({ restored: 1, stopped: "RECORDS_BUSY" });
+        expect(result.restoredIDs).toHaveLength(1);
+        const active = await db.award.findMany({
+          where: { id: { in: ids }, ...live },
+        });
+        expect(active).toHaveLength(1);
       });
     });
 
