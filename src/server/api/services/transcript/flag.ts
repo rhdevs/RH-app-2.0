@@ -19,8 +19,10 @@ import { TRPCError } from "@trpc/server";
 export const TRANSCRIPT_FLAG_KEY = "transcript.enabled";
 export const TRANSCRIPT_DISABLED = "TRANSCRIPT_DISABLED";
 const FLAG_TTL_MS = 15_000;
+const FAILURE_LOG_INTERVAL_MS = 60_000;
 
 let flagCache: { at: number; on: boolean } | null = null;
+let lastFailureLogAt: number | null = null;
 
 export async function isTranscriptEnabled(
   db: Pick<PrismaClient, "systemFlag">,
@@ -35,9 +37,25 @@ export async function isTranscriptEnabled(
     const on = row?.value === "on";
     flagCache = { at: Date.now(), on };
     return on;
-  } catch {
+  } catch (e) {
     // Fail CLOSED, and deliberately NOT cached: the next request retries
     // rather than pinning "off" for 15s on a transient database hiccup.
+    // Logged (code and name only) at most once a minute per server instance.
+    const now = Date.now();
+    if (
+      lastFailureLogAt === null ||
+      now - lastFailureLogAt >= FAILURE_LOG_INTERVAL_MS
+    ) {
+      lastFailureLogAt = now;
+      const code = (e as { code?: unknown } | null)?.code;
+      console.error(
+        JSON.stringify({
+          evt: "transcript_flag_read_failed",
+          ...(typeof code === "string" && { code }),
+          name: e instanceof Error ? e.name : typeof e,
+        }),
+      );
+    }
     return false;
   }
 }
@@ -45,6 +63,7 @@ export async function isTranscriptEnabled(
 /** Test/ops seam: drop the per-lambda cache so the next read hits the row. */
 export function resetTranscriptFlagCache(): void {
   flagCache = null;
+  lastFailureLogAt = null;
 }
 
 /** Throws TRANSCRIPT_DISABLED unless the switch is on. */

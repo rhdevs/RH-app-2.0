@@ -54,6 +54,48 @@ describe("isTranscriptEnabled", () => {
     expect(await flag.isTranscriptEnabled(healthy.db)).toBe(true);
   });
 
+  it("logs a failed read once a minute, with its code and name only, and still refuses (F10)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2027-04-15T00:00:00Z"));
+    const logged = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      const broken = flagDb(
+        Object.assign(new Error("secret host db.internal refused"), {
+          code: "P1001",
+        }),
+      );
+      const refused = async () => {
+        try {
+          await flag.assertTranscriptEnabled(broken.db);
+          return "ok";
+        } catch (error) {
+          const e = error as { code?: string; message?: string };
+          return `${e.code}:${e.message}`;
+        }
+      };
+
+      expect(await refused()).toBe("FORBIDDEN:TRANSCRIPT_DISABLED");
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(logged.mock.calls[0]![0]))).toEqual({
+        evt: "transcript_flag_read_failed",
+        code: "P1001",
+        name: "Error",
+      });
+      expect(String(logged.mock.calls[0]![0])).not.toContain("secret");
+
+      expect(await refused()).toBe("FORBIDDEN:TRANSCRIPT_DISABLED");
+      expect(logged).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date("2027-04-15T00:01:01Z"));
+      expect(await refused()).toBe("FORBIDDEN:TRANSCRIPT_DISABLED");
+      expect(logged).toHaveBeenCalledTimes(2);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("caches the row for 15 seconds, then reads it again", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2027-04-15T00:00:00Z"));
