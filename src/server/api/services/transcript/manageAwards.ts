@@ -708,7 +708,7 @@ async function bulkTargets(
 
 /** The in-transaction year check for every year a bulk change touches. */
 async function assertYearsStillCollecting(
-  tx: Pick<PrismaClient, "transcriptPeriod">,
+  tx: Pick<PrismaClient, "transcriptPeriod" | "residentUnlock">,
   guards: Map<string, { correction: boolean }>,
 ) {
   for (const [year, guard] of guards) {

@@ -8,6 +8,7 @@ import {
   type ResidentEventAction,
 } from "~/lib/transcript/corrections";
 import {
+  isLater,
   normaliseYearStatus,
   type EditRefusal,
 } from "~/lib/transcript/lifecycle";
@@ -63,6 +64,14 @@ export interface ResidentWriteScope {
   affectedUserIDs: readonly string[];
 }
 
+/** What the guard decided, and for which year and residents. */
+export interface ResidentWriteGuard {
+  correction: boolean;
+  academicYear: string;
+  /** The residents the guard checked (unlocked, for a correction). */
+  residents: readonly string[];
+}
+
 /**
  * Throws the refusal, or returns whether the write is a CORRECTION (allowed only
  * because every affected resident is unlocked in a published year).
@@ -71,7 +80,7 @@ export async function assertCanEditForResidents(
   db: PrismaClient,
   actor: { userID: string },
   scope: ResidentWriteScope,
-): Promise<{ correction: boolean }> {
+): Promise<ResidentWriteGuard> {
   const [roles, period] = await Promise.all([
     getUserRoles(db, actor.userID),
     getPeriod(db, scope.academicYear),
@@ -92,6 +101,13 @@ export async function assertCanEditForResidents(
     if (!isManager) {
       throw new TRPCError({ code: "FORBIDDEN", message: "INSUFFICIENT_ROLE" });
     }
+    // Nor for a year after the current one: it has not started.
+    if (isLater(scope.academicYear, currentAcademicYear(new Date()))) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "YEAR_NOT_STARTED",
+      });
+    }
     ordinary = status === "published" ? PUBLISHED_REFUSAL : null;
   }
 
@@ -105,7 +121,13 @@ export async function assertCanEditForResidents(
         ? await unlockedAmong(db, scope.academicYear, scope.affectedUserIDs)
         : new Set(),
   });
-  if (decision.allow) return { correction: decision.correction };
+  if (decision.allow) {
+    return {
+      correction: decision.correction,
+      academicYear: scope.academicYear,
+      residents: [...new Set(scope.affectedUserIDs)],
+    };
+  }
 
   if (decision.refusal === ONLY_UNLOCKED_RESIDENTS) {
     throw new TRPCError({
@@ -120,6 +142,24 @@ export async function assertCanEditForResidents(
         : "FORBIDDEN",
     message: decision.refusal,
   });
+}
+
+/**
+ * Refuse a correction whose in-transaction diff names a resident the guard did
+ * not check (the records changed between the guard and the write).
+ */
+export function assertCheckedResidents(
+  guard: { correction: boolean; residents?: readonly string[] },
+  userIDs: readonly string[],
+): void {
+  if (!guard.correction) return;
+  const checked = new Set(guard.residents ?? []);
+  if (userIDs.some((id) => !checked.has(id))) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: ONLY_UNLOCKED_RESIDENTS,
+    });
+  }
 }
 
 /**
@@ -148,15 +188,31 @@ export const ORDINARY_WRITE = { correction: false } as const;
  *    milliseconds before the commit, not for the whole save, so one long save
  *    no longer makes every other save of the year fail.
  * A correction is for an open year already, so it is checked by neither half.
+ * Instead its residents' unlocks are read again here: a relock since the guard
+ * ran refuses the correction before it writes.
  * It must run inside `yearWrite`: anywhere else nothing would write the row.
  */
 export async function assertStillCollecting(
-  tx: Pick<PrismaClient, "transcriptPeriod">,
+  tx: Pick<PrismaClient, "transcriptPeriod" | "residentUnlock">,
   academicYear: string,
-  guard: { correction: boolean },
+  guard: { correction: boolean; residents?: readonly string[] },
   now: Date = new Date(),
 ): Promise<void> {
-  if (guard.correction) return;
+  if (guard.correction) {
+    const residents = [...new Set(guard.residents ?? [])];
+    const rows = await tx.residentUnlock.findMany({
+      where: { academicYear, userID: { in: residents }, ...NOT_RELOCKED },
+      select: { userID: true },
+    });
+    const unlocked = new Set(rows.map((r) => r.userID));
+    if (residents.length === 0 || residents.some((id) => !unlocked.has(id))) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: ONLY_UNLOCKED_RESIDENTS,
+      });
+    }
+    return;
+  }
   const pending = pendingTouches.get(tx);
   if (!pending) {
     throw new Error("YEAR_WRITE_REQUIRED: the year check runs in yearWrite");

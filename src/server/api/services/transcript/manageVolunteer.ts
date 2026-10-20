@@ -26,6 +26,7 @@ import { assertCanEditCcaYear } from "./editRights";
 import { correctionSummary } from "~/lib/transcript/corrections";
 import {
   assertCanEditForResidents,
+  assertCheckedResidents,
   assertStillCollecting,
   yearWrite,
   ORDINARY_WRITE,
@@ -718,6 +719,10 @@ export async function volunteerPeopleSet(
       const toRemove = existing.filter(
         (row) => !row.removedAt && !wanted.has(row.userID),
       );
+      assertCheckedResidents(guard, [
+        ...toAdd,
+        ...[...toRestore, ...toRemove].map((row) => row.userID),
+      ]);
       if (toAdd.length > 0) {
         await tx.volunteerPerson.createMany({
           data: toAdd.map((userID) => ({

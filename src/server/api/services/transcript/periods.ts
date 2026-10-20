@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
-import { parseAcademicYear } from "~/lib/transcript/academicYear";
+import {
+  currentAcademicYear,
+  parseAcademicYear,
+} from "~/lib/transcript/academicYear";
 import {
   isBeforeFirstYear,
+  isLater,
   normaliseYearStatus,
   openBlocker,
   type OpenBlocker,
@@ -53,13 +57,22 @@ function requireValidYear(academicYear: string) {
   return ay;
 }
 
-/** A year that is valid AND not before transcripts began (for writes to a period). */
-function requireSupportedYear(academicYear: string) {
+/**
+ * A year that is valid, not before transcripts began and not after the current
+ * one (for writes to a period).
+ */
+function requireSupportedYear(academicYear: string, now: Date = new Date()) {
   const ay = requireValidYear(academicYear);
   if (isBeforeFirstYear(academicYear)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "YEAR_BEFORE_START",
+    });
+  }
+  if (isLater(academicYear, currentAcademicYear(now))) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "YEAR_NOT_STARTED",
     });
   }
   return ay;
@@ -255,7 +268,7 @@ export async function openTranscripts(
   now: Date = new Date(),
   options: { runID?: string; budgetMs?: number } = {},
 ): Promise<OpenResult> {
-  requireSupportedYear(academicYear);
+  requireSupportedYear(academicYear, now);
   const period = await getPeriod(db, academicYear);
   const blocker = openBlocker(
     academicYear,

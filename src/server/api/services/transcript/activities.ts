@@ -19,6 +19,7 @@ import { participantSummaries } from "~/lib/transcript/corrections";
 import { NOT_REMOVED } from "./loader";
 import {
   assertCanEditForResidents,
+  assertCheckedResidents,
   assertStillCollecting,
   yearWrite,
   ORDINARY_WRITE,
@@ -351,6 +352,12 @@ export async function participantsSet(
         where: { activityID: activity.id },
       });
       const diff = diffParticipants(asExisting(existing), desired);
+      assertCheckedResidents(
+        guard,
+        participantSummaries("Activities", activity.title, diff).map(
+          (s) => s.userID,
+        ),
+      );
       const text = (d: DesiredParticipant) => ({
         role: d.role === "" ? null : d.role,
         description: d.description === "" ? null : d.description,

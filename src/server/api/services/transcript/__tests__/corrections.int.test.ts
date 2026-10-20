@@ -1458,6 +1458,191 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(row.removedBy).toBe(ADMIN.id);
         expect(row.removedAt?.getTime()).not.toBe(later.getTime());
       });
+
+      it("refuses a correction whose resident is relocked after the guard passed, writing nothing (F4)", async () => {
+        const roster = await import("../manageRoster");
+        await publishYear();
+        await unlock(R12);
+        const relocking = withRivalBeforeFirstTransaction(() =>
+          as(JCRC).transcriptManage.corrections.relock({
+            userID: R12.id,
+            academicYear: AY,
+          }),
+        );
+
+        expect(
+          await errorOf(
+            roster.rosterUpsert(relocking, JCRC.id, {
+              ccaID: SOCCER,
+              academicYear: AY,
+              userID: R12.id,
+              roleLabel: "Vice-Captain",
+            }),
+          ),
+        ).toBe("FORBIDDEN:ONLY_UNLOCKED_RESIDENTS");
+        expect((await entryOf(R12)).roleLabel ?? null).toBeNull();
+        expect((await events(R12)).map((e) => e.action)).toEqual([
+          "unlock",
+          "relock",
+        ]);
+      });
+
+      it("refuses a participants correction when a change meanwhile adds an unchecked resident to the diff (F4)", async () => {
+        const { participantsSet } = await import("../activities");
+        await publishYear();
+        await unlock(R12);
+        const activity = await interHall();
+        const rows = await db.ccaActivityParticipant.findMany({
+          where: { activityID: activity.id },
+        });
+        // Only R12 changes, so the guard checks only R12...
+        const participants = rows
+          .filter((r) => !r.removedAt)
+          .map((r) => ({
+            userID: r.userID,
+            role: r.userID === R12.id ? "Striker" : (r.role ?? ""),
+            description: r.description ?? "",
+          }));
+        // ...but R17 is added meanwhile, so the write would remove R17 too.
+        const racing = withRivalBeforeFirstTransaction(() =>
+          db.ccaActivityParticipant.create({
+            data: {
+              activityID: activity.id,
+              academicYear: AY,
+              ccaID: SOCCER,
+              userID: R17.id,
+              addedBy: ADMIN.id,
+              addedAt: new Date(),
+            },
+          }),
+        );
+
+        expect(
+          await errorOf(
+            participantsSet(racing, JCRC.id, {
+              ccaID: SOCCER,
+              id: activity.id,
+              participants,
+            }),
+          ),
+        ).toBe("FORBIDDEN:ONLY_UNLOCKED_RESIDENTS");
+        const after = await db.ccaActivityParticipant.findMany({
+          where: { activityID: activity.id },
+        });
+        expect(after.find((r) => r.userID === R12.id)?.role).toBe("Midfielder");
+        expect(after.find((r) => r.userID === R17.id)?.removedAt ?? null).toBe(
+          null,
+        );
+        expect(
+          (await events(R12)).filter((e) => e.action === "correction"),
+        ).toHaveLength(0);
+      });
+    });
+    /* ---------------------------------------------------------------- */
+    describe("who added each activity participant (F14)", () => {
+      it("returns the names of who added and who last edited a participation", async () => {
+        const list = () =>
+          as(JCRC).transcriptManage.corrections.participation.list({
+            userID: R12.id,
+            academicYear: AY,
+          });
+        const before = (await list()).find(
+          (i) => i.title === "Inter-hall league",
+        );
+        expect(before).toMatchObject({
+          addedByName: "Seed Resident 04",
+          updatedByName: null,
+        });
+
+        await as(JCRC).transcriptManage.corrections.participation.set({
+          userID: R12.id,
+          academicYear: AY,
+          activityID: (await interHall()).id,
+          role: "Striker",
+          description: "",
+        });
+        const after = (await list()).find(
+          (i) => i.title === "Inter-hall league",
+        );
+        expect(after).toMatchObject({
+          addedByName: "Seed Resident 04",
+          updatedByName: "Seed Resident 02",
+        });
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("a year that has not started (F17)", () => {
+      const NEXT = "AY2027/28";
+
+      it("refuses a manager's download-by date for the next year, and still sets the current one", async () => {
+        const c = as(JCRC).transcript.periods;
+        expect(
+          await errorOf(
+            c.setDownloadBy({ academicYear: NEXT, downloadBy: "2028-06-30" }),
+          ),
+        ).toBe("PRECONDITION_FAILED:YEAR_NOT_STARTED");
+        expect(
+          await db.transcriptPeriod.count({ where: { academicYear: NEXT } }),
+        ).toBe(0);
+        expect(
+          await errorOf(
+            c.setDownloadBy({ academicYear: AY, downloadBy: "2027-06-30" }),
+          ),
+        ).toBe("ok");
+      });
+
+      it("refuses an award for the next year, and still gives one for the current year", async () => {
+        const colours = await db.awardType.findUniqueOrThrow({
+          where: { normalizedName: "full colours" },
+        });
+        const give = (academicYear: string) =>
+          as(JCRC).transcriptManage.awards.assign({
+            academicYear,
+            awardTypeID: colours.id,
+            recipients: [{ userID: R20.id }],
+          });
+        expect(await errorOf(give(NEXT))).toBe(
+          "PRECONDITION_FAILED:YEAR_NOT_STARTED",
+        );
+        expect(await db.award.count({ where: { academicYear: NEXT } })).toBe(0);
+        expect(await errorOf(give(AY))).toBe("ok");
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("a manual entry's role period without a role (F18)", () => {
+      it("stores no role period without a role, and lets an old one go to Semester 2", async () => {
+        const save = (fields: Record<string, unknown>) =>
+          as(JCRC).transcriptManage.corrections.memberships.saveManual({
+            userID: R20.id,
+            academicYear: AY,
+            ccaID: SOCCER,
+            ...fields,
+          } as never);
+        const where = {
+          academicYear_userID_ccaID: {
+            academicYear: AY,
+            userID: R20.id,
+            ccaID: SOCCER,
+          },
+        };
+        await save({ duration: "full", roleDuration: "sem1" });
+        expect(
+          (await db.manualMembership.findUniqueOrThrow({ where }))
+            .roleDuration ?? null,
+        ).toBeNull();
+
+        // An entry saved before this rule, with the role period kept.
+        await db.manualMembership.update({
+          where,
+          data: { roleDuration: "sem1" },
+        });
+        expect(await errorOf(save({ duration: "sem2" }))).toBe("ok");
+        expect(
+          await db.manualMembership.findUniqueOrThrow({ where }),
+        ).toMatchObject({ duration: "sem2", roleDuration: null });
+      });
     });
   },
 );

@@ -153,8 +153,7 @@ export const PREVIOUS_YEAR_WARNING = (academicYear: string) =>
 
 /** The API's error codes, in plain words for an inline message. */
 const ERROR_TEXT: Record<string, string> = {
-  YEAR_NOT_STARTED:
-    "This academic year has not started yet, so its transcripts cannot be opened.",
+  YEAR_NOT_STARTED: "This academic year has not started yet.",
   YEAR_ENDED: PAST_YEAR_NOTE,
   TRANSCRIPT_DISABLED: "Transcripts are not available yet.",
   NOT_THE_TERM_YEAR:
