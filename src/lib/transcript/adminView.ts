@@ -65,6 +65,25 @@ const plural = (n: number, one: string, many: string) =>
 export const unresolvedNote = (count: number) =>
   `${plural(count, "member", "members")} could not be matched`;
 
+/**
+ * "2 members could not be matched: E0123456, Alice Tan or Alicia Tan": the
+ * count, then who they were as far as the lock names them (the names of the
+ * accounts claiming an ambiguous key, else the raw key).
+ */
+export function unmatchedLine(
+  count: number,
+  members: ReadonlyArray<{ key: string; names: readonly string[] }>,
+): string {
+  const who = members
+    .map((m) => (m.names.length > 0 ? m.names.join(" or ") : m.key))
+    .join(", ");
+  return who ? `${unresolvedNote(count)}: ${who}` : unresolvedNote(count);
+}
+
+/** While Open transcripts runs: how far it has got. */
+export const openProgress = (lockedInRun: number, totalCcas: number) =>
+  `Locking member lists: ${lockedInRun} of ${totalCcas} CCAs`;
+
 /** A few words for why one CCA's member list could not be saved. */
 const LOCK_FAILURE_TEXT: Record<string, string> = {
   PERIOD_PUBLISHED: "year already open",
@@ -251,7 +270,7 @@ export function bulkRestoreStoppedLine(done: number, reason: string): string {
   return `${done} ${done === 1 ? "was" : "were"} restored before it stopped: ${why}. The rest are still selected; try again to finish.`;
 }
 
-/** A readable message for an API error; unknown codes get a generic line, never a stack. */
+/** A readable message for an API error; anything not coded gets a generic line, never raw text. */
 export function errorText(message: string | null | undefined): string {
   if (!message) return "Something went wrong. Try again.";
   const validation = validationText(message);
@@ -261,10 +280,9 @@ export function errorText(message: string | null | undefined): string {
     // "UPLOAD_PARTIAL:<rows written>", from an import that stopped part way.
     return `The upload stopped part way: ${message.split(":")[1] ?? "0"} imported. Undo it from History, fix the file, and upload again.`;
   }
-  const known = ERROR_TEXT[message] ?? ERROR_TEXT[code];
-  if (known) return known;
-  // Zod errors and other readable messages from the API are kept short.
-  if (/^[A-Z0-9_]+(:.*)?$/.test(message))
-    return "Something went wrong. Try again.";
-  return message.length > 160 ? `${message.slice(0, 157)}...` : message;
+  return (
+    ERROR_TEXT[message] ??
+    ERROR_TEXT[code] ??
+    "Something went wrong. Try again."
+  );
 }

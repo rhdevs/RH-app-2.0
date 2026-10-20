@@ -7,6 +7,7 @@ import {
 import {
   resolveRoster,
   type RosterResolved,
+  type RosterUnresolved,
 } from "~/server/api/services/ccaRoster";
 import { personKey } from "./loader";
 
@@ -22,14 +23,19 @@ export type LiveMemberResolved = {
   keys: string[];
 };
 
-/** Every resolved person in the CCA, with the keys that name them. */
+/**
+ * Every resolved person in the CCA, with the keys that name them, and the
+ * roster entries the resolver could not match to one person.
+ */
 export async function liveMembers(db: PrismaClient, ccaID: number) {
   const roster = await resolveRoster(db, ccaID);
   const seen = new Map<string, LiveMemberResolved>();
   let unresolved = 0;
+  const unresolvedEntries: RosterUnresolved[] = [];
   for (const e of [...roster.heads, ...roster.members]) {
     if (e.kind !== "resolved") {
       unresolved += 1;
+      unresolvedEntries.push(e);
       continue;
     }
     const key = personKey(
@@ -48,7 +54,7 @@ export async function liveMembers(db: PrismaClient, ccaID: number) {
       ].filter((k) => k.length > 0),
     });
   }
-  return { members: [...seen.values()], unresolved };
+  return { members: [...seen.values()], unresolved, unresolvedEntries };
 }
 
 /**

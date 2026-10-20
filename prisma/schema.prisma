@@ -1687,6 +1687,12 @@ model CcaYearFreeze {
   memberCount    Int?
   /// Members the roster resolver could not match when the list was saved.
   unresolvedCount Int?
+  /// Who they were (at most 50): the raw key, and for an ambiguous key the
+  /// names of the accounts that claim it. Shown to managers only.
+  unresolvedMembers FreezeUnresolvedMember[]
+  /// The Open transcripts run that saved this list, so a run that continues
+  /// over several requests skips the CCAs it already saved.
+  openRunID      String?
   unfrozenAt     DateTime?
   unfrozenBy     String?
   unfreezeReason String?
@@ -1694,6 +1700,15 @@ model CcaYearFreeze {
   @@unique([academicYear, ccaID], map: "freeze_year_cca")
   /// A CCA's saved lists across years.
   @@index([ccaID], map: "freeze_cca")
+}
+
+/// One member Open transcripts could not match: reason NO_USER_ROW (no account
+/// has the key; names is empty) or AMBIGUOUS_KEY (names of the accounts that
+/// claim it).
+type FreezeUnresolvedMember {
+  key    String
+  reason String
+  names  String[]
 }
 
 /// A CCA activity for one academic year: a project or event the CCA ran. It is

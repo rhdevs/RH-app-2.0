@@ -1779,6 +1779,88 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await lockCount()).toBe(await db.cCA.count());
       });
 
+      it("opens over several requests of one run when each may lock only one CCA (F1)", async () => {
+        const first = await periods.openTranscripts(db, AY, JCRC.id, APR_2027, {
+          budgetMs: 0,
+        });
+        expect(first).toMatchObject({ opened: false, lockedInRun: 1 });
+        expect(await statusOf()).toBe("collecting");
+
+        let result = first;
+        let calls = 1;
+        while (!result.opened) {
+          expect(result.failures).toEqual([]);
+          result = await periods.openTranscripts(db, AY, JCRC.id, APR_2027, {
+            runID: first.runID,
+            budgetMs: 0,
+          });
+          calls += 1;
+        }
+
+        const ccas = await db.cCA.count();
+        expect(calls).toBeGreaterThanOrEqual(2);
+        expect(result).toMatchObject({
+          opened: true,
+          runID: first.runID,
+          lockedInRun: ccas,
+          totalCcas: ccas,
+        });
+        expect(await statusOf()).toBe("published");
+        const locks = await db.ccaYearFreeze.findMany({
+          where: { academicYear: AY },
+        });
+        expect(locks).toHaveLength(ccas);
+        expect(new Set(locks.map((l) => l.ccaID)).size).toBe(ccas);
+        expect(locks.every((l) => l.openRunID === first.runID)).toBe(true);
+      });
+
+      it("names the accounts claiming an ambiguous member key on the lock (F3)", async () => {
+        // Two accounts claim the key SEED-AMB1: one by its NUS address, the
+        // other by its stored id. The roster cannot tell which is the member.
+        await db.user.createMany({
+          data: [
+            {
+              email: "seed-amb1@u.nus.edu",
+              userID: "SEED-AMB1-A",
+              displayName: "Ambiguous One A",
+            },
+            {
+              email: "seed-amb1b@u.nus.edu",
+              userID: "SEED-AMB1",
+              displayName: "Ambiguous One B",
+            },
+          ],
+        });
+        await db.userCCA.create({
+          data: { userID: "SEED-AMB1", ccaID: SOCCER },
+        });
+
+        const result = await freeze.freezeCca(db, {
+          ccaID: SOCCER,
+          academicYear: AY,
+          actorUserID: JCRC.id,
+          now: APR_2027,
+        });
+
+        expect(result.unresolvedCount).toBe(1);
+        const lock = await db.ccaYearFreeze.findFirstOrThrow({
+          where: { academicYear: AY, ccaID: SOCCER },
+        });
+        expect(lock.unresolvedMembers).toHaveLength(1);
+        expect(lock.unresolvedMembers[0]).toMatchObject({
+          key: "SEED-AMB1",
+          reason: "AMBIGUOUS_KEY",
+        });
+        expect([...lock.unresolvedMembers[0]!.names].sort()).toEqual([
+          "Ambiguous One A",
+          "Ambiguous One B",
+        ]);
+        const listed = await freeze.listFreezes(db, AY);
+        expect(
+          listed.rows.find((r) => r.ccaID === SOCCER)?.unresolvedMembers,
+        ).toEqual(lock.unresolvedMembers);
+      });
+
       it("locks a CCA created while the first pass was running before it opens (F29)", async () => {
         let created = false;
         const racing = new Proxy(db, {
@@ -1820,11 +1902,22 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }) as PrismaClient;
 
         try {
+          const first = await periods.openTranscripts(
+            racing,
+            AY,
+            JCRC.id,
+            APR_2027,
+          );
+          // The new CCA has no lock from this run yet: not claimed. The
+          // client's next request continues the run and locks it.
+          expect(first.opened).toBe(false);
+          expect(await statusOf()).toBe("collecting");
           const result = await periods.openTranscripts(
             racing,
             AY,
             JCRC.id,
             APR_2027,
+            { runID: first.runID },
           );
 
           expect(result.opened).toBe(true);
@@ -1832,7 +1925,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             where: { academicYear: AY, ccaID: NEW_CCA },
           });
           expect(late).not.toBeNull();
-          expect(result.lockedNow).toBe(await db.cCA.count());
+          expect(result.lockedNow).toBe(1);
+          expect(first.lockedNow + result.lockedNow).toBe(await db.cCA.count());
           expect(await statusOf()).toBe("published");
         } finally {
           await db.ccaYearFreeze.deleteMany({ where: { ccaID: NEW_CCA } });

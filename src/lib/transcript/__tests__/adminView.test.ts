@@ -211,8 +211,10 @@ describe("errorText", () => {
     expect(errorText("x".repeat(500)).length).toBeLessThanOrEqual(160);
   });
 
-  it("keeps a short readable message", () => {
-    expect(errorText("Title is required")).toBe("Title is required");
+  it("shows a generic line for any text that is not a coded message (F26)", () => {
+    expect(errorText("Title is required")).toBe(
+      "Something went wrong. Try again.",
+    );
   });
 
   it("explains a partial upload", () => {

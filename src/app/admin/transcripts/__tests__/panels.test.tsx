@@ -7,6 +7,8 @@ import {
 import {
   PeriodPanelView,
   panelReminders,
+  runOpen,
+  type OpenStep,
   type PeriodPanelViewProps,
 } from "../_components/PeriodPanel";
 import { PreviewPickerView, previewHref } from "../_components/PreviewPicker";
@@ -180,6 +182,96 @@ describe("academic year panel", () => {
 
     expect(text).not.toContain("!");
     expect(text.toLowerCase()).not.toContain("successfully");
+  });
+});
+
+describe("one press of Open transcripts", () => {
+  const step = (over: Partial<OpenStep>): OpenStep => ({
+    opened: false,
+    runID: "11111111-1111-4111-8111-111111111111",
+    lockedInRun: 0,
+    totalCcas: 3,
+    lockedNow: 0,
+    relocked: 0,
+    failures: [],
+    unresolved: 0,
+    ...over,
+  });
+
+  it("continues the run with its runID, shows progress, and adds the counts up", async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce(step({ lockedInRun: 1, lockedNow: 1 }))
+      .mockResolvedValueOnce(
+        step({ lockedInRun: 2, lockedNow: 1, unresolved: 2 }),
+      )
+      .mockResolvedValueOnce(
+        step({ opened: true, lockedInRun: 3, lockedNow: 1 }),
+      );
+    const progress: string[] = [];
+    const refresh = vi.fn(async () => undefined);
+
+    const outcome = await runOpen(
+      "AY2026/27",
+      call,
+      (l) => progress.push(l),
+      refresh,
+    );
+
+    expect(call.mock.calls.map((c) => c[0])).toEqual([
+      { academicYear: "AY2026/27", runID: undefined },
+      { academicYear: "AY2026/27", runID: step({}).runID },
+      { academicYear: "AY2026/27", runID: step({}).runID },
+    ]);
+    expect(progress).toEqual([
+      "Locking member lists: 1 of 3 CCAs",
+      "Locking member lists: 2 of 3 CCAs",
+    ]);
+    expect(outcome).toEqual({
+      result: step({
+        opened: true,
+        lockedInRun: 3,
+        lockedNow: 3,
+        unresolved: 2,
+      }),
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops at the first failure and returns it", async () => {
+    const failed = step({ failures: [{ name: "Chess Club", code: "P2034" }] });
+    const call = vi.fn().mockResolvedValue(failed);
+
+    const outcome = await runOpen("AY2026/27", call, noop, async () => noop());
+
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ result: failed });
+  });
+
+  it("refreshes after a rejected call and shows a generic line for uncoded text (F26)", async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce(step({ lockedInRun: 1, lockedNow: 1 }))
+      .mockRejectedValueOnce(new Error("socket hang up at 10.0.0.1"));
+    const refresh = vi.fn(async () => undefined);
+
+    const outcome = await runOpen("AY2026/27", call, noop, refresh);
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ error: "Something went wrong. Try again." });
+    const html = renderPeriod({
+      actionError: "error" in outcome ? outcome.error : null,
+    });
+    expect(html).toContain("Something went wrong. Try again.");
+    expect(html).not.toContain("socket");
+  });
+
+  it("keeps the coded refusals in plain words", async () => {
+    const call = vi.fn().mockRejectedValue(new Error("ALREADY_PUBLISHED"));
+    const outcome = await runOpen("AY2026/27", call, noop, async () => noop());
+    expect(outcome).toEqual({
+      error: "Transcripts for this academic year are already open.",
+    });
   });
 });
 

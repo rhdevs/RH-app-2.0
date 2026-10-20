@@ -1,6 +1,6 @@
 "use client";
 
-import { errorText, unresolvedNote } from "~/lib/transcript/adminView";
+import { errorText, unmatchedLine } from "~/lib/transcript/adminView";
 import { formatSgDate } from "~/lib/transcript/sgDate";
 import { api } from "~/trpc/react";
 import { ErrorLine } from "./Bits";
@@ -17,6 +17,8 @@ export interface FreezeRowView {
   memberCount: number | null;
   /** Members the resolver could not match when the list was saved. */
   unresolvedCount?: number | null;
+  /** Who they were: the raw key, or the names of the accounts claiming it. */
+  unresolvedMembers?: ReadonlyArray<{ key: string; names: readonly string[] }>;
 }
 
 /** Shown while the year is still collecting but some lists are already saved. */
@@ -101,7 +103,10 @@ export function FreezeTableView(p: FreezeTableViewProps) {
                   <td className="px-2 py-2">
                     {r.unresolvedCount ? (
                       <span className="text-amber-800">
-                        {unresolvedNote(r.unresolvedCount)}
+                        {unmatchedLine(
+                          r.unresolvedCount,
+                          r.unresolvedMembers ?? [],
+                        )}
                       </span>
                     ) : (
                       ""
@@ -139,6 +144,7 @@ export default function FreezeTable({
     frozenByName: r.frozenByName,
     memberCount: r.memberCount,
     unresolvedCount: r.unresolvedCount,
+    unresolvedMembers: r.unresolvedMembers,
   }));
   if (!showFreezeTable({ published, hasError: Boolean(list.error), rows })) {
     return null;

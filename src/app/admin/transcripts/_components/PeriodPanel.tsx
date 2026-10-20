@@ -23,6 +23,7 @@ import {
   errorText,
   normaliseStatus,
   openAvailability,
+  openProgress,
   openSummary,
   statusLabel,
   yearOptions,
@@ -66,6 +67,8 @@ export interface PeriodPanelViewProps {
   onConfirm: () => void;
   /** Open transcripts is in flight. */
   acting: boolean;
+  /** "Locking member lists: 3 of 40 CCAs" while it runs. */
+  progressLine?: string | null;
   actionError: string | null;
   /** The last result, in words, shown in place after Open transcripts ran. */
   resultLine: string | null;
@@ -219,6 +222,11 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
             {OPEN_CONFIRMATION(p.selected)}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {p.acting && p.progressLine && (
+          <p className="text-sm text-gray-700" role="status">
+            {p.progressLine}
+          </p>
+        )}
         <ErrorLine message={p.confirming ? p.actionError : null} />
         <AlertDialogFooter>
           <AlertDialogCancel disabled={p.acting}>Cancel</AlertDialogCancel>
@@ -270,6 +278,53 @@ export function panelReminders(
 const when = (d: Date | string | null | undefined) =>
   d ? formatSgDate(d) : null;
 
+/** What one request of Open transcripts returns (periods.open). */
+export interface OpenStep {
+  opened: boolean;
+  runID: string;
+  lockedInRun: number;
+  totalCcas: number;
+  lockedNow: number;
+  relocked: number;
+  failures: Array<{ name: string; code: string }>;
+  unresolved: number;
+}
+
+/**
+ * ONE PRESS of Open transcripts: starts a run and continues it with its runID
+ * until the year opens, a CCA fails, or a request errors, reporting progress
+ * after each request. The counts are added up over the requests. However it
+ * ends, the year and the member lists are refreshed.
+ */
+export async function runOpen(
+  academicYear: string,
+  step: (input: { academicYear: string; runID?: string }) => Promise<OpenStep>,
+  onProgress: (line: string) => void,
+  refresh: () => Promise<unknown>,
+): Promise<{ result: OpenStep } | { error: string }> {
+  let runID: string | undefined;
+  let lockedNow = 0;
+  let relocked = 0;
+  let unresolved = 0;
+  try {
+    for (;;) {
+      const r = await step({ academicYear, runID });
+      runID = r.runID;
+      lockedNow += r.lockedNow;
+      relocked += r.relocked;
+      unresolved += r.unresolved;
+      if (r.opened || r.failures.length > 0) {
+        return { result: { ...r, lockedNow, relocked, unresolved } };
+      }
+      onProgress(openProgress(r.lockedInRun, r.totalCcas));
+    }
+  } catch (error) {
+    return { error: errorText(error instanceof Error ? error.message : null) };
+  } finally {
+    await refresh();
+  }
+}
+
 export default function PeriodPanel() {
   const utils = api.useUtils();
   const list = api.transcript.periods.list.useQuery(undefined, {
@@ -279,6 +334,9 @@ export default function PeriodPanel() {
   const [downloadBy, setDownloadBy] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [resultLine, setResultLine] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [progressLine, setProgressLine] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
 
   const current = list.data?.currentAcademicYear ?? "";
   const year = selected ?? current;
@@ -308,13 +366,25 @@ export default function PeriodPanel() {
       await refresh();
     },
   });
-  const open = api.transcript.periods.open.useMutation({
-    onSuccess: async (r) => {
-      setConfirming(false);
-      setResultLine(openSummary(year, r));
-      await refresh();
-    },
-  });
+  const open = api.transcript.periods.open.useMutation();
+  const pressOpen = async () => {
+    setOpening(true);
+    setOpenError(null);
+    setProgressLine(null);
+    const outcome = await runOpen(
+      year,
+      open.mutateAsync,
+      setProgressLine,
+      refresh,
+    );
+    setOpening(false);
+    if ("error" in outcome) {
+      setOpenError(outcome.error);
+      return;
+    }
+    setConfirming(false);
+    setResultLine(openSummary(year, outcome.result));
+  };
 
   if (list.isPending) {
     return (
@@ -342,7 +412,7 @@ export default function PeriodPanel() {
         if (y !== year && !confirmLeave()) return;
         setSelected(y);
         setResultLine(null);
-        open.reset();
+        setOpenError(null);
       }}
       status={period?.status ?? null}
       canOpen={openAvailability(year, current, period?.status) === "open"}
@@ -354,12 +424,13 @@ export default function PeriodPanel() {
       }
       confirming={confirming}
       onConfirming={(c) => {
-        open.reset();
+        setOpenError(null);
         setConfirming(c);
       }}
-      onConfirm={() => open.mutate({ academicYear: year })}
-      acting={open.isPending}
-      actionError={open.error ? errorText(open.error.message) : null}
+      onConfirm={() => void pressOpen()}
+      acting={opening}
+      progressLine={progressLine}
+      actionError={openError}
       resultLine={resultLine}
       downloadByValue={downloadBy}
       onDownloadByChange={(v) => {

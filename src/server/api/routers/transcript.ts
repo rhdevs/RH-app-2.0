@@ -105,13 +105,15 @@ export const transcriptRouter = createTRPCRouter({
 
     /**
      * OPEN TRANSCRIPTS: locks every CCA's member list for the year as it is,
-     * then opens the year to residents. If any CCA fails, the year stays
+     * then opens the year to residents. One run can take several requests:
+     * while `opened` is false and nothing failed, call again with the
+     * returned runID to continue. If any CCA fails, the year stays
      * collecting and the failures are returned; running it again finishes.
      * Only the CURRENT academic year: refused here, and again by openBlocker
      * inside openTranscripts.
      */
     open: managerProcedure
-      .input(z.object({ academicYear }))
+      .input(z.object({ academicYear, runID: z.string().uuid().optional() }))
       .mutation(({ ctx, input }) => {
         const now = new Date();
         const current = currentAcademicYear(now);
@@ -130,6 +132,7 @@ export const transcriptRouter = createTRPCRouter({
           input.academicYear,
           ctx.session.user.userID,
           now,
+          { runID: input.runID },
         );
       }),
   }),

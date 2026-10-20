@@ -58,6 +58,26 @@ describe("CCA member lists after transcripts open", () => {
     expect(html.match(/could not be matched/g)).toHaveLength(1);
   });
 
+  it("names the members not matched: the accounts' names for an ambiguous key, else the key (F3)", () => {
+    const html = render({
+      rows: [
+        {
+          ...ROWS[0]!,
+          unresolvedCount: 2,
+          unresolvedMembers: [
+            { key: "E0999999", names: [] },
+            { key: "E0123456", names: ["Alice Tan", "Alicia Tan"] },
+          ],
+        },
+        { ...ROWS[1]!, unresolvedCount: 1, unresolvedMembers: [] },
+      ],
+    });
+    expect(html).toContain(
+      "2 members could not be matched: E0999999, Alice Tan or Alicia Tan",
+    );
+    expect(html).toContain("1 member could not be matched<");
+  });
+
   it("tells a collecting year with some lists saved to press Open again (F30)", () => {
     const partly = render({ partlySaved: true });
     expect(partly).toContain(

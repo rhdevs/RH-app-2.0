@@ -11,6 +11,7 @@ import {
   normaliseYearStatus,
   type FreezeReason,
 } from "~/lib/transcript/lifecycle";
+import type { RosterUnresolved } from "~/server/api/services/ccaRoster";
 import { keptBySavedEntry, liveMembers } from "./liveRoster";
 import { NOT_UNFROZEN } from "./loader";
 import { actorLabels } from "./residents";
@@ -107,6 +108,41 @@ export interface FreezeInput {
   academicYear: string;
   actorUserID: string;
   now?: Date;
+  /** The Open transcripts run this lock belongs to, stored on the lock record. */
+  openRunID?: string;
+}
+
+/** Members not matched that a lock record names, at most. */
+export const UNRESOLVED_MEMBERS_KEPT = 50;
+
+/**
+ * The members not matched, for the lock record: the raw key, and for a key
+ * several accounts claim, those accounts' names (as the roster labels them).
+ */
+async function unresolvedMembers(
+  db: PrismaClient,
+  entries: ReadonlyArray<RosterUnresolved>,
+) {
+  const kept = entries.slice(0, UNRESOLVED_MEMBERS_KEPT);
+  const ids = [...new Set(kept.flatMap((e) => e.candidateUserIds))];
+  const users =
+    ids.length === 0
+      ? []
+      : await db.user.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, email: true, displayName: true },
+        });
+  const name = new Map(
+    users.map((u) => [u.id, u.displayName ?? u.email ?? u.id]),
+  );
+  return kept.map((e) => ({
+    key: e.key,
+    reason: e.reason,
+    names:
+      e.reason === "AMBIGUOUS_KEY"
+        ? e.candidateUserIds.map((id) => name.get(id) ?? id)
+        : [],
+  }));
 }
 
 /**
@@ -147,6 +183,7 @@ async function freezeOnce(
   for (const m of live.members) if (!byKey.has(m.key)) byKey.set(m.key, m);
   const members = [...byKey.values()];
   const unresolved = live.unresolved + (live.members.length - members.length);
+  const notMatched = await unresolvedMembers(db, live.unresolvedEntries);
 
   let memberCount = 0;
   let replaced = false;
@@ -235,6 +272,8 @@ async function freezeOnce(
           frozenBy: input.actorUserID,
           memberCount,
           unresolvedCount: unresolved,
+          unresolvedMembers: notMatched,
+          openRunID: input.openRunID ?? null,
           unfrozenAt: null,
           unfrozenBy: null,
           unfreezeReason: null,
@@ -313,6 +352,8 @@ export interface FreezeRow {
   memberCount: number | null;
   /** Members the resolver could not match when the list was saved. */
   unresolvedCount: number | null;
+  /** Who they were, as far as the lock record names them. */
+  unresolvedMembers: Array<{ key: string; reason: string; names: string[] }>;
 }
 
 /** Every CCA's member-list lock for one year, for the admin results table. */
@@ -341,6 +382,7 @@ export async function listFreezes(
       frozenByName: f ? label(f.frozenBy) : null,
       memberCount: f?.memberCount ?? null,
       unresolvedCount: f?.unresolvedCount ?? null,
+      unresolvedMembers: f?.unresolvedMembers ?? [],
     };
   });
   return { rows, unlocked: rows.filter((r) => !r.locked).length };
