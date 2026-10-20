@@ -188,7 +188,10 @@ describe("set-transcript-flag.mjs names the database it writes to", () => {
 });
 
 describe("set-transcript-flag.mjs refuses to turn the feature on without its unique indexes (F24)", () => {
-  const TARGETS = {
+  const TARGETS: Record<
+    string,
+    Array<{ name: string; key: Record<string, number>; unique: boolean }>
+  > = {
     Thing: [
       { name: "thing_u", key: { x: 1 }, unique: true },
       { name: "thing_i", key: { y: 1 }, unique: false },

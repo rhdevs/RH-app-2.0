@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { classifyRows } from "~/lib/transcript/awardImport";
 import {
@@ -9,7 +9,9 @@ import {
   ImportPreviewView,
   ImportProgressView,
   PREVIEW_TABLE_MIN_WIDTH,
+  REPREVIEW_DELAY_MS,
   StatusChip,
+  createSkipRepreview,
   importableCount,
   shortCitation,
   skipToggle,
@@ -266,6 +268,119 @@ describe("import: the preview", () => {
   it("shows an error from the import, and a spinner while importing", () => {
     expect(preview({ error: "Nope." })).toContain('role="alert"');
     expect(preview({ importing: true })).toContain("Importing");
+  });
+});
+
+describe("import: the Skip toggle re-preview (F58, F59)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const readyRows = (...statuses: Array<"ready" | "duplicate">) =>
+    statuses.map((status, i) => ({ row: i + 1, status }));
+
+  const setup = (send: (skipRows: number[]) => Promise<unknown>) => {
+    vi.useFakeTimers();
+    const seen = {
+      skipped: new Set<number>(),
+      pending: false,
+      preview: null as unknown,
+      error: null as unknown,
+    };
+    const repreview = createSkipRepreview({
+      send: send as never,
+      onSkipped: (v) => (seen.skipped = v),
+      onPreview: (v) => (seen.preview = v),
+      onPending: (v) => (seen.pending = v),
+      onError: (v) => (seen.error = v),
+    });
+    return { repreview, seen };
+  };
+
+  it("sends one request with both rows after two quick toggles", async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValue({ rows: readyRows("ready", "ready") });
+    const { repreview, seen } = setup(send);
+
+    repreview.toggle(1, true);
+    vi.advanceTimersByTime(REPREVIEW_DELAY_MS - 1);
+    repreview.toggle(2, true);
+    vi.advanceTimersByTime(REPREVIEW_DELAY_MS - 1);
+    expect(send).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    await vi.runAllTimersAsync();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith([1, 2]);
+    expect(seen.skipped).toEqual(new Set([1, 2]));
+  });
+
+  it("is pending from the first toggle until the answer, and Import is disabled meanwhile", async () => {
+    let answer: (v: unknown) => void = noop;
+    const send = vi.fn(() => new Promise((r) => (answer = r)));
+    const { repreview, seen } = setup(send);
+
+    repreview.toggle(1, true);
+    expect(seen.pending).toBe(true);
+    vi.advanceTimersByTime(REPREVIEW_DELAY_MS);
+    expect(seen.pending).toBe(true);
+    answer({ rows: readyRows("ready") });
+    await vi.runAllTimersAsync();
+    expect(seen.pending).toBe(false);
+
+    const html = preview({ rechecking: true });
+    expect(html).toContain("Re-checking...");
+    expect(html).toMatch(
+      /<button[^>]*disabled=""[^>]*>Import \d+ rows?<\/button>/,
+    );
+    expect(preview()).not.toContain("Re-checking...");
+  });
+
+  it("puts the skip set back and shows the error when the re-preview fails", async () => {
+    const send = vi.fn().mockRejectedValue(new Error("down"));
+    const { repreview, seen } = setup(send);
+    repreview.reset(new Set([3]));
+
+    repreview.toggle(1, true);
+    repreview.toggle(2, true);
+    expect(seen.skipped).toEqual(new Set([1, 2, 3]));
+    await vi.runAllTimersAsync();
+
+    expect(seen.skipped).toEqual(new Set([3]));
+    expect(seen.error).toEqual(new Error("down"));
+    expect(seen.pending).toBe(false);
+  });
+
+  it("clears the error when a toggle starts and when a re-preview succeeds", async () => {
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValueOnce({ rows: readyRows("ready") });
+    const { repreview, seen } = setup(send);
+
+    repreview.toggle(1, true);
+    await vi.runAllTimersAsync();
+    expect(seen.error).not.toBeNull();
+
+    repreview.toggle(1, true);
+    expect(seen.error).toBeNull();
+    await vi.runAllTimersAsync();
+    expect(seen.error).toBeNull();
+    expect(seen.skipped).toEqual(new Set([1]));
+  });
+
+  it("drops a row that is no longer Ready from the skip set", async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValue({ rows: readyRows("ready", "duplicate") });
+    const { repreview, seen } = setup(send);
+
+    repreview.toggle(1, true);
+    repreview.toggle(2, true);
+    await vi.runAllTimersAsync();
+
+    expect(seen.skipped).toEqual(new Set([1]));
   });
 });
 

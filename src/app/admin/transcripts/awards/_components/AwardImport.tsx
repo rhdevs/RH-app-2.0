@@ -297,6 +297,8 @@ export interface ImportPreviewViewProps {
   onBack: () => void;
   onImport: () => void;
   importing: boolean;
+  /** A re-preview is waiting or running: the rows below may be stale. */
+  rechecking?: boolean;
   error: string | null;
 }
 
@@ -319,6 +321,11 @@ export function ImportPreviewView(p: ImportPreviewViewProps) {
         <p className="mb-2 text-sm font-medium text-gray-900" role="status">
           {previewSummaryLine(counts)}
         </p>
+        {p.rechecking && (
+          <p className="mb-2 text-sm text-gray-700" role="status">
+            Re-checking...
+          </p>
+        )}
         <ul className="flex flex-wrap gap-2">
           {(Object.keys(counts) as RowStatus[]).map((s) => (
             <li
@@ -567,7 +574,7 @@ export function ImportPreviewView(p: ImportPreviewViewProps) {
         </Button>
         <Button
           type="button"
-          disabled={n === 0 || open.length > 0 || p.importing}
+          disabled={n === 0 || open.length > 0 || p.importing || p.rechecking}
           onClick={p.onImport}
         >
           {p.importing ? (
@@ -704,6 +711,82 @@ export function skipToggle(
   return { next, request: { academicYear, rows, skipRows: [...next] } };
 }
 
+/** A skipped row that is no longer Ready after a re-preview is not skipped. */
+export const stillSkipped = (
+  skipped: ReadonlySet<number>,
+  rows: readonly ClassifiedRow[],
+) =>
+  new Set(
+    rows
+      .filter((r) => r.status === "ready" && skipped.has(r.row))
+      .map((r) => r.row),
+  );
+
+export const REPREVIEW_DELAY_MS = 300;
+
+/**
+ * The Skip toggles of the preview. Each toggle shows at once; the re-preview
+ * is sent once, REPREVIEW_DELAY_MS after the last toggle, with the final skip
+ * set. If it fails the skip set goes back to what it was before the toggles.
+ */
+export function createSkipRepreview(o: {
+  send: (skipRows: number[]) => Promise<{ rows: ClassifiedRow[] }>;
+  onSkipped: (skipped: Set<number>) => void;
+  onPreview: (data: { rows: ClassifiedRow[] }) => void;
+  onPending: (pending: boolean) => void;
+  onError: (error: unknown) => void;
+  delayMs?: number;
+}) {
+  let current = new Set<number>();
+  let before: Set<number> | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let latest = 0;
+
+  const cancel = (skipped: Set<number>) => {
+    clearTimeout(timer);
+    latest += 1;
+    current = skipped;
+    before = null;
+    o.onPending(false);
+  };
+
+  return {
+    reset: cancel,
+    toggle(row: number, skip: boolean) {
+      o.onError(null);
+      before ??= current;
+      current = new Set(current);
+      if (skip) current.add(row);
+      else current.delete(row);
+      o.onSkipped(current);
+      o.onPending(true);
+      clearTimeout(timer);
+      const token = (latest += 1);
+      timer = setTimeout(() => {
+        o.send([...current]).then(
+          (data) => {
+            if (token !== latest) return;
+            current = stillSkipped(current, data.rows);
+            before = null;
+            o.onSkipped(current);
+            o.onPreview(data);
+            o.onError(null);
+            o.onPending(false);
+          },
+          (e: unknown) => {
+            if (token !== latest) return;
+            current = before ?? current;
+            before = null;
+            o.onSkipped(current);
+            o.onError(e);
+            o.onPending(false);
+          },
+        );
+      }, o.delayMs ?? REPREVIEW_DELAY_MS);
+    },
+  };
+}
+
 function downloadTemplate() {
   const blob = new Blob([TEMPLATE_CSV], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -753,7 +836,24 @@ export default function AwardImport({
     onDirty(dirty);
   }, [dirty, onDirty]);
   const picks = useRef(latestOnly());
-  const previews = useRef(latestOnly());
+  const [rechecking, setRechecking] = useState(false);
+  const sendRef = useRef<(skipRows: number[]) => Promise<ImportPreviewData>>();
+  sendRef.current = (skipRows) =>
+    previewMutation.mutateAsync({
+      academicYear,
+      rows: sentRows,
+      skipRows,
+    }) as Promise<ImportPreviewData>;
+  const repreview = useRef<ReturnType<typeof createSkipRepreview>>();
+  repreview.current ??= createSkipRepreview({
+    send: (skipRows) => sendRef.current!(skipRows),
+    onSkipped: setSkipped,
+    onPreview: (data) => setPreview(data as ImportPreviewData),
+    onPending: setRechecking,
+    onError: (e) =>
+      setError(e ? errorText((e as { message?: string }).message) : null),
+  });
+  useEffect(() => () => repreview.current?.reset(new Set()), []);
   const onDirtyRef = useRef(onDirty);
   onDirtyRef.current = onDirty;
   useEffect(() => () => onDirtyRef.current(false), []);
@@ -765,6 +865,7 @@ export default function AwardImport({
     setTable([]);
     setPreview(null);
     setSkipped(new Set());
+    repreview.current?.reset(new Set());
     setDecisions([]);
     setResult(null);
     setError(null);
@@ -776,11 +877,11 @@ export default function AwardImport({
     setError(null);
     const rows = rowsNow();
     setSentRows(rows);
-    previews.current.start();
     try {
       const data = await previewMutation.mutateAsync({ academicYear, rows });
       setPreview(data as ImportPreviewData);
       setSkipped(new Set());
+      repreview.current?.reset(new Set());
       setDecisions([]);
       setStep("preview");
     } catch (e) {
@@ -846,29 +947,8 @@ export default function AwardImport({
           layout={rosterLayoutFor(width, PREVIEW_TABLE_MIN_WIDTH)}
           preview={preview}
           skipped={skipped}
-          onSkip={(row, skip) => {
-            const { next, request } = skipToggle(
-              academicYear,
-              sentRows,
-              skipped,
-              row,
-              skip,
-            );
-            setSkipped(next);
-            const token = previews.current.start();
-            previewMutation
-              .mutateAsync(request)
-              .then((data) => {
-                if (previews.current.isCurrent(token)) {
-                  setPreview(data as ImportPreviewData);
-                }
-              })
-              .catch((e: { message?: string }) => {
-                if (previews.current.isCurrent(token)) {
-                  setError(errorText(e.message));
-                }
-              });
-          }}
+          onSkip={(row, skip) => repreview.current?.toggle(row, skip)}
+          rechecking={rechecking}
           decisions={decisions}
           onDecision={(d, nameKey) =>
             setDecisions((cur) => [
