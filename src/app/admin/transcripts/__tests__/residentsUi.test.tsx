@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { draftOf } from "~/lib/transcript/headView";
+import { ParticipationCard } from "../residents/_components/ActivitiesTab";
 import { HistoryView } from "../residents/_components/HistoryTab";
 import {
   MembershipFormView,
@@ -221,5 +222,45 @@ describe("the history timeline", () => {
     expect(renderToStaticMarkup(<HistoryView items={[]} />)).toContain(
       "Nothing has been changed for this resident and year.",
     );
+  });
+});
+
+describe("an activity participation", () => {
+  const card = (addedByName: string | null, updatedByName: string | null) =>
+    renderToStaticMarkup(
+      <ul>
+        <ParticipationCard
+          item={{
+            activityID: "a1",
+            ccaName: "Soccer (MALE)",
+            title: "Inter-hall league",
+            role: "Midfielder",
+            description: "",
+            removed: false,
+            activityRemoved: false,
+            isMember: true,
+            addedByName,
+            updatedByName,
+          }}
+          idKey="a1"
+          editable={false}
+          onDirty={noop}
+          onSave={async () => undefined}
+          onRemove={null}
+        />
+      </ul>,
+    );
+
+  it("says who added it, and who edited it when that is someone else (F14)", () => {
+    expect(card("Seed Resident 04", null)).toContain(
+      "Added by Seed Resident 04<",
+    );
+    expect(card("Seed Resident 04", "Seed Resident 04")).toContain(
+      "Added by Seed Resident 04<",
+    );
+    expect(card("Seed Resident 04", "Seed Resident 02")).toContain(
+      "Added by Seed Resident 04, edited by Seed Resident 02",
+    );
+    expect(card(null, null)).not.toContain("Added by");
   });
 });

@@ -35,10 +35,22 @@ interface Item {
   removed: boolean;
   activityRemoved: boolean;
   isMember: boolean;
+  addedByName: string | null;
+  updatedByName: string | null;
+}
+
+/** "Added by A, edited by B": who added the participation, and who changed it. */
+function authorLine(item: Item): string | null {
+  const edited =
+    item.updatedByName && item.updatedByName !== item.addedByName
+      ? item.updatedByName
+      : null;
+  if (!item.addedByName) return edited ? `Edited by ${edited}` : null;
+  return `Added by ${item.addedByName}${edited ? `, edited by ${edited}` : ""}`;
 }
 
 /** One participation: role and description, saved on their own. */
-function ParticipationCard({
+export function ParticipationCard({
   item,
   idKey,
   editable,
@@ -94,6 +106,9 @@ function ParticipationCard({
         {item.removed && <Tag>Removed</Tag>}
         {item.activityRemoved && <Tag>Activity removed</Tag>}
       </div>
+      {authorLine(item) && (
+        <p className="text-xs text-gray-500">{authorLine(item)}</p>
+      )}
       <div className={FIELD_GRID}>
         <div>
           <label htmlFor={`prole-${idKey}`} className={FIELD_LABEL}>

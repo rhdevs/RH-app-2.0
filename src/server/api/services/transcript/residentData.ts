@@ -64,6 +64,9 @@ export interface ParticipationItem {
   activityRemoved: boolean;
   /** The resident is a member of this CCA this year (else "Other involvement"). */
   isMember: boolean;
+  /** Who added the participation, and who last edited it (display names). */
+  addedByName: string | null;
+  updatedByName: string | null;
 }
 
 export async function participationList(
@@ -90,6 +93,10 @@ export async function participationList(
   });
   const ccaName = new Map(ccas.map((c) => [c.ccaID, c.ccaName]));
   const person = new Map(mine.map((p) => [p.activityID, p]));
+  const label = await actorLabels(
+    db,
+    mine.flatMap((p) => [p.addedBy, p.updatedBy]),
+  );
   return activities
     .flatMap((a): ParticipationItem[] => {
       const p = person.get(a.id);
@@ -108,6 +115,8 @@ export async function participationList(
           removed: p.removedAt != null,
           activityRemoved: a.removedAt != null,
           isMember: memberCcaIDs.has(a.ccaID),
+          addedByName: label(p.addedBy),
+          updatedByName: label(p.updatedBy),
         },
       ];
     })
