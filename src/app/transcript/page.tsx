@@ -63,10 +63,16 @@ export default async function TranscriptPage({
           <NotAvailable academicYear={now} notes={TRANSCRIPTS_OFF_NOTES} />
         );
       }
-      // FORBIDDEN (no canonical identity): nothing can be issued for them.
-      // Anything else (a database outage, say) must not read as "not
-      // published yet", so it propagates to the error page.
-      if (!(error instanceof TRPCError && error.code === "FORBIDDEN")) {
+      // FORBIDDEN NO_CANONICAL_IDENTITY: nothing can be issued for them.
+      // Anything else (another FORBIDDEN, a database outage) must not read as
+      // "not published yet", so it propagates to the error page.
+      if (
+        !(
+          error instanceof TRPCError &&
+          error.code === "FORBIDDEN" &&
+          error.message === "NO_CANONICAL_IDENTITY"
+        )
+      ) {
         throw error;
       }
     }
@@ -98,20 +104,32 @@ export default async function TranscriptPage({
     );
   }
 
-  // Defensive: the year could change between listing it and fetching it.
-  const result = await api.transcript.mine
-    .get({ academicYear: state.academicYear })
-    .catch((error: unknown) => {
-      if (error instanceof TRPCError && error.code === "PRECONDITION_FAILED") {
-        return null;
-      }
-      throw error;
+  // The switch can flip between listing the years and fetching one.
+  let result: Awaited<ReturnType<typeof api.transcript.mine.get>>;
+  try {
+    result = await api.transcript.mine.get({
+      academicYear: state.academicYear,
     });
+  } catch (error) {
+    if (
+      error instanceof TRPCError &&
+      error.code === "FORBIDDEN" &&
+      error.message === "TRANSCRIPT_DISABLED"
+    ) {
+      return (
+        <NotAvailable
+          academicYear={state.academicYear}
+          notes={TRANSCRIPTS_OFF_NOTES}
+        />
+      );
+    }
+    throw error;
+  }
   // The hall office has put this resident's year on hold: nothing else shows.
-  if (result?.status === "on_hold") {
+  if (result.status === "on_hold") {
     return <OnHold academicYear={state.academicYear} switcher={switcher} />;
   }
-  if (!result || result.status !== "ready") {
+  if (result.status !== "ready") {
     return (
       <NotAvailable academicYear={state.academicYear} switcher={switcher} />
     );

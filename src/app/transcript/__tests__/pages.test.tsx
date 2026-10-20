@@ -120,9 +120,46 @@ describe("/transcript", () => {
 
   it("shows nothing but not-available when the person has no canonical identity (FORBIDDEN)", async () => {
     auth.mockResolvedValue({ user: { id: "x" } });
-    years.mockRejectedValue(new TRPCError({ code: "FORBIDDEN" }));
+    years.mockRejectedValue(
+      new TRPCError({ code: "FORBIDDEN", message: "NO_CANONICAL_IDENTITY" }),
+    );
 
     expect(await outcome()).toEqual(["NotAvailable"]);
+  });
+
+  it("sends any other FORBIDDEN from years to the error path (F27)", async () => {
+    auth.mockResolvedValue({ user: { id: "x" } });
+    years.mockRejectedValue(
+      new TRPCError({ code: "FORBIDDEN", message: "SOMETHING_ELSE" }),
+    );
+
+    expect(await outcome()).toBe("SOMETHING_ELSE");
+  });
+
+  it("shows the switched-off words when the switch flips between years and get (F27)", async () => {
+    auth.mockResolvedValue({ user: { id: "x" } });
+    years.mockResolvedValue(["AY2026/27"]);
+    get.mockRejectedValue(
+      new TRPCError({ code: "FORBIDDEN", message: "TRANSCRIPT_DISABLED" }),
+    );
+
+    const page = (await Page({ searchParams: {} })) as ReactElement<{
+      notes?: { headline: string };
+    }>;
+    expect(names(page)).toEqual(["NotAvailable"]);
+    expect(page.props.notes?.headline).toBe(
+      "Transcripts are not available yet.",
+    );
+  });
+
+  it("rethrows any other error from get (F27)", async () => {
+    auth.mockResolvedValue({ user: { id: "x" } });
+    years.mockResolvedValue(["AY2026/27"]);
+    get.mockRejectedValue(
+      new TRPCError({ code: "PRECONDITION_FAILED", message: "NOPE" }),
+    );
+
+    expect(await outcome()).toBe("NOPE");
   });
 
   it("shows the calm page, with the switched-off words, while transcripts are off", async () => {
