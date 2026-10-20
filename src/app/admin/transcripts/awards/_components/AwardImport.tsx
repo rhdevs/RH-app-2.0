@@ -687,6 +687,23 @@ function mappingFor(table: string[][], header: boolean): ImportColumn[] {
   );
 }
 
+/**
+ * Toggling one row's Skip: the new skip set, and the preview request that
+ * honours it (a row whose earlier copy is now skipped stops being a duplicate).
+ */
+export function skipToggle(
+  academicYear: string,
+  rows: ImportRow[],
+  skipped: ReadonlySet<number>,
+  row: number,
+  skip: boolean,
+) {
+  const next = new Set(skipped);
+  if (skip) next.add(row);
+  else next.delete(row);
+  return { next, request: { academicYear, rows, skipRows: [...next] } };
+}
+
 function downloadTemplate() {
   const blob = new Blob([TEMPLATE_CSV], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -736,6 +753,7 @@ export default function AwardImport({
     onDirty(dirty);
   }, [dirty, onDirty]);
   const picks = useRef(latestOnly());
+  const previews = useRef(latestOnly());
   const onDirtyRef = useRef(onDirty);
   onDirtyRef.current = onDirty;
   useEffect(() => () => onDirtyRef.current(false), []);
@@ -758,6 +776,7 @@ export default function AwardImport({
     setError(null);
     const rows = rowsNow();
     setSentRows(rows);
+    previews.current.start();
     try {
       const data = await previewMutation.mutateAsync({ academicYear, rows });
       setPreview(data as ImportPreviewData);
@@ -827,14 +846,29 @@ export default function AwardImport({
           layout={rosterLayoutFor(width, PREVIEW_TABLE_MIN_WIDTH)}
           preview={preview}
           skipped={skipped}
-          onSkip={(row, skip) =>
-            setSkipped((cur) => {
-              const next = new Set(cur);
-              if (skip) next.add(row);
-              else next.delete(row);
-              return next;
-            })
-          }
+          onSkip={(row, skip) => {
+            const { next, request } = skipToggle(
+              academicYear,
+              sentRows,
+              skipped,
+              row,
+              skip,
+            );
+            setSkipped(next);
+            const token = previews.current.start();
+            previewMutation
+              .mutateAsync(request)
+              .then((data) => {
+                if (previews.current.isCurrent(token)) {
+                  setPreview(data as ImportPreviewData);
+                }
+              })
+              .catch((e: { message?: string }) => {
+                if (previews.current.isCurrent(token)) {
+                  setError(errorText(e.message));
+                }
+              });
+          }}
           decisions={decisions}
           onDecision={(d, nameKey) =>
             setDecisions((cur) => [

@@ -182,10 +182,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             as(JCRC).awardImport.preview({ academicYear: AY, rows: sample() }),
           ),
         ).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
-        // The commit names residents, so it is a per-resident correction:
-        // refused until every one of them is unlocked.
+        // The commit refuses an open year too (F43): an import is never a
+        // per-resident correction.
         expect(await errorOf(commit(JCRC))).toBe(
-          "FORBIDDEN:ONLY_UNLOCKED_RESIDENTS",
+          "PRECONDITION_FAILED:PERIOD_PUBLISHED",
         );
         expect(
           await db.awardImportBatch.count({
@@ -470,12 +470,43 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
       it("skips the rows the user skipped", async () => {
         const result = await commit(JCRC, sample(), { skipRows: [1, 2] });
-        expect(result.imported).toBe(6);
+        // 8 Ready minus the 2 skipped, plus row 10 (seed-r05, "full  colours"):
+        // its earlier copy, row 1, is skipped, so it is no longer a duplicate (F5).
+        expect(result.imported).toBe(7);
         expect(
           result.skipped
             .filter((s) => s.reason === "Skipped by you.")
             .map((s) => s.row),
         ).toEqual([1, 2]);
+      });
+
+      it("skipping the first of two identical rows imports the second, in the preview and the commit (F5)", async () => {
+        const twice: ImportRow[] = [1, 2].map(() => ({
+          identifier: "seed-r20@u.nus.edu",
+          award: "Full Colours",
+          citation: "",
+        }));
+        const statuses = async (skipRows?: number[]) =>
+          (
+            await as(JCRC).awardImport.preview({
+              academicYear: AY,
+              rows: twice,
+              skipRows,
+            })
+          ).rows.map((r) => r.status);
+        expect(await statuses()).toEqual(["ready", "duplicate"]);
+        expect(await statuses([1])).toEqual(["ready", "ready"]);
+
+        const result = await commit(JCRC, twice, { skipRows: [1] });
+
+        expect(result.imported).toBe(1);
+        expect(result.skipped).toEqual([
+          expect.objectContaining({ row: 1, reason: "Skipped by you." }),
+        ]);
+        const held = await db.award.findMany({
+          where: { userID: "SEED-R20", title: "Full Colours", ...live },
+        });
+        expect(held).toHaveLength(1);
       });
 
       it("does not ask about a new name whose only rows were skipped", async () => {
@@ -1047,7 +1078,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
       });
 
-      it("logs a published-year correction in the same transaction as the awards of each chunk", async () => {
+      it("refuses an import in a published year even for residents unlocked for correction, and writes nothing (F43)", async () => {
         await publish();
         for (const n of [5, 6]) {
           await as(JCRC).corrections.unlock({
@@ -1056,32 +1087,119 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             reason: "Late awards",
           });
         }
-        const result = await as(JCRC).awardImport.commit({
-          academicYear: AY,
-          fileName: "published.csv",
-          rows: [
-            {
-              identifier: "seed-r05@u.nus.edu",
-              award: "Hall Spirit Award",
-              citation: "",
-            },
-            {
-              identifier: "seed-r06@u.nus.edu",
-              award: "Hall Spirit Award",
-              citation: "",
-            },
-          ],
-          decisions: [{ nameKey: "hall spirit award", action: "create" }],
-        });
-        expect(result.imported).toBe(2);
-        const lines = await db.residentEvent.findMany({
-          where: { academicYear: AY, action: "correction" },
-        });
-        expect(lines.map((l) => l.summary).sort()).toEqual([
-          "Awards: Hall Spirit Award assigned (upload)",
-          "Awards: Hall Spirit Award assigned (upload)",
-        ]);
+        const events = () =>
+          db.residentEvent.count({
+            where: { academicYear: AY, action: "correction" },
+          });
+        const before = {
+          awards: await db.award.count(),
+          types: await db.awardType.count(),
+          batches: await db.awardImportBatch.count(),
+          events: await events(),
+        };
+
+        const refused = await errorOf(
+          as(JCRC).awardImport.commit({
+            academicYear: AY,
+            fileName: "published.csv",
+            rows: [
+              {
+                identifier: "seed-r05@u.nus.edu",
+                award: "Hall Spirit Award",
+                citation: "",
+              },
+              {
+                identifier: "seed-r06@u.nus.edu",
+                award: "Hall Spirit Award",
+                citation: "",
+              },
+            ],
+            decisions: [{ nameKey: "hall spirit award", action: "create" }],
+          }),
+        );
+
+        expect(refused).toBe("PRECONDITION_FAILED:PERIOD_PUBLISHED");
+        expect({
+          awards: await db.award.count(),
+          types: await db.awardType.count(),
+          batches: await db.awardImportBatch.count(),
+          events: await events(),
+        }).toEqual(before);
       });
+
+      it("logs the original error of a failed chunk, with code and name only, and still reports UPLOAD_PARTIAL (F8)", async () => {
+        const service = await import("../awardImport");
+        const logged = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        try {
+          let transactions = 0;
+          const failing = new Proxy(db, {
+            get(target, prop, receiver) {
+              if (prop === "$transaction") {
+                return (...args: unknown[]) => {
+                  transactions += 1;
+                  if (transactions === 2) {
+                    return Promise.reject(
+                      Object.assign(new Error("secret detail SEED-R01"), {
+                        code: "P1001",
+                      }),
+                    );
+                  }
+                  return (
+                    target.$transaction as unknown as (
+                      ...a: unknown[]
+                    ) => Promise<unknown>
+                  )(...args);
+                };
+              }
+              return Reflect.get(target, prop, receiver) as unknown;
+            },
+          });
+          const rows: ImportRow[] = [];
+          const keys: Decision[] = [];
+          for (let a = 0; a < 11; a += 1) {
+            const name = `Chunk Award ${String(a).padStart(2, "0")}`;
+            keys.push({ nameKey: name.toLowerCase(), action: "create" });
+            for (let n = 1; n <= 20; n += 1) {
+              rows.push({
+                identifier: `seed-r${String(n).padStart(2, "0")}@u.nus.edu`,
+                award: name,
+                citation: "",
+              });
+            }
+          }
+
+          const message = await errorOf(
+            service.awardImportCommit(failing, JCRC.id, {
+              academicYear: AY,
+              fileName: "chunk.csv",
+              rows,
+              decisions: keys,
+            } as never),
+          );
+
+          expect(message).toBe("CONFLICT:UPLOAD_PARTIAL:200");
+          const line = logged.mock.calls
+            .map((c) => String(c[0]))
+            .find((l) => l.includes("award_import_chunk_failed"))!;
+          const batch = await db.awardImportBatch.findFirstOrThrow({
+            where: { fileName: "chunk.csv" },
+          });
+          expect(JSON.parse(line)).toEqual({
+            evt: "award_import_chunk_failed",
+            academicYear: AY,
+            batchId: batch.id,
+            imported: 200,
+            code: "P1001",
+            name: "Error",
+          });
+          expect(line).not.toContain("secret");
+          expect(line).not.toContain("SEED-R01");
+        } finally {
+          logged.mockRestore();
+        }
+      }, 300_000);
     });
 
     /* ---------------------------------------------------------------- */

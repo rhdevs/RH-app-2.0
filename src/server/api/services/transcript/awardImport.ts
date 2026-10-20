@@ -68,6 +68,7 @@ async function prepare(
     award: string;
     citation?: string | null;
   }>,
+  skipped: ReadonlySet<number>,
 ): Promise<Prepared> {
   if (rawRows.length > MAX_IMPORT_ROWS) {
     throw fail("BAD_REQUEST", "TOO_MANY_ROWS");
@@ -123,6 +124,7 @@ async function prepare(
     },
     catalogue,
     held,
+    skipped,
   });
   return { rows: classified, catalogue, held };
 }
@@ -132,7 +134,12 @@ export async function awardImportPreview(
   input: z.infer<typeof awardImportPreviewInput>,
 ) {
   await assertWritable(db, input.academicYear);
-  const { rows, catalogue } = await prepare(db, input.academicYear, input.rows);
+  const { rows, catalogue } = await prepare(
+    db,
+    input.academicYear,
+    input.rows,
+    new Set(input.skipRows ?? []),
+  );
   return {
     rows,
     counts: countByStatus(rows),
@@ -195,12 +202,14 @@ export async function awardImportCommit(
   input: z.infer<typeof awardImportCommitInput>,
   now: Date = new Date(),
 ) {
+  await assertWritable(db, input.academicYear);
+  const skippedByUser = new Set(input.skipRows ?? []);
   const { rows, catalogue, held } = await prepare(
     db,
     input.academicYear,
     input.rows,
+    skippedByUser,
   );
-  const skippedByUser = new Set(input.skipRows ?? []);
   const decisions: Decision[] = input.decisions;
 
   // Who the import may touch: every resident on a Ready row not skipped. Checked
@@ -410,6 +419,24 @@ export async function awardImportCommit(
       }
     }
   } catch (error) {
+    // The original error is lost in the coded error below, so log it here:
+    // code and name only, never a message that could carry names.
+    const e = error as { code?: unknown; name?: unknown };
+    console.error(
+      JSON.stringify({
+        evt: "award_import_chunk_failed",
+        academicYear: input.academicYear,
+        batchId: batch.id,
+        imported,
+        code:
+          error instanceof TRPCError
+            ? error.message
+            : typeof e.code === "string"
+              ? e.code
+              : "UNKNOWN",
+        name: typeof e.name === "string" ? e.name : typeof error,
+      }),
+    );
     // Say what was written. If even that cannot be saved the failure is logged,
     // and the manager still sees the partial-upload message, never a bare error.
     await markBatch(db, batch.id, input.academicYear, {

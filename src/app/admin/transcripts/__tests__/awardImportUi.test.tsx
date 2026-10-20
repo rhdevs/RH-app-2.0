@@ -12,6 +12,7 @@ import {
   StatusChip,
   importableCount,
   shortCitation,
+  skipToggle,
   type ImportDoneViewProps,
   type ImportInputViewProps,
   type ImportMapViewProps,
@@ -234,6 +235,26 @@ describe("import: the preview", () => {
     expect(html).toContain("1 unknown award needs a decision.");
     expect(importableCount(rows, new Set([2]))).toBe(2);
     expect(importableCount(rows, new Set([1, 2, 3]))).toBe(0);
+  });
+
+  it("toggling Skip asks for a fresh preview that carries the whole file and the new skip set (F5)", () => {
+    const sent = [
+      { identifier: "a", award: "Full Colours", citation: "" },
+      { identifier: "a", award: "Full Colours", citation: "" },
+    ];
+    const first = skipToggle("AY2026/27", sent, new Set(), 1, true);
+    expect(first.next).toEqual(new Set([1]));
+    expect(first.request).toEqual({
+      academicYear: "AY2026/27",
+      rows: sent,
+      skipRows: [1],
+    });
+    const second = skipToggle("AY2026/27", sent, first.next, 2, true);
+    expect(second.request.skipRows).toEqual([1, 2]);
+    const undone = skipToggle("AY2026/27", sent, second.next, 1, false);
+    expect(undone.request.skipRows).toEqual([2]);
+    // The caller's set is not changed.
+    expect(first.next).toEqual(new Set([1]));
   });
 
   it("marks a new award on its row and shows the citation", () => {

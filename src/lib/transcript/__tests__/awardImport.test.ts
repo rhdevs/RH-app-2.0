@@ -156,6 +156,18 @@ describe("row status", () => {
     expect(rows[1]!.reason).toBe("Listed earlier in the file (row 1).");
   });
 
+  it("a skipped row is not the earlier one: the identical row after it stays Ready (F5)", () => {
+    const rows = classifyRows({
+      rows: [row(), row(), row()],
+      resident: (id) => PEOPLE[id] ?? null,
+      catalogue,
+      held: new Set(),
+      skipped: new Set([1]),
+    });
+    expect(rows.map((r) => r.status)).toEqual(["ready", "ready", "duplicate"]);
+    expect(rows[2]!.reason).toBe("Listed earlier in the file (row 2).");
+  });
+
   it("does not count an invalid or not-found row as the earlier one", () => {
     const rows = classify([row({ citation: "x".repeat(301) }), row()]);
     expect(rows.map((r) => r.status)).toEqual(["invalid", "ready"]);
@@ -336,6 +348,16 @@ describe("the template and the columns", () => {
     expect(looksLikeHeader(["identifier", "award", "citation"])).toBe(true);
     expect(looksLikeHeader(["Email", "Award"])).toBe(true);
     expect(looksLikeHeader(["e0000001@u.nus.edu", "Full Colours"])).toBe(false);
+  });
+
+  it("treats a first row with an email or NUSNET id as data, even if the award starts with 'Award' (F6)", () => {
+    expect(looksLikeHeader(["e0000001@u.nus.edu", "Award of Merit"])).toBe(
+      false,
+    );
+    expect(looksLikeHeader(["E0000001", "Awards Night Volunteer"])).toBe(false);
+    expect(looksLikeHeader([" e0000001 ", "Award of Merit"])).toBe(false);
+    expect(looksLikeHeader(["identifier", "award"])).toBe(true);
+    expect(looksLikeHeader(["NUSNET id", "Award"])).toBe(true);
   });
 
   it("asks for exactly one identifier and one award column", () => {

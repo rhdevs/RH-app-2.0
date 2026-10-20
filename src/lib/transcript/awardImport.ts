@@ -87,8 +87,12 @@ export function guessMapping(headers: readonly string[]): ImportColumn[] {
   });
 }
 
+/** A cell that is an email address or an E-format NUSNET id: data, never a heading. */
+const DATA_CELL = /^([^\s@]+@[^\s@]+|e\d{7})$/i;
+
 /** Does the first row look like headings (it names at least the identifier or the award)? */
 export function looksLikeHeader(first: readonly string[]): boolean {
+  if (first.some((c) => DATA_CELL.test(c.trim()))) return false;
   return first.some((c) => {
     const g = guessImportColumn(c);
     return g === "identifier" || g === "award";
@@ -219,6 +223,8 @@ export interface ClassifyInput {
   catalogue: readonly CatalogueEntry[];
   /** `${userID}|type:${id}` and `${userID}|name:${normalizedName}` of active awards held. */
   held: ReadonlySet<string>;
+  /** Rows (by number) the user skips: not imported, and no cause of a later duplicate. */
+  skipped?: ReadonlySet<number>;
 }
 
 export const heldTypeKey = (userID: string, typeID: string) =>
@@ -299,7 +305,7 @@ export function classifyRows(input: ClassifyInput): ClassifiedRow[] {
         reason: `Listed earlier in the file (row ${earlier}).`,
       };
     }
-    seen.set(key, row);
+    if (!input.skipped?.has(row)) seen.set(key, row);
     return { ...withPerson, status: "ready", reason: null };
   });
 }
@@ -411,9 +417,16 @@ const importRow = z.object({
 
 const importRows = z.array(importRow).max(MAX_IMPORT_ROWS, "TOO_MANY_ROWS");
 
+/** Rows (by number) the user chose to skip. */
+const skipRows = z
+  .array(z.number().int().positive())
+  .max(MAX_IMPORT_ROWS)
+  .optional();
+
 export const awardImportPreviewInput = z.object({
   academicYear: academicYearInput,
   rows: importRows,
+  skipRows,
 });
 
 const decision = z.discriminatedUnion("action", [
@@ -430,11 +443,7 @@ export const awardImportCommitInput = z.object({
   fileName: z.string().max(200).optional(),
   rows: importRows,
   decisions: z.array(decision).max(MAX_IMPORT_ROWS),
-  /** Rows (by number) the user chose to skip. */
-  skipRows: z
-    .array(z.number().int().positive())
-    .max(MAX_IMPORT_ROWS)
-    .optional(),
+  skipRows,
 });
 
 /**
