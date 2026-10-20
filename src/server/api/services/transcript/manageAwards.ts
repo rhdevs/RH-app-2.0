@@ -18,7 +18,6 @@ import type {
   awardsAssignInput,
   awardsListInput,
 } from "~/lib/transcript/manageInput";
-import { YEAR_WRITE_HARD_CAP_MS } from "~/lib/transcript/writeConflict";
 import { NOT_VOIDED } from "./loader";
 import {
   ONLY_UNLOCKED_RESIDENTS,
@@ -180,6 +179,12 @@ function logStopped(evt: string, academicYear: string, e: unknown) {
   );
 }
 
+/**
+ * How long a person-by-person fallback may run, counted from the start of the
+ * whole call: the last write then still has about 40 s of the route's 60 s.
+ */
+export const FALLBACK_BUDGET_MS = 20_000;
+
 /** Test seam: the clock the person-by-person fallbacks measure their time with. */
 export interface FallbackOptions {
   clock?: () => number;
@@ -295,6 +300,7 @@ export async function awardsAssign(
   now: Date = new Date(),
   { clock = Date.now }: FallbackOptions = {},
 ) {
+  const started = clock();
   const type = await requireType(db, input.awardTypeID);
   if (type.archivedAt) throw fail("CONFLICT", "AWARD_TYPE_ARCHIVED");
 
@@ -396,9 +402,13 @@ export async function awardsAssign(
     const plan = await planWith(db);
     const created: typeof recipients = [];
     const raced: typeof recipients = [];
-    const fallbackStart = clock();
     for (const r of plan.create) {
-      if (clock() - fallbackStart > YEAR_WRITE_HARD_CAP_MS) {
+      if (clock() - started > FALLBACK_BUDGET_MS) {
+        logStopped(
+          "award_assign_stopped",
+          input.academicYear,
+          fail("CONFLICT", "RECORDS_BUSY"),
+        );
         stopped = "RECORDS_BUSY";
         break;
       }
@@ -788,6 +798,7 @@ export async function awardsBulkRestore(
   now: Date = new Date(),
   { clock = Date.now }: FallbackOptions = {},
 ) {
+  const started = clock();
   const { rows, guards } = await bulkTargets(db, actorUserID, ids);
   if (!rows.some((r) => r.voidedAt)) {
     return {
@@ -883,9 +894,13 @@ export async function awardsBulkRestore(
   const plan = await planWith(db);
   const skipped = [...plan.skipped];
   const restoredIDs: string[] = [];
-  const fallbackStart = clock();
   for (const r of plan.restorable) {
-    if (clock() - fallbackStart > YEAR_WRITE_HARD_CAP_MS) {
+    if (clock() - started > FALLBACK_BUDGET_MS) {
+      logStopped(
+        "award_restore_stopped",
+        r.academicYear,
+        fail("CONFLICT", "RECORDS_BUSY"),
+      );
       return {
         restored: restoredIDs.length,
         restoredIDs,

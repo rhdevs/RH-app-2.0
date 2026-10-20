@@ -13,7 +13,6 @@ import {
   vi,
 } from "vitest";
 import { awardActiveKey } from "~/lib/transcript/awards";
-import { YEAR_WRITE_HARD_CAP_MS } from "~/lib/transcript/writeConflict";
 import { isLocalDevDatabase } from "./localDbGate";
 
 /**
@@ -764,18 +763,20 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(line).not.toContain("Transaction already closed");
       });
 
-      it("an assignment's fallback stops before the next person once it has run past the time cap (F41)", async () => {
-        const { awardsAssign } = await import("../manageAwards");
+      it("an assignment's fallback does no write once the call is already past the time budget when it begins (F41, F57)", async () => {
+        const { awardsAssign, FALLBACK_BUDGET_MS } = await import(
+          "../manageAwards"
+        );
         const t = await fullColours();
         const people = ["SEED-R12", "SEED-R16", "SEED-R17"];
         let elapsed = 0;
-        // 1: everyone at once hits a duplicate; during the first person's write
-        // the clock passes the cap, so the second person is not started.
+        // The call started at 0. The all-at-once write hits a duplicate, and by
+        // the time the fallback begins the budget is spent: nobody is written.
         const racing = interfering({
-          1: { error: duplicate() },
-          2: {
+          1: {
+            error: duplicate(),
             before: async () => {
-              elapsed = YEAR_WRITE_HARD_CAP_MS + 1;
+              elapsed = FALLBACK_BUDGET_MS + 1;
             },
           },
         });
@@ -793,12 +794,22 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
 
         expect(result.stopped).toBe("RECORDS_BUSY");
-        expect(result.assignedUserIDs).toEqual([people[0]]);
-        expect(await awardsOf(people[1]!, t.name)).toHaveLength(0);
+        expect(result.assignedUserIDs).toEqual([]);
+        for (const userID of people) {
+          expect(await awardsOf(userID, t.name)).toHaveLength(0);
+        }
+        expect(JSON.parse(lineFor("award_assign_stopped")!)).toEqual({
+          evt: "award_assign_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
       });
 
-      it("a restore's fallback stops before the next person once it has run past the time cap (F41)", async () => {
-        const { awardsBulkRestore } = await import("../manageAwards");
+      it("a restore's fallback does no write once the call is already past the time budget when it begins (F41, F57)", async () => {
+        const { awardsBulkRestore, FALLBACK_BUDGET_MS } = await import(
+          "../manageAwards"
+        );
         const mine = await db.award.findMany({
           where: { academicYear: AY, title: "Full Colours", ...live },
           take: 3,
@@ -807,10 +818,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         for (const id of ids) await as(JCRC).awards.remove({ id });
         let elapsed = 0;
         const racing = interfering({
-          1: { error: duplicate() },
-          2: {
+          1: {
+            error: duplicate(),
             before: async () => {
-              elapsed = YEAR_WRITE_HARD_CAP_MS + 1;
+              elapsed = FALLBACK_BUDGET_MS + 1;
             },
           },
         });
@@ -825,12 +836,18 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           },
         );
 
-        expect(result).toMatchObject({ restored: 1, stopped: "RECORDS_BUSY" });
-        expect(result.restoredIDs).toHaveLength(1);
+        expect(result).toMatchObject({ restored: 0, stopped: "RECORDS_BUSY" });
+        expect(result.restoredIDs).toEqual([]);
         const active = await db.award.findMany({
           where: { id: { in: ids }, ...live },
         });
-        expect(active).toHaveLength(1);
+        expect(active).toHaveLength(0);
+        expect(JSON.parse(lineFor("award_restore_stopped")!)).toEqual({
+          evt: "award_restore_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
       });
     });
 
