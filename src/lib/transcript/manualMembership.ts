@@ -76,14 +76,20 @@ export type ManualProblem = "ROLE_PERIOD_OUTSIDE_MEMBERSHIP";
 
 /**
  * A role period must fit inside the membership period (a sem 2 member can only
- * hold a sem 2 role): the same rule the roster editor applies.
+ * hold a sem 2 role): the same rule the roster editor applies. Without a role,
+ * a role period is not stored, so it is not checked.
  */
 export function manualProblem(input: {
   duration: Duration | null;
+  roleLabel: string | null;
   roleDuration: Duration | null;
 }): ManualProblem | null {
   const membership = input.duration ?? "full";
-  if (input.roleDuration && !roleFits(membership, input.roleDuration)) {
+  if (
+    input.roleLabel?.trim() &&
+    input.roleDuration &&
+    !roleFits(membership, input.roleDuration)
+  ) {
     return "ROLE_PERIOD_OUTSIDE_MEMBERSHIP";
   }
   return null;

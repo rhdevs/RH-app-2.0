@@ -213,6 +213,11 @@ export async function manualSave(
       extraContribution: input.extraContribution,
     }),
   };
+  /** The role the entry will have after this change. */
+  const roleAfter = (existing: Awaited<ReturnType<typeof findEntry>>) =>
+    input.roleLabel !== undefined
+      ? input.roleLabel
+      : (existing?.roleLabel ?? null);
   /** Refuse a removed entry, or a role period that would not fit. */
   const check = (existing: Awaited<ReturnType<typeof findEntry>>) => {
     if (existing?.removedAt) throw fail("CONFLICT", "MANUAL_REMOVED");
@@ -221,6 +226,7 @@ export async function manualSave(
         input.duration !== undefined
           ? input.duration
           : asDuration(existing?.duration),
+      roleLabel: roleAfter(existing),
       roleDuration:
         input.roleDuration !== undefined
           ? input.roleDuration
@@ -239,10 +245,14 @@ export async function manualSave(
     // meanwhile, is edited, never created twice.
     const existing = await findEntry(tx);
     check(existing);
+    // A role period is stored only beside a role.
+    const saved = roleAfter(existing)?.trim()
+      ? changes
+      : { ...changes, roleDuration: null };
     if (existing) {
       await tx.manualMembership.update({
         where,
-        data: { ...changes, updatedBy: actorUserID, updatedAt: now },
+        data: { ...saved, updatedBy: actorUserID, updatedAt: now },
       });
     } else {
       try {
@@ -251,7 +261,7 @@ export async function manualSave(
             academicYear: input.academicYear,
             userID: resident.key,
             ccaID: input.ccaID,
-            ...changes,
+            ...saved,
             createdBy: actorUserID,
             createdAt: now,
           },

@@ -110,27 +110,61 @@ describe("mergeManualMemberships (roster wins)", () => {
 describe("manualProblem (role period inside membership period)", () => {
   it("accepts any role period in a full-year membership", () => {
     for (const roleDuration of ["full", "sem1", "sem2"] as const) {
-      expect(manualProblem({ duration: null, roleDuration })).toBeNull();
-      expect(manualProblem({ duration: "full", roleDuration })).toBeNull();
+      expect(
+        manualProblem({ roleLabel: "Captain", duration: null, roleDuration }),
+      ).toBeNull();
+      expect(
+        manualProblem({ roleLabel: "Captain", duration: "full", roleDuration }),
+      ).toBeNull();
     }
   });
 
   it("refuses a role period outside a part-year membership", () => {
-    expect(manualProblem({ duration: "sem2", roleDuration: "sem1" })).toBe(
-      "ROLE_PERIOD_OUTSIDE_MEMBERSHIP",
-    );
-    expect(manualProblem({ duration: "sem2", roleDuration: "full" })).toBe(
-      "ROLE_PERIOD_OUTSIDE_MEMBERSHIP",
-    );
-    expect(manualProblem({ duration: "sem1", roleDuration: "sem2" })).toBe(
-      "ROLE_PERIOD_OUTSIDE_MEMBERSHIP",
-    );
+    expect(
+      manualProblem({
+        roleLabel: "Captain",
+        duration: "sem2",
+        roleDuration: "sem1",
+      }),
+    ).toBe("ROLE_PERIOD_OUTSIDE_MEMBERSHIP");
+    expect(
+      manualProblem({
+        roleLabel: "Captain",
+        duration: "sem2",
+        roleDuration: "full",
+      }),
+    ).toBe("ROLE_PERIOD_OUTSIDE_MEMBERSHIP");
+    expect(
+      manualProblem({
+        roleLabel: "Captain",
+        duration: "sem1",
+        roleDuration: "sem2",
+      }),
+    ).toBe("ROLE_PERIOD_OUTSIDE_MEMBERSHIP");
   });
 
   it("accepts the same semester, and no role period at all", () => {
     expect(
-      manualProblem({ duration: "sem2", roleDuration: "sem2" }),
+      manualProblem({
+        roleLabel: "Captain",
+        duration: "sem2",
+        roleDuration: "sem2",
+      }),
     ).toBeNull();
-    expect(manualProblem({ duration: "sem2", roleDuration: null })).toBeNull();
+    expect(
+      manualProblem({
+        roleLabel: "Captain",
+        duration: "sem2",
+        roleDuration: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores a role period kept without a role (F18)", () => {
+    for (const roleLabel of [null, "", "  "]) {
+      expect(
+        manualProblem({ roleLabel, duration: "sem2", roleDuration: "sem1" }),
+      ).toBeNull();
+    }
   });
 });
