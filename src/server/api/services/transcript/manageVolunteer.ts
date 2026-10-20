@@ -676,24 +676,25 @@ export async function volunteerPeopleSet(
     where: { activityID: activity.id },
   });
   const storedBy = new Map(stored.map((e) => [e.userID, e]));
-  const summaries = [
-    ...keys
-      .filter((k) => !storedBy.has(k) || storedBy.get(k)!.removedAt)
-      .map((userID) => ({
-        userID,
-        summary: correctionSummary("Volunteer hours", activity.title, "added"),
-      })),
-    ...stored
-      .filter((e) => !e.removedAt && !wanted.has(e.userID))
-      .map((e) => ({
-        userID: e.userID,
-        summary: correctionSummary(
-          "Volunteer hours",
-          activity.title,
-          "removed",
-        ),
-      })),
+  const summariesFor = (
+    added: readonly string[],
+    removed: readonly string[],
+  ) => [
+    ...added.map((userID) => ({
+      userID,
+      summary: correctionSummary("Volunteer hours", activity.title, "added"),
+    })),
+    ...removed.map((userID) => ({
+      userID,
+      summary: correctionSummary("Volunteer hours", activity.title, "removed"),
+    })),
   ];
+  const summaries = summariesFor(
+    keys.filter((k) => !storedBy.has(k) || storedBy.get(k)!.removedAt),
+    stored
+      .filter((e) => !e.removedAt && !wanted.has(e.userID))
+      .map((e) => e.userID),
+  );
   const guard = await assertCanWriteForResidents(
     db,
     actorUserID,
@@ -719,10 +720,14 @@ export async function volunteerPeopleSet(
       const toRemove = existing.filter(
         (row) => !row.removedAt && !wanted.has(row.userID),
       );
-      assertCheckedResidents(guard, [
-        ...toAdd,
-        ...[...toRestore, ...toRemove].map((row) => row.userID),
-      ]);
+      const changes = summariesFor(
+        [...toAdd, ...toRestore.map((row) => row.userID)],
+        toRemove.map((row) => row.userID),
+      );
+      assertCheckedResidents(
+        guard,
+        changes.map((c) => c.userID),
+      );
       if (toAdd.length > 0) {
         await tx.volunteerPerson.createMany({
           data: toAdd.map((userID) => ({
@@ -759,7 +764,7 @@ export async function volunteerPeopleSet(
         guard,
         actorUserID,
         activity.academicYear,
-        summaries,
+        changes,
         now,
       );
       return out;

@@ -352,11 +352,10 @@ export async function participantsSet(
         where: { activityID: activity.id },
       });
       const diff = diffParticipants(asExisting(existing), desired);
+      const changes = participantSummaries("Activities", activity.title, diff);
       assertCheckedResidents(
         guard,
-        participantSummaries("Activities", activity.title, diff).map(
-          (s) => s.userID,
-        ),
+        changes.map((s) => s.userID),
       );
       const text = (d: DesiredParticipant) => ({
         role: d.role === "" ? null : d.role,
@@ -418,7 +417,7 @@ export async function participantsSet(
         guard,
         actorUserID,
         activity.academicYear,
-        summaries,
+        changes,
         now,
       );
       return out;

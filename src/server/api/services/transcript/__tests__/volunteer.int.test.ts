@@ -872,6 +872,52 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const all = await rows();
         expect(all.filter((p) => p.userID === "SEED-R12")).toHaveLength(1);
       });
+
+      it("writes no history line for a removal someone else made between the guard and the write (F60)", async () => {
+        const { volunteerPeopleSet } = await import("../manageVolunteer");
+        const t = await tuition();
+        // The head is on the list, then drops themself. Before the write,
+        // another manager removes them first, so this call removes nobody.
+        await set(["SEED-R12", CHILDREN_HEAD.id]);
+        const racing = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return async (...args: unknown[]) => {
+                await db.volunteerPerson.updateMany({
+                  where: { activityID: t.id, userID: CHILDREN_HEAD.id },
+                  data: { removedAt: new Date(), removedBy: ADMIN.id },
+                });
+                return (
+                  target.$transaction as unknown as (
+                    ...a: unknown[]
+                  ) => Promise<unknown>
+                )(...args);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+
+        const result = await volunteerPeopleSet(racing, CHILDREN_HEAD.id, {
+          activityID: t.id,
+          ccaID: CHILDREN,
+          userIDs: ["SEED-R12"],
+        });
+
+        expect(result).toMatchObject({ removed: 0 });
+        expect(
+          await db.residentEvent.count({
+            where: {
+              userID: CHILDREN_HEAD.id,
+              academicYear: AY,
+              summary: { contains: "removed" },
+            },
+          }),
+        ).toBe(0);
+      });
     });
 
     /* ---------------------------------------------------------------- */
