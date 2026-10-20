@@ -1753,10 +1753,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await editAs(SOCCER_HEAD, "AY2025/26")).toBe(
           "FORBIDDEN:NOT_THE_TERM_YEAR",
         );
+        expect(await editAs(ADMIN, "AY2025/26")).toBe("ok");
+        // A year that has not started is refused for everyone (F17). The
+        // roster guard (residentRecords.ts) words every refusal but
+        // PERIOD_PUBLISHED as FORBIDDEN.
         expect(await editAs(SOCCER_HEAD, NEXT)).toBe(
-          "FORBIDDEN:NOT_THE_TERM_YEAR",
+          "FORBIDDEN:YEAR_NOT_STARTED",
         );
-        expect(await editAs(ADMIN, NEXT)).toBe("ok");
+        expect(await editAs(ADMIN, NEXT)).toBe("FORBIDDEN:YEAR_NOT_STARTED");
       });
 
       it("refuses everyone but a per-resident correction once transcripts are open", async () => {

@@ -91,6 +91,7 @@ describe("who may edit a CCA's records for a year", () => {
     isHead: true,
     status: "collecting" as YearStatus,
     isCurrentYear: true,
+    isFutureYear: false,
   };
 
   it("lets a current head edit the current year while it is collecting", () => {
@@ -123,6 +124,27 @@ describe("who may edit a CCA's records for a year", () => {
         "PERIOD_PUBLISHED",
       );
     }
+  });
+
+  it("refuses everyone, managers too, for a year that has not started", () => {
+    for (const who of [
+      { isManager: true, isHead: false },
+      { isManager: false, isHead: true },
+    ]) {
+      expect(
+        editRefusal({
+          ...base,
+          ...who,
+          isCurrentYear: false,
+          isFutureYear: true,
+        }),
+      ).toBe("YEAR_NOT_STARTED");
+    }
+  });
+
+  it("does not refuse the current year as not started", () => {
+    expect(editRefusal({ ...base, isManager: true, isHead: false })).toBeNull();
+    expect(editRefusal(base)).toBeNull();
   });
 
   it("refuses anyone who is neither a manager nor a head of this CCA", () => {

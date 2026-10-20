@@ -2,7 +2,12 @@ import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
 import { residentStateOf } from "~/lib/transcript/corrections";
-import { normaliseYearStatus } from "~/lib/transcript/lifecycle";
+import { currentAcademicYear } from "~/lib/transcript/academicYear";
+import {
+  isBeforeFirstYear,
+  isLater,
+  normaliseYearStatus,
+} from "~/lib/transcript/lifecycle";
 import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import type {
   historyInput,
@@ -253,6 +258,12 @@ export async function withholdResident(
   input: z.infer<typeof withholdInput>,
   now: Date = new Date(),
 ) {
+  if (isBeforeFirstYear(input.academicYear)) {
+    throw fail("BAD_REQUEST", "YEAR_BEFORE_START");
+  }
+  if (isLater(input.academicYear, currentAcademicYear(now))) {
+    throw fail("PRECONDITION_FAILED", "YEAR_NOT_STARTED");
+  }
   const resident = await requireResident(db, input.userID);
   // As for unlock: re-read on every try, so a lost conflict ends quietly.
   await retryWriteConflicts(async () => {

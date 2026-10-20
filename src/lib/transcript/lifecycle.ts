@@ -116,6 +116,8 @@ export function openBlocker(
 
 export type EditRefusal =
   | "PERIOD_PUBLISHED"
+  /** The year has not started: nobody writes records for it yet. */
+  | "YEAR_NOT_STARTED"
   /** Heads edit only the current academic year; other years are read-only. */
   | "NOT_THE_TERM_YEAR"
   | "NOT_A_HEAD_OF_THIS_CCA";
@@ -124,6 +126,7 @@ export type EditRefusal =
  * May this person change a CCA's records for a year?
  *  - Nobody once transcripts for the year are open (published), except the
  *    per-resident corrections, which are a separate path.
+ *  - Nobody for a year after the current one: it has not started.
  *  - Managers (admin or jcrc): any CCA, for any year still collecting.
  *  - A current head of this CCA (whoever heads it now, so new heads after a
  *    handover too): only the CURRENT academic year. Other years are read-only.
@@ -135,8 +138,11 @@ export function editRefusal(input: {
   status: YearStatus;
   /** This year is the current academic year (by date, Singapore). */
   isCurrentYear: boolean;
+  /** This year is after the current academic year. */
+  isFutureYear?: boolean;
 }): EditRefusal | null {
   if (input.status === "published") return "PERIOD_PUBLISHED";
+  if (input.isFutureYear) return "YEAR_NOT_STARTED";
   if (input.isManager) return null;
   if (!input.isHead) return "NOT_A_HEAD_OF_THIS_CCA";
   return input.isCurrentYear ? null : "NOT_THE_TERM_YEAR";

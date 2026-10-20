@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { currentAcademicYear } from "~/lib/transcript/academicYear";
 import {
   editRefusal,
+  isLater,
   normaliseYearStatus,
   type EditRefusal,
 } from "~/lib/transcript/lifecycle";
@@ -13,7 +14,7 @@ import { getPeriod } from "./periods";
 /**
  * WHO MAY CHANGE A CCA'S TRANSCRIPT RECORDS FOR A YEAR. One guard, decided from
  * LIVE role and headship reads, so every edit screen applies the same rule:
- *  - nobody once the year is published;
+ *  - nobody once the year is published, or for a year that has not started;
  *  - managers (admin or jcrc): any CCA, for any year still collecting;
  *  - a current head of THIS CCA (whoever heads it now, new heads after a
  *    handover too): only the CURRENT academic year; other years are read-only;
@@ -23,6 +24,7 @@ import { getPeriod } from "./periods";
 
 const CODE: Record<EditRefusal, "PRECONDITION_FAILED" | "FORBIDDEN"> = {
   PERIOD_PUBLISHED: "PRECONDITION_FAILED",
+  YEAR_NOT_STARTED: "PRECONDITION_FAILED",
   NOT_THE_TERM_YEAR: "FORBIDDEN",
   NOT_A_HEAD_OF_THIS_CCA: "FORBIDDEN",
 };
@@ -51,6 +53,7 @@ export async function editRefusalFor(
     isHead: headRow !== null,
     status: normaliseYearStatus(period?.status),
     isCurrentYear: academicYear === currentAcademicYear(now),
+    isFutureYear: isLater(academicYear, currentAcademicYear(now)),
   });
 }
 

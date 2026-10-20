@@ -348,12 +348,16 @@ export function rosterNotice(input: {
   /** Why this person cannot edit, or null if they can. */
   refusal:
     | "PERIOD_PUBLISHED"
+    | "YEAR_NOT_STARTED"
     | "NOT_THE_TERM_YEAR"
     | "NOT_A_HEAD_OF_THIS_CCA"
     | null;
 }): string | null {
   if (input.refusal === "PERIOD_PUBLISHED") {
     return PUBLISHED_NOTE(input.academicYear);
+  }
+  if (input.refusal === "YEAR_NOT_STARTED") {
+    return "This academic year has not started yet.";
   }
   if (input.mode === "none") return NO_MEMBER_LIST_NOTE;
   if (input.refusal === "NOT_THE_TERM_YEAR") {

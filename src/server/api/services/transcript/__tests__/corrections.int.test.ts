@@ -1487,6 +1487,25 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ]);
       });
 
+      it("a correction guard for one resident refuses a write that resolves to another (F61)", async () => {
+        const records = await import("../residentRecords");
+        await publishYear();
+        await unlock(R12);
+        const guard = await records.assertCanEditForResidents(
+          db,
+          { userID: JCRC.id },
+          { ccaID: SOCCER, academicYear: AY, affectedUserIDs: [R12.id] },
+        );
+
+        expect(guard.correction).toBe(true);
+        expect(() =>
+          records.assertCheckedResidents(guard, [R12.id]),
+        ).not.toThrow();
+        expect(() => records.assertCheckedResidents(guard, [R20.id])).toThrow(
+          "ONLY_UNLOCKED_RESIDENTS",
+        );
+      });
+
       it("refuses a participants correction when a change meanwhile adds an unchecked resident to the diff (F4)", async () => {
         const { participantsSet } = await import("../activities");
         await publishYear();
@@ -1607,6 +1626,55 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
         expect(await db.award.count({ where: { academicYear: NEXT } })).toBe(0);
         expect(await errorOf(give(AY))).toBe("ok");
+      });
+
+      it("refuses a manager's activity and roster write for the next year, and still writes the current one", async () => {
+        const manage = as(JCRC).transcriptManage;
+        const activity = (academicYear: string) =>
+          manage.activities.create({
+            ccaID: SOCCER,
+            academicYear,
+            title: "Next year's league",
+            description: "",
+            period: "full",
+          });
+        const roster = (academicYear: string) =>
+          manage.roster.upsert({
+            ccaID: SOCCER,
+            academicYear,
+            userID: R12.id,
+            extraContribution: "Kept the kit room tidy.",
+          });
+        expect(await errorOf(activity(NEXT))).toBe(
+          "PRECONDITION_FAILED:YEAR_NOT_STARTED",
+        );
+        // The roster guard (residentRecords.ts) words this one as FORBIDDEN.
+        expect(await errorOf(roster(NEXT))).toBe("FORBIDDEN:YEAR_NOT_STARTED");
+        expect(
+          await db.ccaActivity.count({ where: { academicYear: NEXT } }),
+        ).toBe(0);
+        expect(await errorOf(activity(AY))).toBe("ok");
+        expect(await errorOf(roster(AY))).toBe("ok");
+      });
+
+      it("refuses to withhold a resident for the next year, and for a year before the start", async () => {
+        const withhold = (academicYear: string) =>
+          as(JCRC).transcriptManage.corrections.withhold({
+            userID: R20.id,
+            academicYear,
+            reason: "Outstanding fees",
+          });
+        expect(await errorOf(withhold(NEXT))).toBe(
+          "PRECONDITION_FAILED:YEAR_NOT_STARTED",
+        );
+        expect(await errorOf(withhold("AY2025/26"))).toBe(
+          "BAD_REQUEST:YEAR_BEFORE_START",
+        );
+        expect(
+          await db.residentWithhold.count({
+            where: { academicYear: { in: [NEXT, "AY2025/26"] } },
+          }),
+        ).toBe(0);
       });
     });
 

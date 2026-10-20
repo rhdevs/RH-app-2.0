@@ -9,6 +9,7 @@ import {
   headYearOptions,
   isDirty,
   remainingCharacters,
+  rosterNotice,
   rowProblem,
   upsertFields,
 } from "../headView";
@@ -173,5 +174,15 @@ describe("wording and years", () => {
       "AY2026/27",
     ]);
     expect(headYearOptions(2020)).toEqual(["AY2026/27"]);
+  });
+
+  it("tells a head the year has not started yet", () => {
+    expect(
+      rosterNotice({
+        academicYear: "AY2027/28",
+        mode: "live",
+        refusal: "YEAR_NOT_STARTED",
+      }),
+    ).toBe("This academic year has not started yet.");
   });
 });

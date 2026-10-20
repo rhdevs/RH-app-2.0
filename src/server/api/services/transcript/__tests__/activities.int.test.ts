@@ -352,12 +352,18 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             academicYear: year,
             ...draft("Another year"),
           });
+        expect(await errorOf(other(SOCCER_HEAD, OLD))).toBe(
+          "FORBIDDEN:NOT_THE_TERM_YEAR",
+        );
+        expect(await errorOf(other(JCRC, OLD))).toBe("ok");
+        // A year that has not started is refused for everyone (F17).
         for (const year of ["AY2027/28", "AY2030/31"]) {
-          expect(await errorOf(other(SOCCER_HEAD, year)), year).toBe(
-            "FORBIDDEN:NOT_THE_TERM_YEAR",
-          );
+          for (const who of [SOCCER_HEAD, JCRC, ADMIN]) {
+            expect(await errorOf(other(who, year)), year).toBe(
+              "PRECONDITION_FAILED:YEAR_NOT_STARTED",
+            );
+          }
         }
-        expect(await errorOf(other(JCRC, "AY2027/28"))).toBe("ok");
         expect(await errorOf(create(SOCCER_HEAD, "This year"))).toBe("ok");
       });
 
@@ -594,6 +600,47 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const row = await db.ccaActivity.findUniqueOrThrow({ where: { id } });
         expect(row.updatedBy).toBe(SOCCER_HEAD.id);
         expect(row.updatedAt).toBeTruthy();
+      });
+
+      it("writes no history line for a removal someone else made between the guard and the write (F60)", async () => {
+        const { participantsSet } = await import("../activities");
+        const id = await seeded(SOCCER, "Inter-hall league");
+        // The head drops themself (R04). Before the write, another manager
+        // removes R04 first, so this call removes nobody.
+        const racing = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return async (...args: unknown[]) => {
+                await db.ccaActivityParticipant.updateMany({
+                  where: { activityID: id, userID: SOCCER_HEAD.id },
+                  data: { removedAt: new Date(), removedBy: ADMIN.id },
+                });
+                return (
+                  target.$transaction as unknown as (
+                    ...a: unknown[]
+                  ) => Promise<unknown>
+                )(...args);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+
+        const result = await participantsSet(racing, SOCCER_HEAD.id, {
+          id,
+          ccaID: SOCCER,
+          participants: people(["SEED-R12", "Midfielder"], ["SEED-R20"]),
+        });
+
+        expect(result).toMatchObject({ removed: 0 });
+        expect(
+          await db.residentEvent.count({
+            where: { userID: SOCCER_HEAD.id, academicYear: AY },
+          }),
+        ).toBe(0);
       });
     });
 
