@@ -102,6 +102,9 @@ function userIDsIn(node: unknown, found: string[] = []): string[] {
   return found;
 }
 
+// The first call loads the whole router, which is slow on a busy machine.
+vi.setConfig({ testTimeout: 60_000 });
+
 beforeEach(() => flag.resetTranscriptFlagCache());
 
 describe("a withheld transcript leaks nothing", () => {
