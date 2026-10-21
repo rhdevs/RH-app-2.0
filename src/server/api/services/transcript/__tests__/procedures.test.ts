@@ -85,3 +85,118 @@ describe("an unexpected error in a transcript procedure", () => {
     }
   }, 60_000);
 });
+
+describe("an unexpected error in a transcript manager procedure (F67)", () => {
+  const managerCaller = async (db: PrismaClient) => {
+    const { createCaller } = await import("~/server/api/root");
+    return createCaller({
+      db,
+      session: {
+        user: {
+          userID: "SEED-R02",
+          roles: ["jcrc", "resident"],
+          eligible: true,
+          hasMatric: true,
+          credentialsStale: false,
+        },
+        expires: new Date(Date.now() + 3600_000).toISOString(),
+      } as never,
+      headers: new Headers({ "x-forwarded-for": "203.0.113.10" }),
+    });
+  };
+  const caught = (promise: Promise<unknown>) =>
+    promise.then(
+      () => null,
+      (e: { code?: string; message?: string }) => e,
+    );
+
+  it("reaches the caller as 'Something went wrong.' and no log line carries its message", async () => {
+    flag.resetTranscriptFlagCache();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {
+      /* captured below */
+    });
+    const caller = await managerCaller(brokenDb());
+
+    const error = await caught(caller.transcript.periods.list());
+
+    expect(error).toMatchObject({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Something went wrong.",
+    });
+    const lines = logged.mock.calls.map((args) => args.map(String).join(" "));
+    expect(lines.some((l) => l.includes("transcript_internal_error"))).toBe(
+      true,
+    );
+    for (const l of lines) {
+      expect(l).not.toContain("secret_field");
+      expect(l).not.toContain(SECRET);
+    }
+  }, 60_000);
+
+  it("leaves a deliberate OPEN_FAILED alone: it is not logged as an unexpected error", async () => {
+    flag.resetTranscriptFlagCache();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {
+      /* captured below */
+    });
+    const base = brokenDb() as unknown as Record<string, unknown>;
+    const db = new Proxy(base, {
+      get: (target, prop) => {
+        if (prop === "transcriptPeriod") {
+          return {
+            findUnique: async () => ({ status: "collecting" }),
+            updateMany: () =>
+              Promise.reject(
+                Object.assign(new Error(SECRET), { code: "P1001" }),
+              ),
+          };
+        }
+        if (prop === "userRole") {
+          return { findUnique: async () => ({ roles: ["jcrc"] }) };
+        }
+        if (prop === "cCA") return { findMany: async () => [] };
+        if (prop === "ccaYearFreeze") return { findMany: async () => [] };
+        return target[prop as string];
+      },
+    }) as unknown as PrismaClient;
+    const caller = await managerCaller(db);
+    const { currentAcademicYear } = await import(
+      "~/lib/transcript/academicYear"
+    );
+
+    const error = await caught(
+      caller.transcript.periods.open({
+        academicYear: currentAcademicYear(new Date()),
+      }),
+    );
+    // The repo's own sanitizeErrors (trpc.ts) still words the caller's message.
+    expect(error).toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+    const lines = logged.mock.calls.map((args) => args.map(String).join(" "));
+    expect(lines.some((l) => l.includes("transcript_open_failed"))).toBe(true);
+    expect(lines.some((l) => l.includes("transcript_internal_error"))).toBe(
+      false,
+    );
+    for (const l of lines) expect(l).not.toContain("secret_field");
+  }, 60_000);
+
+  it("the middleware passes a deliberate code and any non-internal error through untouched", async () => {
+    const { sanitiseInternalErrors } = await import("../procedures");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {
+      /* captured below */
+    });
+    const { TRPCError } = await import("@trpc/server");
+    for (const error of [
+      new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "OPEN_FAILED" }),
+      new TRPCError({ code: "CONFLICT", message: "RECORDS_BUSY" }),
+      new TRPCError({ code: "FORBIDDEN", message: "free text, with spaces" }),
+    ]) {
+      const result = { ok: false as const, error };
+      expect(
+        await sanitiseInternalErrors({
+          next: () => Promise.resolve(result),
+          path: "transcript.periods.open",
+        }),
+      ).toBe(result);
+    }
+    expect(logged).not.toHaveBeenCalled();
+  });
+});
