@@ -51,7 +51,7 @@ const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/;
  * and the tag characters (U+E0000-E007F). On a formal document they
  * reorder or hide text, so no free-text field accepts them.
  */
-export const INVISIBLE = /[​-‏‪-‮⁠-⁤⁦-⁩﻿؜\u{E0000}-\u{E007F}]/u;
+export const INVISIBLE = /[​-‏‪-‮⁠-⁤⁦-⁩﻿؜\u{E0000}-\u{E007F}͏᠎⁥ᅟᅠㅤﾠ⠀]/u;
 const NO_INVISIBLE = "INVISIBLE_CHARACTERS_NOT_ALLOWED";
 
 /** A required single-line text field. */

@@ -17,6 +17,13 @@ const RANGES: Array<[string, number, number]> = [
   ["byte order mark", 0xfeff, 0xfeff],
   ["Arabic letter mark", 0x061c, 0x061c],
   ["tag characters", 0xe0000, 0xe007f],
+  ["combining grapheme joiner", 0x034f, 0x034f],
+  ["Mongolian vowel separator", 0x180e, 0x180e],
+  ["unassigned invisible", 0x2065, 0x2065],
+  ["Hangul fillers", 0x115f, 0x1160],
+  ["Hangul filler", 0x3164, 0x3164],
+  ["halfwidth Hangul filler", 0xffa0, 0xffa0],
+  ["braille blank", 0x2800, 0x2800],
 ];
 
 const ONE_CODE_POINT_PER_RANGE_END = RANGES.flatMap(([name, from, to]) => [
@@ -77,13 +84,14 @@ describe("invisible and direction-changing characters", () => {
       "Run \u{1F3C3} club",
       "名前",
       "سلام",
+      "❤️",
     ]) {
       expect(line(1, 60).safeParse(ok).success, ok).toBe(true);
     }
     expect(block(0, 500).safeParse("one\ntwo\r\nthree").success).toBe(true);
     // Just outside the ranges.
     for (const c of [
-      0x200a, 0x2029, 0x202f, 0x205f, 0x2065, 0x206a, 0xfefe, 0xff00,
+      0x200a, 0x2029, 0x202f, 0x205f, 0x206a, 0xfefe, 0xff00, 0x00ad, 0xfe0f,
     ]) {
       expect(
         line(1, 60).safeParse(`a${String.fromCodePoint(c)}b`).success,

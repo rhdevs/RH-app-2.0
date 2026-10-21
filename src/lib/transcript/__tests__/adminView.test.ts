@@ -150,7 +150,7 @@ describe("the Open transcripts result", () => {
       unresolved: 0,
     });
     expect(text).toBe(
-      "Transcripts for AY2026/27 are not open yet. 2 CCAs could not be saved: Soccer (MALE) (list changed while saving), Chess Club (UNKNOWN). Press Open transcripts again to finish.",
+      "Transcripts for AY2026/27 are not open yet. 2 CCAs could not be saved: Soccer (MALE) (list changed while saving), Chess Club (UNKNOWN). Press Open transcripts again to lock every CCA again.",
     );
   });
 
@@ -174,7 +174,20 @@ describe("the Open transcripts result", () => {
 
 describe("errorText", () => {
   it("turns known codes into plain sentences", () => {
-    expect(errorText("PERIOD_PUBLISHED")).toBe(WRITES_LOCKED_NOTE);
+    expect(errorText("PERIOD_PUBLISHED")).toBe(
+      "Transcripts for this year are open. Only the JCRC or an admin can correct a resident's records now.",
+    );
+    expect(errorText("ONLY_UNLOCKED_RESIDENTS")).toBe(
+      "This year is open. Unlock the resident first, and change only their records.",
+    );
+    expect(errorText("JCRC_PAGE_REMOVED")).toBe(
+      "This JCRC page has been removed. Restore it first.",
+    );
+    expect(errorText("MANUAL_REMOVED")).toBe(
+      "This manual CCA entry has been removed. Restore it first.",
+    );
+    expect(errorText("NOT_UNLOCKED")).toBe("This resident is not unlocked.");
+    expect(errorText("NOT_WITHHELD")).toBe("This transcript is not on hold.");
     expect(errorText("RATE_LIMITED:30")).not.toMatch(/RATE_LIMITED/);
   });
 

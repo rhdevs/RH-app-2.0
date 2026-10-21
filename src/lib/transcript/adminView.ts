@@ -118,7 +118,7 @@ export function openSummary(
     const list = result.failures
       .map((f) => `${f.name} (${lockFailureText(f.code)})`)
       .join(", ");
-    return `Transcripts for ${academicYear} are not open yet. ${plural(result.failures.length, "CCA", "CCAs")} could not be saved: ${list}. Press Open transcripts again to finish.${unmatched}`;
+    return `Transcripts for ${academicYear} are not open yet. ${plural(result.failures.length, "CCA", "CCAs")} could not be saved: ${list}. Press Open transcripts again to lock every CCA again.${unmatched}`;
   }
   return `Transcripts for ${academicYear} are open. ${plural(result.lockedNow, "CCA member list", "CCA member lists")} saved.${unmatched}`;
 }
@@ -161,7 +161,14 @@ const ERROR_TEXT: Record<string, string> = {
   YEAR_BEFORE_START: `Transcripts start at ${FIRST_ACADEMIC_YEAR}. Earlier years cannot be opened.`,
   YEAR_NOT_OPEN: "Transcripts for this year are not open yet.",
   ALREADY_PUBLISHED: "Transcripts for this academic year are already open.",
-  PERIOD_PUBLISHED: WRITES_LOCKED_NOTE,
+  PERIOD_PUBLISHED:
+    "Transcripts for this year are open. Only the JCRC or an admin can correct a resident's records now.",
+  ONLY_UNLOCKED_RESIDENTS:
+    "This year is open. Unlock the resident first, and change only their records.",
+  JCRC_PAGE_REMOVED: "This JCRC page has been removed. Restore it first.",
+  MANUAL_REMOVED: "This manual CCA entry has been removed. Restore it first.",
+  NOT_UNLOCKED: "This resident is not unlocked.",
+  NOT_WITHHELD: "This transcript is not on hold.",
   PERIOD_CHANGING:
     "Someone else is changing this academic year. Reload and try again.",
   RECORDS_BUSY: "Someone else is saving right now. Please try again.",
