@@ -113,7 +113,13 @@ export const transcriptRouter = createTRPCRouter({
      * inside openTranscripts.
      */
     open: managerProcedure
-      .input(z.object({ academicYear, runID: z.string().uuid().optional() }))
+      .input(
+        z.object({
+          academicYear,
+          runID: z.string().uuid().optional(),
+          replacesRunID: z.string().uuid().optional(),
+        }),
+      )
       .mutation(({ ctx, input }) => {
         const now = new Date();
         const current = currentAcademicYear(now);
@@ -132,7 +138,7 @@ export const transcriptRouter = createTRPCRouter({
           input.academicYear,
           ctx.session.user.userID,
           now,
-          { runID: input.runID },
+          { runID: input.runID, replacesRunID: input.replacesRunID },
         );
       }),
   }),

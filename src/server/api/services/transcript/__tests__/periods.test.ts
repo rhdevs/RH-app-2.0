@@ -404,6 +404,32 @@ describe("Open transcripts runs in steps (F1)", () => {
     expect(claim).not.toHaveBeenCalled();
   });
 
+  it("a press that replaces a failed run's id is not refused by that run's locks, but still by another run's (F79)", async () => {
+    const { db, locks, lockedAt } = runDb([1, 2, 3]);
+    locks.set(1, "failed-run");
+    lockedAt.set(1, new Date(NOW.getTime() - 10_000));
+
+    expect(
+      await codeOf(openTranscripts(db, "AY2026/27", "SEED-R02", NOW)),
+    ).toBe("CONFLICT:OPEN_IN_PROGRESS");
+    const r = await openTranscripts(db, "AY2026/27", "SEED-R02", NOW, {
+      replacesRunID: "failed-run",
+    });
+    expect(r.runID).not.toBe("failed-run");
+    expect(r).toMatchObject({ opened: true, lockedNow: 3 });
+
+    const other = runDb([1, 2]);
+    other.locks.set(1, "someone-else");
+    other.lockedAt.set(1, new Date(NOW.getTime() - 10_000));
+    expect(
+      await codeOf(
+        openTranscripts(other.db, "AY2026/27", "SEED-R02", NOW, {
+          replacesRunID: "failed-run",
+        }),
+      ),
+    ).toBe("CONFLICT:OPEN_IN_PROGRESS");
+  });
+
   it("starts a new run when the other run's latest lock is 90 seconds old (F75)", async () => {
     const { db, locks, lockedAt } = runDb([1, 2]);
     locks.set(1, "run-a");

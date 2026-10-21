@@ -238,6 +238,21 @@ describe("one press of Open transcripts", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("sends the previous run's id as replacesRunID on the first request only (F79)", async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce(step({ lockedInRun: 1, lockedNow: 1 }))
+      .mockResolvedValueOnce(step({ opened: true, lockedInRun: 3 }));
+
+    await runOpen("AY2026/27", call, noop, async () => noop(), "previous-run");
+
+    expect(call.mock.calls[0]![0]).toEqual({
+      academicYear: "AY2026/27",
+      replacesRunID: "previous-run",
+    });
+    expect(call.mock.calls[1]![0].replacesRunID).toBeUndefined();
+  });
+
   it("stops at the first failure and returns it", async () => {
     const failed = step({ failures: [{ name: "Chess Club", code: "P2034" }] });
     const call = vi.fn().mockResolvedValue(failed);

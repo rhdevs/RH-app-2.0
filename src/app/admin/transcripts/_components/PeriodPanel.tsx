@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import {
   AlertDialog,
@@ -301,9 +301,14 @@ const OPEN_UNFINISHED = "Open transcripts did not finish. Press it again.";
  */
 export async function runOpen(
   academicYear: string,
-  step: (input: { academicYear: string; runID?: string }) => Promise<OpenStep>,
+  step: (input: {
+    academicYear: string;
+    runID?: string;
+    replacesRunID?: string;
+  }) => Promise<OpenStep>,
   onProgress: (line: string) => void,
   refresh: () => Promise<unknown>,
+  replacesRunID?: string,
 ): Promise<{ result: OpenStep } | { error: string }> {
   let runID: string | undefined;
   let lockedNow = 0;
@@ -313,7 +318,11 @@ export async function runOpen(
   let lastInRun = 0;
   try {
     for (let requests = 0; requests < OPEN_MAX_REQUESTS; requests++) {
-      const r = await step({ academicYear, runID });
+      const r = await step({
+        academicYear,
+        runID,
+        replacesRunID: runID ? undefined : replacesRunID,
+      });
       runID = r.runID;
       lockedNow += r.lockedNow;
       relocked += r.relocked;
@@ -377,6 +386,7 @@ export default function PeriodPanel() {
     },
   });
   const open = api.transcript.periods.open.useMutation();
+  const lastRunID = useRef<string | undefined>(undefined);
   const pressOpen = async () => {
     setOpening(true);
     setOpenError(null);
@@ -386,12 +396,14 @@ export default function PeriodPanel() {
       open.mutateAsync,
       setProgressLine,
       refresh,
+      lastRunID.current,
     );
     setOpening(false);
     if ("error" in outcome) {
       setOpenError(outcome.error);
       return;
     }
+    lastRunID.current = outcome.result.runID;
     setConfirming(false);
     setResultLine(openSummary(year, outcome.result));
   };

@@ -276,7 +276,7 @@ export async function openTranscripts(
   academicYear: string,
   actorUserID: string,
   now: Date = new Date(),
-  options: { runID?: string; budgetMs?: number } = {},
+  options: { runID?: string; budgetMs?: number; replacesRunID?: string } = {},
 ): Promise<OpenResult> {
   requireSupportedYear(academicYear, now);
   const period = await getPeriod(db, academicYear);
@@ -309,6 +309,7 @@ export async function openTranscripts(
       (l) =>
         l.openRunID &&
         l.openRunID !== runID &&
+        l.openRunID !== options.replacesRunID &&
         now.getTime() - l.frozenAt.getTime() < OPEN_BUSY_WINDOW_MS,
     )
   ) {
