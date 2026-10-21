@@ -367,6 +367,49 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await errorOf(create(SOCCER_HEAD, "This year"))).toBe("ok");
       });
 
+      it("keeps a head out of every write on a past-year activity, and lets a manager in (F31)", async () => {
+        const row = (title: string, removed = false) =>
+          db.ccaActivity.create({
+            data: {
+              academicYear: OLD,
+              ccaID: SOCCER,
+              title,
+              description: "",
+              period: "full",
+              createdBy: ADMIN.id,
+              ...(removed
+                ? { removedAt: new Date(), removedBy: ADMIN.id }
+                : {}),
+            },
+          });
+        const live = await row("Old league");
+        const gone = await row("Old cup", true);
+        const draftOf = (id: string) => ({
+          id,
+          ccaID: SOCCER,
+          ...draft("Old league (revised)"),
+        });
+        const ref = (id: string) => ({ id, ccaID: SOCCER });
+        const set = (who: { id: string; roles: string[] }) =>
+          as(who).participants.set({
+            ...ref(live.id),
+            participants: people(["SEED-R12", "Captain"]),
+          });
+
+        const refused = "FORBIDDEN:NOT_THE_TERM_YEAR";
+        const head = as(SOCCER_HEAD).activities;
+        expect(await errorOf(head.update(draftOf(live.id)))).toBe(refused);
+        expect(await errorOf(head.remove(ref(live.id)))).toBe(refused);
+        expect(await errorOf(head.restore(ref(gone.id)))).toBe(refused);
+        expect(await errorOf(set(SOCCER_HEAD))).toBe(refused);
+
+        const manager = as(JCRC).activities;
+        expect(await errorOf(manager.update(draftOf(live.id)))).toBe("ok");
+        expect(await errorOf(set(JCRC))).toBe("ok");
+        expect(await errorOf(manager.remove(ref(live.id)))).toBe("ok");
+        expect(await errorOf(manager.restore(ref(gone.id)))).toBe("ok");
+      });
+
       it("refuses everyone, managers included, once the year is published, unless a resident is unlocked", async () => {
         const id = await seeded(SOCCER, "Inter-hall league");
         await db.transcriptPeriod.update({

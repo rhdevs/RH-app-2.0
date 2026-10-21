@@ -1648,8 +1648,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await errorOf(activity(NEXT))).toBe(
           "PRECONDITION_FAILED:YEAR_NOT_STARTED",
         );
-        // The roster guard (residentRecords.ts) words this one as FORBIDDEN.
-        expect(await errorOf(roster(NEXT))).toBe("FORBIDDEN:YEAR_NOT_STARTED");
+        expect(await errorOf(roster(NEXT))).toBe(
+          "PRECONDITION_FAILED:YEAR_NOT_STARTED",
+        );
         expect(
           await db.ccaActivity.count({ where: { academicYear: NEXT } }),
         ).toBe(0);

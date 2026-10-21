@@ -14,7 +14,6 @@ import {
   createSkipRepreview,
   importableCount,
   shortCitation,
-  skipToggle,
   type ImportDoneViewProps,
   type ImportInputViewProps,
   type ImportMapViewProps,
@@ -239,26 +238,6 @@ describe("import: the preview", () => {
     expect(importableCount(rows, new Set([1, 2, 3]))).toBe(0);
   });
 
-  it("toggling Skip asks for a fresh preview that carries the whole file and the new skip set (F5)", () => {
-    const sent = [
-      { identifier: "a", award: "Full Colours", citation: "" },
-      { identifier: "a", award: "Full Colours", citation: "" },
-    ];
-    const first = skipToggle("AY2026/27", sent, new Set(), 1, true);
-    expect(first.next).toEqual(new Set([1]));
-    expect(first.request).toEqual({
-      academicYear: "AY2026/27",
-      rows: sent,
-      skipRows: [1],
-    });
-    const second = skipToggle("AY2026/27", sent, first.next, 2, true);
-    expect(second.request.skipRows).toEqual([1, 2]);
-    const undone = skipToggle("AY2026/27", sent, second.next, 1, false);
-    expect(undone.request.skipRows).toEqual([2]);
-    // The caller's set is not changed.
-    expect(first.next).toEqual(new Set([1]));
-  });
-
   it("marks a new award on its row and shows the citation", () => {
     const html = preview();
     expect(html).toContain("New award");
@@ -296,6 +275,36 @@ describe("import: the Skip toggle re-preview (F58, F59)", () => {
     });
     return { repreview, seen };
   };
+
+  it("sends nothing after a reset during the debounce, and ignores an answer in flight (F66)", async () => {
+    vi.useFakeTimers();
+    const send = vi.fn().mockResolvedValue({ rows: readyRows("ready") });
+    const onPreview = vi.fn();
+    const onError = vi.fn();
+    const again = createSkipRepreview({
+      send,
+      onSkipped: noop,
+      onPreview,
+      onPending: noop,
+      onError,
+    });
+
+    again.toggle(1, true);
+    vi.advanceTimersByTime(REPREVIEW_DELAY_MS - 1);
+    again.reset(new Set());
+    await vi.runAllTimersAsync();
+    expect(send).not.toHaveBeenCalled();
+
+    let answer: (v: unknown) => void = noop;
+    send.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    again.toggle(1, true);
+    vi.advanceTimersByTime(REPREVIEW_DELAY_MS);
+    again.reset(new Set());
+    answer({ rows: readyRows("ready") });
+    await vi.runAllTimersAsync();
+    expect(onPreview).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalledWith(expect.anything());
+  });
 
   it("sends one request with both rows after two quick toggles", async () => {
     const send = vi

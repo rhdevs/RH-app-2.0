@@ -135,6 +135,63 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     };
 
     /* ---------------------------------------------------------------- */
+    describe("a past year", () => {
+      it("is read-only for a head in every volunteer write, and open to a manager (F31)", async () => {
+        const oldActivity = await db.volunteerActivity.create({
+          data: {
+            academicYear: OLD,
+            ccaID: CHILDREN,
+            title: "Old tuition",
+            kind: "regular",
+            description: "",
+            createdBy: ADMIN.id,
+          },
+        });
+        const oldSession = await db.volunteerSession.create({
+          data: {
+            activityID: oldActivity.id,
+            academicYear: OLD,
+            ccaID: CHILDREN,
+            date: new Date("2025-10-06T00:00:00Z"),
+            hours: 2,
+            createdBy: ADMIN.id,
+          },
+        });
+        const ids = { activityID: oldActivity.id, ccaID: CHILDREN };
+        const writes = (who: { id: string; roles: string[] }) => [
+          () =>
+            as(who).activities.update({
+              id: oldActivity.id,
+              ccaID: CHILDREN,
+              title: "Old tuition (revised)",
+              description: "",
+              defaultHours: null,
+            }),
+          () => as(who).sessions.add({ ...ids, date: "2025-10-13", hours: 2 }),
+          () => as(who).people.set({ ...ids, userIDs: ["SEED-R12"] }),
+          () =>
+            as(who).attendance.save({
+              ...ids,
+              changes: [
+                {
+                  sessionID: oldSession.id,
+                  userID: "SEED-R12",
+                  attended: true,
+                },
+              ],
+            }),
+        ];
+
+        for (const write of writes(CHILDREN_HEAD)) {
+          expect(await errorOf(write())).toBe("FORBIDDEN:NOT_THE_TERM_YEAR");
+        }
+        for (const write of writes(JCRC)) {
+          expect(await errorOf(write())).toBe("ok");
+        }
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
     describe("a head of a volunteering CCA, for the term year", () => {
       it("creates, edits, removes and restores a regular activity, recording who and when", async () => {
         const head = as(CHILDREN_HEAD);

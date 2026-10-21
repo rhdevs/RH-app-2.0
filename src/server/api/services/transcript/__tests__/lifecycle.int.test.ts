@@ -501,7 +501,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await soccerRow("SEED-R13")).toBeUndefined();
         expect(await soccerRow(R20.id)).toBeDefined();
         // The old head's "Head" was the first run's default, not a choice.
-        expect((await soccerRow(SOCCER_HEAD.id))?.role || null).toBeNull();
+        const oldHeadRow = await soccerRow(SOCCER_HEAD.id);
+        expect(oldHeadRow).toBeDefined();
+        expect(oldHeadRow?.role || null).toBeNull();
         expect((await soccerRow(R09.id))?.role).toBe("Head");
         const lock = await db.ccaYearFreeze.findFirstOrThrow({
           where: { academicYear: AY, ccaID: SOCCER },
@@ -1754,13 +1756,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           "FORBIDDEN:NOT_THE_TERM_YEAR",
         );
         expect(await editAs(ADMIN, "AY2025/26")).toBe("ok");
-        // A year that has not started is refused for everyone (F17). The
-        // roster guard (residentRecords.ts) words every refusal but
-        // PERIOD_PUBLISHED as FORBIDDEN.
+        // A year that has not started is refused for everyone (F17), with the
+        // same code as every other write path (F63).
         expect(await editAs(SOCCER_HEAD, NEXT)).toBe(
-          "FORBIDDEN:YEAR_NOT_STARTED",
+          "PRECONDITION_FAILED:YEAR_NOT_STARTED",
         );
-        expect(await editAs(ADMIN, NEXT)).toBe("FORBIDDEN:YEAR_NOT_STARTED");
+        expect(await editAs(ADMIN, NEXT)).toBe(
+          "PRECONDITION_FAILED:YEAR_NOT_STARTED",
+        );
       });
 
       it("refuses everyone but a per-resident correction once transcripts are open", async () => {

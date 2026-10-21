@@ -694,23 +694,6 @@ function mappingFor(table: string[][], header: boolean): ImportColumn[] {
   );
 }
 
-/**
- * Toggling one row's Skip: the new skip set, and the preview request that
- * honours it (a row whose earlier copy is now skipped stops being a duplicate).
- */
-export function skipToggle(
-  academicYear: string,
-  rows: ImportRow[],
-  skipped: ReadonlySet<number>,
-  row: number,
-  skip: boolean,
-) {
-  const next = new Set(skipped);
-  if (skip) next.add(row);
-  else next.delete(row);
-  return { next, request: { academicYear, rows, skipRows: [...next] } };
-}
-
 /** A skipped row that is no longer Ready after a re-preview is not skipped. */
 export const stillSkipped = (
   skipped: ReadonlySet<number>,
@@ -956,7 +939,10 @@ export default function AwardImport({
               ...(d ? [d] : []),
             ])
           }
-          onBack={() => setStep("map")}
+          onBack={() => {
+            repreview.current?.reset(new Set(skipped));
+            setStep("map");
+          }}
           onImport={() => void runImport()}
           importing={false}
           error={error}

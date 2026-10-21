@@ -137,7 +137,8 @@ export async function assertCanEditForResidents(
   }
   throw new TRPCError({
     code:
-      decision.refusal === PUBLISHED_REFUSAL
+      decision.refusal === PUBLISHED_REFUSAL ||
+      decision.refusal === "YEAR_NOT_STARTED"
         ? "PRECONDITION_FAILED"
         : "FORBIDDEN",
     message: decision.refusal,

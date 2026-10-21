@@ -849,6 +849,81 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           name: "TRPCError",
         });
       });
+
+      it("an assignment's fallback stops inside the loop once the budget passes after the first person (F64)", async () => {
+        const { awardsAssign, FALLBACK_BUDGET_MS } = await import(
+          "../manageAwards"
+        );
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16", "SEED-R17"];
+        // Calls: the start, then one check before each person. Only the third
+        // call (before the second person) is past the budget.
+        let calls = 0;
+        const clock = () => (++calls <= 2 ? 0 : FALLBACK_BUDGET_MS + 1);
+        const racing = interfering({ 1: { error: duplicate() } });
+
+        const result = await awardsAssign(
+          racing,
+          JCRC.id,
+          {
+            academicYear: AY,
+            awardTypeID: t.id,
+            recipients: people.map((userID) => ({ userID, citation: null })),
+          },
+          undefined,
+          { clock },
+        );
+
+        expect(result.stopped).toBe("RECORDS_BUSY");
+        expect(result.assignedUserIDs).toHaveLength(1);
+        let written = 0;
+        for (const userID of people) {
+          written += (await awardsOf(userID, t.name)).length;
+        }
+        expect(written).toBe(1);
+        expect(JSON.parse(lineFor("award_assign_stopped")!)).toEqual({
+          evt: "award_assign_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
+      });
+
+      it("a restore's fallback stops inside the loop once the budget passes after the first award (F64)", async () => {
+        const { awardsBulkRestore, FALLBACK_BUDGET_MS } = await import(
+          "../manageAwards"
+        );
+        const mine = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 3,
+        });
+        const ids = mine.map((m) => m.id);
+        for (const id of ids) await as(JCRC).awards.remove({ id });
+        let calls = 0;
+        const clock = () => (++calls <= 2 ? 0 : FALLBACK_BUDGET_MS + 1);
+        const racing = interfering({ 1: { error: duplicate() } });
+
+        const result = await awardsBulkRestore(
+          racing,
+          JCRC.id,
+          ids,
+          undefined,
+          { clock },
+        );
+
+        expect(result).toMatchObject({ restored: 1, stopped: "RECORDS_BUSY" });
+        expect(result.restoredIDs).toHaveLength(1);
+        const active = await db.award.findMany({
+          where: { id: { in: ids }, ...live },
+        });
+        expect(active).toHaveLength(1);
+        expect(JSON.parse(lineFor("award_restore_stopped")!)).toEqual({
+          evt: "award_restore_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
+      });
     });
 
     describe("self-recorded awards (F25a)", () => {
