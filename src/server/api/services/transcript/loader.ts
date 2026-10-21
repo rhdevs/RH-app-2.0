@@ -31,17 +31,17 @@ import {
  * existing pure input type, so assembleTranscript and the pages are unchanged.
  *
  * WHICH MEMBERSHIPS COUNT, per CCA, for the year asked for:
- *  - a CCA with an ACTIVE FREEZE for that year contributes its FROZEN entries
- *    (TranscriptRosterEntry rows with frozen=true), whoever is in the CCA now:
- *    a member who left after the freeze still appears, and nobody who joined
- *    after it does;
- *  - a CCA with no active freeze contributes the resident's CURRENT membership
- *    (UserCCA, the embedded User.userCCA array, CcaHead) merged with the stored
- *    annotations and derived defaults, but ONLY if the year asked for is that
- *    CCA's term year (its oldest unfrozen year). Otherwise it contributes
- *    nothing: after a handover the CCA's new members belong to the next year.
+ *  - a PUBLISHED (open) year reads the LOCKED roster entries
+ *    (TranscriptRosterEntry rows with frozen=true) saved when transcripts were
+ *    opened, whoever is in the CCA now: a member who left after Open still
+ *    appears, and nobody who joined after it does;
+ *  - a COLLECTING year reads the live member list: the resident's CURRENT
+ *    membership (UserCCA, the embedded User.userCCA array, CcaHead) merged with
+ *    the stored annotations and derived defaults, plus any CCA where a saved
+ *    role or semester keeps the person on this year's list;
+ *  - manual CCA entries are merged in for either.
  *
- * Writes to CCA / UserCCA / User: never. Reads of them: for CCAs not frozen yet.
+ * Writes to CCA / UserCCA / User: never. Reads of them: for collecting years.
  */
 
 export interface LoadOptions {
