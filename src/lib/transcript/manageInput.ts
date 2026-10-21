@@ -47,10 +47,11 @@ const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/;
  * Invisible and direction-changing characters: zero-width space, joiners and
  * marks (U+200B-200F), bidirectional embeddings and overrides (U+202A-202E),
  * word joiner and invisible operators (U+2060-2064), bidirectional isolates
- * (U+2066-2069) and the byte order mark (U+FEFF). On a formal document they
+ * (U+2066-2069), the byte order mark (U+FEFF), the Arabic letter mark (U+061C)
+ * and the tag characters (U+E0000-E007F). On a formal document they
  * reorder or hide text, so no free-text field accepts them.
  */
-export const INVISIBLE = /[​-‏‪-‮⁠-⁤⁦-⁩﻿]/;
+export const INVISIBLE = /[​-‏‪-‮⁠-⁤⁦-⁩﻿؜\u{E0000}-\u{E007F}]/u;
 const NO_INVISIBLE = "INVISIBLE_CHARACTERS_NOT_ALLOWED";
 
 /** A required single-line text field. */

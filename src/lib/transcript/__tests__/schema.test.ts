@@ -36,16 +36,28 @@ const current = parseModels(readFileSync("prisma/schema.prisma", "utf8"));
 
 function upstreamSchema(): string | null {
   try {
-    return execFileSync("git", ["show", "upstream/main:prisma/schema.prisma"], {
+    return execFileSync("git", ["show", `${BASE_REF}:prisma/schema.prisma`], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
   } catch {
-    return null; // no upstream remote here (for example in CI)
+    return null; // no upstream remote here; CI fetches one (see the workflow)
   }
 }
+// The ref the base schema is read from. Only a test of this check changes it.
+const BASE_REF = process.env.TRANSCRIPT_SCHEMA_BASE_REF ?? "upstream/main";
 const upstream = upstreamSchema();
 const upstreamModels = upstream ? parseModels(upstream) : null;
+
+describe("schema: the base schema to compare with", () => {
+  it("is available in CI, so the checks below compare something", () => {
+    if (process.env.CI && !upstreamModels) {
+      throw new Error(
+        `CI is set but ${BASE_REF}:prisma/schema.prisma cannot be read: the "only CcaProfile changes" checks would pass without comparing anything. The workflow must fetch the base branch into refs/remotes/upstream/main.`,
+      );
+    }
+  });
+});
 
 const NEW_MODELS: Record<string, string[]> = {
   // model -> its KEY fields: the columns that identify the row, so required.

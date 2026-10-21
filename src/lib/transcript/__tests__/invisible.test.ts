@@ -15,6 +15,8 @@ const RANGES: Array<[string, number, number]> = [
   ["word joiner and invisible operators", 0x2060, 0x2064],
   ["bidirectional isolates", 0x2066, 0x2069],
   ["byte order mark", 0xfeff, 0xfeff],
+  ["Arabic letter mark", 0x061c, 0x061c],
+  ["tag characters", 0xe0000, 0xe007f],
 ];
 
 const ONE_CODE_POINT_PER_RANGE_END = RANGES.flatMap(([name, from, to]) => [
@@ -74,6 +76,7 @@ describe("invisible and direction-changing characters", () => {
       "Café société",
       "Run \u{1F3C3} club",
       "名前",
+      "سلام",
     ]) {
       expect(line(1, 60).safeParse(ok).success, ok).toBe(true);
     }

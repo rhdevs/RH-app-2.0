@@ -19,6 +19,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Fetch the base branch for the schema checks
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/upstream/main"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:

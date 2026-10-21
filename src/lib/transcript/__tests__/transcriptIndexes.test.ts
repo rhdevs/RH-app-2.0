@@ -56,6 +56,12 @@ const fields = (list: string) =>
 function schemaIndexes(body: string): Index[] {
   const found: Index[] = [];
   for (const line of body.split("\n")) {
+    const code = line.replace(/\/\/.*$/, "");
+    if (/@@?(unique|index)\b/.test(code) && !/\bmap:\s*"[^"]+"/.test(code)) {
+      throw new Error(
+        `An index without a map: name cannot be checked: ${code.trim()}`,
+      );
+    }
     const field = /^\s+(\w+)\s+\S+.*@unique\(map:\s*"([^"]+)"\)/.exec(line);
     if (field) {
       found.push({ name: field[2]!, key: { [field[1]!]: 1 }, unique: true });
@@ -73,6 +79,22 @@ function schemaIndexes(body: string): Index[] {
   }
   return found;
 }
+
+describe("schemaIndexes", () => {
+  it("throws on an index that has no map: name, instead of skipping it", () => {
+    expect(() => schemaIndexes("  @@index([academicYear, userID])")).toThrow(
+      "without a map",
+    );
+    expect(() => schemaIndexes("  userID String @unique")).toThrow(
+      "without a map",
+    );
+    expect(
+      schemaIndexes('  @@index([academicYear], map: "x_year")').map(
+        (i) => i.name,
+      ),
+    ).toEqual(["x_year"]);
+  });
+});
 
 const models = modelBlocks(transcriptPart);
 const fromSchema = new Map(

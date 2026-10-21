@@ -53,7 +53,25 @@ describe("requireResidents (F25b)", () => {
 
     const found = await requireResidents(db, ["e0000007"]);
 
-    expect(found.get("e0000007")?.displayName).toBe("Resident 7");
+    expect(found.get("e0000007")).toEqual({
+      key: "E0000007",
+      displayName: "Resident 7",
+    });
+  });
+
+  it("files a mixed-case key under the canonical key, not the caller's string", async () => {
+    const { db } = dbWith([
+      {
+        id: "oidA",
+        email: "e000000a@u.nus.edu",
+        userID: "E000000A",
+        displayName: "Resident A",
+      },
+    ]);
+
+    const found = await requireResidents(db, ["E000000a"]);
+
+    expect(found.get("E000000a")?.key).toBe("E000000A");
   });
 
   it("reports an unknown key as RESIDENT_NOT_FOUND, as requireResident does", async () => {
