@@ -212,7 +212,7 @@ const specOf = (ix) =>
 /** Server fields on a listed index that say nothing about its shape. */
 const NEUTRAL = new Set(["v", "key", "name", "ns", "unique", "background"]);
 
-const sameKey = (a, b) => {
+export const sameKey = (a, b) => {
   const ak = Object.entries(a ?? {});
   const bk = Object.entries(b ?? {});
   return (
@@ -222,7 +222,7 @@ const sameKey = (a, b) => {
 };
 
 /** Options on a listed index beyond key/name/unique (collation, sparse, partial...). */
-const extraOptions = (i) => Object.keys(i ?? {}).filter((k) => !NEUTRAL.has(k));
+export const extraOptions = (i) => Object.keys(i ?? {}).filter((k) => !NEUTRAL.has(k));
 
 /**
  * Compare what we want with what a collection has. Returns

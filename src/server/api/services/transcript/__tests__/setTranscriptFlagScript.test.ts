@@ -248,6 +248,63 @@ describe("set-transcript-flag.mjs refuses to turn the feature on without its uni
     expect(absent.problems.join()).toContain("Other.other_u");
   });
 
+  it("reads real replies: keys and order as extended JSON still match (F73)", async () => {
+    const real = {
+      Thing: [
+        {
+          v: { $numberInt: "2" },
+          name: "thing_u",
+          key: { x: { $numberInt: "1" } },
+          unique: true,
+        },
+      ],
+      Other: [
+        {
+          name: "other_u",
+          key: { a: { $numberDouble: "1.0" }, b: { $numberInt: "1" } },
+          unique: true,
+        },
+      ],
+    } as Record<string, Array<Record<string, unknown>>>;
+    expect(await checkUniqueIndexes(fake(real), TARGETS)).toEqual({
+      ok: true,
+      problems: [],
+    });
+
+    const reordered = await checkUniqueIndexes(
+      fake({
+        ...real,
+        Other: [
+          {
+            name: "other_u",
+            key: { b: { $numberInt: "1" }, a: { $numberInt: "1" } },
+            unique: true,
+          },
+        ],
+      }),
+      TARGETS,
+    );
+    expect(reordered.problems.join()).toContain("Other.other_u");
+  });
+
+  it("refuses an index with the right name and key but extra options (F73)", async () => {
+    for (const extra of [
+      { partialFilterExpression: { x: { $gt: 1 } } },
+      { sparse: true },
+      { collation: { locale: "en" } },
+    ]) {
+      const res = await checkUniqueIndexes(
+        fake({
+          ...present,
+          Thing: [{ name: "thing_u", key: { x: 1 }, unique: true, ...extra }],
+        }),
+        TARGETS,
+      );
+      expect(res.ok).toBe(false);
+      expect(res.problems.join()).toContain("Thing.thing_u");
+    }
+  });
+
   it("runs the check for mode on only, before the dry-run line and the write", () => {
     const source = readFileSync(SCRIPT, "utf8");
     const main = source.slice(source.indexOf("async function main()"));

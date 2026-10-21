@@ -4,9 +4,7 @@
  * answers not-ok counts as "missing": an unanswered question is not "present".
  * Returns `{ ok, problems }`, one line per missing or different index.
  */
-const sameKey = (a, b) =>
-  JSON.stringify(Object.entries(a ?? {})) ===
-  JSON.stringify(Object.entries(b ?? {}));
+import { sameKey, extraOptions } from "../create-transcript-indexes.mjs";
 
 export async function checkUniqueIndexes(db, targets) {
   const problems = [];
@@ -23,7 +21,10 @@ export async function checkUniqueIndexes(db, targets) {
     for (const ix of uniques) {
       const found = existing.find(
         (i) =>
-          i?.name === ix.name && sameKey(i.key, ix.key) && i.unique === true,
+          i?.name === ix.name &&
+          sameKey(i.key, ix.key) &&
+          i.unique === true &&
+          extraOptions(i).length === 0,
       );
       if (!found) {
         problems.push(
