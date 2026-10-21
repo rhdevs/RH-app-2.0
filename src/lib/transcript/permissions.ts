@@ -1,4 +1,4 @@
-import { ADMIN_ROLE, CCA_HEAD_ROLE, JCRC_ROLE } from "~/lib/roleNames";
+import { ADMIN_ROLE, JCRC_ROLE } from "~/lib/roleNames";
 
 /**
  * TRANSCRIPT PERMISSIONS — pure functions over a roles array.
