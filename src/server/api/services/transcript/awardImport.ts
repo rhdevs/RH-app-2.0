@@ -22,7 +22,12 @@ import type {
 } from "~/lib/transcript/awardImport";
 // The admin bulk wizard's own identifier resolvers, imported, not copied.
 import { bulkResolver } from "~/server/api/routers/admin";
-import { awardTypeCreate, isUniqueViolation } from "./manageAwards";
+import {
+  awardTypeCreate,
+  FALLBACK_BUDGET_MS,
+  isUniqueViolation,
+  type FallbackOptions,
+} from "./manageAwards";
 import { awardActiveKey } from "~/lib/transcript/awards";
 import { NOT_VOIDED } from "./loader";
 import { assertWritable } from "./manageAccess";
@@ -201,7 +206,9 @@ export async function awardImportCommit(
   actorUserID: string,
   input: z.infer<typeof awardImportCommitInput>,
   now: Date = new Date(),
+  { clock = Date.now }: FallbackOptions = {},
 ) {
+  const started = clock();
   await assertWritable(db, input.academicYear);
   const skippedByUser = new Set(input.skipRows ?? []);
   const { rows, catalogue, held } = await prepare(
@@ -393,6 +400,17 @@ export async function awardImportCommit(
         // or a double-submit). One duplicate aborts the whole chunk, so write it
         // row by row: that row is skipped, the others are imported.
         for (const a of chunk) {
+          if (clock() - started > FALLBACK_BUDGET_MS) {
+            console.error(
+              JSON.stringify({
+                evt: "award_import_budget_stop",
+                academicYear: input.academicYear,
+                batchId: batch.id,
+                imported,
+              }),
+            );
+            throw new TRPCError({ code: "CONFLICT", message: "RECORDS_BUSY" });
+          }
           try {
             await yearWrite(
               db,

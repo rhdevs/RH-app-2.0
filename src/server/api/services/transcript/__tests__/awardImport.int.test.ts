@@ -1200,6 +1200,83 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           logged.mockRestore();
         }
       }, 300_000);
+
+      it("stops the per-row fallback once the time budget passes, and ends as a partial upload (F70)", async () => {
+        const service = await import("../awardImport");
+        const { FALLBACK_BUDGET_MS } = await import("../manageAwards");
+        const logged = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        try {
+          let transactions = 0;
+          // The chunk write hits a duplicate (someone gave one of these awards
+          // at the same moment), so the rows go one by one.
+          const racing = new Proxy(db, {
+            get(target, prop, receiver) {
+              if (prop === "$transaction") {
+                return (...args: unknown[]) => {
+                  transactions += 1;
+                  if (transactions === 1) {
+                    return Promise.reject(
+                      Object.assign(new Error("dup"), { code: "P2002" }),
+                    );
+                  }
+                  return (
+                    target.$transaction as unknown as (
+                      ...a: unknown[]
+                    ) => Promise<unknown>
+                  )(...args);
+                };
+              }
+              return Reflect.get(target, prop, receiver) as unknown;
+            },
+          });
+          // Calls: the start, then one check before each row. Only the third
+          // call (before the second row) is past the budget.
+          let calls = 0;
+          const clock = () => (++calls <= 2 ? 0 : FALLBACK_BUDGET_MS + 1);
+          const rows: ImportRow[] = [5, 6, 7].map((n) => ({
+            identifier: `seed-r0${n}@u.nus.edu`,
+            award: "Hall Spirit Award",
+            citation: "",
+          }));
+
+          const message = await errorOf(
+            service.awardImportCommit(
+              racing,
+              JCRC.id,
+              {
+                academicYear: AY,
+                fileName: "budget.csv",
+                rows,
+                decisions: [{ nameKey: "hall spirit award", action: "create" }],
+              } as never,
+              undefined,
+              { clock },
+            ),
+          );
+
+          expect(message).toBe("CONFLICT:UPLOAD_PARTIAL:1");
+          const batch = await db.awardImportBatch.findFirstOrThrow({
+            where: { fileName: "budget.csv" },
+          });
+          expect(batch).toMatchObject({ status: "partial", importedCount: 1 });
+          expect(
+            await db.award.count({ where: { importBatchID: batch.id } }),
+          ).toBe(1);
+          const line = logged.mock.calls
+            .map((c) => String(c[0]))
+            .find((l) => l.includes("award_import_budget_stop"))!;
+          expect(JSON.parse(line)).toEqual({
+            evt: "award_import_budget_stop",
+            academicYear: AY,
+            batchId: batch.id,
+            imported: 1,
+          });
+        } finally {
+          logged.mockRestore();
+        }
+      });
     });
 
     /* ---------------------------------------------------------------- */
