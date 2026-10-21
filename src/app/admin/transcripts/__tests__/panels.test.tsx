@@ -273,7 +273,10 @@ describe("one press of Open transcripts", () => {
     const outcome = await runOpen("AY2026/27", call, noop, refresh);
 
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(outcome).toEqual({ error: "Something went wrong. Try again." });
+    expect(outcome).toEqual({
+      error: "Something went wrong. Try again.",
+      runID: step({}).runID,
+    });
     const html = renderPeriod({
       actionError: "error" in outcome ? outcome.error : null,
     });
@@ -290,6 +293,7 @@ describe("one press of Open transcripts", () => {
     expect(call).toHaveBeenCalledTimes(2);
     expect(outcome).toEqual({
       error: "Open transcripts did not finish. Press it again.",
+      runID: step({}).runID,
     });
     expect(refresh).toHaveBeenCalledTimes(1);
   });
@@ -303,7 +307,30 @@ describe("one press of Open transcripts", () => {
     expect(call).toHaveBeenCalledTimes(200);
     expect(outcome).toEqual({
       error: "Open transcripts did not finish. Press it again.",
+      runID: step({}).runID,
     });
+  });
+
+  it("returns no runID when the first request rejects (F81)", async () => {
+    const call = vi.fn().mockRejectedValue(new Error("network"));
+    const outcome = await runOpen("AY2026/27", call, noop, async () => noop());
+    expect(outcome).toEqual({ error: "Something went wrong. Try again." });
+    expect("runID" in outcome ? outcome.runID : "x").toBeUndefined();
+  });
+
+  it("returns the run's id with an error so the next press replaces it (F81)", async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce(step({ lockedInRun: 1, lockedNow: 1 }))
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce(step({ opened: true, lockedInRun: 3 }));
+
+    const first = await runOpen("AY2026/27", call, noop, async () => noop());
+    const runID = "error" in first ? first.runID : undefined;
+    expect(runID).toBe(step({}).runID);
+
+    await runOpen("AY2026/27", call, noop, async () => noop(), runID);
+    expect(call.mock.calls[2]![0].replacesRunID).toBe(runID);
   });
 
   it("keeps the coded refusals in plain words", async () => {

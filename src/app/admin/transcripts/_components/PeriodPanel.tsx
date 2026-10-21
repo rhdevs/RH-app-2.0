@@ -309,7 +309,7 @@ export async function runOpen(
   onProgress: (line: string) => void,
   refresh: () => Promise<unknown>,
   replacesRunID?: string,
-): Promise<{ result: OpenStep } | { error: string }> {
+): Promise<{ result: OpenStep } | { error: string; runID?: string }> {
   let runID: string | undefined;
   let lockedNow = 0;
   let relocked = 0;
@@ -336,9 +336,12 @@ export async function runOpen(
       lastInRun = r.lockedInRun;
       onProgress(openProgress(r.lockedInRun, r.totalCcas));
     }
-    return { error: OPEN_UNFINISHED };
+    return { error: OPEN_UNFINISHED, runID };
   } catch (error) {
-    return { error: errorText(error instanceof Error ? error.message : null) };
+    return {
+      error: errorText(error instanceof Error ? error.message : null),
+      runID,
+    };
   } finally {
     await refresh();
   }
@@ -400,6 +403,7 @@ export default function PeriodPanel() {
     );
     setOpening(false);
     if ("error" in outcome) {
+      lastRunID.current = outcome.runID ?? lastRunID.current;
       setOpenError(outcome.error);
       return;
     }
