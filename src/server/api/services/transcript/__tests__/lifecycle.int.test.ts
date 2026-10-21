@@ -1854,15 +1854,22 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     describe("Open transcripts: edge cases", () => {
       const NEW_CCA = 99001;
 
-      it("two opens at once with no period row both succeed, and the year is opened once (F28)", async () => {
+      it("two opens at once with no period row open the year once; each call opened it or was refused with OPEN_IN_PROGRESS (F28, F80)", async () => {
         await db.transcriptPeriod.deleteMany({ where: { academicYear: AY } });
 
-        const results = await Promise.all([
+        const results = await Promise.allSettled([
           periods.openTranscripts(db, AY, JCRC.id, APR_2027),
           periods.openTranscripts(db, AY, ADMIN.id, APR_2027),
         ]);
 
-        expect(results.map((r) => r.opened)).toEqual([true, true]);
+        for (const r of results) {
+          if (r.status === "fulfilled") expect(r.value.opened).toBe(true);
+          else
+            expect((r.reason as { message?: string }).message).toBe(
+              "OPEN_IN_PROGRESS",
+            );
+        }
+        expect(results.some((r) => r.status === "fulfilled")).toBe(true);
         const rows = await db.transcriptPeriod.findMany({
           where: { academicYear: AY },
         });
@@ -1871,6 +1878,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(rows[0]!.publishedAt).not.toBeNull();
         expect([JCRC.id, ADMIN.id]).toContain(rows[0]!.publishedBy);
         expect(await lockCount()).toBe(await db.cCA.count());
+        expect(
+          await db.ccaYearFreeze.count({ where: { academicYear: AY } }),
+        ).toBe(await db.cCA.count());
       });
 
       it("opens over several requests of one run when each may lock only one CCA (F1)", async () => {
