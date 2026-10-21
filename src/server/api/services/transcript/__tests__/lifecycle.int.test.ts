@@ -152,6 +152,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /** A moment inside AY2026/27, when the year may be opened. */
     const APR_2027 = new Date("2027-04-15T04:00:00Z");
+    /** A rerun two minutes later: the first run is no longer going. */
+    const RERUN_2027 = new Date(APR_2027.getTime() + 120_000);
     const GHOST = "GHOST-NO-SUCH-USER";
 
     const lockCount = (academicYear = AY) =>
@@ -417,7 +419,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
         // Running it again locks EVERY CCA again from its current list,
         // replacing the locks of the first run, and opens the year.
-        const second = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        const second = await periods.openTranscripts(
+          db,
+          AY,
+          JCRC.id,
+          RERUN_2027,
+        );
         expect(second).toMatchObject({
           opened: true,
           lockedNow: ccas,
@@ -475,7 +482,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(r04).toMatchObject({ roleLabel: null, isHead: false });
         expect(r04?.effective.roleLabel).toBeNull();
 
-        const second = await periods.openTranscripts(db, AY, JCRC.id, APR_2027);
+        const second = await periods.openTranscripts(
+          db,
+          AY,
+          JCRC.id,
+          RERUN_2027,
+        );
         const ccas = await db.cCA.count();
         expect(second).toMatchObject({
           opened: true,
@@ -1336,6 +1348,37 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await r12Contribution()).not.toBe("Written while Open ran.");
       });
 
+      it("a CCA lock that loses to the claim is retried and refused, and its list is not rewritten after the claim (F68)", async () => {
+        const { database, state } = pausedAtCheck({
+          beforeCheck: async () => {
+            // The lock has written its entries and its record but not touched
+            // the year; Open claims the year and commits before the commit.
+            expect((await claim()).count).toBe(1);
+          },
+        });
+
+        expect(
+          await errorOf(
+            freeze.freezeCca(database, {
+              ccaID: SOCCER,
+              academicYear: AY,
+              actorUserID: JCRC.id,
+              now: APR_2027,
+              openRunID: "late-run",
+            }),
+          ),
+        ).toBe("FORBIDDEN:PERIOD_PUBLISHED");
+        // The first try lost a write conflict; the retry saw the open year
+        // before it opened a transaction.
+        expect(state.attempts).toBe(1);
+        expect(await frozenKeys(SOCCER, AY)).toEqual([]);
+        expect(
+          await db.ccaYearFreeze.count({
+            where: { academicYear: AY, ccaID: SOCCER },
+          }),
+        ).toBe(0);
+      });
+
       it("Open cannot commit while a write that has touched the year is in flight: it waits, and the write lands before the year opens", async () => {
         const roster = await import("../manageRoster");
         let writeDone = false;
@@ -1863,6 +1906,27 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(locks).toHaveLength(ccas);
         expect(new Set(locks.map((l) => l.ccaID)).size).toBe(ccas);
         expect(locks.every((l) => l.openRunID === first.runID)).toBe(true);
+      });
+
+      it("refuses a second press while the first run is mid-way, and the first run then opens the year (F75)", async () => {
+        const first = await periods.openTranscripts(db, AY, JCRC.id, APR_2027, {
+          budgetMs: 0,
+        });
+        expect(first).toMatchObject({ opened: false, lockedInRun: 1 });
+
+        const ten = new Date(APR_2027.getTime() + 10_000);
+        expect(
+          await errorOf(periods.openTranscripts(db, AY, ADMIN.id, ten)),
+        ).toBe("CONFLICT:OPEN_IN_PROGRESS");
+        expect(await lockCount()).toBe(1);
+        expect(await statusOf()).toBe("collecting");
+
+        const result = await periods.openTranscripts(db, AY, JCRC.id, ten, {
+          runID: first.runID,
+        });
+        expect(result).toMatchObject({ opened: true, runID: first.runID });
+        expect(await statusOf()).toBe("published");
+        expect(await lockCount()).toBe(await db.cCA.count());
       });
 
       it("names the accounts claiming an ambiguous member key on the lock (F3)", async () => {

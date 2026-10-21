@@ -5,6 +5,7 @@ import {
   currentAcademicYear,
   parseAcademicYear,
 } from "~/lib/transcript/academicYear";
+import { lockFailureText } from "~/lib/transcript/adminView";
 import {
   isBeforeFirstYear,
   isLater,
@@ -195,15 +196,23 @@ export const OPEN_STEP_BUDGET_MS = 20_000;
 /** A runID idle this long (its latest lock this old) is not continued: a new run starts. */
 export const OPEN_RUN_MAX_AGE_MS = 10 * 60_000;
 
-/** A short, loggable reason a lock failed: a code-shaped word, never free text. */
+/** A lock made this recently by another run means that run is still going. */
+export const OPEN_BUSY_WINDOW_MS = 60_000;
+
+const PRISMA_CODE = /^P\d{4}$/;
+const isKnownLockCode = (code: string) =>
+  PRISMA_CODE.test(code) || lockFailureText(code) !== code;
+
+/**
+ * A short, loggable reason a lock failed: a Prisma code or a code the screen
+ * knows, never free text (a message can start with a member id).
+ */
 function failureCode(error: unknown): string {
   const e = error as { message?: unknown; code?: unknown };
-  if (error instanceof TRPCError) {
-    return /^[A-Z][A-Z0-9_]+/.exec(error.message)?.[0] ?? error.code;
-  }
-  if (typeof e?.code === "string") return e.code;
+  if (typeof e?.code === "string" && isKnownLockCode(e.code)) return e.code;
   const message = typeof e?.message === "string" ? e.message : "";
-  return /^[A-Z][A-Z0-9_]+/.exec(message)?.[0] ?? "UNKNOWN";
+  const token = /^[A-Z][A-Z0-9_]+/.exec(message)?.[0];
+  return token && isKnownLockCode(token) ? token : "UNKNOWN";
 }
 
 /**
@@ -232,6 +241,7 @@ async function runCoverage(
   const latest = Math.max(...mine.map((l) => l.frozenAt.getTime()));
   return {
     ccas,
+    locks,
     since,
     latest,
     locked: new Set(mine.map((l) => l.ccaID)),
@@ -291,6 +301,18 @@ export async function openTranscripts(
   ) {
     runID = randomUUID();
     locked = new Set();
+  }
+  // A new run must not fight one that is still locking CCAs.
+  if (
+    runID !== options.runID &&
+    first.locks.some(
+      (l) =>
+        l.openRunID &&
+        l.openRunID !== runID &&
+        now.getTime() - l.frozenAt.getTime() < OPEN_BUSY_WINDOW_MS,
+    )
+  ) {
+    throw new TRPCError({ code: "CONFLICT", message: "OPEN_IN_PROGRESS" });
   }
   // The CCAs THIS run has not locked yet. Locks from an earlier run do not
   // count: every CCA is locked again from its current list.

@@ -5,7 +5,6 @@ import {
   savedChoices,
   type RosterAnnotation,
 } from "~/lib/transcript/duration";
-import { retryWriteConflicts } from "~/lib/transcript/writeConflict";
 import {
   FREEZE_STATE_LABEL,
   normaliseYearStatus,
@@ -14,7 +13,9 @@ import {
 import type { RosterUnresolved } from "~/server/api/services/ccaRoster";
 import { keptBySavedEntry, liveMembers } from "./liveRoster";
 import { NOT_UNFROZEN } from "./loader";
+import { ORDINARY_WRITE, touchYear } from "./residentRecords";
 import { actorLabels } from "./residents";
+import { retryYearConflicts } from "./yearRetry";
 
 /**
  * LOCKING ("FREEZING") A CCA'S MEMBER LIST FOR A YEAR.
@@ -156,7 +157,7 @@ export function freezeCca(
   db: PrismaClient,
   input: FreezeInput,
 ): Promise<FreezeResult> {
-  return retryWriteConflicts(() => freezeOnce(db, input));
+  return retryYearConflicts(() => freezeOnce(db, input));
 }
 
 async function freezeOnce(
@@ -285,6 +286,9 @@ async function freezeOnce(
           create: { academicYear, ccaID: input.ccaID, ...record },
           update: record,
         });
+        // Last, like every year-scoped save: a claim that commits meanwhile
+        // conflicts with this write, and the lock runs again and sees it.
+        await touchYear(tx, academicYear, ORDINARY_WRITE, now);
       },
       { maxWait: 10_000, timeout: 60_000 },
     );

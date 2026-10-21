@@ -313,8 +313,10 @@ describe("Open transcripts runs in steps (F1)", () => {
   });
 
   it("a new press without a runID locks every CCA again, including those an earlier run locked", async () => {
-    const { db, locks, claim } = runDb([1, 2, 3]);
+    const { db, locks, lockedAt, claim } = runDb([1, 2, 3]);
     locks.set(1, "old").set(2, "old").set(3, "old");
+    for (const id of [1, 2, 3])
+      lockedAt.set(id, new Date(NOW.getTime() - 5 * 60_000));
 
     const r = await openTranscripts(db, "AY2026/27", "SEED-R02", NOW);
 
@@ -384,6 +386,48 @@ describe("Open transcripts runs in steps (F1)", () => {
     expect(lockedIDs()).toEqual([1, 2, 3]);
   });
 
+  it("refuses a new press while another run locked a CCA 10 seconds ago (F75)", async () => {
+    const { db, locks, lockedAt, claim } = runDb([1, 2, 3]);
+    locks.set(1, "run-a");
+    lockedAt.set(1, new Date(NOW.getTime() - 10_000));
+
+    expect(
+      await codeOf(openTranscripts(db, "AY2026/27", "SEED-R02", NOW)),
+    ).toBe("CONFLICT:OPEN_IN_PROGRESS");
+    // An unknown runID starts a new run too, so it is refused as well.
+    expect(
+      await codeOf(
+        openTranscripts(db, "AY2026/27", "SEED-R02", NOW, { runID: "nobody" }),
+      ),
+    ).toBe("CONFLICT:OPEN_IN_PROGRESS");
+    expect(freezeCcaMock).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  it("starts a new run when the other run's latest lock is 90 seconds old (F75)", async () => {
+    const { db, locks, lockedAt } = runDb([1, 2]);
+    locks.set(1, "run-a");
+    lockedAt.set(1, new Date(NOW.getTime() - 90_000));
+
+    const r = await openTranscripts(db, "AY2026/27", "SEED-R02", NOW);
+
+    expect(r.runID).not.toBe("run-a");
+    expect(r).toMatchObject({ opened: true, lockedNow: 2 });
+  });
+
+  it("never refuses a continuation of the live run, even with its locks seconds old (F75)", async () => {
+    const { db, locks, lockedAt } = runDb([1, 2, 3]);
+    locks.set(1, "run-a").set(2, "run-a");
+    lockedAt.set(1, new Date(NOW.getTime() - 10_000));
+    lockedAt.set(2, new Date(NOW.getTime() - 5_000));
+
+    const r = await openTranscripts(db, "AY2026/27", "SEED-R02", NOW, {
+      runID: "run-a",
+    });
+
+    expect(r).toMatchObject({ opened: true, runID: "run-a", lockedNow: 1 });
+  });
+
   it("stops the run when one CCA fails: opened false, the failure returned, no claim", async () => {
     const logged = vi
       .spyOn(console, "error")
@@ -413,6 +457,34 @@ describe("Open transcripts runs in steps (F1)", () => {
       logged.mockRestore();
     }
   });
+
+  it.each([
+    ["E0123456 duplicate key for member", undefined, "UNKNOWN"],
+    ["FREEZE_RACE", undefined, "FREEZE_RACE"],
+    ["boom", "P2034", "P2034"],
+    ["boom", "E0123456", "UNKNOWN"],
+    ["PERIOD_PUBLISHED", undefined, "PERIOD_PUBLISHED"],
+  ])(
+    "a lock failure with message %j and code %j is reported as %s (F71)",
+    async (message, code, expected) => {
+      const logged = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => undefined);
+      try {
+        const { db } = runDb([1]);
+        freezeCcaMock.mockRejectedValue(
+          Object.assign(new Error(message), { code }),
+        );
+
+        const r = await openTranscripts(db, "AY2026/27", "SEED-R02", NOW);
+
+        expect(r.failures).toEqual([{ name: "CCA 1", code: expected }]);
+        expect(String(logged.mock.calls[0]?.[0])).not.toContain("E0123456");
+      } finally {
+        logged.mockRestore();
+      }
+    },
+  );
 
   it("opens the year over several requests of the real loop, each continuing the same run (F30)", async () => {
     const { db, claim } = runDb([1, 2, 3, 4]);

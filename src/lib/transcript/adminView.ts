@@ -165,6 +165,8 @@ const ERROR_TEXT: Record<string, string> = {
   PERIOD_CHANGING:
     "Someone else is changing this academic year. Reload and try again.",
   RECORDS_BUSY: "Someone else is saving right now. Please try again.",
+  OPEN_IN_PROGRESS:
+    "Someone else is opening transcripts right now. Try again in a minute.",
   RESIDENT_NOT_FOUND: "No resident was found for that selection.",
   INVALID_USER_ID: "No resident was found for that selection.",
   CCA_NOT_FOUND: "That CCA no longer exists.",
