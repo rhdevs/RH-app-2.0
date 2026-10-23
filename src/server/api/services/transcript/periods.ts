@@ -190,8 +190,12 @@ export interface OpenResult {
   unresolved: number;
 }
 
-/** How long one request of Open transcripts keeps locking CCAs (the route allows 60 s). */
-export const OPEN_STEP_BUDGET_MS = 20_000;
+/**
+ * How long one request of Open transcripts keeps STARTING locks (the route
+ * allows 60 s). A lock started just before this ends within LOCK_MAX_MS, so
+ * OPEN_STEP_BUDGET_MS + LOCK_MAX_MS <= 50 s.
+ */
+export const OPEN_STEP_BUDGET_MS = 15_000;
 
 /** A runID idle this long (its latest lock this old) is not continued: a new run starts. */
 export const OPEN_RUN_MAX_AGE_MS = 10 * 60_000;

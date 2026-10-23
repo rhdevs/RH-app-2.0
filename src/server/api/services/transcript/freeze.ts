@@ -72,6 +72,20 @@ export function groupByPayload<D extends object>(
   );
 }
 
+/**
+ * The most ONE CCA lock may take, every retry included. Open transcripts stops
+ * starting locks after OPEN_STEP_BUDGET_MS, so a request lasts at most that
+ * plus one lock; the two add up to 50 s, inside the route's 60 s limit.
+ */
+export const LOCK_MAX_MS = 35_000;
+/** The lock transaction's wait for a connection, and its run time, at most. */
+export const LOCK_TX_MAX_WAIT_MS = 5_000;
+export const LOCK_TX_TIMEOUT_MS = 25_000;
+/** The lock's retries stop starting once they would pass this. */
+export const LOCK_RETRY_CAP_MS = LOCK_MAX_MS;
+/** A transaction given less time than this is not started: the lock gives up. */
+const LOCK_MIN_TX_MS = 2_000;
+
 const isDuplicateKey = (error: unknown) =>
   (error as { code?: string }).code === "P2002";
 
@@ -157,12 +171,16 @@ export function freezeCca(
   db: PrismaClient,
   input: FreezeInput,
 ): Promise<FreezeResult> {
-  return retryYearConflicts(() => freezeOnce(db, input));
+  const deadline = Date.now() + LOCK_MAX_MS;
+  return retryYearConflicts(() => freezeOnce(db, input, deadline), {
+    hardCapMs: LOCK_RETRY_CAP_MS,
+  });
 }
 
 async function freezeOnce(
   db: PrismaClient,
   input: FreezeInput,
+  deadline: number,
 ): Promise<FreezeResult> {
   const now = input.now ?? new Date();
   const { academicYear } = input;
@@ -185,6 +203,17 @@ async function freezeOnce(
   const members = [...byKey.values()];
   const unresolved = live.unresolved + (live.members.length - members.length);
   const notMatched = await unresolvedMembers(db, live.unresolvedEntries);
+
+  // The transaction gets what is left of this lock's time, so the wait for a
+  // connection plus the run never pass the deadline; with too little left the
+  // lock gives up (reported, and the run is continued by the next request).
+  const txTimeout = Math.min(
+    LOCK_TX_TIMEOUT_MS,
+    deadline - Date.now() - LOCK_TX_MAX_WAIT_MS,
+  );
+  if (txTimeout < LOCK_MIN_TX_MS) {
+    throw new TRPCError({ code: "CONFLICT", message: "RECORDS_BUSY" });
+  }
 
   let memberCount = 0;
   let replaced = false;
@@ -290,7 +319,7 @@ async function freezeOnce(
         // conflicts with this write, and the lock runs again and sees it.
         await touchYear(tx, academicYear, ORDINARY_WRITE, now);
       },
-      { maxWait: 10_000, timeout: 60_000 },
+      { maxWait: LOCK_TX_MAX_WAIT_MS, timeout: txTimeout },
     );
   } catch (error) {
     if (!isDuplicateKey(error)) throw error;

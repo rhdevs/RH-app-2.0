@@ -86,6 +86,12 @@ export interface BudgetOptions {
   /** Milliseconds, for the budget; Date.now by default. */
   clock?: () => number;
   random?: () => number;
+  /**
+   * Replaces YEAR_WRITE_HARD_CAP_MS for this call: no retry starts when the
+   * time spent, the next wait and one more try as long as the last one would
+   * pass it. Ordinary saves leave it out.
+   */
+  hardCapMs?: number;
 }
 
 /**
@@ -103,6 +109,7 @@ export async function retryWithinBudget<T>(
 ): Promise<T> {
   const wait = options.wait ?? pause;
   const clock = options.clock ?? Date.now;
+  const hardCapMs = options.hardCapMs ?? YEAR_WRITE_HARD_CAP_MS;
   const started = clock();
   for (let attempt = 1; ; attempt += 1) {
     const tryStarted = clock();
@@ -115,7 +122,7 @@ export async function retryWithinBudget<T>(
       const now = clock();
       const delay = yearBackoff(attempt, options.random);
       const spent = now - started + delay;
-      if (spent + (now - tryStarted) > YEAR_WRITE_HARD_CAP_MS) throw error;
+      if (spent + (now - tryStarted) > hardCapMs) throw error;
       const outOfTime = spent > YEAR_WRITE_BUDGET_MS;
       if (attempt >= YEAR_WRITE_MIN_ATTEMPTS && outOfTime) throw error;
       await wait(delay);
