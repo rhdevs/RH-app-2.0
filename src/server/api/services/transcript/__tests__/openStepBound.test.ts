@@ -6,7 +6,7 @@ import {
   LOCK_TX_MAX_WAIT_MS,
   LOCK_TX_TIMEOUT_MS,
 } from "../freeze";
-import { OPEN_STEP_BUDGET_MS } from "../periods";
+import { CLAIM_MAX_MS, OPEN_STEP_BUDGET_MS } from "../periods";
 
 /** The route allows 60 s (maxDuration); one Open request must end before 50 s. */
 const REQUEST_BOUND_MS = 50_000;
@@ -14,6 +14,12 @@ const REQUEST_BOUND_MS = 50_000;
 describe("one Open request fits the function limit", () => {
   it("step budget plus one lock stays within 50 s", () => {
     expect(OPEN_STEP_BUDGET_MS + LOCK_MAX_MS).toBeLessThanOrEqual(
+      REQUEST_BOUND_MS,
+    );
+  });
+
+  it("step budget plus the claim stays within 50 s", () => {
+    expect(OPEN_STEP_BUDGET_MS + CLAIM_MAX_MS).toBeLessThanOrEqual(
       REQUEST_BOUND_MS,
     );
   });

@@ -197,6 +197,12 @@ export interface OpenResult {
  */
 export const OPEN_STEP_BUDGET_MS = 15_000;
 
+/**
+ * The most the claim (the last write of Open) may take, every retry included:
+ * OPEN_STEP_BUDGET_MS + CLAIM_MAX_MS <= 50 s, like a lock.
+ */
+export const CLAIM_MAX_MS = 35_000;
+
 /** A runID idle this long (its latest lock this old) is not continued: a new run starts. */
 export const OPEN_RUN_MAX_AGE_MS = 10 * 60_000;
 
@@ -390,6 +396,11 @@ export async function openTranscripts(
   // stays collecting, so a year is never half open.
   if (failures.length > 0 || attempted < todo.length) return result(false);
 
+  // The coverage check and the claim run only with budget left, or when this
+  // request locked nothing (it is then only the claim): otherwise the client's
+  // next request does them, so a request stays within budget + CLAIM_MAX_MS.
+  if (attempted > 0 && Date.now() - started >= budgetMs) return result(false);
+
   // Right before the claim: every CCA there is NOW has a current lock. A CCA
   // created while the run was locking has none, so the year is not claimed
   // and the client's next request locks it.
@@ -416,8 +427,9 @@ async function claimYear(
   try {
     // Idempotent, so a claim that loses a write conflict (to a save's final
     // touch of the row) is simply run again, with the year-write bounds.
-    await retryYearConflicts(() =>
-      claimYearOnce(db, academicYear, actorUserID, now),
+    await retryYearConflicts(
+      () => claimYearOnce(db, academicYear, actorUserID, now),
+      { hardCapMs: CLAIM_MAX_MS },
     );
   } catch (error) {
     if (error instanceof TRPCError) throw error;

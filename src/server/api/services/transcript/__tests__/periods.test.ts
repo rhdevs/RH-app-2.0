@@ -529,7 +529,9 @@ describe("Open transcripts runs in steps (F1)", () => {
       progress.push(r.lockedInRun);
     }
 
-    expect(progress).toEqual([1, 2, 3, 4]);
+    // With no budget left after the last lock, the claim waits for one more
+    // request, which only claims.
+    expect(progress).toEqual([1, 2, 3, 4, 4]);
     expect(lockedIDs()).toEqual([1, 2, 3, 4]);
     expect(r.runID).toBe(runID);
     expect(claim).toHaveBeenCalledTimes(1);

@@ -1918,6 +1918,31 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(locks.every((l) => l.openRunID === first.runID)).toBe(true);
       });
 
+      it("does not claim in a request whose budget is spent after the last lock; the next request claims", async () => {
+        let result = await periods.openTranscripts(db, AY, JCRC.id, APR_2027, {
+          budgetMs: 0,
+        });
+        const runID = result.runID;
+        const ccas = await db.cCA.count();
+        // One lock per request until every CCA is locked: none of these claims.
+        while (result.lockedInRun < ccas) {
+          expect(result.opened).toBe(false);
+          result = await periods.openTranscripts(db, AY, JCRC.id, APR_2027, {
+            runID,
+            budgetMs: 0,
+          });
+        }
+        expect(result).toMatchObject({ opened: false, lockedInRun: ccas });
+        expect(await statusOf()).toBe("collecting");
+
+        const last = await periods.openTranscripts(db, AY, JCRC.id, APR_2027, {
+          runID,
+          budgetMs: 0,
+        });
+        expect(last).toMatchObject({ opened: true, runID, lockedNow: 0 });
+        expect(await statusOf()).toBe("published");
+      });
+
       it("refuses a second press while the first run is mid-way, and the first run then opens the year (F75)", async () => {
         const first = await periods.openTranscripts(db, AY, JCRC.id, APR_2027, {
           budgetMs: 0,
