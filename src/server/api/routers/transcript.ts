@@ -40,7 +40,8 @@ import {
   transcriptIdentifiedProcedure as identifiedProcedure,
   transcriptRoleManagerProcedure as roleManagerProcedure,
 } from "~/server/api/services/transcript/procedures";
-import { createTRPCRouter } from "~/server/api/trpc";
+import { isTranscriptEnabled } from "~/server/api/services/transcript/flag";
+import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 
 const academicYear = z
   .string()
@@ -71,6 +72,15 @@ const managerProcedure = roleManagerProcedure.use(async ({ ctx, next }) => {
 });
 
 export const transcriptRouter = createTRPCRouter({
+  /**
+   * Is the transcript switch on? Any signed-in user may ask, and it answers
+   * while the switch is off (it is deliberately NOT behind the kill-switch
+   * gate): the app uses it to hide the transcript links. Only the boolean.
+   */
+  enabled: protectedProcedure.query(async ({ ctx }) => ({
+    enabled: await isTranscriptEnabled(ctx.db),
+  })),
+
   /**
    * Academic-year control, one step: Open transcripts (locks every CCA's
    * member list for the year, then opens it to residents). See

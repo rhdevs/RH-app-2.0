@@ -9,11 +9,20 @@
  *  - "resident-self":   any signed-in resident, for their OWN data only.
  *  - "head-or-manager": a head of THAT CCA or a manager (checked per CCA inside).
  *  - "manager-only":    admin or jcrc, read live from the database.
+ *  - "signed-in-ungated": any signed-in user, and NOT behind the kill switch
+ *                      (it answers while the switch is off); returns only the
+ *                      switch state.
  */
-export type AccessClass = "resident-self" | "head-or-manager" | "manager-only";
+export type AccessClass =
+  | "resident-self"
+  | "head-or-manager"
+  | "manager-only"
+  | "signed-in-ungated";
 
 const own = (...paths: string[]) => paths.map((p) => [p, "resident-self"]);
 const head = (...paths: string[]) => paths.map((p) => [p, "head-or-manager"]);
+const ungated = (...paths: string[]) =>
+  paths.map((p) => [p, "signed-in-ungated"]);
 const manager = (...paths: string[]) => paths.map((p) => [p, "manager-only"]);
 
 export const PROCEDURE_ACCESS: Readonly<Record<string, AccessClass>> =
@@ -26,6 +35,7 @@ export const PROCEDURE_ACCESS: Readonly<Record<string, AccessClass>> =
       "transcriptManage.jcrc.mine",
       "transcriptManage.jcrc.saveMine",
     ),
+    ...ungated("transcript.enabled"),
     ...head(
       "transcriptManage.activities.create",
       "transcriptManage.activities.list",

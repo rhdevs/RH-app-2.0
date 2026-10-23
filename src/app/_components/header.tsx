@@ -38,12 +38,19 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
   const { data: session } = useSession();
   // A published transcript the resident has not opened yet: a badge and a dot.
   // Only asked for a signed-in user, and a failure just means no badge.
-  const transcriptReady =
-    api.transcript.mine.readiness.useQuery(undefined, {
+  // None of it is shown, or asked for, while the transcript switch is off.
+  const transcriptEnabled =
+    api.transcript.enabled.useQuery(undefined, {
       enabled: Boolean(session),
       retry: false,
       staleTime: 60_000,
-    }).data?.ready === true;
+    }).data?.enabled === true;
+  const transcriptReady =
+    api.transcript.mine.readiness.useQuery(undefined, {
+      enabled: Boolean(session) && transcriptEnabled,
+      retry: false,
+      staleTime: 60_000,
+    }).data?.ready === true && transcriptEnabled;
 
   /**
    * COSMETIC ONLY. The real gate is the server-side guard in
@@ -294,23 +301,25 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                           My applications
                         </button>
 
-                        <button
-                          onClick={handleMyTranscript}
-                          className="flex w-full items-center px-4 py-2 text-left text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
-                        >
-                          <FileText
-                            size={16}
-                            className="mr-3 shrink-0 text-gray-400"
-                          />
-                          <span className="whitespace-nowrap text-left">
-                            My transcript
-                          </span>
-                          {transcriptReady && (
-                            <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                              Ready
+                        {transcriptEnabled && (
+                          <button
+                            onClick={handleMyTranscript}
+                            className="flex w-full items-center px-4 py-2 text-left text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
+                          >
+                            <FileText
+                              size={16}
+                              className="mr-3 shrink-0 text-gray-400"
+                            />
+                            <span className="whitespace-nowrap text-left">
+                              My transcript
                             </span>
-                          )}
-                        </button>
+                            {transcriptReady && (
+                              <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                                Ready
+                              </span>
+                            )}
+                          </button>
+                        )}
 
                         <hr className="border-gray-100" />
 
@@ -397,18 +406,20 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
                       <ClipboardList size={18} />
                       <span>My applications</span>
                     </button>
-                    <button
-                      onClick={handleMyTranscript}
-                      className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
-                    >
-                      <FileText size={18} />
-                      <span className="whitespace-nowrap">My transcript</span>
-                      {transcriptReady && (
-                        <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900">
-                          Ready
-                        </span>
-                      )}
-                    </button>
+                    {transcriptEnabled && (
+                      <button
+                        onClick={handleMyTranscript}
+                        className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"
+                      >
+                        <FileText size={18} />
+                        <span className="whitespace-nowrap">My transcript</span>
+                        {transcriptReady && (
+                          <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900">
+                            Ready
+                          </span>
+                        )}
+                      </button>
+                    )}
                     <button
                       onClick={handleLogout}
                       className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-left font-medium text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 hover:text-white"

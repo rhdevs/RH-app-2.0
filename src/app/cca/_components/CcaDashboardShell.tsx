@@ -59,7 +59,16 @@ export default function CcaDashboardShell({
 
   const ccas = data?.ccas ?? [];
   const current = ccas.find((c) => c.ccaID === ccaID) ?? null;
-  const sections = visibleSections(SECTIONS, headsThisCca(data?.ccas, ccaID));
+  // The Transcript tab is hidden until the transcript switch is known to be on.
+  const transcriptEnabled =
+    api.transcript.enabled.useQuery(undefined, {
+      retry: false,
+      staleTime: 60_000,
+    }).data?.enabled === true;
+  const sections = visibleSections(
+    SECTIONS,
+    headsThisCca(data?.ccas, ccaID),
+  ).filter((s) => s.slug !== "transcript" || transcriptEnabled);
 
   const isActive = (slug: string) => {
     const base = `/cca/${ccaID}`;

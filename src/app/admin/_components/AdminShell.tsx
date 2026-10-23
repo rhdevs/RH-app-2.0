@@ -18,6 +18,7 @@ import {
 
 import Header from "~/app/_components/header";
 import type { Capabilities } from "~/server/api/services/roles";
+import { api } from "~/trpc/react";
 import { AdminCapabilityProvider } from "./AdminCapabilityContext";
 
 /**
@@ -116,7 +117,17 @@ export default function AdminShell({
   // `=== true` and not a truthiness test: `assignableRoles` is a (possibly
   // empty) ARRAY on this same object, and [] is truthy. A future tab keyed on
   // one of those fields would otherwise render for everyone.
-  const tabs = ADMIN_TABS.filter((t) => capabilities[t.requires] === true);
+  // The Transcripts tab is hidden until the transcript switch is known to be on.
+  const transcriptEnabled =
+    api.transcript.enabled.useQuery(undefined, {
+      retry: false,
+      staleTime: 60_000,
+    }).data?.enabled === true;
+  const tabs = ADMIN_TABS.filter(
+    (t) =>
+      capabilities[t.requires] === true &&
+      (t.href !== "/admin/transcripts" || transcriptEnabled),
+  );
 
   return (
     <AdminCapabilityProvider value={capabilities}>

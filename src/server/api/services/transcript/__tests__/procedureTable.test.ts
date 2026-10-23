@@ -32,12 +32,13 @@ describe("the transcript procedures and their access classes", () => {
     expect(stale, "in the table but not in a router").toEqual([]);
   }, 60_000);
 
-  it("uses only the three known classes, and keeps every writer off resident-self", () => {
+  it("uses only the four known classes, and keeps every writer off resident-self", () => {
     const classes = new Set(Object.values(PROCEDURE_ACCESS));
     expect([...classes].sort()).toEqual([
       "head-or-manager",
       "manager-only",
       "resident-self",
+      "signed-in-ungated",
     ]);
     // Resident-self procedures take no resident id: only the signed-in person.
     const own = Object.entries(PROCEDURE_ACCESS)

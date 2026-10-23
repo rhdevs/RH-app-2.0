@@ -147,7 +147,9 @@ describe("every transcript procedure refuses while the switch is off", () => {
     }
   };
 
-  const paths = Object.keys(PROCEDURE_ACCESS).sort();
+  const paths = Object.keys(PROCEDURE_ACCESS)
+    .filter((p) => PROCEDURE_ACCESS[p] !== "signed-in-ungated")
+    .sort();
 
   it.each([
     ["no row", null],
@@ -165,6 +167,27 @@ describe("every transcript procedure refuses while the switch is off", () => {
     },
     60_000,
   );
+
+  it("transcript.enabled answers while the switch is off, with only the boolean", async () => {
+    for (const [value, enabled] of [
+      [null, false],
+      ["off", false],
+      ["on", true],
+    ] as const) {
+      flag.resetTranscriptFlagCache();
+      const caller = await callerFor(flagDb(value).db);
+      expect(await caller.transcript.enabled(), String(value)).toEqual({
+        enabled,
+      });
+    }
+  }, 60_000);
+
+  it("transcript.enabled refuses a signed-out caller", async () => {
+    const caller = await callerFor(flagDb("on").db, false);
+    expect(await call(caller, "transcript.enabled")).toBe(
+      "UNAUTHORIZED:UNAUTHORIZED",
+    );
+  }, 60_000);
 
   it("still answers a signed-out caller UNAUTHORIZED, so the switch is not disclosed", async () => {
     const caller = await callerFor(flagDb(null).db, false);

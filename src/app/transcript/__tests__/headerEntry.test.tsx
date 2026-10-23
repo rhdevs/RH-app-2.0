@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 const useSession = vi.fn();
 const useQuery = vi.fn();
+const enabledQuery = vi.fn();
 
 vi.mock("next-auth/react", () => ({
   useSession: () => useSession(),
@@ -24,6 +25,7 @@ vi.mock("next/image", () => ({
 vi.mock("~/trpc/react", () => ({
   api: {
     transcript: {
+      enabled: { useQuery: (...a: unknown[]) => enabledQuery(...a) },
       mine: { readiness: { useQuery: (...a: unknown[]) => useQuery(...a) } },
     },
   },
@@ -37,6 +39,8 @@ describe("header: My transcript entry", () => {
   beforeEach(() => {
     useSession.mockReset();
     useQuery.mockReset();
+    enabledQuery.mockReset();
+    enabledQuery.mockReturnValue({ data: { enabled: true } });
   });
 
   it("shows a dot and a screen-reader line on the profile button when a transcript is ready", () => {
@@ -91,6 +95,33 @@ describe("header: My transcript entry", () => {
         retry: false,
         staleTime: 60_000,
       }),
+    );
+  });
+
+  describe("while transcripts are switched off", () => {
+    const off = [
+      ["off", { data: { enabled: false } }],
+      ["loading", { data: undefined }],
+    ] as const;
+
+    it.each(off)(
+      "shows no badge or dot, and does not ask for readiness (%s)",
+      (_n, answer) => {
+        useSession.mockReturnValue({ data: { user: { name: "Sam" } } });
+        enabledQuery.mockReturnValue(answer);
+        useQuery.mockReturnValue({
+          data: { ready: true, academicYear: "AY2026/27" },
+        });
+
+        const html = render();
+
+        expect(html).not.toContain("Ready");
+        expect(html).not.toContain("Your transcript is ready");
+        expect(useQuery).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({ enabled: false }),
+        );
+      },
     );
   });
 });
