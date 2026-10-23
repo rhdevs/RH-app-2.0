@@ -27,6 +27,7 @@ const HIGHLIGHT_MS = 2500;
 
 type EntryContext = {
   entryOpen: boolean;
+  yearStartedAt: string | null;
   range: Range;
   isWaived: boolean;
   note: string | null;
@@ -70,6 +71,7 @@ export default function Workbench({
     storageKeyUserID: userID,
     range,
     entryOpen,
+    yearStartedAt: context.yearStartedAt,
     ihg: context.ihg,
   });
   const [view, setViewState] = useState<ListView>(DEFAULT_VIEW);

@@ -237,3 +237,33 @@ export function removeDraftItem(
     return false;
   }
 }
+
+/** A draft saved before "Start new points year" last ran belongs to the old year. */
+export function isDraftFromBeforeYear(
+  savedAt: string,
+  yearStartedAt: string | null,
+): boolean {
+  if (yearStartedAt === null) return false;
+  return Date.parse(savedAt) < Date.parse(yearStartedAt);
+}
+
+/**
+ * Like readDraftItem, but a draft from before the current points year is removed
+ * and reported as none, so last year's scores and ticks never refill the page.
+ */
+export function readCurrentDraftItem(
+  storage: Pick<Storage, "getItem" | "removeItem">,
+  key: string,
+  ccaID: number,
+  yearStartedAt: string | null,
+): ParsedDraft {
+  const parsed = readDraftItem(storage, key, ccaID);
+  if (
+    parsed.status === "ok" &&
+    isDraftFromBeforeYear(parsed.draft.savedAt, yearStartedAt)
+  ) {
+    removeDraftItem(storage, key);
+    return { status: "none" };
+  }
+  return parsed;
+}

@@ -127,9 +127,7 @@ export default function AdminPointsPage() {
           </section>
           <FlatCcasPanel flatCcas={data.flatCcas} onChanged={refresh} />
           <NewYearPanel
-            ihgResultCount={
-              data.ccas.filter((c) => c.ihgResult !== null).length
-            }
+            ihgResultCount={data.ihgResultsStored}
             entryOpen={data.entryOpen}
             onChanged={refresh}
           />

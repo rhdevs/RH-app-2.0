@@ -9,7 +9,7 @@ import {
   draftKey,
   mergeDraftWithRoster,
   mergeRosterOverEntries,
-  readDraftItem,
+  readCurrentDraftItem,
   removeDraftItem,
   type ParsedDraft,
   type RosterMember,
@@ -71,9 +71,13 @@ const scoreText = (n: number | null): string =>
   n === null || Number.isNaN(n) ? "" : String(n);
 
 /** The stored draft; storage that cannot be read at all counts as unreadable. */
-function readStored(key: string, ccaID: number): ParsedDraft {
+function readStored(
+  key: string,
+  ccaID: number,
+  yearStartedAt: string | null,
+): ParsedDraft {
   try {
-    return readDraftItem(window.localStorage, key, ccaID);
+    return readCurrentDraftItem(window.localStorage, key, ccaID, yearStartedAt);
   } catch {
     return { status: "unreadable" };
   }
@@ -105,10 +109,20 @@ export function usePointsEntries(args: {
   storageKeyUserID: string | null;
   range: Readonly<Range>;
   entryOpen: boolean;
+  /** When "Start new points year" last ran; older drafts are discarded. */
+  yearStartedAt: string | null;
   /** JCRC's IHG config for a sport; null when this CCA is not one. */
   ihg: IhgContext | null;
 }) {
-  const { ccaID, roster, storageKeyUserID, range, entryOpen, ihg } = args;
+  const {
+    ccaID,
+    roster,
+    storageKeyUserID,
+    range,
+    entryOpen,
+    yearStartedAt,
+    ihg,
+  } = args;
   const storageKey =
     storageKeyUserID === null ? null : draftKey(ccaID, storageKeyUserID);
 
@@ -126,9 +140,11 @@ export function usePointsEntries(args: {
   const loadedFor = useRef<string | null>(null);
   const keyRef = useRef(storageKey);
   const ccaRef = useRef(ccaID);
+  const yearRef = useRef(yearStartedAt);
   const unreadableRef = useRef(false);
   keyRef.current = storageKey;
   ccaRef.current = ccaID;
+  yearRef.current = yearStartedAt;
   unreadableRef.current = unreadable;
 
   const commit = useCallback((next: PointsEntry[]) => {
@@ -157,7 +173,7 @@ export function usePointsEntries(args: {
     }
     loadedFor.current = id;
     const parsed: ParsedDraft = storageKey
-      ? readStored(storageKey, ccaID)
+      ? readStored(storageKey, ccaID, yearRef.current)
       : { status: "none" };
     const draft = parsed.status === "ok" ? parsed.draft : null;
     const merged = mergeDraftWithRoster(roster, draft);

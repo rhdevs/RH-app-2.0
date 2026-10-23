@@ -5,10 +5,12 @@ import {
   buildDraft,
   canAutosave,
   draftKey,
+  isDraftFromBeforeYear,
   mergeDraftWithRoster,
   mergeRosterOverEntries,
   parseDraft,
   prefillEntry,
+  readCurrentDraftItem,
   readDraftItem,
   removeDraftItem,
   type Draft,
@@ -525,5 +527,77 @@ describe("readDraftItem", () => {
         12,
       ),
     ).toEqual({ status: "unreadable" });
+  });
+});
+
+describe("isDraftFromBeforeYear", () => {
+  const SAVED = "2027-04-01T09:30:00.000Z";
+
+  it("is stale when saved before the year stamp", () => {
+    expect(isDraftFromBeforeYear(SAVED, "2027-04-02T00:00:00.000Z")).toBe(true);
+  });
+
+  it("is kept when saved at the stamp", () => {
+    expect(isDraftFromBeforeYear(SAVED, SAVED)).toBe(false);
+  });
+
+  it("is kept when saved after the stamp", () => {
+    expect(isDraftFromBeforeYear(SAVED, "2027-03-01T00:00:00.000Z")).toBe(
+      false,
+    );
+  });
+
+  it("is kept when there is no stamp", () => {
+    expect(isDraftFromBeforeYear(SAVED, null)).toBe(false);
+  });
+});
+
+describe("readCurrentDraftItem", () => {
+  const row = {
+    basePoints: 5,
+    semesterOnly: false,
+    outgoingRole: "none" as const,
+    incomingRole: "none" as const,
+    ihg: true,
+  };
+  const stored = JSON.stringify(draft({ "u:1": row }));
+
+  const store = () => {
+    const removed: string[] = [];
+    return {
+      removed,
+      getItem: () => stored,
+      removeItem: (k: string) => void removed.push(k),
+    };
+  };
+
+  it("removes a draft from before the year and reports none", () => {
+    const s = store();
+    expect(
+      readCurrentDraftItem(s, "k", 12, "2027-05-01T00:00:00.000Z"),
+    ).toEqual({ status: "none" });
+    expect(s.removed).toEqual(["k"]);
+  });
+
+  it("keeps a draft saved after the year stamp", () => {
+    const s = store();
+    expect(
+      readCurrentDraftItem(s, "k", 12, "2027-03-01T00:00:00.000Z").status,
+    ).toBe("ok");
+    expect(s.removed).toEqual([]);
+  });
+
+  it("keeps every draft when there is no stamp", () => {
+    const s = store();
+    expect(readCurrentDraftItem(s, "k", 12, null).status).toBe("ok");
+    expect(s.removed).toEqual([]);
+  });
+
+  it("leaves an unreadable draft alone", () => {
+    const s = { ...store(), getItem: () => "{nope" };
+    expect(
+      readCurrentDraftItem(s, "k", 12, "2027-05-01T00:00:00.000Z").status,
+    ).toBe("unreadable");
+    expect(s.removed).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { csvCell } from "~/lib/points/csvCell";
 import type { PointsEntry } from "~/lib/points/entries";
 import { buildBundleCsv } from "~/lib/points/bundleCsv";
 import { buildPointsCsv } from "~/lib/points/exportCsv";
@@ -132,5 +133,22 @@ describe("formula guard on the bundle export", () => {
   it.each(CASES)("guards a note starting with %j", (lead, cellText) => {
     const csv = bundle("Test CCA", "Test Member", `${lead}x`);
     expect(csv).toContain(`,10,14,2,5,${cellText},${AT.toISOString()}`);
+  });
+});
+
+describe("csvCell stricter guard", () => {
+  it.each([" =1", "  @x", "\t +1", "＝1", "＋1", "－1", "＠x", "|cmd"])(
+    "guards %j",
+    (v) => {
+      expect(csvCell(v, true)).toBe(`'${v}`);
+    },
+  );
+
+  it.each(["Ann", " Ann", "1-2", "a|b"])("leaves %j alone", (v) => {
+    expect(csvCell(v, true)).toBe(v);
+  });
+
+  it("does not guard when guard is off", () => {
+    expect(csvCell(" =1", false)).toBe(" =1");
   });
 });

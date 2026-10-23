@@ -30,6 +30,8 @@ function friendlyError(message: string | undefined): string | null {
     SAME_USER: "Pick two different people.",
     NOT_A_HEAD_OF_THIS_CCA: "They aren't a head of this CCA.",
     CANNOT_MODIFY_AN_ADMIN: "You can't change an admin's roles.",
+    ENTRY_OPEN_IHG:
+      "Points entry is open. Close it, set this sport’s IHG result and cap on Admin › Points, then reopen.",
   };
   if (map[message]) return map[message]!;
   if (message.startsWith("CAPABILITY_REQUIRED"))

@@ -34,9 +34,11 @@ export default function CreateCcaForm({ enabled }: { enabled: boolean }) {
       ? "A CCA with that name already exists."
       : create.error?.message === "CCA_MANAGEMENT_DISABLED"
         ? "CCA management is turned off."
-        : create.error
-          ? "That didn't save. Try again."
-          : null;
+        : create.error?.message === "ENTRY_OPEN_IHG"
+          ? "Points entry is open. Close it, set this sport’s IHG result and cap on Admin › Points, then reopen."
+          : create.error
+            ? "That didn't save. Try again."
+            : null;
 
   if (!open) {
     return (
