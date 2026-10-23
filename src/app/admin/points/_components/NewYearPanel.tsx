@@ -57,8 +57,8 @@ export default function NewYearPanel({
       <p className="mb-4 max-w-3xl text-xs text-gray-500">
         At the start of a new points year, clear last year&rsquo;s IHG results
         and close points entry. Types, IHG caps, waivers, flat values and the
-        default range are kept. Heads&rsquo; unsaved drafts stay in their own
-        browsers.
+        default range are kept. Heads&rsquo; unsaved drafts from before this are
+        cleared the next time they open their points page.
       </p>
 
       <Button
