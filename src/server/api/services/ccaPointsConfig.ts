@@ -1,4 +1,5 @@
 import type { CcaPointsConfig, Prisma, PrismaClient } from "@prisma/client";
+import { TRPCError } from "@trpc/server";
 
 import {
   DEFAULT_RANGE,
@@ -166,6 +167,32 @@ export function sportsMissingIhg(
     .map((c) => c.ccaName);
 }
 
+/**
+ * The category gate for ccaAdmin.create / rename. While points entry is open, a
+ * write that leaves this CCA an effective sport (JCRC's tick, else the NEW
+ * category) that is not flat and lacks a valid IHG result or cap is refused:
+ * heads would be ticking IHG recipients for a sport with nothing to tick against.
+ * `ccaID` is null for a CCA that does not exist yet (no config row).
+ */
+export async function refuseIncompleteSportWhileOpen(
+  db: PrismaClient,
+  ccaID: number | null,
+  newCategory: string,
+): Promise<void> {
+  if (!isEntryOpen(await readDefaultRow(db))) return;
+  const row = ccaID === null ? null : await readOverrideRow(db, ccaID);
+  if (
+    effectiveIsSport(row, newCategory) &&
+    !isFlatRow(row) &&
+    !isIhgComplete(row)
+  ) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "ENTRY_OPEN_IHG",
+    });
+  }
+}
+
 /** A real waiver: any range field or a note is set. */
 export const hasWaiver = (row: ConfigRowLike | null): boolean =>
   row !== null &&
@@ -271,16 +298,24 @@ export async function writeEntryOpen(
   open: boolean,
   actorUserID: string,
   now: Date,
+  yearStartedAt?: Date,
 ): Promise<void> {
+  const stamp = yearStartedAt ? { yearStartedAt } : {};
   await db.ccaPointsConfig.upsert({
     where: { scope: DEFAULT_SCOPE },
     create: {
       scope: DEFAULT_SCOPE,
       entryOpen: open,
+      ...stamp,
       updatedAt: now,
       updatedBy: actorUserID,
     },
-    update: { entryOpen: open, updatedAt: now, updatedBy: actorUserID },
+    update: {
+      entryOpen: open,
+      ...stamp,
+      updatedAt: now,
+      updatedBy: actorUserID,
+    },
   });
 }
 
@@ -546,7 +581,8 @@ export async function writeSport(
 /**
  * Starts a new points year: closes points entry, nulls every IHG result (caps stay),
  * then deletes any per-CCA row left with every config field blank. Returns
- * how many results were cleared. Types, caps, sport ticks, waivers, flat values
+ * how many results were cleared. Also stamps `yearStartedAt` on the default row
+ * (heads' drafts saved before it are ignored). Types, caps, sport ticks, waivers, flat values
  * and the default range are kept.
  */
 export async function startNewPointsYear(
@@ -556,7 +592,7 @@ export async function startNewPointsYear(
 ): Promise<number> {
   // Close first: if clearing the results then fails, entry is shut, not open
   // with sports missing their IHG result.
-  await writeEntryOpen(db, false, actorUserID, now);
+  await writeEntryOpen(db, false, actorUserID, now, now);
   const cleared = await db.ccaPointsConfig.updateMany({
     where: { scope: { startsWith: "cca:" }, ihgResult: { not: null } },
     data: { ihgResult: null, updatedAt: now, updatedBy: actorUserID },

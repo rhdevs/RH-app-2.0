@@ -910,6 +910,22 @@ describe("startNewPointsYear (R48, R53)", () => {
     ]);
   });
 
+  it("stamps yearStartedAt on the default row in the same upsert that closes entry", async () => {
+    const { db, rows, calls } = fakeDb([
+      { ...DEFAULT_ROW },
+      { scope: "cca:1", ihgResult: "1st", ihgCap: 12 },
+    ]);
+    await startNewPointsYear(db, "E1", NOW);
+    expect(rows.find((r) => r.scope === "default")).toMatchObject({
+      entryOpen: false,
+      yearStartedAt: NOW,
+    });
+    expect(calls.filter((c) => c === "upsert")).toHaveLength(1);
+    expect(rows.find((r) => r.scope === "cca:1")).not.toHaveProperty(
+      "yearStartedAt",
+    );
+  });
+
   it("closes entry before it clears the results", async () => {
     const { db, calls } = fakeDb([
       { ...DEFAULT_ROW },

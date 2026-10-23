@@ -1292,3 +1292,169 @@ describe("invalid stored config values", () => {
     expect(logged(spy)).toEqual([invalid(8, "ccaType", "3x")]);
   });
 });
+
+/* ----------------------- PR #118 review: server fixes ---------------------- */
+
+describe("ccaPoints.setEntryOpen: the post-write re-check", () => {
+  it("closes entry again and throws IHG_NOT_READY when a sport became incomplete meanwhile", async () => {
+    const db = pointsDb({
+      ccas: [soccer, choir],
+      rows: [configRow("cca:7", ihgSet)],
+    });
+    // The pre-check sees a complete sport; by the re-check its cap is gone.
+    db.ccaPointsConfig.findMany
+      .mockResolvedValueOnce([configRow("cca:7", ihgSet)])
+      .mockResolvedValue([configRow("cca:7", { ihgResult: "1st" })]);
+
+    await expect(
+      caller(db, ["jcrc"]).setEntryOpen({ open: true }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: "IHG_NOT_READY: Soccer",
+    });
+
+    const upserts = db.ccaPointsConfig.upsert.mock.calls as unknown as [
+      { update: { entryOpen: boolean } },
+    ][];
+    expect(upserts.map((c) => c[0].update.entryOpen)).toEqual([true, false]);
+    expect(mockedAudit).not.toHaveBeenCalled();
+  });
+
+  it("still opens and audits once when the re-check finds nothing missing", async () => {
+    const db = pointsDb({
+      ccas: [soccer, choir],
+      rows: [configRow("cca:7", ihgSet)],
+    });
+    await expect(
+      caller(db, ["jcrc"]).setEntryOpen({ open: true }),
+    ).resolves.toMatchObject({ entryOpen: true });
+    expect(db.ccaPointsConfig.upsert).toHaveBeenCalledTimes(1);
+    expect(mockedAudit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ccaPoints: the new-year stamp", () => {
+  it("startNewPointsYear writes yearStartedAt on the default row in the closing upsert", async () => {
+    const db = pointsDb({ updateCount: 1 });
+    await caller(db, ["jcrc"]).startNewPointsYear();
+    const arg = (
+      db.ccaPointsConfig.upsert.mock.calls as unknown as [unknown][]
+    )[0]?.[0] as {
+      where: { scope: string };
+      create: { yearStartedAt: Date };
+      update: { entryOpen: boolean; yearStartedAt: Date };
+    };
+    expect(arg.where).toEqual({ scope: "default" });
+    expect(arg.update.entryOpen).toBe(false);
+    expect(arg.update.yearStartedAt).toBeInstanceOf(Date);
+    expect(arg.create.yearStartedAt).toBeInstanceOf(Date);
+  });
+
+  it("setEntryOpen does not touch yearStartedAt", async () => {
+    const db = pointsDb({ ccas: [choir] });
+    await caller(db, ["jcrc"]).setEntryOpen({ open: false });
+    const arg = (
+      db.ccaPointsConfig.upsert.mock.calls as unknown as [unknown][]
+    )[0]?.[0] as {
+      update: Record<string, unknown>;
+    };
+    expect(arg.update).not.toHaveProperty("yearStartedAt");
+  });
+
+  const headCaller = (rows: ConfigRow[]) =>
+    caller(
+      {
+        ...pointsDb({ ccas: [soccer], rows }),
+        ccaHead: { findUnique: vi.fn(async () => ({ id: "row" })) },
+      },
+      ["cca_head"],
+    );
+
+  it("getEntryContext returns it as an ISO string", async () => {
+    const result = await headCaller([
+      configRow("default", {
+        entryOpen: true,
+        yearStartedAt: new Date("2027-03-01T08:30:00.000Z"),
+      }),
+      configRow("cca:7", ihgSet),
+    ]).getEntryContext({ ccaID: 7 });
+    expect(result.yearStartedAt).toBe("2027-03-01T08:30:00.000Z");
+  });
+
+  it("getEntryContext returns null when it was never set, or there is no default row", async () => {
+    expect(
+      (await headCaller([OPEN]).getEntryContext({ ccaID: 7 })).yearStartedAt,
+    ).toBeNull();
+    expect(
+      (await headCaller([]).getEntryContext({ ccaID: 7 })).yearStartedAt,
+    ).toBeNull();
+  });
+});
+
+describe("ccaPoints.bundleExportData: flat sports", () => {
+  it("blanks IHG for a flat sport and keeps it for a non-flat sport", async () => {
+    vi.mocked(buildDirectoryEntries).mockResolvedValue({
+      entries: [],
+    } as never);
+    const db = pointsDb({
+      ccas: [
+        { ccaID: 1, ccaName: "Archery", category: SPORTS },
+        { ccaID: 2, ccaName: "Bowling", category: SPORTS },
+      ],
+      rows: [
+        OPEN,
+        configRow("cca:1", { flatPoints: 8, ...ihgSet }),
+        configRow("cca:2", { ihgResult: "2nd", ihgCap: 6 }),
+      ],
+    });
+    const result = await caller(db, ["jcrc"]).bundleExportData();
+    expect(result.ccas).toEqual([
+      {
+        ccaID: 1,
+        ccaName: "Archery",
+        flatPoints: 8,
+        type: null,
+        isSport: true,
+        ihgResult: null,
+        ihgCap: null,
+      },
+      {
+        ccaID: 2,
+        ccaName: "Bowling",
+        flatPoints: null,
+        type: null,
+        isSport: true,
+        ihgResult: "2nd",
+        ihgCap: 6,
+      },
+    ]);
+  });
+});
+
+describe("ccaPoints.getConfig: ihgResultsStored", () => {
+  it("counts every row holding a raw result, valid or not, but no blank one", async () => {
+    vi.mocked(resolveRoster).mockResolvedValue({
+      heads: [],
+      members: [],
+    } as never);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const db = pointsDb({
+      ccas: [soccer, choir, { ccaID: 4, ccaName: "Debate", category: null }],
+      rows: [
+        CLOSED,
+        configRow("cca:7", ihgSet),
+        configRow("cca:4", { ihgResult: "4th", ihgCap: 5 }),
+        configRow("cca:8", { ccaType: "1x" }),
+      ],
+    });
+    const result = await caller(db, ["jcrc"]).getConfig();
+    expect(result.ihgResultsStored).toBe(2);
+    spy.mockRestore();
+  });
+
+  it("is 0 when no row holds a result", async () => {
+    const db = pointsDb({ ccas: [choir], rows: [CLOSED] });
+    const result = await caller(db, ["jcrc"]).getConfig();
+    expect(result.ihgResultsStored).toBe(0);
+  });
+});

@@ -9,6 +9,7 @@ import {
   isCcaManagementEnabled,
 } from "~/server/api/services/ccaScope";
 import { writeAudit } from "~/server/api/routers/admin";
+import { refuseIncompleteSportWhileOpen } from "~/server/api/services/ccaPointsConfig";
 import {
   addCcaMember,
   membershipKeysFor,
@@ -151,6 +152,8 @@ export const ccaAdminRouter = createTRPCRouter({
         });
       }
 
+      await refuseIncompleteSportWhileOpen(ctx.db, null, input.category);
+
       let created: { ccaID: number; ccaName: string } | null = null;
       for (let attempt = 0; attempt < 2 && !created; attempt++) {
         const top = await ctx.db.cCA.findFirst({
@@ -214,6 +217,8 @@ export const ccaAdminRouter = createTRPCRouter({
       if (!before) {
         throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_CCA" });
       }
+
+      await refuseIncompleteSportWhileOpen(ctx.db, input.ccaID, input.category);
 
       const updated = await ctx.db.cCA.update({
         where: { ccaID: input.ccaID },

@@ -246,6 +246,8 @@ export const ccaPointsRouter = createTRPCRouter({
       const isSport = effectiveIsSport(overrideRow, cca?.category ?? null);
       return {
         entryOpen: isEntryOpen(defaultRow),
+        /** When "Start new points year" last ran; drafts saved before it are stale. */
+        yearStartedAt: defaultRow?.yearStartedAt?.toISOString() ?? null,
         range: resolved.range,
         isWaived: resolved.isWaived,
         waivedFields: resolved.waivedFields,
@@ -325,6 +327,10 @@ export const ccaPointsRouter = createTRPCRouter({
       updatedAt: defaultRow?.updatedAt ?? null,
       updatedBy: defaultRow?.updatedBy ?? null,
       flatCcas: flatWithCounts,
+      /** Rows holding any stored IHG result, valid or not: what a new year clears. */
+      ihgResultsStored: overrideRows.filter(
+        (r) => r.ihgResult !== null && r.ihgResult !== undefined,
+      ).length,
       /** EVERY CCA with its type, sport flag, IHG config, flat and waiver state. */
       ccas: allCcas.map((c) => {
         const row = rowById.get(c.ccaID) ?? null;
@@ -399,6 +405,21 @@ export const ccaPointsRouter = createTRPCRouter({
       }
       const now = new Date();
       await writeEntryOpen(ctx.db, input.open, actorUserID, now);
+      if (input.open) {
+        // A sport may have lost its result or cap since the pre-check: look
+        // again, and shut entry rather than leave it open with a gap.
+        const missing = sportsMissingIhg(
+          await listCcas(ctx.db),
+          await listOverrideRows(ctx.db),
+        );
+        if (missing.length > 0) {
+          await writeEntryOpen(ctx.db, false, actorUserID, new Date());
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: `IHG_NOT_READY: ${missing.join(", ")}`,
+          });
+        }
+      }
       await audit(ctx.db, {
         actorUserID,
         actorRoles: roles,
@@ -770,12 +791,20 @@ export const ccaPointsRouter = createTRPCRouter({
         flatPoints: isFlatRow(row) ? (row?.flatPoints ?? null) : null,
         type: validConfigValue(c.ccaID, "ccaType", row?.ccaType, isCcaType),
         isSport,
-        ihgResult: isSport
-          ? validConfigValue(c.ccaID, "ihgResult", row?.ihgResult, isIhgResult)
-          : null,
-        ihgCap: isSport
-          ? validConfigValue(c.ccaID, "ihgCap", row?.ihgCap, isValidIhgCap)
-          : null,
+        // A flat sport carries no IHG: its members get the flat value alone.
+        ihgResult:
+          isSport && !isFlatRow(row)
+            ? validConfigValue(
+                c.ccaID,
+                "ihgResult",
+                row?.ihgResult,
+                isIhgResult,
+              )
+            : null,
+        ihgCap:
+          isSport && !isFlatRow(row)
+            ? validConfigValue(c.ccaID, "ihgCap", row?.ihgCap, isValidIhgCap)
+            : null,
       };
     });
     const waivers = waiverRows(overrideRows).flatMap((r) =>

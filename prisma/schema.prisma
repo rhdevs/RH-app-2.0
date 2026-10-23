@@ -699,6 +699,9 @@ model CcaPointsConfig {
   /// Per-CCA rows only. JCRC's "Sport" tick: true / false overrides the category
   /// default (CCA.category = SPORTS_CATEGORY); null = follow the category.
   isSport   Boolean?
+  /// Default row only. Set by "Start new points year" so heads' drafts saved before
+  /// it are ignored. Config only (a timestamp); null = no new year started yet.
+  yearStartedAt DateTime?
   updatedAt DateTime?
   updatedBy String?
 }
