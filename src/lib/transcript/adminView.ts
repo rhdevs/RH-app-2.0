@@ -7,6 +7,7 @@
 import {
   FIRST_ACADEMIC_YEAR,
   academicYearsUpTo,
+  isLateOpenLive,
   normaliseYearStatus,
   type YearStatus,
 } from "./lifecycle";
@@ -136,12 +137,20 @@ export function openAvailability(
   selected: string,
   currentAcademicYear: string,
   status: string | null | undefined,
-): "open" | "past" | "none" {
+  lateOpenAllowedUntil?: Date | string | null,
+  now: Date = new Date(),
+): "open" | "late" | "past" | "none" {
   if (!selected || !currentAcademicYear) return "none";
   if (normaliseStatus(status) === "published") return "none";
   if (selected === currentAcademicYear) return "open";
-  return selected < currentAcademicYear ? "past" : "none";
+  if (selected > currentAcademicYear) return "none";
+  // A past year: only RHDevs' late-open allowance (live) brings the button back.
+  return isLateOpenLive(lateOpenAllowedUntil, now) ? "late" : "past";
 }
+
+/** Added to the Open confirmation for a past year that RHDevs allowed to open. */
+export const LATE_OPEN_WARNING =
+  "This year has ended. Today's CCA member lists will be used: people who left since August will be missing and new members will appear.";
 
 /** Why a past year has no Open transcripts button. */
 export const PAST_YEAR_NOTE =
@@ -149,7 +158,7 @@ export const PAST_YEAR_NOTE =
 
 /** From 1 August: the previous year's transcripts were never opened. */
 export const PREVIOUS_YEAR_WARNING = (academicYear: string) =>
-  `Transcripts for ${academicYear} were never opened. ${PAST_YEAR_NOTE}`;
+  `Transcripts for ${academicYear} were never opened. ${PAST_YEAR_NOTE} RHDevs can allow one late Open with scripts/remediation/allow-late-open.mjs.`;
 
 /** The API's error codes, in plain words for an inline message. */
 const ERROR_TEXT: Record<string, string> = {

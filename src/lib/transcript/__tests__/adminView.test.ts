@@ -4,6 +4,7 @@ import {
   OPEN_LABEL,
   OPEN_REMINDER,
   PAST_YEAR_NOTE,
+  LATE_OPEN_WARNING,
   PREVIOUS_YEAR_WARNING,
   openAvailability,
   WRITES_LOCKED_NOTE,
@@ -86,7 +87,7 @@ describe("wording", () => {
       "Transcripts for AY2026/27 are not open yet. Open them at the end of the year, before 1 August. After that, this year can no longer be opened from the app.",
     );
     expect(PREVIOUS_YEAR_WARNING("AY2026/27")).toBe(
-      "Transcripts for AY2026/27 were never opened. This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs.",
+      "Transcripts for AY2026/27 were never opened. This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs. RHDevs can allow one late Open with scripts/remediation/allow-late-open.mjs.",
     );
     expect(PAST_YEAR_NOTE).toBe(
       "This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs.",
@@ -108,11 +109,42 @@ describe("wording", () => {
     expect(openAvailability("", now, null)).toBe("none");
   });
 
+  it("offers Open for a past year only while RHDevs' allowance is live", () => {
+    const now = new Date("2027-09-10T00:00:00Z");
+    const live = new Date("2027-09-17T00:00:00Z");
+    const expired = new Date("2027-09-09T00:00:00Z");
+    const ay = "AY2027/28";
+    expect(openAvailability("AY2026/27", ay, "collecting", live, now)).toBe(
+      "late",
+    );
+    expect(openAvailability("AY2026/27", ay, null, live, now)).toBe("late");
+    expect(openAvailability("AY2026/27", ay, "collecting", expired, now)).toBe(
+      "past",
+    );
+    expect(openAvailability("AY2026/27", ay, "collecting", null, now)).toBe(
+      "past",
+    );
+    // An allowance changes nothing for a published, current or future year.
+    expect(openAvailability("AY2026/27", ay, "published", live, now)).toBe(
+      "none",
+    );
+    expect(openAvailability("AY2027/28", ay, "collecting", live, now)).toBe(
+      "open",
+    );
+    expect(openAvailability("AY2028/29", ay, "collecting", live, now)).toBe(
+      "none",
+    );
+    expect(LATE_OPEN_WARNING).toBe(
+      "This year has ended. Today's CCA member lists will be used: people who left since August will be missing and new members will appear.",
+    );
+  });
+
   it("has no exclamation marks and never says 'successfully'", () => {
     for (const text of [
       OPEN_CONFIRMATION("AY2026/27"),
       OPEN_REMINDER("AY2026/27"),
       PREVIOUS_YEAR_WARNING("AY2026/27"),
+      LATE_OPEN_WARNING,
       WRITES_LOCKED_NOTE,
       openSummary("AY2026/27", {
         opened: true,

@@ -11,6 +11,7 @@ import { instantToSgDate, sgDateToInstant } from "~/lib/transcript/sgDate";
 import { residentViewOf } from "~/lib/transcript/corrections";
 import {
   isBeforeFirstYear,
+  isLateOpenLive,
   isLater,
   normaliseYearStatus,
 } from "~/lib/transcript/lifecycle";
@@ -119,8 +120,9 @@ export const transcriptRouter = createTRPCRouter({
      * while `opened` is false and nothing failed, call again with the
      * returned runID to continue. If any CCA fails, the year stays
      * collecting and the failures are returned; running it again finishes.
-     * Only the CURRENT academic year: refused here, and again by openBlocker
-     * inside openTranscripts.
+     * Only the CURRENT academic year (or a past one with a live late-open
+     * allowance): refused here, and again by openBlocker inside
+     * openTranscripts.
      */
     open: managerProcedure
       .input(
@@ -130,7 +132,7 @@ export const transcriptRouter = createTRPCRouter({
           replacesRunID: z.string().uuid().optional(),
         }),
       )
-      .mutation(({ ctx, input }) => {
+      .mutation(async ({ ctx, input }) => {
         const now = new Date();
         const current = currentAcademicYear(now);
         // A year before transcripts began gets its own refusal from the service.
@@ -138,10 +140,16 @@ export const transcriptRouter = createTRPCRouter({
           input.academicYear !== current &&
           !isBeforeFirstYear(input.academicYear)
         ) {
-          const code = isLater(input.academicYear, current)
-            ? "YEAR_NOT_STARTED"
-            : "YEAR_ENDED";
-          throw new TRPCError({ code: "PRECONDITION_FAILED", message: code });
+          // A past year passes only while RHDevs' late-open allowance is live.
+          const period = isLater(input.academicYear, current)
+            ? null
+            : await getPeriod(ctx.db, input.academicYear);
+          if (!isLateOpenLive(period?.lateOpenAllowedUntil, now)) {
+            const code = isLater(input.academicYear, current)
+              ? "YEAR_NOT_STARTED"
+              : "YEAR_ENDED";
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: code });
+          }
         }
         return openTranscripts(
           ctx.db,

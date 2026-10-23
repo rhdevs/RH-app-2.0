@@ -15,6 +15,7 @@ import {
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
+  LATE_OPEN_WARNING,
   OPEN_CONFIRMATION,
   OPEN_LABEL,
   OPEN_REMINDER,
@@ -29,6 +30,7 @@ import {
   yearOptions,
 } from "~/lib/transcript/adminView";
 import {
+  isLateOpenLive,
   previousYearNotOpen,
   showOpenReminder,
 } from "~/lib/transcript/lifecycle";
@@ -58,6 +60,11 @@ export interface PeriodPanelViewProps {
    * the note that it can no longer be opened from the app.
    */
   pastUnopened?: boolean;
+  /**
+   * The selected year is a past year RHDevs allowed to open late (canOpen is
+   * true too): the Open confirmation warns that today's lists will be used.
+   */
+  lateOpen?: boolean;
   /** "Opened on 15 Apr 2027 by ..." or null. */
   publishedLine: string | null;
   /** The Open transcripts confirmation is showing. */
@@ -193,6 +200,14 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
             {PAST_YEAR_NOTE}
           </p>
         )}
+        {p.canOpen && p.lateOpen && (
+          <p
+            role="status"
+            className="mt-6 max-w-2xl border-t border-gray-100 pt-5 text-sm text-gray-700"
+          >
+            {LATE_OPEN_WARNING}
+          </p>
+        )}
         {p.canOpen && (
           <div className="mt-6 flex flex-wrap gap-3 border-t border-gray-100 pt-5">
             <Button
@@ -220,6 +235,7 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
           <AlertDialogTitle>{OPEN_LABEL}</AlertDialogTitle>
           <AlertDialogDescription>
             {OPEN_CONFIRMATION(p.selected)}
+            {p.lateOpen && ` ${LATE_OPEN_WARNING}`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {p.acting && p.progressLine && (
@@ -256,7 +272,11 @@ export function PeriodPanelView(p: PeriodPanelViewProps) {
  * year still to open; from 1 August, a previous year that was never opened.
  */
 export function panelReminders(
-  periods: ReadonlyArray<{ academicYear: string; status: string | null }>,
+  periods: ReadonlyArray<{
+    academicYear: string;
+    status: string | null;
+    lateOpenAllowedUntil?: Date | string | null;
+  }>,
   currentAcademicYear: string,
   now: Date,
 ): { openReminder: string | null; previousYear: string | null } {
@@ -271,7 +291,15 @@ export function panelReminders(
     )
       ? OPEN_REMINDER(currentAcademicYear)
       : null,
-    previousYear: previous ? PREVIOUS_YEAR_WARNING(previous) : null,
+    // Not while RHDevs' allowance is live: the Open button is back for it.
+    previousYear:
+      previous &&
+      !isLateOpenLive(
+        periods.find((p) => p.academicYear === previous)?.lateOpenAllowedUntil,
+        now,
+      )
+        ? PREVIOUS_YEAR_WARNING(previous)
+        : null,
   };
 }
 
@@ -429,6 +457,12 @@ export default function PeriodPanel() {
   }
 
   const published = normaliseStatus(period?.status) === "published";
+  const availability = openAvailability(
+    year,
+    current,
+    period?.status,
+    period?.lateOpenAllowedUntil,
+  );
 
   return (
     <PeriodPanelView
@@ -441,8 +475,9 @@ export default function PeriodPanel() {
         setOpenError(null);
       }}
       status={period?.status ?? null}
-      canOpen={openAvailability(year, current, period?.status) === "open"}
-      pastUnopened={openAvailability(year, current, period?.status) === "past"}
+      canOpen={availability === "open" || availability === "late"}
+      lateOpen={availability === "late"}
+      pastUnopened={availability === "past"}
       publishedLine={
         published && period?.publishedAt
           ? `Opened on ${when(period.publishedAt)}${period.publishedByName ? ` by ${period.publishedByName}` : ""}.`

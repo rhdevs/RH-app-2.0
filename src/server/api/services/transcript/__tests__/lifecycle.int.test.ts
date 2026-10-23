@@ -311,6 +311,67 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         }
       });
 
+      it("opens a past year once under a live late-open allowance, then clears it", async () => {
+        const SEP_2028 = new Date("2028-09-10T04:00:00Z"); // AY2026/27 and AY2027/28 are past
+        const grant = (academicYear: string, until: Date) =>
+          db.transcriptPeriod.upsert({
+            where: { academicYear },
+            create: {
+              academicYear,
+              status: "collecting",
+              lateOpenAllowedUntil: until,
+              lateOpenAllowedBy: "script",
+            },
+            update: {
+              lateOpenAllowedUntil: until,
+              lateOpenAllowedBy: "script",
+            },
+          });
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+          vi.setSystemTime(SEP_2028);
+          // An EXPIRED allowance changes nothing.
+          await grant(AY, new Date(SEP_2028.getTime() - 1000));
+          expect(
+            await errorOf(
+              as(JCRC).transcript.periods.open({ academicYear: AY }),
+            ),
+          ).toBe("PRECONDITION_FAILED:YEAR_ENDED");
+          expect(
+            await errorOf(periods.openTranscripts(db, AY, JCRC.id, SEP_2028)),
+          ).toBe("PRECONDITION_FAILED:YEAR_ENDED");
+          expect(await lockCount()).toBe(0);
+
+          // A live one lets that year (only) through.
+          await grant(AY, new Date(SEP_2028.getTime() + 7 * 86_400_000));
+          const listed = await as(JCRC).transcript.periods.list();
+          expect(
+            listed.periods.find((p) => p.academicYear === AY)
+              ?.lateOpenAllowedBy,
+          ).toBe("script");
+          const opened = await as(JCRC).transcript.periods.open({
+            academicYear: AY,
+          });
+          expect(opened.opened).toBe(true);
+          expect(await statusOf()).toBe("published");
+          const row = await db.transcriptPeriod.findUnique({
+            where: { academicYear: AY },
+          });
+          expect(row?.lateOpenAllowedUntil ?? null).toBeNull();
+          expect(row?.lateOpenAllowedBy ?? null).toBeNull();
+
+          // Another past year, no allowance: still refused.
+          expect(
+            await errorOf(
+              as(JCRC).transcript.periods.open({ academicYear: NEXT }),
+            ),
+          ).toBe("PRECONDITION_FAILED:YEAR_ENDED");
+          expect(await lockCount(NEXT)).toBe(0);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
       /**
        * The database, except that the lock of `ccaID` fails ONCE inside its
        * transaction (at the lock record), as a network blip would.

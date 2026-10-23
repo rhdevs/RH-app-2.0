@@ -1440,6 +1440,12 @@ model TranscriptPeriod {
   /// assertStillCollecting). Random, not a time: a write that stores the value
   /// already there changes nothing and would not conflict.
   lastWriteID  String?
+  /// A PAST year that was never opened can be opened once, only while this is
+  /// in the future. Set by scripts/remediation/allow-late-open.mjs (RHDevs; no
+  /// UI sets it), 7 days ahead, and cleared by the write that publishes the
+  /// year. Absent = no allowance.
+  lateOpenAllowedUntil DateTime?
+  lateOpenAllowedBy    String?
 }
 
 /// Per member, per CCA, per academic year ANNOTATIONS on top of the live

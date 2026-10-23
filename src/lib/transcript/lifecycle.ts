@@ -97,19 +97,36 @@ export function isBeforeFirstYear(academicYear: string): boolean {
  * the year must not be before transcripts began, must still be collecting, and
  * must be the CURRENT year. A future year has not started; a past year's member
  * lists were changed by the August application period, so opening it would
- * save the next year's members into it.
+ * save the next year's members into it. The one exception is a past year with
+ * a live late-open allowance (`lateOpenAllowedUntil` later than `now`).
  */
 export function openBlocker(
   academicYear: string,
   status: YearStatus,
   now: Date,
+  lateOpenAllowedUntil: Date | null = null,
 ): OpenBlocker | null {
   if (isBeforeFirstYear(academicYear)) return "YEAR_BEFORE_START";
   if (status === "published") return "ALREADY_PUBLISHED";
   const current = currentAcademicYear(now);
   if (isLater(academicYear, current)) return "YEAR_NOT_STARTED";
-  if (academicYear !== current) return "YEAR_ENDED";
+  if (academicYear !== current) {
+    return isLateOpenLive(lateOpenAllowedUntil, now) ? null : "YEAR_ENDED";
+  }
   return null;
+}
+
+/**
+ * Is a late-open allowance (granted by RHDevs for a past year that was never
+ * opened) still running at `now`? It lets that year pass openBlocker once.
+ */
+export function isLateOpenLive(
+  lateOpenAllowedUntil: Date | string | null | undefined,
+  now: Date,
+): boolean {
+  if (!lateOpenAllowedUntil) return false;
+  const until = new Date(lateOpenAllowedUntil).getTime();
+  return Number.isFinite(until) && until > now.getTime();
 }
 
 /* ---- who may edit a CCA's records for a year ------------------------------ */

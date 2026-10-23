@@ -106,6 +106,8 @@ export const PERIOD_FIELDS = {
   status: true,
   publishedAt: true,
   publishedBy: true,
+  lateOpenAllowedUntil: true,
+  lateOpenAllowedBy: true,
 } as const;
 
 export function listPeriods(db: PrismaClient) {
@@ -294,6 +296,7 @@ export async function openTranscripts(
     academicYear,
     normaliseYearStatus(period?.status),
     now,
+    period?.lateOpenAllowedUntil ?? null,
   );
   if (blocker) {
     throw new TRPCError({ code: BLOCKER_CODE[blocker], message: blocker });
@@ -470,6 +473,9 @@ async function claimYearOnce(
         status: STATUS_PUBLISHED,
         publishedAt: now,
         publishedBy: actorUserID,
+        // A late-open allowance is single use: gone in the same write.
+        lateOpenAllowedUntil: null,
+        lateOpenAllowedBy: null,
       },
     });
     if (claimed.count === 1) return;

@@ -128,6 +128,17 @@ describe("academic year panel", () => {
     );
   });
 
+  it("shows Open and the today's-lists warning for a past year RHDevs allowed", () => {
+    const html = renderPeriod({ canOpen: true, lateOpen: true });
+    expect(buttons(html)).toContain("Open transcripts");
+    expect(html).toContain(
+      "This year has ended. Today&#x27;s CCA member lists will be used: people who left since August will be missing and new members will appear.",
+    );
+    expect(renderPeriod({ canOpen: true })).not.toContain(
+      "This year has ended",
+    );
+  });
+
   it("treats a year with no period yet as collecting", () => {
     const html = renderPeriod({ status: null });
 
@@ -378,11 +389,30 @@ describe("the admin reminders, by date (time travel)", () => {
   it("warns from 1 August when the previous year was never opened", () => {
     const august = new Date("2027-08-05T00:00:00Z");
     expect(panelReminders(periods([]), "AY2027/28", august).previousYear).toBe(
-      "Transcripts for AY2026/27 were never opened. This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs.",
+      "Transcripts for AY2026/27 were never opened. This year can no longer be opened from the app, because CCA member lists have changed since August. Contact RHDevs. RHDevs can allow one late Open with scripts/remediation/allow-late-open.mjs.",
     );
     expect(
       panelReminders(periods(["AY2026/27"]), "AY2027/28", august).previousYear,
     ).toBeNull();
+  });
+
+  it("drops the 1 August warning while that year's allowance is live", () => {
+    const august = new Date("2027-08-05T00:00:00Z");
+    const withAllowance = (until: string) => [
+      {
+        academicYear: "AY2026/27",
+        status: "collecting",
+        lateOpenAllowedUntil: until,
+      },
+    ];
+    expect(
+      panelReminders(withAllowance("2027-08-12T00:00:00Z"), "AY2027/28", august)
+        .previousYear,
+    ).toBeNull();
+    expect(
+      panelReminders(withAllowance("2027-08-01T00:00:00Z"), "AY2027/28", august)
+        .previousYear,
+    ).toContain("allow-late-open.mjs");
   });
 });
 
