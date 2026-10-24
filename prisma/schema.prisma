@@ -643,6 +643,11 @@ model CcaProfile {
   bannerUrl   String?
   updatedAt   DateTime?
   updatedBy   String?
+  /// Marks one of the four "RVC ..." volunteering CCAs. Set by admin/JCRC only;
+  /// the heads of a tagged CCA (and JCRC/admin) may record transcript volunteer
+  /// hours for any resident. Nullable and additive: null means "not a
+  /// volunteering CCA" (I-2); no backfill.
+  isVolunteering Boolean?
 }
 
 /// JCRC's configuration for CCA points entry (/admin/points). CONFIG ONLY: the
@@ -1412,4 +1417,453 @@ model Authenticator {
   transports           String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// TRANSCRIPT (docs/transcript/SPEC.md). Every model below is a NEW, UNVALIDATED
+// collection — the validator-guarded CCA / UserCCA / User silently reject new
+// fields (code 121), so nothing transcript-specific lives on them. All are keyed
+// on the canonical userID (I-1, the same key UserCCA / CcaHead / UserMatric use)
+// and on the ccaID business key, never on an ObjectId. Key fields are required
+// (they ARE the row); every other scalar is nullable or defaulted (I-2).
+// Membership itself is read LIVE from UserCCA / CcaHead while a year is
+// collecting, and each CCA's list is saved (CcaYearFreeze + frozen
+// TranscriptRosterEntry rows) only when the JCRC presses Open transcripts.
+// Nothing is stored as a copy of the finished transcript: it is assembled from
+// the data each time it is opened.
+// ---------------------------------------------------------------------------
+
+/// One academic year's transcript state. The app has no notion of an academic
+/// year, so this adds it: `academicYear` ("AY2026/27") is the key and `status`
+/// gates who can do what.
+///
+/// status: "collecting" (heads/JCRC edit, residents see nothing) ->
+/// "published" (Open transcripts: every CCA's list is locked, residents
+/// download, edits locked except per-resident corrections). One step, never
+/// undone. Nothing here ever changes UserCCA.
+model TranscriptPeriod {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String    @unique(map: "transcript_period_ay")
+  /// Last day residents are asked to download by (a Singapore calendar date,
+  /// stored as midnight Singapore time). Shown as a banner; nothing is enforced.
+  downloadBy   DateTime?
+  /// collecting | published ("Open": set by Open transcripts)
+  status       String?   @default("collecting")
+  /// Who opened transcripts for the year, and when.
+  publishedAt  DateTime?
+  publishedBy  String?
+  /// A fresh random id, written by every ordinary (non-correction)
+  /// year-scoped write inside its own transaction, so the write genuinely
+  /// conflicts with Open transcripts claiming the year (see
+  /// assertStillCollecting). Random, not a time: a write that stores the value
+  /// already there changes nothing and would not conflict.
+  lastWriteID  String?
+  /// A PAST year that was never opened can be opened once, only while this is
+  /// in the future. Set by scripts/remediation/allow-late-open.mjs (RHDevs; no
+  /// UI sets it), 7 days ahead, and cleared by the write that publishes the
+  /// year. Absent = no allowance.
+  lateOpenAllowedUntil DateTime?
+  lateOpenAllowedBy    String?
+}
+
+/// Per member, per CCA, per academic year ANNOTATIONS on top of the live
+/// membership: how long they were in the CCA, their role label and how long
+/// they held it, and the optional "Additional contribution" text. A member who
+/// left simply has no entry that matters — membership is read live while the
+/// year is collecting and locked when transcripts open, never rebuilt from here.
+///
+/// duration / roleDuration: full | sem1 | sem2. The transcript prints a
+/// duration only when it is NOT a full year. Everyone is a full year until a
+/// head (or JCRC/admin) chooses a semester label by hand.
+/// `frozen` is set when the year is opened (Open transcripts), so later changes
+/// to who is in the CCA cannot alter the transcript.
+/// `preFreeze` keeps the head's own choices aside when a lock writes the
+/// resolved values (defaults included) into the entry, so a lock run again
+/// after one that stopped part way, and the collecting-year screens, read the
+/// real choices rather than a default the lock filled in.
+model TranscriptRosterEntry {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear      String
+  userID            String
+  ccaID             Int
+  /// full | sem1 | sem2
+  duration          String?
+  /// "Head", "Captain", ... Null for a plain member.
+  roleLabel         String?
+  /// full | sem1 | sem2
+  roleDuration      String?
+  extraContribution String?
+  frozen            Boolean?  @default(false)
+  /// The saved choices before a lock wrote resolved values; null on an entry
+  /// no lock has touched (its fields ARE the choices).
+  preFreeze         TranscriptRosterChoices?
+  updatedBy         String?
+  updatedAt         DateTime?
+
+  @@unique([academicYear, userID, ccaID], map: "transcript_roster_member")
+  /// A head's roster screen: everyone annotated for one CCA in one year.
+  @@index([academicYear, ccaID], map: "transcript_roster_cca")
+}
+
+/// A head's (or manager's) own choices for one roster entry, as saved. All
+/// null on an entry a lock created for a member with no saved choices.
+type TranscriptRosterChoices {
+  duration          String?
+  roleLabel         String?
+  roleDuration      String?
+  extraContribution String?
+}
+
+/// A volunteer activity of a volunteering CCA (one tagged
+/// CcaProfile.isVolunteering) for one academic year. regular = recurring
+/// sessions, oneoff = exactly one session. Soft-removed, never deleted.
+model VolunteerActivity {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String
+  ccaID        Int
+  title        String
+  /// regular | oneoff
+  kind         String
+  description  String?
+  /// What a new session defaults to (hours).
+  defaultHours Float?
+  createdBy    String?
+  createdAt    DateTime? @default(now())
+  updatedBy    String?
+  updatedAt    DateTime?
+  removedAt    DateTime?
+  removedBy    String?
+
+  @@index([academicYear, ccaID], map: "vact_year_cca")
+}
+
+/// One session of a volunteer activity: a date (Singapore midnight) and its
+/// hours. academicYear and ccaID are repeated so a year can be purged.
+model VolunteerSession {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  activityID   String    @db.ObjectId
+  academicYear String
+  ccaID        Int
+  date         DateTime
+  hours        Float
+  createdBy    String?
+  createdAt    DateTime? @default(now())
+  updatedBy    String?
+  updatedAt    DateTime?
+  removedAt    DateTime?
+  removedBy    String?
+
+  @@index([activityID], map: "vsession_activity")
+}
+
+/// A resident who took part in a volunteer activity (anyone in the hall).
+/// One row per person per activity; removing sets removedAt/By.
+model VolunteerPerson {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  activityID   String    @db.ObjectId
+  academicYear String
+  ccaID        Int
+  userID       String
+  addedBy      String?
+  addedAt      DateTime? @default(now())
+  removedAt    DateTime?
+  removedBy    String?
+
+  @@unique([activityID, userID], map: "vperson_activity_user")
+  @@index([academicYear, userID], map: "vperson_year_user")
+}
+
+/// A tick: the person attended the session. The presence of the row is the
+/// state (unticking deletes it); hoursOverride replaces the session's hours.
+model VolunteerAttendance {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  sessionID     String    @db.ObjectId
+  activityID    String    @db.ObjectId
+  academicYear  String
+  ccaID         Int
+  userID        String
+  hoursOverride Float?
+  markedBy      String?
+  markedAt      DateTime?
+
+  @@unique([sessionID, userID], map: "vattend_session_user")
+  @@index([academicYear, userID], map: "vattend_year_user")
+  /// Every read of one activity's ticks.
+  @@index([activityID], map: "vattend_activity")
+}
+
+/// An award from the end-of-year Colours Awards, entered by JCRC/admin. Voided
+/// (shown as "removed"), never deleted. `title` is the award's name copied at
+/// assignment, so renaming a catalogue entry never changes a past award.
+model Award {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear  String
+  userID        String
+  title         String?
+  citation      String?
+  ceremony      String?   @default("Colours Awards")
+  recordedBy    String?
+  recordedAt    DateTime? @default(now())
+  voidedAt      DateTime?
+  /// Who voided it (canonical userID). Null while not voided.
+  voidedBy      String?
+  /// The catalogue entry it was assigned from, if any.
+  awardTypeID   String?   @db.ObjectId
+  /// The CSV upload that created it, if any.
+  importBatchID String?   @db.ObjectId
+  updatedBy     String?
+  updatedAt     DateTime?
+  /// One ACTIVE award per year, person and award: "<academicYear>|<userID>|<awardTypeID>"
+  /// (or "...|title:<normalised title>" with no catalogue entry) while active,
+  /// rewritten to "<that>|removed|<award id>" when removed. A duplicate-key error
+  /// on create therefore means "already has it", even under a double-submit.
+  activeKey     String    @unique(map: "award_active_key")
+
+  @@index([academicYear, userID], map: "award_year_user")
+  @@index([academicYear, awardTypeID], map: "award_year_type")
+  /// An upload's awards (History counts, Undo).
+  @@index([importBatchID], map: "award_batch")
+  /// How many active awards each catalogue entry has given, across years.
+  @@index([awardTypeID], map: "award_type")
+}
+
+/// The catalogue of awards (not keyed by year, so never purged with one).
+/// Archived entries are hidden from assignment; their awards keep rendering.
+model AwardType {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  name           String
+  /// Lower-case, trimmed, inner spaces collapsed: what makes a name unique.
+  normalizedName String
+  defaultCitation String?
+  archivedAt     DateTime?
+  archivedBy     String?
+  createdBy      String?
+  createdAt      DateTime? @default(now())
+  updatedBy      String?
+  updatedAt      DateTime?
+
+  @@unique([normalizedName], map: "award_type_name")
+}
+
+/// One CSV upload of awards for a year, so it can be undone as a whole.
+model AwardImportBatch {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear  String
+  fileName      String?
+  rowCount      Int
+  importedCount Int
+  skippedCount  Int
+  createdBy     String?
+  createdAt     DateTime? @default(now())
+  undoneAt      DateTime?
+  undoneBy      String?
+  /// importing (being written) | complete | partial (a chunk failed after
+  /// earlier ones were written).
+  status        String    @default("complete")
+
+  @@index([academicYear], map: "award_batch_year")
+}
+
+/// One row of a JCRC member's "Contributions during the year" table.
+type JcrcContribution {
+  activity    String
+  role        String?
+  description String?
+}
+
+/// A JCRC member's service record for one year: the content of the dedicated
+/// JCRC page. `isPlaceholder` stays true until the real positions and sign-off
+/// flow exist; the Master and President signatures are never stored.
+model JcrcService {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear  String
+  userID        String
+  portfolio     String?
+  position      String?
+  description   String?
+  contributions JcrcContribution[]
+  /// The member's own text, for now.
+  testimonial   String?
+  isPlaceholder Boolean?  @default(true)
+  updatedAt     DateTime?
+  /// Who last saved it: the member themselves, or the manager who did it for them.
+  updatedBy     String?
+  /// Removed (never deleted) by a manager from the resident's panel.
+  removedAt     DateTime?
+  removedBy     String?
+
+  @@unique([academicYear, userID], map: "jcrc_service_member")
+}
+
+/// A CCA's member list for one academic year, LOCKED when the JCRC presses Open
+/// transcripts (`reason` is always "open"). CCAs are cleared and re-recruited
+/// in the August application period, so the list is saved before that and the
+/// transcript keeps reading it. Nothing else creates one: head changes do not.
+/// `unfrozenAt` / `unfrozenBy` / `unfreezeReason` are no longer written; a row
+/// is active while `unfrozenAt` is empty, which is every row.
+model CcaYearFreeze {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear   String
+  ccaID          Int
+  reason         String
+  frozenAt       DateTime
+  frozenBy       String
+  memberCount    Int?
+  /// Members the roster resolver could not match when the list was saved.
+  unresolvedCount Int?
+  /// Who they were (at most 50): the raw key, and for an ambiguous key the
+  /// names of the accounts that claim it. Shown to managers only.
+  unresolvedMembers FreezeUnresolvedMember[]
+  /// The Open transcripts run that saved this list, so a run that continues
+  /// over several requests skips the CCAs it already saved.
+  openRunID      String?
+  unfrozenAt     DateTime?
+  unfrozenBy     String?
+  unfreezeReason String?
+
+  @@unique([academicYear, ccaID], map: "freeze_year_cca")
+  /// A CCA's saved lists across years.
+  @@index([ccaID], map: "freeze_cca")
+}
+
+/// One member Open transcripts could not match: reason NO_USER_ROW (no account
+/// has the key; names is empty) or AMBIGUOUS_KEY (names of the accounts that
+/// claim it).
+type FreezeUnresolvedMember {
+  key    String
+  reason String
+  names  String[]
+}
+
+/// A CCA activity for one academic year: a project or event the CCA ran. It is
+/// shown under the CCA row for members who took part, and under "Other
+/// involvement" for people who are not members of the CCA. Removed softly.
+/// period: full | sem1 | sem2.
+model CcaActivity {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String
+  ccaID       Int
+  title       String
+  description String?
+  period      String?   @default("full")
+  createdBy   String?
+  createdAt   DateTime? @default(now())
+  updatedBy   String?
+  updatedAt   DateTime?
+  removedAt   DateTime?
+  removedBy   String?
+
+  @@index([academicYear, ccaID], map: "activity_year_cca")
+}
+
+/// One person in a CCA activity, with their own role and description (the
+/// activity's general description is used when theirs is empty). academicYear
+/// and ccaID repeat the activity's on purpose, so a year can be purged on its
+/// own; they must stay consistent with the parent.
+model CcaActivityParticipant {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  activityID   String    @db.ObjectId
+  academicYear String
+  ccaID        Int
+  userID       String
+  role         String?
+  description  String?
+  addedBy      String?
+  addedAt      DateTime? @default(now())
+  updatedBy    String?
+  updatedAt    DateTime?
+  removedAt    DateTime?
+  removedBy    String?
+
+  @@unique([activityID, userID], map: "participant_activity_user")
+  @@index([academicYear, userID], map: "participant_year_user")
+}
+
+/// When a resident first and last had their open (published) transcript on
+/// screen, written by the `markOpened` mutation (never by viewing). Drives the
+/// "Ready" badge: an open year with no row here is one they have not seen.
+model TranscriptAccess {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear  String
+  userID        String
+  firstOpenedAt DateTime? @default(now())
+  lastOpenedAt  DateTime?
+
+  @@unique([academicYear, userID], map: "access_year_user")
+}
+
+/// A manager's unlock of ONE resident's records in an OPEN year, so they can
+/// be corrected. ACTIVE while `relockedAt` is empty; at most one active per
+/// resident and year (kept by the service).
+model ResidentUnlock {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String
+  userID       String
+  reason       String
+  unlockedBy   String?
+  unlockedAt   DateTime? @default(now())
+  relockedBy   String?
+  relockedAt   DateTime?
+  /// "<academicYear>|<userID>" while active, rewritten to
+  /// "<academicYear>|<userID>|ended|<id>" on relock: at most one active per resident and year.
+  activeKey    String    @unique(map: "unlock_active_key")
+
+  @@index([academicYear, userID], map: "unlock_year_user")
+}
+
+/// A hold on ONE resident's transcript for a year: they see "on hold" instead of
+/// it. ACTIVE while `releasedAt` is empty; at most one active per resident and year.
+model ResidentWithhold {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String
+  userID       String
+  reason       String
+  withheldBy   String?
+  withheldAt   DateTime? @default(now())
+  releasedBy   String?
+  releasedAt   DateTime?
+  releaseNote  String?
+  /// As ResidentUnlock.activeKey, for the hold.
+  activeKey    String    @unique(map: "withhold_active_key")
+
+  @@index([academicYear, userID], map: "withhold_year_user")
+}
+
+/// A CCA membership a manager adds for a resident the membership data misses. It
+/// counts as membership of that CCA for that resident and year; if a roster entry
+/// exists for the same CCA, the roster entry wins. Removed, never deleted.
+model ManualMembership {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear    String
+  userID          String
+  ccaID           Int
+  duration        String?
+  roleLabel       String?
+  roleDuration    String?
+  extraContribution String?
+  createdBy       String?
+  createdAt       DateTime? @default(now())
+  updatedBy       String?
+  updatedAt       DateTime?
+  removedAt       DateTime?
+  removedBy       String?
+
+  @@unique([academicYear, userID, ccaID], map: "manual_year_user_cca")
+}
+
+/// The history of one resident's year: unlock, relock, withhold, release, manual
+/// entries, and each correction made under an unlock.
+/// action: unlock | relock | withhold | release | manual_add | manual_edit |
+///         manual_remove | manual_restore | correction
+model ResidentEvent {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  academicYear String
+  userID       String
+  action       String
+  reason       String?
+  summary      String?
+  actor        String?
+  at           DateTime? @default(now())
+
+  @@index([academicYear, userID], map: "revent_year_user")
 }

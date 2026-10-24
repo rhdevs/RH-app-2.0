@@ -1,0 +1,55 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import { selectTranscriptState } from "~/lib/transcript/pageState";
+import { YearSwitcher } from "../_components/YearSwitcher";
+
+const choicesFor = (published: string[]) => {
+  const state = selectTranscriptState({
+    authenticated: true,
+    published,
+    requested: null,
+    currentAcademicYear: "AY2026/27",
+  });
+  if (state.kind !== "show") throw new Error("expected a switcher");
+  return state;
+};
+
+describe("the year switcher", () => {
+  it("labels the collecting current year 'not yet available' beside a published one", () => {
+    const state = choicesFor(["AY2025/26"]);
+    const html = renderToStaticMarkup(
+      <YearSwitcher
+        choices={state.choices}
+        active={state.academicYear}
+        basePath="/transcript"
+      />,
+    );
+    expect(html).toContain(">AY2025/26<");
+    expect(html).toContain(">AY2026/27 (not yet available)<");
+    expect(html).toContain('href="/transcript?ay=2026-27"');
+    expect(html).toMatch(
+      /aria-current="page"[^>]*href="\/transcript\?ay=2025-26"|href="\/transcript\?ay=2025-26"[^>]*aria-current="page"/,
+    );
+  });
+
+  it("never labels a year a draft", () => {
+    const state = choicesFor(["AY2025/26"]);
+    const html = renderToStaticMarkup(
+      <YearSwitcher
+        choices={state.choices}
+        active="AY2026/27"
+        basePath="/transcript"
+      />,
+    );
+    expect(html).not.toContain("draft");
+  });
+
+  it("draws nothing without choices", () => {
+    expect(
+      renderToStaticMarkup(
+        <YearSwitcher choices={[]} active="AY2026/27" basePath="/transcript" />,
+      ),
+    ).toBe("");
+  });
+});

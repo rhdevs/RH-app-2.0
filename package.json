@@ -6,11 +6,16 @@
   "scripts": {
     "build": "next build",
     "db:studio": "prisma studio",
+    "dev:db:up": "docker compose -f dev/docker-compose.mongo.yml up -d --wait",
+    "dev:db:down": "docker compose -f dev/docker-compose.mongo.yml down",
+    "dev:db:push": "node scripts/dev/db-push.mjs",
+    "dev:db:seed": "node scripts/dev/seed-transcript.mjs",
     "dev": "next dev",
     "postinstall": "prisma generate",
     "lint": "next lint",
-    "start": "next start",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:db": "node --env-file=.env node_modules/vitest/vitest.mjs run int.test --no-file-parallelism",
+    "start": "next start"
   },
   "prisma": {
     "seed": "node --loader ts-node/esm prisma/seed.ts"

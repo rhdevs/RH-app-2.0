@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   CalendarClock,
   CalendarDays,
+  FileText,
 } from "lucide-react";
 
 import { api } from "~/trpc/react";
@@ -32,6 +33,7 @@ const SECTIONS = [
   { slug: "details", label: "CCA details", icon: Pencil },
   { slug: "events", label: "Events", icon: CalendarDays },
   { slug: "points", label: "Points", icon: ClipboardList },
+  { slug: "transcript", label: "Transcript", icon: FileText },
 ] as const;
 
 /**
@@ -57,7 +59,16 @@ export default function CcaDashboardShell({
 
   const ccas = data?.ccas ?? [];
   const current = ccas.find((c) => c.ccaID === ccaID) ?? null;
-  const sections = visibleSections(SECTIONS, headsThisCca(data?.ccas, ccaID));
+  // The Transcript tab is hidden until the transcript switch is known to be on.
+  const transcriptEnabled =
+    api.transcript.enabled.useQuery(undefined, {
+      retry: false,
+      staleTime: 60_000,
+    }).data?.enabled === true;
+  const sections = visibleSections(
+    SECTIONS,
+    headsThisCca(data?.ccas, ccaID),
+  ).filter((s) => s.slug !== "transcript" || transcriptEnabled);
 
   const isActive = (slug: string) => {
     const base = `/cca/${ccaID}`;

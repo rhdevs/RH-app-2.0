@@ -13,10 +13,12 @@ import {
   CalendarCheck,
   KeyRound,
   SlidersHorizontal,
+  FileText,
 } from "lucide-react";
 
 import Header from "~/app/_components/header";
 import type { Capabilities } from "~/server/api/services/roles";
+import { api } from "~/trpc/react";
 import { AdminCapabilityProvider } from "./AdminCapabilityContext";
 
 /**
@@ -72,6 +74,14 @@ const ADMIN_TABS = [
     requires: "manageCcaPointsRanges",
   },
   {
+    href: "/admin/transcripts",
+    label: "Transcripts",
+    icon: FileText,
+    // manageCcaHeads is held by exactly admin and jcrc, the two roles that run
+    // transcripts. The segment layout re-checks the role itself.
+    requires: "manageCcaHeads",
+  },
+  {
     href: "/admin/facilities",
     label: "Facilities",
     icon: DoorOpen,
@@ -107,7 +117,17 @@ export default function AdminShell({
   // `=== true` and not a truthiness test: `assignableRoles` is a (possibly
   // empty) ARRAY on this same object, and [] is truthy. A future tab keyed on
   // one of those fields would otherwise render for everyone.
-  const tabs = ADMIN_TABS.filter((t) => capabilities[t.requires] === true);
+  // The Transcripts tab is hidden until the transcript switch is known to be on.
+  const transcriptEnabled =
+    api.transcript.enabled.useQuery(undefined, {
+      retry: false,
+      staleTime: 60_000,
+    }).data?.enabled === true;
+  const tabs = ADMIN_TABS.filter(
+    (t) =>
+      capabilities[t.requires] === true &&
+      (t.href !== "/admin/transcripts" || transcriptEnabled),
+  );
 
   return (
     <AdminCapabilityProvider value={capabilities}>

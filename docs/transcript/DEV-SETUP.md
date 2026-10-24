@@ -1,0 +1,302 @@
+# Transcript: local database setup
+
+Phase 3 runs against a local single-node MongoDB replica set in Docker. Nothing here touches a shared or production database.
+
+## Safety rules
+
+- **Localhost only.** The container binds `127.0.0.1:27017`, and `DATABASE_URL` must point at `localhost` or `127.0.0.1`.
+- **A distinct database name:** `rhapp_transcript_dev`, never `rhapp`. The seed script refuses to run against any other host or name.
+- Never run `prisma db push --accept-data-loss` or `--force-reset`, and never run any Prisma command against a non-local URL.
+- **`prisma db push` is for this LOCAL Docker database ONLY.** Never run it, `prisma migrate` or `npm run db:generate` against production: a push silently drops `User.email_unique_ci`. Production gets its indexes from `scripts/remediation/create-transcript-indexes.mjs` (see "Production indexes" below).
+- `.env` is gitignored. Never commit it.
+
+## One-time setup
+
+Docker Desktop must be running.
+
+```bash
+npm ci
+```
+
+Create `.env` (copy `.env.example`) and set:
+
+```text
+DATABASE_URL="mongodb://localhost:27017/rhapp_transcript_dev?replicaSet=rs0&directConnection=true"
+```
+
+The other variables can be placeholders for local work (the build needs `NEXTAUTH_URL` and `RESEND_API_KEY` to be set to something).
+
+## Everyday commands
+
+| Task | Command |
+| --- | --- |
+| Start the database (first run also initiates the replica set) | `npm run dev:db:up` |
+| Stop it (data is kept in the `rhapp-transcript-mongo-data` volume) | `npm run dev:db:down` |
+| Create the collections and indexes (LOCAL ONLY, never production) | `npm run dev:db:push` (refuses unless `DATABASE_URL` is localhost/127.0.0.1 and `rhapp_transcript_dev`, the same check as the seed) |
+| Fill it with fake data (idempotent) | `npm run dev:db:seed` |
+| Start the app | `npm run dev` |
+
+Order on a fresh machine: `dev:db:up`, then `dev:db:push`, then `dev:db:seed`. Use `npm run dev:db:push`, never a bare `npx prisma db push`: the bare command trusts whatever `.env` points at.
+
+The seed also sets the kill switch `transcript.enabled` to `"on"` (a `SystemFlag` row). Without it every transcript page says "Transcripts are not available yet." and every transcript procedure refuses with `TRANSCRIPT_DISABLED`. To try the switched-off state locally: `node scripts/remediation/set-transcript-flag.mjs off --commit` (and `on --commit` to go back); the app picks it up within 15 seconds.
+
+## Reset
+
+To wipe everything and start again:
+
+```bash
+npm run dev:db:down
+docker volume rm dev_rhapp-transcript-mongo-data
+npm run dev:db:up
+npm run dev:db:push
+npm run dev:db:seed
+```
+
+(The volume name is prefixed with the compose project name, `dev`; `docker volume ls` shows it.) To reseed only, just run `npm run dev:db:seed` again: it deletes and re-inserts its own `SEED-` documents.
+
+## What the seed creates
+
+Fake data for `AY2026/27`: 14 CCAs (including the four "RVC ..." volunteering CCAs), 20 made-up residents (`SEED-R01` to `SEED-R20`) with admin, JCRC, CCA head and resident roles, memberships (one resident in 13 CCAs), accepted applications (their dates are not used), roster entries with semester labels chosen by hand (sem1-only, sem2-only, a head whose role period is semester 2), volunteer activities, awards, JCRC service for two members, and CCA activities (Soccer: a full-year league that `SEED-R20`, who is not in Soccer, also took part in; Hall Choir: a semester 2 activity; RVC Children: one live activity and one removed), and one manual CCA entry with its history line (`SEED-R17` in Dance Crew, semester 2). The year starts collecting: nothing is unlocked or withheld.
+
+### A published year to click through (opt-in)
+
+```bash
+npm run dev:db:seed -- --with-published-year
+```
+
+Does everything the plain seed does, and ALSO creates a past year, `AY2025/26`, already opened (Open transcripts): every seeded CCA's member list saved (heads as "Head"), Soccer's "Inter-hall league 2025/26" (with `SEED-R20` as Other involvement), RVC Children's "Reading buddies" (8 hours for `SEED-R12`), two awards, `SEED-R02`'s JCRC page, and a download-by date in the future. Nobody has opened it yet, so `seed-r12` sees the "Ready" badge, the published transcript with a year switcher, and "not available yet" for the collecting `AY2026/27`; as `seed-r01` you can Unlock, correct, Relock, Withhold and Release on it at `/admin/transcripts/residents`. Like the rest of the seed it refuses anything but the local `rhapp_transcript_dev` database. A plain `npm run dev:db:seed` (and every `npm run test:db` run) removes this year again. Transcripts really start at AY2026/27; this year exists only locally.
+
+## A caveat
+
+The local database has no `$jsonSchema` validators (production's CCA, UserCCA and User do). The seed writes only the fields those models declare, so it matches what production would accept, but the local database will not stop you writing a bad field.
+
+## Integration tests (`npm run test:db`)
+
+`npm run test` needs no database: the integration tests in `src/server/api/services/transcript/__tests__/transcript.int.test.ts` are skipped unless `DATABASE_URL` points at `localhost` and the database is `rhapp_transcript_dev`.
+
+```bash
+npm run dev:db:up
+npm run dev:db:push
+npm run test:db
+```
+
+`test:db` loads `.env` (Node's `--env-file`) and runs only the `*.int.test.ts` files. The suite re-runs the seed script first to get a known baseline, and before each test restores the period and the roster annotations. It temporarily edits one seeded CcaHead date and one seeded UserCCA row and puts them back. Run it after any change to `periods.ts`, `loader.ts`, the services or the routers.
+
+## Signing in locally
+
+Every seeded resident can sign in at `/login` with email and password. All of them share one development password:
+
+```text
+Transcript-Dev-2026
+```
+
+It works only against the local `rhapp_transcript_dev` database (the seed refuses any other). The emails are `seed-rNN@u.nus.edu`: that is an address the app's sign-in rule admits, and its canonical id (`SEED-RNN`) is exactly the key the seeded data is filed under. Nothing is ever sent to them. Re-run `npm run dev:db:seed` after pulling to refresh the accounts.
+
+| Email | Role | Notes |
+| --- | --- | --- |
+| `seed-r01@u.nus.edu` | admin | |
+| `seed-r02@u.nus.edu` | JCRC member | Sports Secretary; not a CCA head |
+| `seed-r03@u.nus.edu` | JCRC member and CCA head | Heads RHMP Sets (a normal CCA) |
+| `seed-r04@u.nus.edu` | head of a normal CCA | Heads Soccer (MALE) |
+| `seed-r05@u.nus.edu` | head of a normal CCA | Heads Hall Choir; role period chosen as semester 2 |
+| `seed-r06@u.nus.edu` | head of a volunteering CCA | Heads RVC Children |
+| `seed-r07@u.nus.edu` | head of a volunteering CCA | Heads RVC Special Projects |
+| `seed-r10@u.nus.edu` | head of a volunteering CCA | Heads RVC Pioneers |
+| `seed-r11@u.nus.edu` | head of a volunteering CCA | Heads RVC Special Needs |
+| `seed-r08@u.nus.edu` | head of a normal CCA | Heads Phoenix Press |
+| `seed-r12@u.nus.edu` | plain member | In 13 CCAs; has volunteering, awards and part-year memberships |
+| `seed-r09@u.nus.edu`, `seed-r13@u.nus.edu` to `seed-r20@u.nus.edu` | plain member | A few CCAs each |
+
+A caveat: the addresses end in `@u.nus.edu`, the real NUS student domain, so they could in principle collide with a real mailbox if someone triggered a password reset against a database with a real mail key. Keep `RESEND_API_KEY` a placeholder locally.
+
+## Manual check: admin screens (Phase 3f)
+
+Start with `npm run dev:db:up`, `npm run dev:db:seed`, `npm run dev`. Sign in at `/login` with the password above.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Gate | `seed-r04` (head), then `seed-r15` (plain member) | Open `/admin/transcripts` | Sent back to `/admin` or `/`; no Transcripts tab |
+| Academic year | `seed-r01` (admin) or `seed-r02` (JCRC) | Press Open transcripts (there is no Semester 2 start date to set) | The confirmation "Open transcripts for AY2026/27? Every CCA's member list will be saved as it is now, ...". Confirm: status Open, "Transcripts for AY2026/27 are open. 14 CCA member lists saved.", the button is gone and the CCA member lists table appears. There is no Reopen; reseed to go back. |
+| Year picker | `seed-r01` | Open the year list on the Academic year panel, Awards, Resident corrections, JCRC page and Preview | Every year from AY2026/27 to the current one is offered (newest first), even a year that has never had any dates saved. A previous year flagged by the 1 August warning can be selected but not opened: it shows "This year can no longer be opened from the app, ... Contact RHDevs." and no Open transcripts button. |
+| Manual semester labels | `seed-r04` | Set a member to "Semester 2 only" and save; then Open transcripts as `seed-r01` | The transcript says "Semester 2" for that member only. Nobody else changes: join and head-grant dates never decide a semester. |
+| Collecting year with some lists saved | `seed-r01` | (Dev only) lock one CCA, then press Open with a CCA failing | The panel shows the per-CCA table and "Some CCAs are saved; press Open transcripts again to finish." even though the year is still Collecting. |
+| Volunteering CCAs | same | Flip a switch, reload | Change persists; the four RVC CCAs start on |
+| Awards | same | Add an award for `SEED-R12`, then void it | Appears, then disappears; "Show voided" brings it back. Locked once Open |
+| Preview | same | Pick a resident (3+ letters), open preview | Template C with the Preview bar; JCRC page only for `seed-r02`/`seed-r03`; nothing is recorded |
+
+Re-run `npm run dev:db:seed` afterwards to return the year to Collecting.
+
+## Manual check: head and JCRC screens (Phase 3g)
+
+The app's profile gate sends a seeded account to `/profile` until its profile (name, Telegram, block) is completed. Complete it once per account you sign in with, then use the pages below.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Head tab, normal CCA | `seed-r04` (Soccer) | CCA dashboard, "Transcript" | Member roster table, no volunteer hours section. Set a member to "Semester 2 only", type a role and a contribution, press that row's Save: "Saved". The counter under the contribution counts down from 500. |
+| Head tab, another CCA | `seed-r04` | Open `/cca/9002/transcript` | "You do not head this CCA." |
+| Head tab, volunteering CCA | `seed-r06` (RVC Children) | "Transcript" | Roster and a Volunteer hours section. Search "Seed", choose a resident, add a one-off (date inside the year, hours in quarters). It appears in the list and the totals. Void asks first. |
+| Published year | `seed-r01`, then `seed-r04` | Open transcripts at `/admin/transcripts`, then reload the head tab | The open note, every field read-only. Reseed to restore. |
+| JCRC self page | `seed-r02` | `/admin/transcripts`, "Your JCRC page" | Fields, the placeholder note, "Preview my transcript". Save, then preview: the JCRC page shows your text. |
+| JCRC page, admin only | `seed-r01` | `/admin/transcripts/jcrc` | "Only JCRC members have a JCRC page." |
+| Preview print | `seed-r01` | Preview a resident, print or save as PDF | Only the transcript prints: no header or tabs, crest and footer on every page. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: click-through fixes
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Header entry | `seed-r12` | Open the profile menu (desktop), then the menu (phone) | "My transcript" directly under "My applications". No badge while the year is collecting. After `seed-r01` publishes the year: a "Ready" badge beside it and a dot on the profile button. Open the transcript: both go away. |
+| Download-by banner | `seed-r01`, then `seed-r12` | Academic year panel: set Download by, Save, publish. Open `/transcript` as the resident | "Download your AY2026/27 transcript before 31 Dec 2027." (the seeded date). Clear the date: no banner. |
+| Volunteering CCAs | `seed-r01` | `/admin/transcripts`, Volunteering CCAs | Only the four RVC CCAs, "4 volunteering CCAs". Type "soc", add Soccer: it joins the list. Remove it: a confirmation says hours already recorded stay. |
+| JCRC contributions | `seed-r02` | `/admin/transcripts/jcrc` | One card per contribution with counters. Move up and down, Remove (shows "Removed. Undo"), Undo, Add contribution (a plain count, "2 contributions", never "of 10"), Save. Preview: the rows in three columns with no header row. |
+| Role period | `seed-r04` | `/cca/9005/transcript`, give a member a role | Duration offers "Full year" (the default), "Semester 1 only" and "Semester 2 only", with no "Default (...)" entry. With a semester 2 membership the role period offers only "Semester 2 only". Narrow a full-year member who has a role to another period: the role period changes with a one-line note. |
+| Picker | `seed-r06` | Volunteer hours, search "Seed" | Placeholder "Name". Arrow keys move, Enter picks, Escape closes. As `seed-r01` the placeholder is "Name, email or matric". |
+| Names | `seed-r01` | Add and void an award, then Open transcripts | "Opened on ... by Seed Resident 01", "Recorded by ... Voided by ..." show names, not SEED- keys. |
+| Phone | any | `/transcript/preview/many-ccas` at 375 px wide | No horizontal scroll; the Year column stays on one line. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: collecting, then Open transcripts
+
+The seed keeps AY2026/27 collecting with no saved member lists: every CCA's transcript uses its live members.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Live list | `seed-r01` | Remove `seed-r12` from Soccer in the CCA admin, then preview `seed-r12` | Soccer is gone from the transcript. Add them back. |
+| Handover reminder | `seed-r04` (Soccer head) | CCA dashboard, Overview, Hand over | "Before you hand over, make sure this year's transcript records ... are up to date. The new heads can continue them until the JCRC opens transcripts." and an "Open transcript records" link. |
+| Handover changes nothing | `seed-r04` | Hand over to `seed-r09`, then sign in as `seed-r09` | No member list is saved. `seed-r09` can edit `/cca/9005/transcript` for AY2026/27. |
+| Head's tab | any head | Transcript tab | "Finish this year's records before the JCRC opens transcripts at the end of the year." Other years read-only; no Lock button. |
+| Reminders | `seed-r01` | Academic year section (needs a clock after 1 April or 1 August; covered by tests) | From 1 April: "Transcripts for AY2026/27 are not open yet. Open them at the end of the year, before 1 August. After that, this year can no longer be opened from the app." From 1 August with the previous year still collecting: "Transcripts for ... were never opened. This year can no longer be opened from the app, ... Contact RHDevs." |
+| Open transcripts | `seed-r01` or `seed-r02` | Open transcripts, confirm | Status Open; the CCA member lists table shows each CCA, "Saved when transcripts opened", members and "members could not be matched" where there are some. `seed-r04` cannot see the button (admin and JCRC only). |
+| After opening | `seed-r12`, `seed-r04` | `/transcript`; the head tab | The resident gets the Ready badge and the transcript (no draft anywhere). The head's tab is read-only. Removing a Soccer member now does not change their transcript. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: CCA activities and the roster editor
+
+The seed gives AY2026/27 four activities: Soccer (9005, head `seed-r04`) "Inter-hall league" with `seed-r04` (Captain), `seed-r12` and `seed-r20` (not in Soccer); Hall Choir (9007, head `seed-r05`) "Hall Night preparation" in semester 2; RVC Children (9002, head `seed-r06`) "Exam-period care packs" and a removed "Cancelled workshop". After pulling this change, `prisma db push` (LOCAL database only) adds the `CcaActivity` and `CcaActivityParticipant` collections.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Activities section | `seed-r04` | `/cca/9005/transcript` | "Activities" above the roster, "1 activity", Add activity, and "Inter-hall league" with Edit and Remove. |
+| Add an activity | `seed-r04` | Add activity, fill the title, tick members, Add activity | The dialog closes and the list shows "2 activities". On a phone the editor fills the screen. |
+| Filter and tick | `seed-r04` | In the editor, type part of a name, Select all, Clear all | Only matching members show; the two buttons act on those only. "N people selected" follows. |
+| Outside people | `seed-r04` | In the editor, search `Seed` under "Other people", pick one | A chip appears; the x removes it. Heads search by name only. |
+| Customise | `seed-r04` | "Customise each person" | A Role and Description per person with the two placeholders; empty means the general description. |
+| Remove and restore | `seed-r04` | Remove, confirm; tick Show removed; Restore | It leaves the count and the transcripts; Restore brings it back. At 20 activities Add and Restore are refused. |
+| On a transcript | `seed-r12` and `seed-r20` | Preview as resident (`seed-r01`), AY2026/27 | `seed-r12`: the league nested under Soccer. `seed-r20`: "Other involvement" with the league and "Organised by Soccer (MALE)". |
+| Read-only once open | `seed-r04` | After Open transcripts, `/cca/9005/transcript` | The Activities section shows the open note and no buttons. |
+| Unsaved changes | any head | Edit two roster rows, change the year | A sticky bar says "2 unsaved changes"; Save all saves both; Discard asks first; changing the year asks before leaving. |
+| Phone roster | any head | Roster at 375 px wide | Cards instead of a table, a name filter, and no horizontal scroll. |
+
+Dev only: `/transcript/preview/member-with-activities` and `/transcript/preview/other-involvement-only` show specimens 13 and 14.
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: volunteer activities
+
+The seed gives AY2026/27 two RVC activities. RVC Children (9002, head `seed-r06`): "Weekly tuition for neighbourhood children", 10 weekly sessions of 2 hours from 7 September, the CCA's members plus one outsider as people, `seed-r12` ticked in every session (one with their own 1 hour, so 19 hours). RVC Special Projects (9001, head `seed-r07`): a one-off "Beach clean-up, East Coast Park" of 4 hours. A removed "Cancelled food drive" must never appear on a transcript. After pulling this change, `prisma db push` (LOCAL database only) adds the four volunteer collections.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| The section | `seed-r06` | `/cca/9002/transcript` | "Volunteer hours" with "1 of 30", Add volunteer activity, and the tuition activity with its people and total hours. `seed-r04` (Soccer) has no such section. |
+| Create | `seed-r06` | Add volunteer activity, type a title, tick members, add someone outside the CCA, Add | The list shows "2 of 30". On a phone the editor fills the screen. |
+| Add a session | `seed-r06` | Attendance on the new activity, Add session | The first session is today; the next is a week after the latest, with the same hours. |
+| Grid ticks | `seed-r06` | Click cells; Tick all, Clear all on a column; Tick all sessions on a row | Cells fill, totals update live, the bar says "N unsaved changes". Save stores them; Discard asks nothing and throws them away. |
+| Copy previous | `seed-r06` | On a later column, Copy previous | That column's ticks match the session before it (not its overrides). |
+| Override | `seed-r06` | "h" on a ticked cell, type 1.5, Enter | The cell shows 1.5 and the person's total follows; clearing the box goes back to the session's hours. |
+| Paging | `seed-r06` | The tuition grid | At most 8 session columns, with Earlier sessions / Later sessions. |
+| Phone view | `seed-r06` | The attendance panel at 375 px wide | One session at a time with arrows and a date selector, Tick all, Clear all, Copy previous session, an hours box for each ticked person. |
+| Edit a session | `seed-r06` | Edit session on a column | Change the date or hours, or Remove session; a removed session stops counting. |
+| One-off | `seed-r07` | The beach clean-up | Same editor with a date and hours, no Add session; the grid has one column. |
+| Remove and restore | `seed-r06` | Remove, confirm; Show removed; Restore | It leaves the transcripts and the count; Restore brings it back. There is no limit to refuse at. |
+| On a transcript | `seed-r01` | Preview as resident `seed-r12`, AY2026/27 | "Volunteer hours": Activity, Type, Organised by, Hours; tuition 19 (Regular, RVC Children), beach clean-up 4 (One-off, RVC Special Projects), Total 23. No session counts. |
+| Unsaved changes | `seed-r06` | Tick cells, then open another activity or reload | The browser or an in-app prompt asks before leaving. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: awards
+
+The seed gives a catalogue of five awards (Colours Award, Soccer; Service Excellence Award; Outstanding Newcomer; Full Colours; Retired Award, archived), the awards `seed-r04` and `seed-r12` already had, and one upload, "colours-2026.csv", whose three "Full Colours" awards belong to `seed-r13` to `seed-r15`. After pulling this change, `prisma db push` (LOCAL database only) adds `AwardType` and `AwardImportBatch` and the new `Award` fields and index. Only admin and JCRC can open `/admin/transcripts/awards`; `seed-r04` is sent back to `/admin`.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| The link | `seed-r01` | `/admin/transcripts` | The Awards section is a short count ("6 awards for AY2026/27") with "Manage awards". |
+| Awards tab | `seed-r02` | `/admin/transcripts/awards` | "Assign an award", then the year's awards grouped: "Full Colours: 3 residents" and so on, collapsed. |
+| Group and search | `seed-r02` | Open a group; type `colours`; turn "Group by award" off | The people and citations show; search opens every group; off gives one flat list naming each award. |
+| Assign | `seed-r02` | Choose "Full Colours", add `seed-r13` and `seed-r20` as chips, Assign | "1 assigned. Skipped (already have it): Seed Resident 13." Typing a citation for a person overrides the default. |
+| New award | `seed-r02` | Choose "New award", name it, add someone, Assign | The award is created in the catalogue and assigned. A name that clashes (any case or spacing) is refused. |
+| Edit and remove | `seed-r02` | Edit a row, change the title and citation, Save; Remove; Show removed; Restore | The row changes; a removed row is struck through and can be restored. |
+| Bulk | `seed-r02` | Tick several rows or a group, Remove selected, confirm; Restore selected | A confirmation first; a restore skips anyone who now has the award again and names them. |
+| Catalogue | `seed-r02` | Catalogue tab: add, edit, Archive, Show archived, Restore | An archived award disappears from "Assign an award" but its awards stay on transcripts; renaming leaves past awards' names alone. |
+| History | `seed-r02` | History tab, Undo on "colours-2026.csv", confirm | "3 awards removed."; the three "Full Colours" awards are gone from the Awards tab (Show removed shows them); Undo is no longer offered. |
+| Template | `seed-r02` | Import tab, "Download template" | A file `awards-template.csv` with `identifier,award,citation` and one example row. |
+| Upload | `seed-r02` | Import tab, upload `scripts/dev/sample-awards.csv`, Continue | "12 rows found." The columns are mapped to identifier, award and citation; change one and the Preview button says what is wrong. |
+| Preview | `seed-r02` | Preview | "8 Ready, 1 Not found, 2 Duplicate, 1 Invalid", a reason on each row that is not Ready (row 9 no such person; row 10 listed earlier; row 11 already has it; row 12 citation too long) and a Skip box on Ready rows. |
+| Decisions | `seed-r02` | In "Decide unknown awards": Hall Spirit Award, Create new award; Retired Award, Use existing (archived) | "Import 8 rows" stays disabled until both are chosen. Create is not offered for Retired Award, and using it does not unarchive it. |
+| Import | `seed-r02` | Import 8 rows | "8 imported, 4 skipped" with the four reasons; "Hall Spirit Award" is now in the Catalogue (no default citation); "Retired Award" is still archived. |
+| Undo the upload | `seed-r02` | See it in History, Undo on "sample-awards.csv", confirm | "8 awards removed."; the eight awards are gone from the Awards tab (Show removed shows them). |
+| Phone | `seed-r02` | The Import tab at 375px wide | One card per preview row with the status and Skip on it, no sideways scroll. |
+| Published | `seed-r01` | Publish the year, open the page | A note that changes are locked; the Awards and History tabs are read-only; the Catalogue still works. |
+| On a transcript | `seed-r01` | Preview as resident `seed-r04` | "Award | Year": "Colours Award, Soccer", 2026/27, and the citation in small italics beneath. |
+| Roster layout | `seed-r04` | `/cca/9005/transcript` at 1280px | The roster is cards (the column beside the side menu is narrower than the table needs); on a wider screen the table shows with Save fixed at the right edge. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+
+## Manual check: per-resident corrections
+
+The seed keeps the year COLLECTING and adds one manual CCA entry (`seed-r17` in Dance Crew, semester 2) with its history line. After pulling this change, `prisma db push` (LOCAL database only) adds `ResidentUnlock`, `ResidentWithhold`, `ManualMembership` and `ResidentEvent` and two fields on `JcrcService`. Only admin and JCRC can open `/admin/transcripts/residents`. To get a published year to work on, use the admin buttons yourself: sign in as `seed-r01`, open `/admin/transcripts`, press Open transcripts. Run `npm run dev:db:seed` afterwards to go back to the seeded state.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| The link | `seed-r01` | `/admin/transcripts` | "Resident corrections" beside "Your JCRC page". `seed-r04` is sent back to `/admin` from the new address. |
+| Published is read-only | `seed-r01` | Open transcripts, then `/admin/transcripts/residents`, find Seed Resident 12 | Status "Open"; every section read-only with "Published. Unlock this resident to make corrections."; Unlock and Withhold offered. |
+| Unlock | `seed-r01` | Unlock, leave the reason empty, then type "Wrong role on file" | The button stays disabled until a reason of 3 or more characters. Then "Unlocked" shows with the reason, and Relock replaces Unlock. |
+| Correct a role | `seed-r01` | CCA memberships, Soccer (MALE), type "Vice-Captain" as the role, Save | "Saved". Preview transcript shows it with no mark of amendment. |
+| Another resident stays locked | `seed-r01` | Open Seed Resident 20, try the same | Read-only. A request made some other way is refused with "This year is published. Unlock the resident first, and change only their records." |
+| Clear and reset | `seed-r04` (collecting year only) | A Soccer member's row on `/cca/9005/transcript` | Clear role, Clear contribution and Reset to default appear under the fields that hold something; Reset blanks every override in the draft and Save applies it. Not offered once transcripts are open. |
+| Manual entry | `seed-r01` | Seed Resident 20, CCA memberships, "Add manual CCA entry": Soccer (MALE), Full year, Add | The entry shows with a "Manual" tag. In the preview, Soccer is a CCA row and "Inter-hall league" moved from Other involvement to under it; no "Manual" word on the document. Choosing a role period outside a semester 2 membership is refused. |
+| Manual remove and restore | `seed-r01` | Remove, Show removed, Restore | It leaves the transcript while removed and comes back. |
+| Roster wins | `seed-r01` | Seed Resident 12, add a manual Soccer entry | It is flagged as also in the membership data and the roster entry is what renders. |
+| Activities | `seed-r01` | Seed Resident 12, Activities, change a role, Save; Remove; Restore; "Add to an existing activity" | Each saves on its own; the activity itself cannot be edited (a published year keeps those locked). |
+| Volunteer hours | `seed-r01` | Seed Resident 12, Volunteer hours, untick a session, set 1.5 on another, Save | The total follows as you type; only this resident's ticks change. |
+| Awards | `seed-r01` | Seed Resident 12, Awards: edit a citation, Remove, Show removed, Restore, assign from the catalogue | Each change shows in the preview. |
+| JCRC page | `seed-r01` | Seed Resident 02 (a JCRC member), JCRC page, Remove page, Restore page | The page leaves the transcript while removed and a save is refused until it is restored. Seed Resident 12 has no JCRC page and shows "Only JCRC members have a JCRC page." |
+| Relock | `seed-r01` | Relock with a note | The sections go read-only again. |
+| History | `seed-r01` | History tab | Newest first: Relocked, Correction ("Roster: Soccer (MALE) role set to Vice-Captain"), Unlocked with the reason, each with who (a name) and the time in Singapore. Seed Resident 17 shows the seeded "Manual entry: Dance Crew added". |
+| Withhold | `seed-r01`, then `seed-r12` | Withhold Seed Resident 12 with a reason; sign in as `seed-r12`, open `/transcript` | Only "Your transcript is on hold. Contact the hall office."; no Ready badge or dot; no transcript. Other residents are unaffected. |
+| Preview of a held transcript | `seed-r01` | Preview transcript for Seed Resident 12 | The document, with "Withheld from the resident" on screen only (not in print). |
+| Release | `seed-r01`, then `seed-r12` | Release with a note; reload `/transcript` | The transcript is back; the Ready badge returns if they never opened it. |
+| Phone | `seed-r01` | The resident panel at 375px wide | Fields wrap inside each card, tabs wrap, no sideways scroll. |
+
+Run `npm run dev:db:seed` afterwards to restore the seeded state.
+
+## Manual check: final fixes
+
+Seed with `npm run dev:db:seed -- --with-published-year` (see above) so `seed-r12` has a published `AY2025/26`. Run `npm run dev:db:seed` afterwards to restore the plain seeded state.
+
+| Screen | Sign in as | What to click | Expect |
+| --- | --- | --- | --- |
+| Year switcher | `seed-r12` | `/transcript` | Pills "AY2025/26" and "AY2026/27 (not yet available)". The second shows the calm "isn't available yet" page, with the pills still there. |
+| Menu item | `seed-r12` | Open the profile menu (desktop and phone) | "My transcript" on one line with the "Ready" badge at the right, readable on the dark phone menu. |
+| No header rows | `seed-r01` | Preview `seed-r12` and `seed-r02` for AY2026/27 | Activity rows under a CCA and the JCRC contributions have no heading row; "Other involvement" keeps its headings. |
+| Plain counts | `seed-r04` | `/cca/9005/transcript` | "1 activity", never "1 of 20"; Add activity is never greyed out. |
+| Unlock twice | `seed-r01` | Unlock a resident, press Unlock again quickly | One unlock, one "Unlocked" line in History. |
+| Partly imported | any | A CSV upload that stops part way (a database failure; covered by a test) | "The upload stopped part way: N imported. ..."; History says "Partly imported"; Undo removes those awards only. |
+
+## Production indexes
+
+Production never uses `prisma db push`. MongoDB creates the transcript collections on first write; only the indexes need creating, with the guarded script:
+
+```bash
+npx prisma generate
+node scripts/remediation/index-census.mjs > census-before.txt
+node scripts/remediation/create-transcript-indexes.mjs            # dry run
+node scripts/remediation/create-transcript-indexes.mjs --commit
+node scripts/remediation/index-census.mjs > census-after.txt
+diff census-before.txt census-after.txt
+```
+
+The script creates the 30 transcript indexes (same names, keys and uniqueness as `prisma/schema.prisma`, including the `activeKey` uniques), never drops or changes an index, refuses to continue on a conflicting one, and touches no other collection. A second run reports "all present". A test fails if the script and the schema ever differ. Try it locally against a scratch database first (a fresh database name on localhost), never against a remote URL from this checkout.

@@ -1,0 +1,146 @@
+/**
+ * How long a member was in a CCA, or held a role, within one academic year.
+ *
+ * "Semester 1 only" / "Semester 2 only" is a label a head (or JCRC/admin)
+ * chooses to say roughly how much someone did; it is never derived from join
+ * or grant dates. Every membership and role is a full year until someone sets
+ * otherwise. The transcript prints a duration only when it is NOT a full year.
+ * PURE.
+ */
+
+export const DURATIONS = ["full", "sem1", "sem2"] as const;
+export type Duration = (typeof DURATIONS)[number];
+
+export function isDuration(value: unknown): value is Duration {
+  return (
+    typeof value === "string" &&
+    (DURATIONS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * A role must fit inside the membership: a full-year member may hold a role for
+ * any period, a semester member only for that semester.
+ */
+export function roleFits(membership: Duration, role: Duration): boolean {
+  return membership === "full" || role === membership;
+}
+
+/**
+ * The role period actually in force: the wanted one (a missing one means the
+ * full year), narrowed to the membership when it would stick out of it. A sem2
+ * member is therefore never "Head (full year)".
+ */
+export function clampRoleDuration(
+  membership: Duration,
+  role: Duration | null | undefined,
+): Duration {
+  const wanted = role ?? "full";
+  return roleFits(membership, wanted) ? wanted : membership;
+}
+
+/** "Semester 2" for sem2, "Semester 1" for sem1, null for a full year or unknown. */
+export function durationLabel(value: string | null | undefined): string | null {
+  if (value === "sem1") return "Semester 1";
+  if (value === "sem2") return "Semester 2";
+  return null;
+}
+
+export interface RosterAnnotation {
+  duration: string | null;
+  roleLabel: string | null;
+  roleDuration: string | null;
+  extraContribution: string | null;
+}
+
+/** A stored roster entry, with the choices a lock may have kept aside. */
+export interface StoredRosterEntry extends Partial<RosterAnnotation> {
+  preFreeze?: Partial<RosterAnnotation> | null;
+}
+
+/**
+ * The SAVED choices of a roster entry. A lock writes the resolved values
+ * (defaults included) into the entry and keeps the choices it found in
+ * `preFreeze`; an entry no lock has touched holds its choices in its own
+ * fields. Every collecting-year reader (the head's screen, the transcript, a
+ * lock run again) must read this, never the raw fields.
+ */
+export function savedChoices(
+  entry: StoredRosterEntry | null | undefined,
+): RosterAnnotation | null {
+  if (!entry) return null;
+  const from = entry.preFreeze ?? entry;
+  return {
+    duration: from.duration ?? null,
+    roleLabel: from.roleLabel ?? null,
+    roleDuration: from.roleDuration ?? null,
+    extraContribution: from.extraContribution ?? null,
+  };
+}
+
+/** Semester 1 or Semester 2: a period someone chose, never the default. */
+const isPartYear = (value: unknown) => value === "sem1" || value === "sem2";
+
+/**
+ * A DELIBERATE saved entry: a role, or a Semester 1 / Semester 2 membership
+ * period (a role period counts only beside a saved role), chosen and saved by a head or manager (never a lock's filled-in
+ * default; read through `savedChoices`). "Full year" is the default, which the
+ * screens save as nothing, so it never counts. While the year is collecting,
+ * such an entry keeps its person in the CCA's list for the year even after
+ * they leave the live roster, so an outgoing head who saved "Head" for
+ * Semester 1 before handing over is still on the transcript. An "Additional
+ * contribution" alone does not keep anyone.
+ */
+export function hasSavedRoleOrPeriod(
+  choices: Partial<RosterAnnotation> | null | undefined,
+): boolean {
+  if (!choices) return false;
+  const hasRole = Boolean(choices.roleLabel?.trim());
+  // A role period only means something with a role beside it.
+  return (
+    hasRole ||
+    isPartYear(choices.duration) ||
+    (hasRole && isPartYear(choices.roleDuration))
+  );
+}
+
+export interface ResolvedEntry {
+  duration: Duration;
+  roleLabel: string | null;
+  roleDuration: Duration | null;
+  extraContribution: string | null;
+}
+
+/**
+ * Merge a head's/admin's stored choices with the defaults (a full year; "Head"
+ * for a current head). A stored choice always wins; an unrecognised stored
+ * value is ignored rather than trusted. A non-head with no stored role has no
+ * role and no role duration.
+ */
+export function resolveEntry(
+  stored: Partial<RosterAnnotation> | null | undefined,
+  live: { isHead: boolean },
+): ResolvedEntry {
+  const storedDuration = isDuration(stored?.duration) ? stored.duration : null;
+  const storedRoleDuration = isDuration(stored?.roleDuration)
+    ? stored.roleDuration
+    : null;
+  const storedLabel = stored?.roleLabel?.trim()
+    ? stored.roleLabel.trim()
+    : null;
+
+  const roleLabel = storedLabel ?? (live.isHead ? "Head" : null);
+  const duration = storedDuration ?? "full";
+  const roleDuration = storedRoleDuration ?? (live.isHead ? "full" : null);
+
+  return {
+    duration,
+    roleLabel,
+    // Always inside the membership, so a stored or seeded value that sticks
+    // out of it can never render.
+    roleDuration: roleLabel ? clampRoleDuration(duration, roleDuration) : null,
+    extraContribution: stored?.extraContribution?.trim()
+      ? stored.extraContribution.trim()
+      : null,
+  };
+}

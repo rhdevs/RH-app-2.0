@@ -1,238 +1,245 @@
-import Image from "next/image";
+import { type ReactNode } from "react";
+import { formatIssuedOn } from "~/lib/transcript/assemble";
 import {
-  type CommitmentLevel,
-  type Signatory,
-  type Transcript,
-  formatIssuedOn,
-  groupByYear,
-} from "~/lib/transcript/demoData";
-import { documentSerif, signatureScript } from "./fonts";
-import { VerifyQr } from "./VerifyQr";
+  type TranscriptPage,
+  type TranscriptViewModel,
+} from "~/lib/transcript/types";
+import { JcrcPageBody } from "./JcrcPageBody";
+import { META_COLUMNS, MetaRow, PageHeader } from "./PageHeader";
+import { ClosingBlock, TranscriptSections } from "./TranscriptSections";
+
+export const EMPTY_YEAR_MESSAGE =
+  "No recorded involvements for this academic year.";
+
+/** A light diagonal word across the page. Grey, not coloured: the document's only colour is the crest. */
+const watermark = (word: string) =>
+  `url("data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='360' height='240'><text x='50%' y='50%' text-anchor='middle' dominant-baseline='middle' transform='rotate(-24 180 120)' font-family='Arial,Helvetica,sans-serif' font-size='44' font-weight='700' letter-spacing='6' fill='rgba(0,0,0,0.06)'>${word}</text></svg>`,
+  )}")`;
+const WATERMARK = watermark("SPECIMEN");
+
+/** Faint paper hatch, on screen only (never printed). */
+const HATCH =
+  "repeating-linear-gradient(135deg, rgba(0,0,0,.025) 0 1px, transparent 1px 4px)";
 
 /**
- * Tiled diagonal "SPECIMEN" behind the whole document. A background TILE
- * rather than one absolutely-positioned word, so it repeats onto every printed
- * page; `print-color-adjust: exact` stops the browser dropping it when
- * printing, which it otherwise does to all backgrounds by default.
+ * Print rules.
+ *
+ * FOOTER, in two layers so it works everywhere. Where the browser supports
+ * `@page` margin boxes (Chrome 131+) both halves of the footer are margin
+ * boxes, so they share one baseline: the resident's name and matric at the left
+ * and "Page X of Y", counted by the browser, at the right. The name is written
+ * into the stylesheet as CSS hex escapes of every character, so nothing the
+ * resident typed can reach the CSS as markup. Everywhere else the name and
+ * matric are a plain `position: fixed` element, which every browser repeats on
+ * every printed page (pinned to the bottom of the content area: a fixed element
+ * pushed into the page margin is clipped on page 1 in Chrome), and no page
+ * numbers print. The fixed element is switched off where the margin boxes work
+ * (`interpolate-size`, which shipped in Chrome just before them), or Chrome
+ * would print the name twice. Each sheet ends in a repeating empty table footer
+ * (`rh-print-spacer`) that reserves the footer's space, so body text never
+ * prints underneath it.
+ * On screen each logical page shows its own footer instead.
+ *
+ * Backgrounds are dropped when printing unless `print-color-adjust: exact`, so
+ * the SPECIMEN watermark sets it. The hatch is removed in print so nothing
+ * dark is printed.
  */
-const WATERMARK = `url("data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns='http://www.w3.org/2000/svg' width='360' height='240'><text x='50%' y='50%' text-anchor='middle' dominant-baseline='middle' transform='rotate(-30 180 120)' font-family='Georgia,serif' font-size='44' font-weight='700' letter-spacing='6' fill='rgba(180,40,40,0.09)'>SPECIMEN</text></svg>`,
-)}")`;
+/** Every character as a CSS hex escape: safe inside a CSS string whatever it is. */
+const cssString = (text: string) =>
+  [...text].map((c) => "\\" + c.codePointAt(0)!.toString(16) + " ").join("");
 
-const COMMITMENT_STYLE: Record<CommitmentLevel, string> = {
-  High: "bg-emerald-100 text-emerald-900",
-  Moderate: "bg-amber-100 text-amber-900",
-  Light: "bg-stone-200 text-stone-800",
-};
-
-function Signature({
-  signatory,
-  size = "md",
-}: {
-  signatory: Signatory;
-  size?: "sm" | "md";
-}) {
-  return (
-    <div className="flex flex-col">
-      <span
-        className={`${signatureScript.className} leading-none text-[#1d2b5c] ${
-          size === "sm" ? "text-[26px]" : "text-[38px]"
-        }`}
-        aria-hidden
-      >
-        {signatory.name}
-      </span>
-      <span
-        className={`border-t border-stone-400 pt-1 ${
-          size === "sm" ? "text-[11px]" : "text-sm"
-        }`}
-      >
-        <span className="font-semibold">{signatory.name}</span>
-        <br />
-        <span className="text-stone-600">{signatory.title}</span>
-      </span>
-    </div>
-  );
+const documentCss = (footerText: string) => `
+@page {
+  size: A4;
+  margin: 14mm 14mm 12mm;
+  @bottom-left { content: "${cssString(footerText)}"; vertical-align: top; font: 10.5px Arial, Helvetica, sans-serif; color: #000; }
+  @bottom-right { content: "Page " counter(page) " of " counter(pages); vertical-align: top; font: 10.5px Arial, Helvetica, sans-serif; color: #000; }
 }
+.rh-paper { background-image: ${HATCH}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.rh-paper.rh-specimen { background-image: ${WATERMARK}, ${HATCH}; }
+.rh-print-footer, .rh-print-spacer { display: none; }
+@media print {
+  html, body, main { background: #fff !important; }
+  .rh-paper { background-image: none; }
+  .rh-paper.rh-specimen { background-image: ${WATERMARK}; }
+  .rh-print-footer { display: block; position: fixed; left: 0; bottom: 0; font: 10.5px Arial, Helvetica, sans-serif; color: #000; }
+  @supports (interpolate-size: allow-keywords) { .rh-print-footer { display: none; } }
+  .rh-print-spacer { display: table-footer-group; }
+  .rh-print-spacer td { height: 8mm; padding: 0; }
+}`;
 
-export function TranscriptDocument({ transcript }: { transcript: Transcript }) {
-  const years = groupByYear(transcript.entries);
-  const leadership = transcript.entries.filter((e) =>
-    isLeadershipPosition(e.position),
-  ).length;
-  const distinctCcas = new Set(transcript.entries.map((e) => e.ccaName)).size;
+/**
+ * One academic year's transcript: an ordered list of pages, each starting on a
+ * new printed page. Black text on white, thin rules, tables. The only colour is
+ * the Raffles Hall crest in each page header.
+ */
+export function TranscriptDocument({
+  transcript,
+}: {
+  transcript: TranscriptViewModel;
+}) {
+  const { resident } = transcript;
 
   return (
-    <article
-      className={`${documentSerif.className} relative mx-auto w-full max-w-[210mm] bg-[#fdfcf8] px-6 py-8 text-stone-900 shadow-xl sm:px-12 sm:py-12 print:max-w-none print:px-0 print:py-0 print:shadow-none`}
-      style={{
-        backgroundImage: transcript.isSpecimen ? WATERMARK : undefined,
-        printColorAdjust: "exact",
-        WebkitPrintColorAdjust: "exact",
-      }}
-    >
-      {transcript.isSpecimen && (
-        <p className="mb-6 rounded border border-red-300 bg-red-50 px-3 py-2 text-center font-sans text-xs font-semibold uppercase tracking-wider text-red-800">
-          Specimen · demonstration data · not an official record of Raffles Hall
-        </p>
-      )}
-
-      {/* Letterhead */}
-      <header className="flex items-center gap-4 border-b-2 border-emerald-900 pb-5">
-        <Image
-          src="/raffles-hall-logo.svg"
-          alt="Raffles Hall crest"
-          width={64}
-          height={64}
-          className="h-16 w-16"
+    <article className="font-[Arial,Helvetica,sans-serif] text-[11.5px] leading-[1.4] text-black">
+      <style
+        dangerouslySetInnerHTML={{
+          __html: documentCss(`${resident.name} (${resident.matric})`),
+        }}
+      />
+      <p className="rh-print-footer">
+        {resident.name} ({resident.matric})
+      </p>
+      {transcript.pages.map((page, index) => (
+        <Sheet
+          key={page.kind}
+          index={index}
+          total={transcript.pages.length}
+          transcript={transcript}
+          {...pageParts(page, transcript)}
         />
-        <div className="flex-1">
-          <p className="text-xs uppercase tracking-[0.25em] text-stone-600">
-            National University of Singapore
-          </p>
-          <h1 className="text-2xl font-semibold tracking-wide text-emerald-950 sm:text-3xl">
-            Raffles Hall
-          </h1>
-          <p className="text-base italic text-stone-700">
-            Co-Curricular Activities Transcript
-          </p>
-        </div>
-      </header>
-
-      {/* Resident particulars */}
-      <section className="grid grid-cols-1 gap-x-8 gap-y-2 border-b border-stone-300 py-5 text-[15px] sm:grid-cols-2">
-        <Particular label="Name of resident" value={transcript.resident.name} />
-        <Particular label="Matriculation no." value={transcript.resident.matric} />
-        <Particular label="Faculty" value={transcript.resident.faculty} />
-        <Particular label="Period of residence" value={transcript.residencyPeriod} />
-        <Particular label="Date of issue" value={formatIssuedOn(transcript.issuedOn)} />
-        <Particular
-          label="Verification code"
-          value={transcript.verificationCode}
-          mono
-        />
-      </section>
-
-      {/* Summary */}
-      <section className="grid grid-cols-3 border-b border-stone-300 py-4 text-center">
-        <Stat value={years.length} label="Academic years" />
-        <Stat value={distinctCcas} label="CCAs" />
-        <Stat value={leadership} label="Leadership roles" />
-      </section>
-
-      {/* Record, one block per academic year */}
-      <section className="space-y-6 py-6">
-        {years.map(({ academicYear, entries }) => (
-          <div key={academicYear} className="break-inside-avoid">
-            <h2 className="mb-2 text-lg font-semibold uppercase tracking-widest text-emerald-900">
-              {academicYear}
-            </h2>
-            <ol className="divide-y divide-stone-200 border-y border-stone-300">
-              {entries.map((e) => (
-                <li
-                  key={`${e.academicYear}-${e.ccaName}`}
-                  className="grid grid-cols-1 gap-3 py-3 sm:grid-cols-[1fr_190px] sm:gap-6"
-                >
-                  <div>
-                    <p className="text-[17px] font-semibold leading-snug">
-                      {e.ccaName}
-                      <span className="font-normal text-stone-600">
-                        {" "}
-                        — {e.position}
-                      </span>
-                    </p>
-                    <p className="text-xs uppercase tracking-wider text-stone-500">
-                      {e.category}
-                    </p>
-                    <p className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
-                      <span
-                        className={`rounded px-1.5 py-0.5 font-sans text-[11px] font-semibold ${COMMITMENT_STYLE[e.commitment.level]}`}
-                      >
-                        {e.commitment.level} commitment
-                      </span>
-                      <span className="text-stone-600">
-                        ~{e.commitment.hoursPerWeek} h/week
-                      </span>
-                    </p>
-                    <p className="mt-1 text-[15px] italic text-stone-700">
-                      {e.commitment.summary}
-                    </p>
-                  </div>
-                  <Signature signatory={e.certifiedBy} size="sm" />
-                </li>
-              ))}
-            </ol>
-          </div>
-        ))}
-      </section>
-
-      {/* Endorsement */}
-      <section className="break-inside-avoid border-t-2 border-emerald-900 pt-6">
-        <p className="mb-8 text-[15px] leading-relaxed text-stone-700">
-          We certify that the above is a true record of the resident&rsquo;s
-          participation in the co-curricular life of Raffles Hall, as attested
-          by the respective CCA leaders for each academic year.
-        </p>
-        <div className="grid grid-cols-1 gap-8 sm:grid-cols-2">
-          <Signature signatory={transcript.jcrcPresident} />
-          <Signature signatory={transcript.master} />
-        </div>
-      </section>
-
-      {/* Verification footer */}
-      <footer className="mt-10 flex items-center gap-4 border-t border-stone-300 pt-4 font-sans text-xs text-stone-600">
-        <VerifyQr code={transcript.verificationCode} />
-        <p className="leading-relaxed">
-          To verify this transcript, scan the code or visit{" "}
-          <span className="font-semibold">rhapp.lol/verify</span> and enter{" "}
-          <span className="font-mono font-semibold text-stone-900">
-            {transcript.verificationCode}
-          </span>
-          . The verification page shows the record as held by Raffles Hall;
-          any difference from this copy means this copy has been altered.
-        </p>
-      </footer>
+      ))}
     </article>
   );
 }
 
 /**
- * Named roles, not "anything but Member": Writer or Developer is a function in
- * the CCA, not a leadership position, and counting it would overstate the
- * record to exactly the outside reader this document is for.
+ * One page of the document: the sheet, its footer, and a page break before.
+ *
+ * The page header sits in a table <thead> so that, when a page runs onto a
+ * second printed page, the crest and title repeat there like a letterhead
+ * (browsers repeat a table header on every printed page it spans).
  */
-function isLeadershipPosition(position: string): boolean {
-  return /captain|head|chair|president|secretary|director|lead/i.test(position);
-}
-
-function Particular({
-  label,
-  value,
-  mono,
+function Sheet({
+  index,
+  total,
+  transcript,
+  header,
+  body,
 }: {
-  label: string;
-  value: string;
-  mono?: boolean;
+  index: number;
+  total: number;
+  transcript: TranscriptViewModel;
+  header: ReactNode;
+  body: ReactNode;
 }) {
+  const { resident } = transcript;
   return (
-    <div className="flex flex-col">
-      <span className="text-[11px] uppercase tracking-wider text-stone-500">
-        {label}
-      </span>
-      <span className={mono ? "font-mono text-sm font-semibold" : "font-semibold"}>
-        {value}
-      </span>
-    </div>
+    <section
+      className={`rh-paper ${
+        resident.isSpecimen ? "rh-specimen" : ""
+      } relative mx-auto mb-3.5 flex min-h-[297mm] w-full max-w-[210mm] flex-col bg-white p-5 shadow-[0_1px_6px_rgba(0,0,0,0.2)] sm:p-[14mm] print:mb-0 print:min-h-0 print:max-w-none print:p-0 print:shadow-none ${
+        index > 0 ? "print:break-before-page" : ""
+      }`}
+    >
+      {index === 0 && resident.isSpecimen && (
+        <p className="mb-3 border border-black px-2 py-1 text-center text-[10.5px] font-bold uppercase tracking-wider">
+          Specimen · demonstration data · not an official record of Raffles Hall
+        </p>
+      )}
+      <table className="w-full flex-1 border-collapse">
+        <thead>
+          <tr>
+            <td className="p-0">{header}</td>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="p-0 align-top">
+              {body}
+              {index === total - 1 && <ClosingBlock />}
+            </td>
+          </tr>
+        </tbody>
+        <tfoot className="rh-print-spacer">
+          <tr>
+            <td />
+          </tr>
+        </tfoot>
+      </table>
+      <footer className="mt-4 flex justify-between border-t border-black pt-[3px] text-[10.5px] print:hidden">
+        <span>
+          {resident.name} ({resident.matric})
+        </span>
+        <span>
+          Page {index + 1} of {total}
+        </span>
+      </footer>
+    </section>
   );
 }
 
-function Stat({ value, label }: { value: number; label: string }) {
-  return (
-    <div>
-      <p className="text-2xl font-semibold text-emerald-900">{value}</p>
-      <p className="text-[11px] uppercase tracking-wider text-stone-500">
-        {label}
-      </p>
-    </div>
-  );
+/** A page split into the part that repeats in print and the part that flows. */
+function pageParts(
+  page: TranscriptPage,
+  transcript: TranscriptViewModel,
+): { header: ReactNode; body: ReactNode } {
+  const { resident, issue, academicYear } = transcript;
+
+  switch (page.kind) {
+    case "main":
+      return {
+        header: (
+          <PageHeader
+            level="h1"
+            title="Student Development Transcript"
+            subtitle="Raffles Hall, National University of Singapore"
+          />
+        ),
+        body: (
+          <>
+            <MetaRow
+              items={[
+                { label: "Name", value: resident.name.toUpperCase() },
+                { label: "Matric no.", value: resident.matric },
+                { label: "Academic year", value: academicYear },
+                {
+                  label: "Date issued",
+                  value: issue.issuedOn
+                    ? formatIssuedOn(issue.issuedOn)
+                    : "Not yet issued",
+                },
+              ]}
+            />
+            {transcript.isEmpty ? (
+              <p
+                role="status"
+                className="py-10 text-center italic text-neutral-700"
+              >
+                {EMPTY_YEAR_MESSAGE}
+              </p>
+            ) : (
+              <TranscriptSections sections={page.sections} />
+            )}
+          </>
+        ),
+      };
+    case "jcrc":
+      return {
+        header: (
+          <PageHeader
+            title="Junior Common Room Committee"
+            subtitle={`Hall leadership record · ${page.jcrc.term}`}
+          />
+        ),
+        body: (
+          <>
+            <MetaRow
+              columns={META_COLUMNS.jcrc}
+              items={[
+                { label: "Name", value: resident.name.toUpperCase() },
+                { label: "Matric no.", value: resident.matric },
+                {
+                  label: "Position",
+                  value: `${page.jcrc.position}, ${page.jcrc.portfolio}`,
+                },
+                { label: "Term", value: page.jcrc.term },
+              ]}
+            />
+            <JcrcPageBody jcrc={page.jcrc} />
+          </>
+        ),
+      };
+  }
 }

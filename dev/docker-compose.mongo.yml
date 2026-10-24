@@ -1,0 +1,31 @@
+# Local MongoDB for transcript development: a single-node replica set (Prisma
+# needs one for transactions). LOCALHOST ONLY — the port is bound to 127.0.0.1.
+#
+#   npm run dev:db:up      start (and initiate the replica set on first run)
+#   npm run dev:db:down    stop (data is kept in the named volume)
+#
+# DATABASE_URL="mongodb://localhost:27017/rhapp_transcript_dev?replicaSet=rs0&directConnection=true"
+services:
+  mongo:
+    image: mongo:7
+    container_name: rhapp-transcript-mongo
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - rhapp-transcript-mongo-data:/data/db
+    healthcheck:
+      # Initiates the replica set once; healthy only when a primary exists.
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }; quit(db.hello().isWritablePrimary ? 0 : 1)"
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  rhapp-transcript-mongo-data:

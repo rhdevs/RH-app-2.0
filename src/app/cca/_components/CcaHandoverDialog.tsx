@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { X } from "lucide-react";
 
@@ -18,6 +19,7 @@ import HeadCandidateInput, {
   type ResolvedHead,
 } from "~/app/_components/HeadCandidateInput";
 import type { RosterEntry } from "~/server/api/services/ccaRoster";
+import { HANDOVER_ROLE_NOTE } from "~/lib/transcript/headView";
 
 /**
  * Hand a CCA over: name the new head(s), preview, and OVERWRITE the head set to
@@ -27,6 +29,25 @@ import type { RosterEntry } from "~/server/api/services/ccaRoster";
  * handing over. The dialog makes that consequence loud, since it can't be undone
  * from here (only an admin/JCRC can re-grant).
  */
+
+/**
+ * The transcript reminder in the handover dialog: the outgoing heads set their
+ * own role and bring this year's records up to date; the new heads set theirs
+ * and can carry on until transcripts open.
+ */
+export function HandoverTranscriptReminder({ ccaID }: { ccaID: number }) {
+  return (
+    <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      {HANDOVER_ROLE_NOTE} Before you hand over, make sure this year&apos;s
+      transcript records (roles, activities, contributions and volunteer hours)
+      are up to date. The new heads can continue them until the JCRC opens
+      transcripts.{" "}
+      <Link href={`/cca/${ccaID}/transcript`} className="font-medium underline">
+        Open transcript records
+      </Link>
+    </p>
+  );
+}
 
 /** Canonical userID candidates a head roster entry could match. */
 function headKeys(entry: RosterEntry): string[] {
@@ -113,6 +134,7 @@ export default function CcaHandoverDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          <HandoverTranscriptReminder ccaID={ccaID} />
           <HeadCandidateInput
             ccaID={ccaID}
             confirmLabel="Add"

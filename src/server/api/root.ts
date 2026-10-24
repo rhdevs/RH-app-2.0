@@ -10,6 +10,8 @@ import { ccaApplicationsHeadRouter } from "./routers/ccaApplicationsHead";
 import { ccaPointsRouter } from "./routers/ccaPoints";
 import { ccaRecruitmentRouter } from "./routers/ccaRecruitment";
 import { eventRouter } from "./routers/event";
+import { transcriptRouter } from "./routers/transcript";
+import { transcriptManageRouter } from "./routers/transcriptManage";
 import { userAdminRouter } from "./routers/userAdmin";
 
 /**
@@ -65,6 +67,10 @@ export const appRouter = createTRPCRouter({
   /** Events: head authoring, JCRC review, resident timeline + signup. Behind
    * the events.enabled switch; object-scoped per event's ccaID. */
   event: eventRouter,
+  /** Transcripts: year control, the resident's own transcript, preview. See routers/transcript.ts. */
+  transcript: transcriptRouter,
+  /** Transcript management: head, JCRC and admin edits. See routers/transcriptManage.ts. */
+  transcriptManage: transcriptManageRouter,
 });
 
 // export type definition of API

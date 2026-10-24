@@ -1,0 +1,1664 @@
+import { execFileSync } from "node:child_process";
+import type { PrismaClient } from "@prisma/client";
+import { TRPCError } from "@trpc/server";
+import type { createCaller as CreateCaller } from "~/server/api/root";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { awardActiveKey } from "~/lib/transcript/awards";
+import { isLocalDevDatabase } from "./localDbGate";
+
+/**
+ * INTEGRATION TESTS of awards (catalogue, assignment, bulk edits, upload
+ * history) against the LOCAL development database (skipped unless DATABASE_URL
+ * is localhost and the database is `rhapp_transcript_dev`; run `npm run
+ * test:db`). The seed is re-run before every test. It gives a catalogue of five
+ * awards (one archived, "Retired Award"); SEED-R04 holds "Colours Award,
+ * Soccer"; SEED-R12 holds "Service Excellence Award" and "Outstanding
+ * Newcomer"; SEED-R13 to R15 hold "Full Colours" from the upload
+ * "colours-2026.csv".
+ */
+
+const AY = "AY2026/27";
+const OLD = "AY2025/26";
+const NOW = new Date("2026-10-16T04:00:00Z");
+
+const R = (n: number, roles: string[]) => ({
+  id: `SEED-R${String(n).padStart(2, "0")}`,
+  roles,
+});
+const ADMIN = R(1, ["admin", "resident"]);
+const JCRC = R(2, ["jcrc", "resident"]);
+const SOCCER_HEAD = R(4, ["cca_head", "resident"]);
+const PLAIN = R(9, ["resident"]);
+const SCRC = { id: PLAIN.id, roles: ["scrc", "resident"] };
+
+describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
+  "awards (local database)",
+  { timeout: 120_000 },
+  () => {
+    let db: PrismaClient;
+    let createCaller: typeof CreateCaller;
+    let loader: typeof import("../loader");
+    let retention: typeof import("../retention");
+    let ipCounter = 0;
+
+    const as = (who: { id: string; roles: string[] } | null) =>
+      createCaller({
+        db,
+        session: who
+          ? ({
+              user: {
+                userID: who.id,
+                roles: who.roles,
+                eligible: true,
+                hasMatric: true,
+                credentialsStale: false,
+              },
+              expires: new Date(Date.now() + 3600_000).toISOString(),
+            } as never)
+          : null,
+        headers: new Headers({
+          "x-forwarded-for": `203.0.113.${(ipCounter += 1)}`,
+        }),
+      }).transcriptManage;
+
+    const errorOf = async (promise: Promise<unknown>) => {
+      try {
+        await promise;
+      } catch (error) {
+        const e = error as { code?: string; message?: string };
+        return `${e.code}:${e.message}`;
+      }
+      return "ok";
+    };
+
+    const reseed = () =>
+      execFileSync(process.execPath, ["scripts/dev/seed-transcript.mjs"], {
+        stdio: "pipe",
+      });
+
+    beforeAll(async () => {
+      reseed();
+      ({ db } = await import("~/server/db"));
+      ({ createCaller } = await import("~/server/api/root"));
+      loader = await import("../loader");
+      retention = await import("../retention");
+    }, 120_000);
+
+    beforeEach(() => {
+      reseed();
+    }, 120_000);
+
+    afterAll(async () => {
+      if (db) {
+        reseed();
+        await db.$disconnect();
+      }
+    }, 120_000);
+
+    const type = (normalizedName: string) =>
+      db.awardType.findUniqueOrThrow({ where: { normalizedName } });
+    const fullColours = () => type("full colours");
+
+    const live = { OR: [{ voidedAt: null }, { voidedAt: { isSet: false } }] };
+    const awardsOf = (userID: string, title?: string) =>
+      db.award.findMany({
+        where: {
+          academicYear: AY,
+          userID,
+          ...(title ? { title } : {}),
+          ...live,
+        },
+      });
+
+    const publish = () =>
+      db.transcriptPeriod.update({
+        where: { academicYear: AY },
+        data: {
+          status: "published",
+          publishedAt: new Date(),
+          publishedBy: ADMIN.id,
+        },
+      });
+
+    const assign = async (
+      who: { id: string; roles: string[] },
+      name: string,
+      recipients: Array<{ userID: string; citation?: string | null }>,
+    ) =>
+      as(who).awards.assign({
+        academicYear: AY,
+        awardTypeID: (await type(name.toLowerCase())).id,
+        recipients,
+      });
+
+    /* ---------------------------------------------------------------- */
+    describe("one active award per year, person and award (F20)", () => {
+      it("gives the award once when it is submitted five times at once", async () => {
+        const t = await fullColours();
+        const results = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            as(JCRC).awards.assign({
+              academicYear: AY,
+              awardTypeID: t.id,
+              recipients: [{ userID: "SEED-R20" }],
+            }),
+          ),
+        );
+
+        expect(await awardsOf("SEED-R20", "Full Colours")).toHaveLength(1);
+        expect(results.reduce((n, r) => n + r.assigned, 0)).toBe(1);
+        expect(results.filter((r) => r.assigned === 0)).toHaveLength(4);
+        for (const r of results.filter((x) => x.assigned === 0)) {
+          expect(r.skipped.map((s) => s.userID)).toEqual(["SEED-R20"]);
+        }
+      });
+
+      it("frees the key on remove and takes it back on restore", async () => {
+        const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        const key = a.activeKey;
+        expect(key).toBe(`${AY}|SEED-R13|${a.awardTypeID}`);
+
+        await as(JCRC).awards.remove({ id: a.id });
+        const removed = await db.award.findUniqueOrThrow({
+          where: { id: a.id },
+        });
+        expect(removed.activeKey).toBe(`${key}|removed|${a.id}`);
+
+        await as(JCRC).awards.restore({ id: a.id });
+        const back = await db.award.findUniqueOrThrow({ where: { id: a.id } });
+        expect(back.activeKey).toBe(key);
+        expect(back.voidedAt ?? null).toBeNull();
+      });
+
+      it("lets someone be given the award again after a removal", async () => {
+        const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await as(JCRC).awards.remove({ id: a.id });
+
+        const again = await assign(JCRC, "Full Colours", [
+          { userID: "SEED-R13" },
+        ]);
+
+        expect(again.assigned).toBe(1);
+        expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(1);
+      });
+
+      it("after a duplicate, the person-by-person fallback reports every award it gave as assigned, even when a person's write had to be retried (T2)", async () => {
+        const { awardsAssign } = await import("../manageAwards");
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16", "SEED-R17"];
+        for (const p of people)
+          expect(await awardsOf(p, t.name)).toHaveLength(0);
+        // Transaction 1 (everyone at once) hits a duplicate; transactions 2
+        // and 3-5 are the first person and three conflicts for the second,
+        // more than the old three-try wrapper took before the whole assignment
+        // was rerun and the first person reported as skipped.
+        let started = 0;
+        const failing = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return (
+                fn: (tx: unknown) => Promise<unknown>,
+                opts?: unknown,
+              ) => {
+                started += 1;
+                if (started === 1) {
+                  return Promise.reject(
+                    Object.assign(new Error("dup"), { code: "P2002" }),
+                  );
+                }
+                if (started >= 3 && started <= 5) {
+                  return Promise.reject(
+                    Object.assign(new Error("conflict"), { code: "P2034" }),
+                  );
+                }
+                return (
+                  target.$transaction as unknown as (
+                    f: (tx: unknown) => Promise<unknown>,
+                    o?: unknown,
+                  ) => Promise<unknown>
+                )(fn, opts);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+
+        const result = await awardsAssign(failing, JCRC.id, {
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: [...people, "SEED-R13"].map((userID) => ({
+            userID,
+            citation: null,
+          })),
+        });
+
+        expect(result.assigned).toBe(3);
+        expect(result.skipped.map((s) => s.userID)).toEqual(["SEED-R13"]);
+        for (const p of people)
+          expect(await awardsOf(p, t.name)).toHaveLength(1);
+      });
+
+      it("refuses to restore when an active twin exists: ALREADY_HAS_AWARD", async () => {
+        const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await as(JCRC).awards.remove({ id: a.id });
+        await assign(JCRC, "Full Colours", [{ userID: "SEED-R13" }]);
+
+        expect(await errorOf(as(JCRC).awards.restore({ id: a.id }))).toBe(
+          "CONFLICT:ALREADY_HAS_AWARD",
+        );
+        expect(
+          (await db.award.findUniqueOrThrow({ where: { id: a.id } })).voidedAt,
+        ).not.toBeNull();
+        const { errorText } = await import("~/lib/transcript/adminView");
+        expect(errorText("ALREADY_HAS_AWARD")).toMatch(
+          /already has this award/,
+        );
+      });
+
+      it("refuses a second active copy at the database, whatever the code does", async () => {
+        const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await expect(
+          db.award.create({
+            data: {
+              academicYear: AY,
+              userID: a.userID,
+              title: a.title,
+              awardTypeID: a.awardTypeID,
+              activeKey: a.activeKey,
+            },
+          }),
+        ).rejects.toMatchObject({ code: "P2002" });
+      });
+
+      it("renaming an award with no catalogue entry moves its key, and refuses a clash", async () => {
+        await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "Old Plaque",
+            activeKey: `${AY}|SEED-R20|title:old plaque`,
+          },
+        });
+        await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "New Plaque",
+            activeKey: `${AY}|SEED-R20|title:new plaque`,
+          },
+        });
+        const old = await db.award.findFirstOrThrow({
+          where: { userID: "SEED-R20", title: "Old Plaque" },
+        });
+
+        expect(
+          await errorOf(
+            as(JCRC).awards.update({
+              id: old.id,
+              title: "New  Plaque",
+              citation: null,
+            }),
+          ),
+        ).toBe("CONFLICT:AWARD_DUPLICATE");
+        expect(
+          await errorOf(
+            as(JCRC).awards.update({
+              id: old.id,
+              title: "Third Plaque",
+              citation: null,
+            }),
+          ),
+        ).toBe("ok");
+        expect(
+          (await db.award.findUniqueOrThrow({ where: { id: old.id } }))
+            .activeKey,
+        ).toBe(`${AY}|SEED-R20|title:third plaque`);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("an edit that loses a race with a remove (F38)", () => {
+      it("is refused with AWARD_REMOVED and leaves the removed key alone", async () => {
+        const { awardUpdate } = await import("../manageAwards");
+        await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "Old Plaque",
+            activeKey: `${AY}|SEED-R20|title:old plaque`,
+          },
+        });
+        const stale = await db.award.findFirstOrThrow({
+          where: { userID: "SEED-R20", title: "Old Plaque" },
+        });
+        // The remove wins the race...
+        await as(JCRC).awards.remove({ id: stale.id });
+        const removedKey = (
+          await db.award.findUniqueOrThrow({ where: { id: stale.id } })
+        ).activeKey;
+        expect(removedKey).toBe(`${stale.activeKey}|removed|${stale.id}`);
+
+        // ...and the edit, which read the award before it was removed, writes after.
+        const racing = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "award") {
+              return new Proxy(target.award, {
+                get(m, p) {
+                  if (p === "findUnique") return () => Promise.resolve(stale);
+                  const v: unknown = Reflect.get(m, p, m);
+                  return typeof v === "function"
+                    ? (v as (...a: unknown[]) => unknown).bind(m)
+                    : v;
+                },
+              });
+            }
+            return Reflect.get(target, prop, receiver) as unknown;
+          },
+        });
+
+        expect(
+          await errorOf(
+            awardUpdate(racing, JCRC.id, {
+              id: stale.id,
+              title: "New Plaque",
+              citation: null,
+            }),
+          ),
+        ).toBe("CONFLICT:AWARD_REMOVED");
+        const after = await db.award.findUniqueOrThrow({
+          where: { id: stale.id },
+        });
+        expect(after.activeKey).toBe(removedKey);
+        expect(after.title).toBe("Old Plaque");
+        expect(after.voidedAt).not.toBeNull();
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("assigning to a big list (F25b)", () => {
+      it("gives the award to a list of 500 and still reports an unknown person", async () => {
+        const t = await fullColours();
+        const known = Array.from(
+          { length: 20 },
+          (_, i) => `SEED-R${String(i + 1).padStart(2, "0")}`,
+        );
+        const recipients = Array.from({ length: 500 }, (_, i) => ({
+          userID: known[i % known.length]!,
+        }));
+
+        const started = Date.now();
+        const result = await as(JCRC).awards.assign({
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients,
+        });
+
+        expect(Date.now() - started).toBeLessThan(30_000);
+        expect(result.assigned + result.skipped.length).toBe(500);
+        expect(result.assigned).toBeGreaterThan(0);
+
+        expect(
+          await errorOf(
+            as(JCRC).awards.assign({
+              academicYear: AY,
+              awardTypeID: t.id,
+              recipients: [
+                ...recipients.slice(0, 5),
+                { userID: "NO-SUCH-USER" },
+              ],
+            }),
+          ),
+        ).toBe("NOT_FOUND:RESIDENT_NOT_FOUND");
+      }, 120_000);
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("bulk restore (F25)", () => {
+      it("restores 300 removed awards quickly, in memory twin checks, and refuses twins", async () => {
+        const t = await fullColours();
+        const year = AY;
+        // 300 removed awards for 300 made-up people, plus one active twin.
+        const people = Array.from({ length: 300 }, (_, i) => `BULK-${i}`);
+        const now = new Date();
+        await db.award.createMany({
+          data: people.map((userID, i) => ({
+            academicYear: year,
+            userID,
+            title: "Full Colours",
+            awardTypeID: t.id,
+            voidedAt: now,
+            voidedBy: ADMIN.id,
+            activeKey: `${year}|${userID}|${t.id}|removed|bulk${i}`,
+          })),
+        });
+        await db.award.create({
+          data: {
+            academicYear: year,
+            userID: "BULK-0",
+            title: "Full Colours",
+            awardTypeID: t.id,
+            activeKey: `${year}|BULK-0|${t.id}`,
+          },
+        });
+        try {
+          const ids = (
+            await db.award.findMany({
+              where: {
+                userID: { startsWith: "BULK-" },
+                voidedAt: { not: null },
+              },
+              select: { id: true },
+            })
+          ).map((a) => a.id);
+          expect(ids).toHaveLength(300);
+
+          const started = Date.now();
+          const result = await as(JCRC).awards.bulkRestore({ ids });
+          const seconds = (Date.now() - started) / 1000;
+
+          expect(result.restored).toBe(299);
+          expect(result.skipped).toHaveLength(1);
+          expect(result.skipped[0]).toContain("Full Colours");
+          expect(seconds).toBeLessThan(30);
+          expect(
+            await db.award.count({
+              where: { userID: { startsWith: "BULK-" }, ...live },
+            }),
+          ).toBe(300);
+        } finally {
+          await db.award.deleteMany({
+            where: { userID: { startsWith: "BULK-" } },
+          });
+        }
+      }, 120_000);
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("retried and partial bulk writes (U3, U4)", () => {
+      const logged = vi.spyOn(console, "error");
+      beforeEach(() => {
+        logged.mockReset();
+        logged.mockImplementation(() => undefined);
+      });
+      afterEach(() => logged.mockReset());
+      const lineFor = (evt: string) =>
+        logged.mock.calls
+          .map((c) => String(c[0]))
+          .find((l) => l.includes(`"evt":"${evt}"`));
+      /**
+       * A db whose n-th transaction (1-based) is replaced: `before` runs first
+       * (a rival write), then the transaction fails with `error` when one is
+       * given, else it runs as usual.
+       */
+      const interfering = (
+        plan: Record<
+          number,
+          { before?: () => Promise<unknown>; error?: Error }
+        >,
+      ) => {
+        let started = 0;
+        return new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop === "$transaction") {
+              return async (
+                fn: (tx: unknown) => Promise<unknown>,
+                opts?: unknown,
+              ) => {
+                started += 1;
+                const step = plan[started];
+                await step?.before?.();
+                if (step?.error) throw step.error;
+                return (
+                  target.$transaction as unknown as (
+                    f: (tx: unknown) => Promise<unknown>,
+                    o?: unknown,
+                  ) => Promise<unknown>
+                )(fn, opts);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }) as PrismaClient;
+      };
+      const conflict = () =>
+        Object.assign(new Error("conflict"), { code: "P2034" });
+      const duplicate = () =>
+        Object.assign(new Error("dup"), { code: "P2002" });
+
+      it("a bulk restore that is retried does not write over a row someone restored and renamed meanwhile (U3)", async () => {
+        const { awardsBulkRestore } = await import("../manageAwards");
+        const old = await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "Old Plaque",
+            activeKey: `${AY}|SEED-R20|title:old plaque`,
+          },
+        });
+        await as(JCRC).awards.remove({ id: old.id });
+
+        // The first attempt loses a write conflict; before the retry another
+        // manager restores the award and renames it.
+        const racing = interfering({
+          1: {
+            error: conflict(),
+            before: async () => {
+              await as(JCRC).awards.restore({ id: old.id });
+              await as(JCRC).awards.update({
+                id: old.id,
+                title: "Third Plaque",
+                citation: null,
+              });
+            },
+          },
+        });
+
+        const result = await awardsBulkRestore(racing, JCRC.id, [old.id]);
+
+        expect(result.restored).toBe(0);
+        const row = await db.award.findUniqueOrThrow({ where: { id: old.id } });
+        expect(row.title).toBe("Third Plaque");
+        expect(row.activeKey).toBe(`${AY}|SEED-R20|title:third plaque`);
+        expect(row.voidedAt ?? null).toBeNull();
+      });
+
+      it("a bulk remove that is retried leaves alone a row someone removed meanwhile, and counts only what it removed (U3)", async () => {
+        const { awardsBulkRemove } = await import("../manageAwards");
+        const [a, b] = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 2,
+        });
+        const racing = interfering({
+          1: {
+            error: conflict(),
+            before: () => as(JCRC).awards.remove({ id: a!.id }),
+          },
+        });
+
+        const result = await awardsBulkRemove(racing, JCRC.id, [a!.id, b!.id]);
+
+        expect(result.removed).toBe(1);
+        // Both are removed, and the one removed first was not counted again.
+        const rows = await db.award.findMany({
+          where: { id: { in: [a!.id, b!.id] } },
+        });
+        expect(rows.every((r) => r.voidedAt != null)).toBe(true);
+        expect(rows.map((r) => r.activeKey).sort()).toEqual(
+          [a!, b!].map((r) => `${r.activeKey}|removed|${r.id}`).sort(),
+        );
+      });
+
+      it("an assignment whose fallback fails part way returns who is done and the error code (U4)", async () => {
+        const { awardsAssign } = await import("../manageAwards");
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16", "SEED-R17"];
+        const busy = new TRPCError({
+          code: "CONFLICT",
+          message: "RECORDS_BUSY",
+        });
+        // 1: everyone at once hits a duplicate; 2: first person; 3: second fails.
+        const racing = interfering({
+          1: { error: duplicate() },
+          3: { error: busy },
+        });
+
+        const result = await awardsAssign(racing, JCRC.id, {
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: people.map((userID) => ({ userID, citation: null })),
+        });
+
+        expect(result.stopped).toBe("RECORDS_BUSY");
+        expect(JSON.parse(lineFor("award_assign_stopped")!)).toEqual({
+          evt: "award_assign_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
+        expect(result.assigned).toBe(1);
+        expect(result.assignedUserIDs).toEqual([people[0]]);
+        expect(await awardsOf(people[0]!, t.name)).toHaveLength(1);
+        expect(await awardsOf(people[1]!, t.name)).toHaveLength(0);
+        // Submitting again finishes the rest and skips the one already done.
+        const again = await awardsAssign(db, JCRC.id, {
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: people.map((userID) => ({ userID, citation: null })),
+        });
+        expect(again.stopped).toBeNull();
+        expect(again.assigned).toBe(2);
+        expect(again.skipped.map((x) => x.userID)).toEqual([people[0]]);
+      });
+
+      it("a bulk restore's person-by-person fallback does not count a row someone restored meanwhile (V1)", async () => {
+        const { awardsBulkRestore } = await import("../manageAwards");
+        const mine = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 3,
+        });
+        const ids = mine.map((m) => m.id);
+        for (const id of ids) await as(JCRC).awards.remove({ id });
+        // 1: everyone at once hits a duplicate; 2: before the first person's
+        // write another manager restores that very award.
+        const racing = interfering({
+          1: { error: duplicate() },
+          2: { before: () => as(JCRC).awards.restore({ id: ids[0]! }) },
+        });
+
+        const result = await awardsBulkRestore(racing, JCRC.id, ids);
+
+        expect(result).toMatchObject({ restored: 2, stopped: null });
+        expect([...result.restoredIDs].sort()).toEqual(
+          [ids[1]!, ids[2]!].sort(),
+        );
+        const active = await db.award.findMany({
+          where: { id: { in: ids }, ...live },
+        });
+        expect(active).toHaveLength(3);
+      });
+
+      it("an upload undo refuses when a row of someone the guard did not check turns up before the write (V4)", async () => {
+        const { awardBatchUndo } = await import("../manageAwards");
+        const b = await db.awardImportBatch.findFirstOrThrow();
+        const late = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await as(JCRC).awards.remove({ id: late.id }); // not a holder at the guard
+        // After the guard has read the holders, another manager restores it.
+        const racing = interfering({
+          1: { before: () => as(JCRC).awards.restore({ id: late.id }) },
+        });
+
+        const refused = await awardBatchUndo(racing, JCRC.id, b.id).then(
+          () => "ok",
+          (e: { code?: string; message?: string }) => `${e.code}:${e.message}`,
+        );
+
+        expect(refused).toBe("FORBIDDEN:ONLY_UNLOCKED_RESIDENTS");
+        // Nothing was written: the batch is not undone and every award stays.
+        const row = await db.awardImportBatch.findUniqueOrThrow({
+          where: { id: b.id },
+        });
+        expect(row.undoneAt ?? null).toBeNull();
+        for (const u of ["SEED-R13", "SEED-R14", "SEED-R15"]) {
+          expect(await awardsOf(u, "Full Colours")).toHaveLength(1);
+        }
+        // The next attempt runs the guard again, over all three, and succeeds.
+        const again = await awardBatchUndo(db, JCRC.id, b.id);
+        expect(again.removed).toBe(3);
+      });
+
+      it("a bulk restore whose fallback fails part way returns who is done and the error code (U4)", async () => {
+        const { awardsBulkRestore } = await import("../manageAwards");
+        const mine = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 3,
+        });
+        const ids = mine.map((m) => m.id);
+        for (const id of ids) await as(JCRC).awards.remove({ id });
+        const unknown = new Error("Transaction already closed (timeout)");
+        const racing = interfering({
+          1: { error: duplicate() },
+          3: { error: unknown },
+        });
+
+        const result = await awardsBulkRestore(racing, JCRC.id, ids);
+
+        expect(result.stopped).toBe("UNKNOWN");
+        const line = lineFor("award_restore_stopped");
+        expect(JSON.parse(line!)).toEqual({
+          evt: "award_restore_stopped",
+          academicYear: AY,
+          code: "UNKNOWN",
+          name: "Error",
+        });
+        expect(line).not.toContain("Transaction already closed");
+        expect(result.restored).toBe(1);
+        const active = await db.award.findMany({
+          where: { id: { in: ids }, ...live },
+        });
+        expect(active).toHaveLength(1);
+        // Submitting again restores the rest; the one already done is not touched.
+        const again = await awardsBulkRestore(db, JCRC.id, ids);
+        expect(again).toMatchObject({ restored: 2, stopped: null });
+      });
+
+      it("an assignment whose fallback stops on an unknown error logs only its code and name (F9)", async () => {
+        const { awardsAssign } = await import("../manageAwards");
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16"];
+        const unknown = new Error("Transaction already closed (timeout)");
+        const racing = interfering({
+          1: { error: duplicate() },
+          2: { error: unknown },
+        });
+
+        const result = await awardsAssign(racing, JCRC.id, {
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: people.map((userID) => ({ userID, citation: null })),
+        });
+
+        expect(result).toMatchObject({ stopped: "UNKNOWN", assigned: 0 });
+        const line = lineFor("award_assign_stopped");
+        expect(JSON.parse(line!)).toEqual({
+          evt: "award_assign_stopped",
+          academicYear: AY,
+          code: "UNKNOWN",
+          name: "Error",
+        });
+        expect(line).not.toContain("Transaction already closed");
+      });
+
+      it("an assignment's fallback does no write once the call is already past the time budget when it begins (F41, F57)", async () => {
+        const { awardsAssign, FALLBACK_BUDGET_MS } = await import(
+          "../manageAwards"
+        );
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16", "SEED-R17"];
+        let elapsed = 0;
+        // The call started at 0. The all-at-once write hits a duplicate, and by
+        // the time the fallback begins the budget is spent: nobody is written.
+        const racing = interfering({
+          1: {
+            error: duplicate(),
+            before: async () => {
+              elapsed = FALLBACK_BUDGET_MS + 1;
+            },
+          },
+        });
+
+        const result = await awardsAssign(
+          racing,
+          JCRC.id,
+          {
+            academicYear: AY,
+            awardTypeID: t.id,
+            recipients: people.map((userID) => ({ userID, citation: null })),
+          },
+          undefined,
+          { clock: () => elapsed },
+        );
+
+        expect(result.stopped).toBe("RECORDS_BUSY");
+        expect(result.assignedUserIDs).toEqual([]);
+        for (const userID of people) {
+          expect(await awardsOf(userID, t.name)).toHaveLength(0);
+        }
+        expect(JSON.parse(lineFor("award_assign_stopped")!)).toEqual({
+          evt: "award_assign_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
+      });
+
+      it("a restore's fallback does no write once the call is already past the time budget when it begins (F41, F57)", async () => {
+        const { awardsBulkRestore, FALLBACK_BUDGET_MS } = await import(
+          "../manageAwards"
+        );
+        const mine = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 3,
+        });
+        const ids = mine.map((m) => m.id);
+        for (const id of ids) await as(JCRC).awards.remove({ id });
+        let elapsed = 0;
+        const racing = interfering({
+          1: {
+            error: duplicate(),
+            before: async () => {
+              elapsed = FALLBACK_BUDGET_MS + 1;
+            },
+          },
+        });
+
+        const result = await awardsBulkRestore(
+          racing,
+          JCRC.id,
+          ids,
+          undefined,
+          {
+            clock: () => elapsed,
+          },
+        );
+
+        expect(result).toMatchObject({ restored: 0, stopped: "RECORDS_BUSY" });
+        expect(result.restoredIDs).toEqual([]);
+        const active = await db.award.findMany({
+          where: { id: { in: ids }, ...live },
+        });
+        expect(active).toHaveLength(0);
+        expect(JSON.parse(lineFor("award_restore_stopped")!)).toEqual({
+          evt: "award_restore_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
+      });
+
+      it("an assignment's fallback stops inside the loop once the budget passes after the first person (F64)", async () => {
+        const { awardsAssign, FALLBACK_BUDGET_MS } = await import(
+          "../manageAwards"
+        );
+        const t = await fullColours();
+        const people = ["SEED-R12", "SEED-R16", "SEED-R17"];
+        // Calls: the start, then one check before each person. Only the third
+        // call (before the second person) is past the budget.
+        let calls = 0;
+        const clock = () => (++calls <= 2 ? 0 : FALLBACK_BUDGET_MS + 1);
+        const racing = interfering({ 1: { error: duplicate() } });
+
+        const result = await awardsAssign(
+          racing,
+          JCRC.id,
+          {
+            academicYear: AY,
+            awardTypeID: t.id,
+            recipients: people.map((userID) => ({ userID, citation: null })),
+          },
+          undefined,
+          { clock },
+        );
+
+        expect(result.stopped).toBe("RECORDS_BUSY");
+        expect(result.assignedUserIDs).toHaveLength(1);
+        let written = 0;
+        for (const userID of people) {
+          written += (await awardsOf(userID, t.name)).length;
+        }
+        expect(written).toBe(1);
+        expect(JSON.parse(lineFor("award_assign_stopped")!)).toEqual({
+          evt: "award_assign_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
+      });
+
+      it("a restore's fallback stops inside the loop once the budget passes after the first award (F64)", async () => {
+        const { awardsBulkRestore, FALLBACK_BUDGET_MS } = await import(
+          "../manageAwards"
+        );
+        const mine = await db.award.findMany({
+          where: { academicYear: AY, title: "Full Colours", ...live },
+          take: 3,
+        });
+        const ids = mine.map((m) => m.id);
+        for (const id of ids) await as(JCRC).awards.remove({ id });
+        let calls = 0;
+        const clock = () => (++calls <= 2 ? 0 : FALLBACK_BUDGET_MS + 1);
+        const racing = interfering({ 1: { error: duplicate() } });
+
+        const result = await awardsBulkRestore(
+          racing,
+          JCRC.id,
+          ids,
+          undefined,
+          { clock },
+        );
+
+        expect(result).toMatchObject({ restored: 1, stopped: "RECORDS_BUSY" });
+        expect(result.restoredIDs).toHaveLength(1);
+        const active = await db.award.findMany({
+          where: { id: { in: ids }, ...live },
+        });
+        expect(active).toHaveLength(1);
+        expect(JSON.parse(lineFor("award_restore_stopped")!)).toEqual({
+          evt: "award_restore_stopped",
+          academicYear: AY,
+          code: "RECORDS_BUSY",
+          name: "TRPCError",
+        });
+      });
+    });
+
+    describe("self-recorded awards (F25a)", () => {
+      it("flags an award a manager recorded for themselves, and only that", async () => {
+        const t = await fullColours();
+        await as(JCRC).awards.assign({
+          academicYear: AY,
+          awardTypeID: t.id,
+          recipients: [{ userID: JCRC.id }, { userID: "SEED-R20" }],
+        });
+
+        const list = await as(JCRC).awards.list({ academicYear: AY });
+        const mine = list.find(
+          (a) => a.userID === JCRC.id && a.title === "Full Colours",
+        );
+        const theirs = list.find((a) => a.userID === "SEED-R20");
+        expect(mine?.selfRecorded).toBe(true);
+        expect(theirs?.selfRecorded).toBe(false);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("who may manage awards", () => {
+      it("lets JCRC and admin, and nobody else, use every award procedure", async () => {
+        const calls = async (who: { id: string; roles: string[] } | null) => {
+          const m = as(who);
+          const t = await fullColours();
+          const a = await db.award.findFirstOrThrow({
+            where: { userID: "SEED-R12", ...live },
+          });
+          const batch = await db.awardImportBatch.findFirstOrThrow();
+          return [
+            () => m.awards.list({ academicYear: AY }),
+            () =>
+              m.awards.assign({
+                academicYear: AY,
+                awardTypeID: t.id,
+                recipients: [{ userID: "SEED-R20" }],
+              }),
+            () => m.awards.update({ id: a.id, title: "X", citation: null }),
+            () => m.awards.remove({ id: a.id }),
+            () => m.awards.restore({ id: a.id }),
+            () => m.awards.bulkRemove({ ids: [a.id] }),
+            () => m.awards.bulkRestore({ ids: [a.id] }),
+            () => m.awardTypes.list({}),
+            () => m.awardTypes.create({ name: "Another" }),
+            () => m.awardTypes.update({ id: t.id, name: "Full Colours" }),
+            () => m.awardTypes.archive({ id: t.id }),
+            () => m.awardTypes.restore({ id: t.id }),
+            () => m.awardBatches.list({ academicYear: AY }),
+            () => m.awardBatches.undo({ batchId: batch.id }),
+          ];
+        };
+
+        for (const who of [ADMIN, JCRC]) {
+          for (const call of await calls(who)) {
+            expect(await errorOf(call())).toBe("ok");
+          }
+          reseed();
+        }
+        for (const who of [SOCCER_HEAD, PLAIN, SCRC]) {
+          for (const call of await calls(who)) {
+            expect(await errorOf(call())).toMatch(/^FORBIDDEN:/);
+          }
+        }
+        for (const call of await calls(null)) {
+          expect(await errorOf(call())).toMatch(/^UNAUTHORIZED:/);
+        }
+      }, 180_000);
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("the catalogue", () => {
+      it("lists live entries by default and archived ones on request, with how many were given", async () => {
+        const live = await as(JCRC).awardTypes.list({});
+        expect(live.map((t) => t.name).sort()).toEqual([
+          "Colours Award, Soccer",
+          "Full Colours",
+          "Outstanding Newcomer",
+          "Service Excellence Award",
+        ]);
+        const all = await as(JCRC).awardTypes.list({ includeArchived: true });
+        expect(all).toHaveLength(5);
+        expect(all.find((t) => t.name === "Retired Award")?.archived).toBe(
+          true,
+        );
+        expect(all.find((t) => t.name === "Full Colours")?.awardCount).toBe(3);
+      });
+
+      it("creates an entry, recording who and when", async () => {
+        const made = await as(JCRC).awardTypes.create({
+          name: "  Best   Newcomer ",
+          defaultCitation: "For a fine first year.",
+        });
+        const row = await db.awardType.findUniqueOrThrow({
+          where: { id: made.id },
+        });
+        expect(row).toMatchObject({
+          name: "Best   Newcomer",
+          normalizedName: "best newcomer",
+          defaultCitation: "For a fine first year.",
+          createdBy: JCRC.id,
+        });
+        expect(row.createdAt).toBeTruthy();
+      });
+
+      it("refuses a name that is the same once case and spaces are ignored, archived or not", async () => {
+        const m = as(JCRC);
+        for (const name of [
+          "full colours",
+          "  FULL   COLOURS ",
+          "Retired Award",
+          "retired  award",
+        ]) {
+          expect(await errorOf(m.awardTypes.create({ name }))).toBe(
+            "CONFLICT:AWARD_NAME_TAKEN",
+          );
+        }
+        const count = await db.awardType.count();
+        expect(await db.awardType.count()).toBe(count);
+      });
+
+      it("refuses a rename onto another entry's name, but lets an entry keep its own", async () => {
+        const t = await fullColours();
+        expect(
+          await errorOf(
+            as(JCRC).awardTypes.update({
+              id: t.id,
+              name: "outstanding newcomer",
+            }),
+          ),
+        ).toBe("CONFLICT:AWARD_NAME_TAKEN");
+        expect(
+          await errorOf(
+            as(JCRC).awardTypes.update({ id: t.id, name: "FULL COLOURS" }),
+          ),
+        ).toBe("ok");
+      });
+
+      it("does not change past awards when an entry is renamed", async () => {
+        const t = await fullColours();
+        await as(JCRC).awardTypes.update({
+          id: t.id,
+          name: "Honours",
+          defaultCitation: "New default.",
+        });
+
+        const kept = await awardsOf("SEED-R13");
+        expect(kept.find((a) => a.awardTypeID === t.id)?.title).toBe(
+          "Full Colours",
+        );
+        const input = await loader.loadTranscriptInput(db, "SEED-R13", AY, {
+          now: NOW,
+        });
+        expect(input.awards.map((a) => a.title)).toContain("Full Colours");
+        expect(input.awards.map((a) => a.title)).not.toContain("Honours");
+      });
+
+      it("archives and restores, and never deletes", async () => {
+        const t = await fullColours();
+        const before = await db.awardType.count();
+        await as(JCRC).awardTypes.archive({ id: t.id });
+        const row = await db.awardType.findUniqueOrThrow({
+          where: { id: t.id },
+        });
+        expect(row.archivedAt).toBeTruthy();
+        expect(row.archivedBy).toBe(JCRC.id);
+        expect(
+          (await as(JCRC).awardTypes.list({})).map((x) => x.id),
+        ).not.toContain(t.id);
+        expect(await db.awardType.count()).toBe(before);
+
+        await as(JCRC).awardTypes.restore({ id: t.id });
+        expect(
+          (await db.awardType.findUniqueOrThrow({ where: { id: t.id } }))
+            .archivedAt ?? null,
+        ).toBeNull();
+      });
+
+      it("still allows catalogue writes while the year is published", async () => {
+        await publish();
+        expect(
+          await errorOf(
+            as(JCRC).awardTypes.create({ name: "Mid-publication" }),
+          ),
+        ).toBe("ok");
+        const t = await fullColours();
+        expect(await errorOf(as(JCRC).awardTypes.archive({ id: t.id }))).toBe(
+          "ok",
+        );
+      });
+
+      it("rejects bad names and citations", async () => {
+        const m = as(JCRC);
+        for (const bad of [
+          { name: "   " },
+          { name: "x".repeat(81) },
+          { name: "ok", defaultCitation: "x".repeat(301) },
+          { name: "a\u0000b" },
+        ]) {
+          expect(await errorOf(m.awardTypes.create(bad as never))).toMatch(
+            /^BAD_REQUEST:/,
+          );
+        }
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("assigning an award", () => {
+      it("creates one award per person with the award's name and default citation", async () => {
+        const result = await assign(JCRC, "Full Colours", [
+          { userID: "SEED-R20" },
+          { userID: "SEED-R19", citation: "Led the freshmen." },
+        ]);
+
+        expect(result.assigned).toBe(2);
+        expect(result.skipped).toEqual([]);
+        const [a] = await awardsOf("SEED-R20", "Full Colours");
+        expect(a).toMatchObject({
+          academicYear: AY,
+          title: "Full Colours",
+          citation: "For outstanding contribution to hall life.",
+          recordedBy: JCRC.id,
+        });
+        expect(a!.awardTypeID).toBe((await fullColours()).id);
+        const [b] = await awardsOf("SEED-R19", "Full Colours");
+        expect(b!.citation).toBe("Led the freshmen.");
+      });
+
+      it("skips people who already have it and names them", async () => {
+        const result = await assign(JCRC, "Full Colours", [
+          { userID: "SEED-R13" },
+          { userID: "SEED-R20" },
+          { userID: "SEED-R14" },
+        ]);
+
+        expect(result.assigned).toBe(1);
+        expect(result.skipped.map((s) => s.userID).sort()).toEqual([
+          "SEED-R13",
+          "SEED-R14",
+        ]);
+        expect(result.skipped[0]!.displayName).toBeTruthy();
+        expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(1);
+      });
+
+      it("skips a person listed twice in the same request", async () => {
+        const result = await assign(JCRC, "Full Colours", [
+          { userID: "SEED-R20" },
+          { userID: "SEED-R20" },
+        ]);
+        expect(result.assigned).toBe(1);
+        expect(result.skipped).toHaveLength(1);
+        expect(await awardsOf("SEED-R20", "Full Colours")).toHaveLength(1);
+      });
+
+      it("treats an old award with the same name and no catalogue entry as a duplicate", async () => {
+        await db.award.create({
+          data: {
+            academicYear: AY,
+            userID: "SEED-R20",
+            title: "  full   COLOURS ",
+            recordedBy: JCRC.id,
+            activeKey: awardActiveKey({
+              academicYear: AY,
+              userID: "SEED-R20",
+              awardTypeID: null,
+              title: "  full   COLOURS ",
+            }),
+          },
+        });
+        const result = await assign(JCRC, "Full Colours", [
+          { userID: "SEED-R20" },
+        ]);
+        expect(result.assigned).toBe(0);
+        expect(result.skipped).toHaveLength(1);
+      });
+
+      it("does not count a removed award as a duplicate, or an award of another year", async () => {
+        const m = as(JCRC);
+        const r13 = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await m.awards.remove({ id: r13.id });
+        await db.award.create({
+          data: {
+            academicYear: OLD,
+            userID: "SEED-R20",
+            title: "Full Colours",
+            awardTypeID: (await fullColours()).id,
+            activeKey: `${OLD}|SEED-R20|${(await fullColours()).id}`,
+          },
+        });
+
+        const result = await assign(JCRC, "Full Colours", [
+          { userID: "SEED-R13" },
+          { userID: "SEED-R20" },
+        ]);
+        expect(result.assigned).toBe(2);
+      });
+
+      it("is all or nothing: an unknown resident refuses the whole request", async () => {
+        const before = await db.award.count();
+        expect(
+          await errorOf(
+            assign(JCRC, "Full Colours", [
+              { userID: "SEED-R20" },
+              { userID: "NO-SUCH-RESIDENT" },
+            ]),
+          ),
+        ).toBe("NOT_FOUND:RESIDENT_NOT_FOUND");
+        expect(await db.award.count()).toBe(before);
+      });
+
+      it("refuses an archived award, and an unknown one", async () => {
+        expect(
+          await errorOf(
+            assign(JCRC, "Retired Award", [{ userID: "SEED-R20" }]),
+          ),
+        ).toBe("CONFLICT:AWARD_TYPE_ARCHIVED");
+        expect(
+          await errorOf(
+            as(JCRC).awards.assign({
+              academicYear: AY,
+              awardTypeID: "f".repeat(24),
+              recipients: [{ userID: "SEED-R20" }],
+            }),
+          ),
+        ).toBe("NOT_FOUND:AWARD_TYPE_NOT_FOUND");
+      });
+
+      it("refuses nobody, and takes more than 300 people (only a hidden cap refuses)", async () => {
+        const t = await fullColours();
+        expect(
+          await errorOf(
+            as(JCRC).awards.assign({
+              academicYear: AY,
+              awardTypeID: t.id,
+              recipients: [],
+            }),
+          ),
+        ).toMatch(/^BAD_REQUEST:/);
+        expect(
+          await errorOf(
+            as(JCRC).awards.assign({
+              academicYear: AY,
+              awardTypeID: t.id,
+              recipients: Array.from({ length: 301 }, (_, i) => ({
+                userID: `SEED-X${i}`,
+              })),
+            }),
+          ),
+        ).toBe("NOT_FOUND:RESIDENT_NOT_FOUND"); // 301 is no reason to refuse
+        expect(
+          await errorOf(
+            as(JCRC).awards.assign({
+              academicYear: AY,
+              awardTypeID: t.id,
+              recipients: Array.from({ length: 2001 }, (_, i) => ({
+                userID: `SEED-X${i}`,
+              })),
+            }),
+          ),
+        ).toMatch(/^BAD_REQUEST:/);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("the awards of a year", () => {
+      it("lists with names, who recorded them and when, and filters by search", async () => {
+        const all = await as(JCRC).awards.list({ academicYear: AY });
+        expect(all.length).toBeGreaterThanOrEqual(6);
+        const soccer = all.find((a) => a.userID === "SEED-R04")!;
+        expect(soccer.displayName).toBe("Seed Resident 04");
+        expect(soccer.recordedByName).toBe("Seed Resident 02");
+        expect(soccer.awardTypeID).toBeTruthy();
+
+        const byAward = await as(JCRC).awards.list({
+          academicYear: AY,
+          search: "full col",
+        });
+        expect(byAward.map((a) => a.userID).sort()).toEqual([
+          "SEED-R13",
+          "SEED-R14",
+          "SEED-R15",
+        ]);
+        const byName = await as(JCRC).awards.list({
+          academicYear: AY,
+          search: "resident 12",
+        });
+        expect(byName.every((a) => a.userID === "SEED-R12")).toBe(true);
+        expect(byName).toHaveLength(2);
+      });
+
+      it("hides removed awards unless asked", async () => {
+        const hidden = await as(JCRC).awards.list({ academicYear: AY });
+        expect(hidden.some((a) => a.title === "Recorded in error")).toBe(false);
+        const shown = await as(JCRC).awards.list({
+          academicYear: AY,
+          includeRemoved: true,
+        });
+        expect(
+          shown.find((a) => a.title === "Recorded in error")?.removed,
+        ).toBe(true);
+      });
+
+      it("edits an award's title and citation, recording who and when", async () => {
+        const a = (await awardsOf("SEED-R04"))[0]!;
+        await as(JCRC).awards.update({
+          id: a.id,
+          title: "Colours Award, Football",
+          citation: null,
+        });
+        const row = await db.award.findUniqueOrThrow({ where: { id: a.id } });
+        expect(row).toMatchObject({
+          title: "Colours Award, Football",
+          updatedBy: JCRC.id,
+        });
+        expect(row.citation ?? null).toBeNull();
+        expect(row.updatedAt).toBeTruthy();
+        expect(row.awardTypeID).toBe(a.awardTypeID);
+      });
+
+      it("will not edit a removed award until it is restored", async () => {
+        const a = (await awardsOf("SEED-R04"))[0]!;
+        await as(JCRC).awards.remove({ id: a.id });
+        expect(
+          await errorOf(
+            as(JCRC).awards.update({ id: a.id, title: "X", citation: null }),
+          ),
+        ).toBe("CONFLICT:AWARD_REMOVED");
+      });
+
+      it("removes and restores one award, never deleting it", async () => {
+        const a = (await awardsOf("SEED-R04"))[0]!;
+        const before = await db.award.count();
+        await as(ADMIN).awards.remove({ id: a.id });
+        let row = await db.award.findUniqueOrThrow({ where: { id: a.id } });
+        expect(row.voidedAt).toBeTruthy();
+        expect(row.voidedBy).toBe(ADMIN.id);
+        expect(await db.award.count()).toBe(before);
+
+        await as(JCRC).awards.restore({ id: a.id });
+        row = await db.award.findUniqueOrThrow({ where: { id: a.id } });
+        expect(row.voidedAt ?? null).toBeNull();
+        expect(row.updatedBy).toBe(JCRC.id);
+      });
+
+      it("refuses to restore an award the person now holds again", async () => {
+        const a = (await awardsOf("SEED-R13", "Full Colours"))[0]!;
+        await as(JCRC).awards.remove({ id: a.id });
+        await assign(JCRC, "Full Colours", [{ userID: "SEED-R13" }]);
+        expect(await errorOf(as(JCRC).awards.restore({ id: a.id }))).toBe(
+          "CONFLICT:ALREADY_HAS_AWARD",
+        );
+      });
+
+      it("removes and restores many at once", async () => {
+        const ids = (
+          await db.award.findMany({ where: { title: "Full Colours", ...live } })
+        ).map((a) => a.id);
+        expect(ids).toHaveLength(3);
+        expect(await as(JCRC).awards.bulkRemove({ ids })).toEqual({
+          removed: 3,
+        });
+        expect(await as(JCRC).awards.bulkRemove({ ids })).toEqual({
+          removed: 0,
+        });
+        expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(0);
+
+        const back = await as(JCRC).awards.bulkRestore({ ids });
+        expect(back).toMatchObject({ restored: 3, skipped: [], stopped: null });
+        expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(1);
+      });
+
+      it("skips, and names, an award a bulk restore would duplicate", async () => {
+        const mine = await db.award.findMany({
+          where: { title: "Full Colours", ...live },
+        });
+        const ids = mine.map((a) => a.id);
+        await as(JCRC).awards.bulkRemove({ ids });
+        await assign(JCRC, "Full Colours", [{ userID: "SEED-R13" }]);
+
+        const back = await as(JCRC).awards.bulkRestore({ ids });
+        expect(back.restored).toBe(2);
+        expect(back.skipped).toHaveLength(1);
+        expect(back.skipped[0]).toContain("Full Colours");
+        expect(await awardsOf("SEED-R13", "Full Colours")).toHaveLength(1);
+      });
+
+      it("takes more than 500 awards at once (only a hidden cap refuses), and refuses an unknown id", async () => {
+        const id = (await awardsOf("SEED-R04"))[0]!.id;
+        expect(
+          await errorOf(
+            as(JCRC).awards.bulkRemove({
+              ids: Array.from({ length: 2001 }, () => id),
+            }),
+          ),
+        ).toMatch(/^BAD_REQUEST:/);
+        expect(
+          await errorOf(
+            as(JCRC).awards.bulkRemove({ ids: [id, "f".repeat(24)] }),
+          ),
+        ).toBe("NOT_FOUND:RECORD_NOT_FOUND");
+        expect(
+          (await db.award.findUniqueOrThrow({ where: { id } })).voidedAt ??
+            null,
+        ).toBeNull();
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("a published year", () => {
+      it("refuses every write to its awards, with the existing message", async () => {
+        const a = (await awardsOf("SEED-R04"))[0]!;
+        const batch = await db.awardImportBatch.findFirstOrThrow();
+        const t = await fullColours();
+        await publish();
+        // Every award write names residents, so a manager is refused until
+        // each of them is unlocked.
+        const denied = "FORBIDDEN:ONLY_UNLOCKED_RESIDENTS";
+
+        for (const who of [JCRC, ADMIN]) {
+          const m = as(who);
+          const calls = [
+            () =>
+              m.awards.assign({
+                academicYear: AY,
+                awardTypeID: t.id,
+                recipients: [{ userID: "SEED-R20" }],
+              }),
+            () => m.awards.update({ id: a.id, title: "X", citation: null }),
+            () => m.awards.remove({ id: a.id }),
+            () => m.awards.restore({ id: a.id }),
+            () => m.awards.bulkRemove({ ids: [a.id] }),
+            () => m.awards.bulkRestore({ ids: [a.id] }),
+            () => m.awardBatches.undo({ batchId: batch.id }),
+          ];
+          for (const call of calls) expect(await errorOf(call())).toBe(denied);
+        }
+        // Reading is still allowed.
+        expect(
+          (await as(JCRC).awards.list({ academicYear: AY })).length,
+        ).toBeGreaterThan(0);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("archived awards and the transcript", () => {
+      it("hides an archived award from the catalogue list but keeps its awards on transcripts", async () => {
+        const t = await type("colours award, soccer");
+        await as(JCRC).awardTypes.archive({ id: t.id });
+
+        expect(
+          (await as(JCRC).awardTypes.list({})).map((x) => x.id),
+        ).not.toContain(t.id);
+        const input = await loader.loadTranscriptInput(db, "SEED-R04", AY, {
+          now: NOW,
+        });
+        expect(input.awards.map((a) => a.title)).toContain(
+          "Colours Award, Soccer",
+        );
+        expect(
+          await errorOf(
+            assign(JCRC, "Colours Award, Soccer", [{ userID: "SEED-R20" }]),
+          ),
+        ).toBe("CONFLICT:AWARD_TYPE_ARCHIVED");
+      });
+
+      it("never loads a removed award", async () => {
+        const a = (await awardsOf("SEED-R04"))[0]!;
+        await as(JCRC).awards.remove({ id: a.id });
+        const input = await loader.loadTranscriptInput(db, "SEED-R04", AY, {
+          now: NOW,
+        });
+        expect(input.awards).toEqual([]);
+        await as(JCRC).awards.restore({ id: a.id });
+        expect(
+          (await loader.loadTranscriptInput(db, "SEED-R04", AY, { now: NOW }))
+            .awards,
+        ).toHaveLength(1);
+      });
+
+      it("loads an award's citation", async () => {
+        const input = await loader.loadTranscriptInput(db, "SEED-R13", AY, {
+          now: NOW,
+        });
+        expect(input.awards).toEqual([
+          {
+            title: "Full Colours",
+            academicYear: AY,
+            citation: "For outstanding contribution to hall life.",
+          },
+        ]);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("upload history", () => {
+      const batch = () => db.awardImportBatch.findFirstOrThrow();
+
+      it("lists the seeded upload with who, when and how many are still active", async () => {
+        const list = await as(JCRC).awardBatches.list({ academicYear: AY });
+        expect(list).toHaveLength(1);
+        expect(list[0]).toMatchObject({
+          fileName: "colours-2026.csv",
+          rowCount: 4,
+          importedCount: 3,
+          skippedCount: 1,
+          createdByName: "Seed Resident 02",
+          undone: false,
+          activeCount: 3,
+        });
+        expect(await as(JCRC).awardBatches.list({ academicYear: OLD })).toEqual(
+          [],
+        );
+      });
+
+      it("undoes an upload: removes only its still-active awards and records who", async () => {
+        const b = await batch();
+        const one = (await awardsOf("SEED-R14", "Full Colours"))[0]!;
+        await as(JCRC).awards.remove({ id: one.id }); // already removed by hand
+        const manual = await assign(JCRC, "Full Colours", [
+          { userID: "SEED-R20" },
+        ]);
+        expect(manual.assigned).toBe(1);
+
+        const result = await as(ADMIN).awardBatches.undo({ batchId: b.id });
+
+        expect(result.removed).toBe(2);
+        const row = await db.awardImportBatch.findUniqueOrThrow({
+          where: { id: b.id },
+        });
+        expect(row.undoneAt).toBeTruthy();
+        expect(row.undoneBy).toBe(ADMIN.id);
+        // Nobody from the upload is left; the hand-made award and others are untouched.
+        for (const u of ["SEED-R13", "SEED-R14", "SEED-R15"]) {
+          expect(await awardsOf(u, "Full Colours")).toHaveLength(0);
+        }
+        expect(await awardsOf("SEED-R20", "Full Colours")).toHaveLength(1);
+        expect(await awardsOf("SEED-R04")).toHaveLength(1);
+        expect(await awardsOf("SEED-R12")).toHaveLength(2);
+        // The removed awards are still in the database.
+        expect(await db.award.count({ where: { importBatchID: b.id } })).toBe(
+          3,
+        );
+      });
+
+      it("cannot be undone twice", async () => {
+        const b = await batch();
+        await as(JCRC).awardBatches.undo({ batchId: b.id });
+        const removedAt = (
+          await db.award.findFirstOrThrow({ where: { importBatchID: b.id } })
+        ).voidedAt;
+
+        expect(
+          await errorOf(as(JCRC).awardBatches.undo({ batchId: b.id })),
+        ).toBe("CONFLICT:BATCH_ALREADY_UNDONE");
+        expect(
+          (await db.award.findFirstOrThrow({ where: { importBatchID: b.id } }))
+            .voidedAt,
+        ).toEqual(removedAt);
+        const list = await as(JCRC).awardBatches.list({ academicYear: AY });
+        expect(list[0]!.undone).toBe(true);
+        expect(list[0]!.activeCount).toBe(0);
+      });
+
+      it("refuses an unknown batch", async () => {
+        expect(
+          await errorOf(
+            as(JCRC).awardBatches.undo({ batchId: "f".repeat(24) }),
+          ),
+        ).toBe("NOT_FOUND:BATCH_NOT_FOUND");
+      });
+
+      it("lets an undone upload's awards be restored one by one", async () => {
+        const b = await batch();
+        await as(JCRC).awardBatches.undo({ batchId: b.id });
+        const a = await db.award.findFirstOrThrow({
+          where: { importBatchID: b.id },
+        });
+        await as(JCRC).awards.restore({ id: a.id });
+        expect(await awardsOf(a.userID, "Full Colours")).toHaveLength(1);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    describe("purging a year", () => {
+      it("removes the year's awards and uploads but never the catalogue", async () => {
+        const t = await fullColours();
+        const oldBatch = await db.awardImportBatch.create({
+          data: {
+            academicYear: OLD,
+            fileName: "old.csv",
+            rowCount: 1,
+            importedCount: 1,
+            skippedCount: 0,
+            createdBy: JCRC.id,
+          },
+        });
+        await db.award.create({
+          data: {
+            academicYear: OLD,
+            userID: "SEED-R12",
+            title: "Full Colours",
+            awardTypeID: t.id,
+            importBatchID: oldBatch.id,
+            activeKey: `${OLD}|SEED-R12|${t.id}`,
+          },
+        });
+        const current = {
+          awards: await db.award.count({ where: { academicYear: AY } }),
+          batches: await db.awardImportBatch.count({
+            where: { academicYear: AY },
+          }),
+          types: await db.awardType.count(),
+        };
+
+        const dry = await retention.purgeAcademicYear(db, OLD, {
+          dryRun: true,
+        });
+        expect(dry).toMatchObject({ Award: 1, AwardImportBatch: 1 });
+        const purged = await retention.purgeAcademicYear(db, OLD);
+        expect(purged).toMatchObject({ Award: 1, AwardImportBatch: 1 });
+
+        expect(await db.award.count({ where: { academicYear: OLD } })).toBe(0);
+        expect(
+          await db.awardImportBatch.count({ where: { academicYear: OLD } }),
+        ).toBe(0);
+        expect(await db.award.count({ where: { academicYear: AY } })).toBe(
+          current.awards,
+        );
+        expect(
+          await db.awardImportBatch.count({ where: { academicYear: AY } }),
+        ).toBe(current.batches);
+        expect(await db.awardType.count()).toBe(current.types);
+        expect(Object.keys(purged)).not.toContain("AwardType");
+      });
+    });
+  },
+);
