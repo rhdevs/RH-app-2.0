@@ -12,12 +12,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
-import type { Range } from "~/lib/points/constants";
+import type { IhgContext, Range } from "~/lib/points/constants";
 import { downloadCsvFile } from "~/lib/points/download";
-import type { PointsEntry } from "~/lib/points/entries";
-import { buildPointsCsv, pointsCsvFilename } from "~/lib/points/exportCsv";
+import { withoutStaleIhg, type PointsEntry } from "~/lib/points/entries";
 import { formatStat } from "~/lib/points/hints";
 import {
+  buildExportFile,
   checkAfterOpenChange,
   downloadVerdict,
   type ExportCheck,
@@ -48,11 +48,12 @@ export default function ExportDialog({
   mean: number;
   sd: number;
   /** JCRC's settings as the page holds them right now (they refresh in the background). */
-  context: { entryOpen: boolean; range: Range };
+  context: { entryOpen: boolean; range: Range; ihg: IhgContext | null };
   /** Re-reads JCRC's settings; null when the read failed. */
   refreshContext: () => Promise<{
     entryOpen: boolean;
     range: Range;
+    ihg: IhgContext | null;
   } | null>;
   onExported: (fileName: string) => void;
 }) {
@@ -78,16 +79,23 @@ export default function ExportDialog({
   }, [open]);
   // Judged against the LIVE settings on every render, so a change while the
   // dialog is open shows here at once; judged again just before the file is built.
-  const verdict = downloadVerdict(check, entries, context);
+  const live = context;
+  const verdict = downloadVerdict(check, entries, live);
+  const stale = withoutStaleIhg(entries, live.ihg);
   const download = () => {
-    if (!downloadVerdict(check, entries, context).allowed) return;
     try {
-      const now = new Date();
-      const fileName = pointsCsvFilename(ccaID, now);
-      const csv = buildPointsCsv({ ccaID, ccaName, entries, exportedAt: now });
-      downloadCsvFile(fileName, csv);
+      const file = buildExportFile({
+        check,
+        entries,
+        live,
+        ccaID,
+        ccaName,
+        now: new Date(),
+      });
+      if (!file.allowed) return;
+      downloadCsvFile(file.fileName, file.csv);
       onOpenChange(false);
-      onExported(fileName);
+      onExported(file.fileName);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     }
@@ -105,7 +113,9 @@ export default function ExportDialog({
               <p className="font-medium text-gray-900">
                 This file is confidential. Email it only to your portfolio head.
               </p>
-              <dl className="grid grid-cols-3 gap-2 rounded-md bg-gray-50 p-3 text-center">
+              <dl
+                className={`grid gap-2 rounded-md bg-gray-50 p-3 text-center ${context.ihg ? "grid-cols-4" : "grid-cols-3"}`}
+              >
                 <div>
                   <dt className="text-xs text-gray-500">Members</dt>
                   <dd className="text-lg font-semibold tabular-nums text-gray-900">
@@ -128,6 +138,14 @@ export default function ExportDialog({
                     {formatStat(sd, context.range.sdMin, context.range.sdMax)}
                   </dd>
                 </div>
+                {context.ihg && (
+                  <div>
+                    <dt className="text-xs text-gray-500">IHG ticked</dt>
+                    <dd className="text-lg font-semibold tabular-nums text-gray-900">
+                      {entries.filter((e) => e.ihg).length}
+                    </dd>
+                  </div>
+                )}
               </dl>
               <p>The file is saved to this device only. Nothing is uploaded.</p>
               {check.status === "checking" && (
@@ -154,6 +172,12 @@ export default function ExportDialog({
                     <li key={b.code}>{b.message}</li>
                   ))}
                 </ul>
+              )}
+              {stale.dropped > 0 && (
+                <p className="text-amber-700" role="status">
+                  {stale.dropped} IHG {stale.dropped === 1 ? "tick" : "ticks"}{" "}
+                  will be left out: this CCA is no longer a sport.
+                </p>
               )}
               {error && (
                 <p className="text-red-700" role="alert">

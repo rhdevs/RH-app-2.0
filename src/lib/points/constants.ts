@@ -34,8 +34,63 @@ export const DEFAULT_RANGE: Readonly<Range> = {
 /** Inclusive tolerance for range comparisons, so 14.0000000001 still passes. */
 export const TOLERANCE = 1e-9;
 
-/** The only leader-export format the sandbox reads (its `formatVersion` column). */
-export const EXPORT_FORMAT_VERSION = 1;
+/**
+ * The leader-export format this app writes (its `formatVersion` column).
+ * Version 2 adds the `ihg` column; the sandbox reads 1 and 2.
+ */
+export const EXPORT_FORMAT_VERSION = 2;
+
+/** The flat-points and settings exports stay at version 1, which the sandbox reads for them. */
+export const FLAT_FORMAT_VERSION = 1;
+export const SETTINGS_FORMAT_VERSION = 1;
+
+/** The JCRC bundle's own version, stamped on every row. Never reuse EXPORT_FORMAT_VERSION. */
+export const BUNDLE_FORMAT_VERSION = 1;
+
+/**
+ * A CCA's points type, set by JCRC on /admin/points. The bundle carries these
+ * strings verbatim.
+ * MUST MATCH rh-points-sandbox src/import/parseCommon.ts CCA_TYPES.
+ */
+export const CCA_TYPES = ["1x", "0.5x"] as const;
+export type CcaType = (typeof CCA_TYPES)[number];
+export const isCcaType = (v: unknown): v is CcaType =>
+  typeof v === "string" && (CCA_TYPES as readonly string[]).includes(v);
+
+/**
+ * A sport's result at the inter-hall games. The bundle carries these strings
+ * verbatim.
+ * MUST MATCH rh-points-sandbox src/import/parseCommon.ts IHG_PLACEMENTS.
+ */
+export const IHG_RESULTS = ["1st", "2nd", "3rd", "3rd4th_no_match"] as const;
+export type IhgResult = (typeof IHG_RESULTS)[number];
+export const isIhgResult = (v: unknown): v is IhgResult =>
+  typeof v === "string" && (IHG_RESULTS as readonly string[]).includes(v);
+
+/**
+ * JCRC's IHG config for one CCA, as getEntryContext returns it. `null` as a
+ * whole means the CCA is not a sport.
+ */
+export type IhgContext = { result: IhgResult | null; cap: number | null };
+
+/** The most members a head may tick for a sport's IHG points. */
+export const IHG_CAP_MIN = 1;
+export const IHG_CAP_MAX = 99;
+export const isValidIhgCap = (v: unknown): v is number =>
+  typeof v === "number" &&
+  Number.isInteger(v) &&
+  v >= IHG_CAP_MIN &&
+  v <= IHG_CAP_MAX;
+
+/**
+ * The CCA category that counts as a sport when JCRC has not ticked or unticked
+ * "Sport" for that CCA. Temporary: a later portfolio refactor will replace this.
+ * Use `effectiveIsSport` (ccaPointsConfig service); nothing else decides who is
+ * a sport. The sandbox reads the bundle's `sport` flag and never this string.
+ */
+export const SPORTS_CATEGORY = "Sports Activities";
+export const isSportsCategory = (category: string | null): boolean =>
+  category !== null && category.trim() === SPORTS_CATEGORY;
 
 /** What JCRC may configure: [min, max] for the mean and for the SD. */
 export const MEAN_LIMITS = [0, 20] as const;

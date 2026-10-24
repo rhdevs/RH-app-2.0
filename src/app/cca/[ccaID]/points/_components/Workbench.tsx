@@ -9,7 +9,7 @@ import {
 } from "react";
 import { CheckCircle2 } from "lucide-react";
 
-import type { Range } from "~/lib/points/constants";
+import type { IhgContext, Range } from "~/lib/points/constants";
 import type { RosterMember } from "~/lib/points/draft";
 import type { ExportBlocker } from "~/lib/points/entries";
 import DraftPanel from "./DraftPanel";
@@ -27,9 +27,11 @@ const HIGHLIGHT_MS = 2500;
 
 type EntryContext = {
   entryOpen: boolean;
+  yearStartedAt: string | null;
   range: Range;
   isWaived: boolean;
   note: string | null;
+  ihg: IhgContext | null;
 };
 
 /** Scroll the VISIBLE copy of a row (table on desktop, card on a phone). */
@@ -69,6 +71,8 @@ export default function Workbench({
     storageKeyUserID: userID,
     range,
     entryOpen,
+    yearStartedAt: context.yearStartedAt,
+    ihg: context.ihg,
   });
   const [view, setViewState] = useState<ListView>(DEFAULT_VIEW);
   // The row being edited stays put until the leader moves to another row, so a
@@ -127,6 +131,7 @@ export default function Workbench({
       state={state}
       range={range}
       entryOpen={entryOpen}
+      ihg={context.ihg}
       onBlockerClick={showBlocker}
       onExport={startExport}
     />
@@ -140,6 +145,7 @@ export default function Workbench({
         range={range}
         isWaived={context.isWaived}
         note={context.note}
+        ihg={context.ihg}
       />
 
       {exported && (
@@ -189,6 +195,7 @@ export default function Workbench({
                   state={state}
                   disabled={disabled}
                   highlightKey={highlightKey}
+                  ihg={context.ihg}
                 />
               </div>
               <div className="lg:hidden">
@@ -197,6 +204,7 @@ export default function Workbench({
                   state={state}
                   disabled={disabled}
                   highlightKey={highlightKey}
+                  ihg={context.ihg}
                 />
               </div>
             </div>
@@ -209,6 +217,7 @@ export default function Workbench({
         state={state}
         range={range}
         entryOpen={entryOpen}
+        ihg={context.ihg}
         summary={summary}
         sheetOpen={sheetOpen}
         onSheetOpenChange={setSheetOpen}

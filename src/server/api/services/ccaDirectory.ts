@@ -12,7 +12,7 @@ import { resolveRoster } from "~/server/api/services/ccaRoster";
  * Extracted unchanged from `cca.memberDirectory` so that the JCRC flat-points
  * export reads the same data the same way. THIS FUNCTION DOES NO AUTHORISATION:
  * every caller must have passed its own guard first (memberDirectory uses
- * assertHeadsCca; ccaPoints.flatExportData is a role-manager procedure with a
+ * assertHeadsCca; ccaPoints.bundleExportData is a role-manager procedure with a
  * live capability re-check).
  */
 export async function buildDirectoryEntries(db: PrismaClient, ccaID: number) {

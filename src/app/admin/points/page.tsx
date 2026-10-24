@@ -2,10 +2,12 @@
 
 import { api } from "~/trpc/react";
 import { useCapabilities } from "~/app/admin/_components/AdminCapabilityContext";
+import BundleExport from "./_components/BundleExport";
+import CcaSettingsPanel from "./_components/CcaSettingsPanel";
 import DefaultRangesForm from "./_components/DefaultRangesForm";
 import EntrySwitchPanel from "./_components/EntrySwitchPanel";
 import FlatCcasPanel from "./_components/FlatCcasPanel";
-import SettingsExport from "./_components/SettingsExport";
+import NewYearPanel from "./_components/NewYearPanel";
 import { hasSavedRanges } from "./_components/rangeForm";
 import WaiversPanel from "./_components/WaiversPanel";
 
@@ -107,11 +109,28 @@ export default function AdminPointsPage() {
             effectiveDefault={data.effectiveDefault}
             onChanged={refresh}
           />
-          <SettingsExport
-            effectiveDefault={data.effectiveDefault}
-            waivers={data.overrides}
-          />
+          <CcaSettingsPanel ccas={data.ccas} onChanged={refresh} />
+          <section className="rounded-xl bg-white p-6 shadow-lg">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="max-w-xl">
+                <h3 className="text-sm font-semibold text-gray-900">
+                  Sandbox bundle
+                </h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  One file for the points sandbox: the ranges and waivers, every
+                  CCA with its type (and, for sports, its IHG result and cap),
+                  and the flat-points members.
+                </p>
+              </div>
+              <BundleExport />
+            </div>
+          </section>
           <FlatCcasPanel flatCcas={data.flatCcas} onChanged={refresh} />
+          <NewYearPanel
+            ihgResultCount={data.ihgResultsStored}
+            entryOpen={data.entryOpen}
+            onChanged={refresh}
+          />
         </>
       )}
     </div>

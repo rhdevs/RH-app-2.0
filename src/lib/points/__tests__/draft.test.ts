@@ -5,10 +5,12 @@ import {
   buildDraft,
   canAutosave,
   draftKey,
+  isDraftFromBeforeYear,
   mergeDraftWithRoster,
   mergeRosterOverEntries,
   parseDraft,
   prefillEntry,
+  readCurrentDraftItem,
   readDraftItem,
   removeDraftItem,
   type Draft,
@@ -54,7 +56,12 @@ describe("prefillEntry", () => {
       semesterOnly: false,
       outgoingRole: "head",
       incomingRole: "none",
+      ihg: false,
     });
+  });
+
+  it("starts with no IHG tick", () => {
+    expect(prefillEntry(member(1)).ihg).toBe(false);
   });
 
   it("gives a Member no roles", () => {
@@ -68,6 +75,7 @@ describe("parseDraft", () => {
     semesterOnly: true,
     outgoingRole: "head",
     incomingRole: "vice_head",
+    ihg: false,
   } as const;
   const good = draft({
     "u:1": row,
@@ -76,6 +84,7 @@ describe("parseDraft", () => {
       semesterOnly: false,
       outgoingRole: "none",
       incomingRole: "none",
+      ihg: false,
     },
   });
 
@@ -112,6 +121,7 @@ describe("parseDraft", () => {
             semesterOnly: false,
             outgoingRole: "captain",
             incomingRole: "none",
+            ihg: false,
           },
         } as unknown as Draft["rows"]),
       ),
@@ -125,6 +135,7 @@ describe("parseDraft", () => {
             semesterOnly: false,
             outgoingRole: "none",
             incomingRole: "none",
+            ihg: false,
           },
         } as unknown as Draft["rows"]),
       ),
@@ -133,7 +144,43 @@ describe("parseDraft", () => {
     expect(parseDraft(raw, 12)).toEqual({ status: "unreadable" });
   });
 
-  it("rebuilds each row from only the four editable fields", () => {
+  it("reads a v1-era row with no ihg as unticked", () => {
+    const raw = JSON.stringify({
+      version: 1,
+      ccaID: 12,
+      savedAt: "2027-04-01T09:30:00.000Z",
+      rows: {
+        "u:1": {
+          basePoints: 12,
+          semesterOnly: false,
+          outgoingRole: "none",
+          incomingRole: "none",
+        },
+      },
+    });
+    const parsed = parseDraft(raw, 12);
+    expect(parsed.status).toBe("ok");
+    if (parsed.status !== "ok") return;
+    expect(parsed.draft.rows["u:1"]?.ihg).toBe(false);
+  });
+
+  it("keeps a ticked ihg", () => {
+    const parsed = parseDraft(
+      JSON.stringify(draft({ "u:1": { ...row, ihg: true } })),
+      12,
+    );
+    if (parsed.status !== "ok") throw new Error("expected an ok draft");
+    expect(parsed.draft.rows["u:1"]?.ihg).toBe(true);
+  });
+
+  it("returns unreadable for a row whose ihg is not a boolean", () => {
+    const raw = JSON.stringify(
+      draft({ "u:1": { ...row, ihg: "yes" } } as unknown as Draft["rows"]),
+    );
+    expect(parseDraft(raw, 12)).toEqual({ status: "unreadable" });
+  });
+
+  it("rebuilds each row from only the five editable fields", () => {
     const raw = JSON.stringify(
       draft({
         "u:1": {
@@ -151,6 +198,7 @@ describe("parseDraft", () => {
     expect(parsed.draft.rows["u:1"]).toEqual(row);
     expect(Object.keys(parsed.draft.rows["u:1"] ?? {}).sort()).toEqual([
       "basePoints",
+      "ihg",
       "incomingRole",
       "outgoingRole",
       "semesterOnly",
@@ -170,9 +218,15 @@ describe("buildDraft", () => {
           semesterOnly: false,
           outgoingRole: "none",
           incomingRole: "none",
+          ihg: false,
         },
       }),
     );
+  });
+
+  it("writes the ihg tick", () => {
+    const entry = { ...prefillEntry(member(1)), ihg: true };
+    expect(buildDraft(12, [entry], new Date()).rows["u:1"]?.ihg).toBe(true);
   });
 
   it("stores a non-number score as blank", () => {
@@ -212,6 +266,7 @@ describe("mergeDraftWithRoster", () => {
         semesterOnly: true,
         outgoingRole: "none",
         incomingRole: "head",
+        ihg: false,
       },
     });
     const { entries } = mergeDraftWithRoster(roster, saved);
@@ -220,8 +275,22 @@ describe("mergeDraftWithRoster", () => {
       semesterOnly: true,
       outgoingRole: "none",
       incomingRole: "head",
+      ihg: false,
       matric: "A9900001Z",
     });
+  });
+
+  it("restores a saved ihg tick", () => {
+    const saved = draft({
+      "u:1": {
+        basePoints: 18,
+        semesterOnly: false,
+        outgoingRole: "none",
+        incomingRole: "none",
+        ihg: true,
+      },
+    });
+    expect(mergeDraftWithRoster(roster, saved).entries[0]?.ihg).toBe(true);
   });
 
   it("starts new members blank with the prefill", () => {
@@ -231,6 +300,7 @@ describe("mergeDraftWithRoster", () => {
         semesterOnly: false,
         outgoingRole: "head",
         incomingRole: "none",
+        ihg: false,
       },
     });
     const { entries } = mergeDraftWithRoster(roster, saved);
@@ -243,6 +313,7 @@ describe("mergeDraftWithRoster", () => {
       semesterOnly: false,
       outgoingRole: "none" as const,
       incomingRole: "none" as const,
+      ihg: false,
     };
     const saved = draft({ "u:1": row, "u:8": row, "u:9": row });
     const { entries, droppedCount } = mergeDraftWithRoster(roster, saved);
@@ -259,6 +330,7 @@ describe("mergeDraftWithRoster", () => {
             semesterOnly: true,
             outgoingRole: "none",
             incomingRole: "none",
+            ihg: false,
             matric: "A0000001Z",
             name: "Intruder",
             resolved: true,
@@ -313,6 +385,14 @@ describe("mergeRosterOverEntries", () => {
     expect(entries[1]).toMatchObject({ basePoints: 3, incomingRole: "head" });
   });
 
+  it("keeps the in-memory ihg tick", () => {
+    const { entries } = mergeRosterOverEntries(
+      [member(1)],
+      [edited(1, { ihg: true })],
+    );
+    expect(entries[0]?.ihg).toBe(true);
+  });
+
   it("adds new members blank with the prefill", () => {
     const { entries } = mergeRosterOverEntries(
       [member(1), member(2, { role: "Head" })],
@@ -323,6 +403,7 @@ describe("mergeRosterOverEntries", () => {
       basePoints: null,
       outgoingRole: "head",
       incomingRole: "none",
+      ihg: false,
     });
   });
 
@@ -419,6 +500,7 @@ describe("readDraftItem", () => {
         semesterOnly: false,
         outgoingRole: "none",
         incomingRole: "none",
+        ihg: false,
       },
     }),
   );
@@ -445,5 +527,77 @@ describe("readDraftItem", () => {
         12,
       ),
     ).toEqual({ status: "unreadable" });
+  });
+});
+
+describe("isDraftFromBeforeYear", () => {
+  const SAVED = "2027-04-01T09:30:00.000Z";
+
+  it("is stale when saved before the year stamp", () => {
+    expect(isDraftFromBeforeYear(SAVED, "2027-04-02T00:00:00.000Z")).toBe(true);
+  });
+
+  it("is kept when saved at the stamp", () => {
+    expect(isDraftFromBeforeYear(SAVED, SAVED)).toBe(false);
+  });
+
+  it("is kept when saved after the stamp", () => {
+    expect(isDraftFromBeforeYear(SAVED, "2027-03-01T00:00:00.000Z")).toBe(
+      false,
+    );
+  });
+
+  it("is kept when there is no stamp", () => {
+    expect(isDraftFromBeforeYear(SAVED, null)).toBe(false);
+  });
+});
+
+describe("readCurrentDraftItem", () => {
+  const row = {
+    basePoints: 5,
+    semesterOnly: false,
+    outgoingRole: "none" as const,
+    incomingRole: "none" as const,
+    ihg: true,
+  };
+  const stored = JSON.stringify(draft({ "u:1": row }));
+
+  const store = () => {
+    const removed: string[] = [];
+    return {
+      removed,
+      getItem: () => stored,
+      removeItem: (k: string) => void removed.push(k),
+    };
+  };
+
+  it("removes a draft from before the year and reports none", () => {
+    const s = store();
+    expect(
+      readCurrentDraftItem(s, "k", 12, "2027-05-01T00:00:00.000Z"),
+    ).toEqual({ status: "none" });
+    expect(s.removed).toEqual(["k"]);
+  });
+
+  it("keeps a draft saved after the year stamp", () => {
+    const s = store();
+    expect(
+      readCurrentDraftItem(s, "k", 12, "2027-03-01T00:00:00.000Z").status,
+    ).toBe("ok");
+    expect(s.removed).toEqual([]);
+  });
+
+  it("keeps every draft when there is no stamp", () => {
+    const s = store();
+    expect(readCurrentDraftItem(s, "k", 12, null).status).toBe("ok");
+    expect(s.removed).toEqual([]);
+  });
+
+  it("leaves an unreadable draft alone", () => {
+    const s = { ...store(), getItem: () => "{nope" };
+    expect(
+      readCurrentDraftItem(s, "k", 12, "2027-05-01T00:00:00.000Z").status,
+    ).toBe("unreadable");
+    expect(s.removed).toEqual([]);
   });
 });

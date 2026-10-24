@@ -12,6 +12,7 @@ const entry = (basePoints: number | null): PointsEntry => ({
   semesterOnly: false,
   outgoingRole: "none",
   incomingRole: "none",
+  ihg: false,
 });
 
 describe("scoreHistogram", () => {

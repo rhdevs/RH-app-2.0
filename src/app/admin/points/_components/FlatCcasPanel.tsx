@@ -26,7 +26,6 @@ import { formatFlatPoints } from "~/lib/points/flat";
 import { pointsErrorCopy } from "./errorCopy";
 import { saveStatus, statusClass, type SaveStatus } from "./saveStatus";
 import FlatDialog, { type FlatCca } from "./FlatDialog";
-import FlatExport from "./FlatExport";
 
 function when(at: Date | string | null): string {
   if (!at) return "—";
@@ -115,19 +114,15 @@ export default function FlatCcasPanel({
         <h3 className="text-sm font-semibold text-gray-900">
           Flat-points CCAs
         </h3>
-        <div className="flex flex-wrap items-start gap-2">
-          <FlatExport flatCount={flatCcas.length} />
-          <Button size="sm" onClick={() => openDialog(null)}>
-            <Plus className="h-4 w-4" />
-            Add flat CCA
-          </Button>
-        </div>
+        <Button size="sm" onClick={() => openDialog(null)}>
+          <Plus className="h-4 w-4" />
+          Add flat CCA
+        </Button>
       </div>
       <p className="mb-4 max-w-3xl text-xs text-gray-500">
         In a flat-points CCA every member gets the same points for the whole
         CCA, with no placement bonus, multipliers or halving. Its leaders have
-        nothing to enter. Export the file below and give it to whoever runs the
-        points sandbox.
+        nothing to enter. The sandbox bundle above carries the members.
       </p>
 
       {saved && (
@@ -241,8 +236,8 @@ export default function FlatCcasPanel({
               Make {removing?.ccaName} a normal CCA again?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Its leaders will be asked to allocate points as usual. A flat file
-              you already exported is not changed.
+              Its leaders will be asked to allocate points as usual. A bundle
+              you already downloaded is not changed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {clear.error && (

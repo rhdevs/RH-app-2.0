@@ -1,4 +1,9 @@
-import { SCORE_MAX, SCORE_MIN, type Range } from "~/lib/points/constants";
+import {
+  SCORE_MAX,
+  SCORE_MIN,
+  type IhgContext,
+  type Range,
+} from "~/lib/points/constants";
 import { meanHint, sdHint } from "~/lib/points/hints";
 import { checkMeanSd } from "~/lib/points/meanSd";
 
@@ -16,6 +21,8 @@ export type PointsEntry = {
   semesterOnly: boolean;
   outgoingRole: PointsRole;
   incomingRole: PointsRole;
+  /** Gets the sport's IHG points. Only a sport's head ticks this. */
+  ihg: boolean;
 };
 
 export type ExportBlockerCode =
@@ -27,6 +34,8 @@ export type ExportBlockerCode =
   | "BAD_MATRIC"
   | "DUPLICATE_MATRIC"
   | "UNRESOLVED_MEMBER"
+  | "IHG_OVER_CAP"
+  | "IHG_NOT_CONFIGURED"
   | "MEAN_OUT_OF_RANGE"
   | "SD_OUT_OF_RANGE";
 
@@ -131,6 +140,36 @@ function identityBlockers(entries: readonly PointsEntry[]): ExportBlocker[] {
   return blockers;
 }
 
+/**
+ * IHG ticks against JCRC's config for a sport. About JCRC's config and the
+ * ticks, never the scores, so it is judged even while scores are missing.
+ */
+function ihgBlockers(
+  entries: readonly PointsEntry[],
+  ihg: IhgContext | null,
+): ExportBlocker[] {
+  if (ihg === null) return [];
+  if (ihg.result === null || ihg.cap === null) {
+    return [
+      {
+        code: "IHG_NOT_CONFIGURED",
+        message:
+          "JCRC hasn't set this CCA's IHG result and cap yet. Ask them; you can keep entering scores.",
+      },
+    ];
+  }
+  const ticked = entries.filter((e) => e.ihg);
+  const excess = ticked.length - ihg.cap;
+  if (excess <= 0) return [];
+  return [
+    {
+      code: "IHG_OVER_CAP",
+      message: `IHG: ${ticked.length} ticked, the cap is ${ihg.cap} — untick ${excess}.`,
+      rowKeys: keysOf(ticked),
+    },
+  ];
+}
+
 /** Mean and SD over FULL scores. Semester-only and roles change nothing here. */
 function rangeBlockers(
   entries: readonly PointsEntry[],
@@ -158,6 +197,7 @@ export function exportBlockers(
   entries: readonly PointsEntry[],
   range: Readonly<Range>,
   entryOpen: boolean,
+  ihg: IhgContext | null,
 ): ExportBlocker[] {
   const blockers: ExportBlocker[] = [];
   if (!entryOpen) {
@@ -175,9 +215,30 @@ export function exportBlockers(
     return blockers;
   }
   const scoreIssues = scoreBlockers(entries);
-  blockers.push(...scoreIssues, ...identityBlockers(entries));
+  blockers.push(
+    ...scoreIssues,
+    ...identityBlockers(entries),
+    ...ihgBlockers(entries, ihg),
+  );
   if (scoreIssues.length === 0) blockers.push(...rangeBlockers(entries, range));
   return blockers;
+}
+
+/**
+ * IHG ticks only mean something for a sport. When the live IHG context is null
+ * (the CCA is not, or is no longer, a sport, or is flat) a stale tick must not
+ * reach the file: returns copies with the ticks cleared and how many there were.
+ * Never mutates its input; the draft is left alone.
+ */
+export function withoutStaleIhg(
+  entries: readonly PointsEntry[],
+  ihg: IhgContext | null,
+): { entries: PointsEntry[]; dropped: number } {
+  if (ihg !== null) return { entries: [...entries], dropped: 0 };
+  return {
+    entries: entries.map((e) => ({ ...e, ihg: false })),
+    dropped: entries.filter((e) => e.ihg).length,
+  };
 }
 
 /**
@@ -187,8 +248,17 @@ export function exportBlockers(
  */
 export function exportAllowedNow(
   entries: readonly PointsEntry[],
-  fresh: { entryOpen: boolean; range: Readonly<Range> },
+  fresh: {
+    entryOpen: boolean;
+    range: Readonly<Range>;
+    ihg: IhgContext | null;
+  },
 ): { allowed: boolean; blockers: ExportBlocker[] } {
-  const blockers = exportBlockers(entries, fresh.range, fresh.entryOpen);
+  const blockers = exportBlockers(
+    entries,
+    fresh.range,
+    fresh.entryOpen,
+    fresh.ihg,
+  );
   return { allowed: blockers.length === 0, blockers };
 }

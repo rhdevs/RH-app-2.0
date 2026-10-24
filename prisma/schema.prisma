@@ -660,8 +660,10 @@ model CcaProfile {
 ///   "default"        hall-wide ranges, plus `entryOpen` (the switch; ONLY used
 ///                    on this row — an absent row or a null `entryOpen` reads as
 ///                    CLOSED).
-///   "cca:<ccaID>"    a per-CCA waiver (`ccaID` is set). A null range field
-///                    means "use the default for that field", independently.
+///   "cca:<ccaID>"    a per-CCA row (`ccaID` is set) holding any combination of
+///                    a waiver, a flat marking, a type, an IHG config and a
+///                    sport tick. A null range field in a waiver means "use the
+///                    default for that field", independently.
 ///
 /// I-2: every scalar is NULLABLE, so a row written by another process without a
 /// field cannot break deserialisation for later readers.
@@ -684,6 +686,22 @@ model CcaPointsConfig {
   /// Per-CCA rows only: the CCA is a FLAT-points CCA and every member receives this
   /// many points for it (null = not flat). Set by JCRC; the sandbox applies the maths.
   flatPoints Float?
+  /// Per-CCA rows only. The CCA's points type ("1x" | "0.5x"), set by JCRC on
+  /// /admin/points and carried to the sandbox in the bundle. CONFIG, not points.
+  /// Values are enforced in code (src/lib/points/constants.ts); null = not set yet.
+  ccaType   String?
+  /// Per-CCA rows of SPORTS CCAs only: this year's IHG result ("1st" | "2nd" |
+  /// "3rd" | "3rd4th_no_match") and the most members the head may tick for the
+  /// IHG points. Config only; the ticks themselves never reach the server.
+  /// "Start new points year" nulls every ihgResult and keeps ihgCap.
+  ihgResult String?
+  ihgCap    Int?
+  /// Per-CCA rows only. JCRC's "Sport" tick: true / false overrides the category
+  /// default (CCA.category = SPORTS_CATEGORY); null = follow the category.
+  isSport   Boolean?
+  /// Default row only. Set by "Start new points year" so heads' drafts saved before
+  /// it are ignored. Config only (a timestamp); null = no new year started yet.
+  yearStartedAt DateTime?
   updatedAt DateTime?
   updatedBy String?
 }

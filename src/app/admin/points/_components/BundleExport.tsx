@@ -16,15 +16,29 @@ import {
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
 import {
-  buildFlatPointsCsv,
+  buildBundleCsv,
+  bundleCsvFilename,
+  bundleGaps,
+  type BundleCca,
+} from "~/lib/points/bundleCsv";
+import type { Range } from "~/lib/points/constants";
+import {
   flatCsvCcas,
   flatExportBlockers,
-  flatPointsCsvFilename,
   type FlatBlocker,
   type FlatExportCca,
   type FlatWarning,
 } from "~/lib/points/flatCsv";
+import type { SettingsWaiver } from "~/lib/points/settingsCsv";
+import { bundleGapLines } from "./bundleGapCopy";
 import { pointsErrorCopy } from "./errorCopy";
+
+type BundleData = {
+  effectiveDefault: Range;
+  waivers: SettingsWaiver[];
+  ccas: BundleCca[];
+  flat: FlatExportCca[];
+};
 
 type Stage =
   | { kind: "idle" }
@@ -37,24 +51,29 @@ type Stage =
     }
   | {
       kind: "confirm";
-      ccas: FlatExportCca[];
+      data: BundleData;
       ccaCount: number;
+      sportCount: number;
+      flatCcaCount: number;
       totalRows: number;
       warnings: FlatWarning[];
+      gapLines: string[];
     };
 
 /**
- * "Export flat-points CSV". The roster (with matrics) is fetched only when the
- * button is pressed, checked here, and dropped as soon as the dialog closes. The
- * file is built in the browser and saved to this device; nothing is uploaded.
+ * "Download sandbox bundle". The data (flat rosters with matrics) is fetched only
+ * when the button is pressed, checked here, and dropped as soon as the dialog
+ * closes. The file is built in the browser and saved to this device; nothing is
+ * uploaded. Missing types or IHG results are warned about but never block.
  */
-export default function FlatExport({ flatCount }: { flatCount: number }) {
-  // A mutation, not a query: each export is audited on the server and the roster
-  // (matrics) is never kept in the query cache. reset() drops it on close.
-  const exportData = api.ccaPoints.flatExportData.useMutation();
+export default function BundleExport() {
+  // A mutation, not a query: each export is audited on the server and the rosters
+  // (matrics) are never kept in the query cache. reset() drops them on close.
+  const exportData = api.ccaPoints.bundleExportData.useMutation();
   const { reset: resetExport } = exportData;
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [started, setStarted] = useState<string | null>(null);
   const close = () => {
     setDownloadError(null);
     resetExport();
@@ -63,10 +82,11 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
 
   const start = async () => {
     setDownloadError(null);
+    setStarted(null);
     setStage({ kind: "loading" });
     try {
       const data = await exportData.mutateAsync();
-      const check = flatExportBlockers(data);
+      const check = flatExportBlockers(data.flat);
       if (check.blockers.length > 0) {
         setStage({
           kind: "blocked",
@@ -76,10 +96,13 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
       } else {
         setStage({
           kind: "confirm",
-          ccas: data,
-          ccaCount: check.ccaCount,
+          data,
+          ccaCount: data.ccas.length,
+          sportCount: data.ccas.filter((c) => c.isSport).length,
+          flatCcaCount: check.ccaCount,
           totalRows: check.totalRows,
           warnings: check.warnings,
+          gapLines: bundleGapLines(data.ccas, bundleGaps(data.ccas)),
         });
       }
     } catch (error) {
@@ -91,14 +114,22 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
     }
   };
 
-  const download = (ccas: FlatExportCca[]) => {
+  const download = (data: BundleData) => {
     try {
       const now = new Date();
+      const fileName = bundleCsvFilename(now);
       downloadCsvFile(
-        flatPointsCsvFilename(now),
-        buildFlatPointsCsv({ ccas: flatCsvCcas(ccas), exportedAt: now }),
+        fileName,
+        buildBundleCsv({
+          defaultRange: data.effectiveDefault,
+          waivers: data.waivers,
+          ccas: data.ccas,
+          flat: flatCsvCcas(data.flat),
+          exportedAt: now,
+        }),
       );
       close();
+      setStarted(fileName);
     } catch (e) {
       setDownloadError(
         e instanceof Error ? e.message : "Something went wrong.",
@@ -112,7 +143,7 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
       <Button
         variant="outline"
         size="sm"
-        disabled={flatCount === 0 || loading}
+        disabled={loading}
         onClick={() => void start()}
       >
         {loading ? (
@@ -120,10 +151,17 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
         ) : (
           <Download className="h-4 w-4" />
         )}
-        Export flat-points CSV
+        Download sandbox bundle
       </Button>
+      {started && (
+        <p className="mt-3 text-sm text-emerald-700" role="status">
+          Download started: <span className="font-mono">{started}</span>. Load
+          it into the points sandbox together with the leader files and
+          JCRC&rsquo;s residents list.
+        </p>
+      )}
       {stage.kind === "error" && (
-        <p className="mt-2 text-sm text-red-700" role="alert">
+        <p className="mt-3 text-sm text-red-700" role="alert">
           {stage.message}{" "}
           <button
             type="button"
@@ -146,7 +184,7 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-gray-600">
-                <p>Fix these first, then export again:</p>
+                <p>Fix these first, then download again:</p>
                 {stage.kind === "blocked" && (
                   <ul className="list-disc space-y-1 pl-5 text-gray-800">
                     {stage.blockers.map((b) => (
@@ -173,12 +211,12 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Download the flat-points file?</AlertDialogTitle>
+            <AlertDialogTitle>Download the sandbox bundle?</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-gray-600">
                 <p className="font-medium text-gray-900">
-                  This file lists matric numbers. Send it only to the JCRC
-                  member running the points sandbox.
+                  This file lists matric numbers (members of flat-points CCAs).
+                  Send it only to the JCRC member running the points sandbox.
                 </p>
                 {downloadError && (
                   <p className="text-red-700" role="alert">
@@ -189,7 +227,12 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
                   <>
                     <p>
                       {stage.ccaCount} {stage.ccaCount === 1 ? "CCA" : "CCAs"} ·{" "}
-                      {stage.totalRows} {stage.totalRows === 1 ? "row" : "rows"}
+                      {stage.sportCount}{" "}
+                      {stage.sportCount === 1 ? "sport" : "sports"} ·{" "}
+                      {stage.flatCcaCount} flat-points{" "}
+                      {stage.flatCcaCount === 1 ? "CCA" : "CCAs"} ·{" "}
+                      {stage.totalRows}{" "}
+                      {stage.totalRows === 1 ? "member row" : "member rows"}
                     </p>
                     {stage.warnings.length > 0 && (
                       <ul className="list-disc pl-5 text-amber-800">
@@ -197,6 +240,18 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
                           <li key={w.ccaID}>{w.message}</li>
                         ))}
                       </ul>
+                    )}
+                    {stage.gapLines.length > 0 && (
+                      <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                        {stage.gapLines.map((line) => (
+                          <p key={line}>{line}</p>
+                        ))}
+                        <p>
+                          The sandbox will warn about them and will not finalise
+                          until they are set here and the bundle is downloaded
+                          again.
+                        </p>
+                      </div>
                     )}
                   </>
                 )}
@@ -206,7 +261,7 @@ export default function FlatExport({ flatCount }: { flatCount: number }) {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button
-              onClick={() => stage.kind === "confirm" && download(stage.ccas)}
+              onClick={() => stage.kind === "confirm" && download(stage.data)}
             >
               <Download className="h-4 w-4" />
               Download CSV

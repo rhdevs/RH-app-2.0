@@ -4,7 +4,12 @@ import { AlertTriangle, CheckCircle2, Download } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import { Progress } from "~/components/ui/progress";
-import { SD_LIMITS, SCORE_MAX, type Range } from "~/lib/points/constants";
+import {
+  SD_LIMITS,
+  SCORE_MAX,
+  type IhgContext,
+  type Range,
+} from "~/lib/points/constants";
 import type { ExportBlocker } from "~/lib/points/entries";
 import { advisoryHints } from "~/lib/points/hints";
 import { RangeMeter, ScoreHistogram } from "./Meters";
@@ -19,12 +24,14 @@ export default function SummaryCard({
   state,
   range,
   entryOpen,
+  ihg,
   onBlockerClick,
   onExport,
 }: {
   state: PointsState;
   range: Readonly<Range>;
   entryOpen: boolean;
+  ihg: IhgContext | null;
   onBlockerClick: (blocker: ExportBlocker) => void;
   onExport: () => void;
 }) {
@@ -55,6 +62,17 @@ export default function SummaryCard({
           className="mt-2 h-2"
           aria-label="Members scored"
         />
+        {ihg && (
+          <p
+            className={`mt-2 text-sm tabular-nums ${
+              ihg.cap !== null && state.tickedCount > ihg.cap
+                ? "font-medium text-red-700"
+                : "text-gray-600"
+            }`}
+          >
+            IHG: {state.tickedCount} of {ihg.cap ?? "—"} ticked
+          </p>
+        )}
       </div>
 
       <RangeMeter

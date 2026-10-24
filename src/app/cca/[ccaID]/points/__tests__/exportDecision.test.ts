@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_RANGE } from "~/lib/points/constants";
 import type { PointsEntry } from "~/lib/points/entries";
+import { EXPORT_HEADER } from "~/lib/points/exportCsv";
 import {
+  buildExportFile,
   checkAfterOpenChange,
   downloadVerdict,
   type ExportCheck,
@@ -17,11 +19,12 @@ const entry = (n: number, basePoints: number): PointsEntry => ({
   semesterOnly: false,
   outgoingRole: "none",
   incomingRole: "none",
+  ihg: false,
 });
 
 // Mean 13, SD 3.42: inside the default range.
 const entries = [8, 10, 12, 14, 16, 18].map((s, i) => entry(i + 1, s));
-const open = { entryOpen: true, range: DEFAULT_RANGE };
+const open = { entryOpen: true, range: DEFAULT_RANGE, ihg: null };
 const DONE: ExportCheck = { status: "done" };
 
 describe("checkAfterOpenChange", () => {
@@ -56,6 +59,7 @@ describe("downloadVerdict", () => {
     const verdict = downloadVerdict(DONE, entries, {
       entryOpen: false,
       range: DEFAULT_RANGE,
+      ihg: null,
     });
     expect(verdict.allowed).toBe(false);
     if (verdict.allowed || verdict.reason !== "blocked")
@@ -67,7 +71,84 @@ describe("downloadVerdict", () => {
     const verdict = downloadVerdict(DONE, entries, {
       entryOpen: true,
       range: { ...DEFAULT_RANGE, meanMin: 14, meanMax: 15 },
+      ihg: null,
     });
     expect(verdict).toMatchObject({ allowed: false, reason: "blocked" });
+  });
+
+  it("a cap lowered between opening and downloading blocks the download", () => {
+    const ticked = entries.map((e, i) => ({ ...e, ihg: i < 5 }));
+    const atOpen = { entryOpen: true, range: DEFAULT_RANGE };
+    expect(
+      downloadVerdict(DONE, ticked, {
+        ...atOpen,
+        ihg: { result: "1st", cap: 5 },
+      }),
+    ).toEqual({ allowed: true });
+    const verdict = downloadVerdict(DONE, ticked, {
+      ...atOpen,
+      ihg: { result: "1st", cap: 3 },
+    });
+    if (verdict.allowed || verdict.reason !== "blocked")
+      throw new Error("expected a blocked verdict");
+    expect(verdict.blockers.map((b) => b.code)).toEqual(["IHG_OVER_CAP"]);
+  });
+});
+
+describe("buildExportFile", () => {
+  const NOW = new Date("2026-10-19T08:00:00Z");
+  const base = { ccaID: 7, ccaName: "Soccer", now: NOW };
+  const ihgColumn = EXPORT_HEADER.indexOf("ihg");
+  /** The ihg cell of each data row. */
+  const ihgCells = (csv: string) =>
+    csv
+      .trim()
+      .split(/\r?\n/)
+      .slice(1)
+      .map((line) => line.split(",")[ihgColumn]);
+  const ticked = entries.map((e, i) => ({ ...e, ihg: i === 0 }));
+
+  it("drops a stale IHG tick when the CCA is no longer a sport and counts it", () => {
+    const file = buildExportFile({
+      ...base,
+      check: DONE,
+      entries: ticked,
+      live: open,
+    });
+    if (!file.allowed) throw new Error("expected an allowed file");
+    expect(file.droppedIhg).toBe(1);
+    expect(ihgCells(file.csv).every((c) => c === "N")).toBe(true);
+    expect(file.fileName).toMatch(/\.csv$/);
+  });
+
+  it("keeps the tick when the CCA is still a sport", () => {
+    const file = buildExportFile({
+      ...base,
+      check: DONE,
+      entries: ticked,
+      live: { ...open, ihg: { result: "1st", cap: 5 } },
+    });
+    if (!file.allowed) throw new Error("expected an allowed file");
+    expect(file.droppedIhg).toBe(0);
+    expect(ihgCells(file.csv)).toEqual(["Y", "N", "N", "N", "N", "N"]);
+  });
+
+  it("returns allowed false when the verdict is blocked", () => {
+    expect(
+      buildExportFile({
+        ...base,
+        check: DONE,
+        entries,
+        live: { ...open, entryOpen: false },
+      }),
+    ).toEqual({ allowed: false });
+    expect(
+      buildExportFile({
+        ...base,
+        check: { status: "checking" },
+        entries,
+        live: open,
+      }),
+    ).toEqual({ allowed: false });
   });
 });

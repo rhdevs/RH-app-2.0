@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { Range } from "~/lib/points/constants";
+import type { IhgContext, IhgResult, Range } from "~/lib/points/constants";
 import {
   buildDraft,
   canAutosave,
   draftKey,
   mergeDraftWithRoster,
   mergeRosterOverEntries,
-  readDraftItem,
+  readCurrentDraftItem,
   removeDraftItem,
   type ParsedDraft,
   type RosterMember,
@@ -46,13 +46,38 @@ export function parseScoreText(text: string): number | null {
   return /^\d+$/.test(t) ? Number(t) : Number.NaN;
 }
 
+/** How a sport's IHG result reads on the page. */
+export function ihgResultLabel(result: IhgResult): string {
+  return result === "3rd4th_no_match" ? "3rd–4th, no placement match" : result;
+}
+
+/** "3 Apr 2027, 14:32", or just the time when the draft was saved today. */
+export function savedAtText(savedAt: Date, now: Date = new Date()): string {
+  const time = savedAt.toLocaleTimeString("en-SG", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  if (savedAt.toDateString() === now.toDateString()) return time;
+  const date = savedAt.toLocaleDateString("en-SG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  return `${date}, ${time}`;
+}
+
 const scoreText = (n: number | null): string =>
   n === null || Number.isNaN(n) ? "" : String(n);
 
 /** The stored draft; storage that cannot be read at all counts as unreadable. */
-function readStored(key: string, ccaID: number): ParsedDraft {
+function readStored(
+  key: string,
+  ccaID: number,
+  yearStartedAt: string | null,
+): ParsedDraft {
   try {
-    return readDraftItem(window.localStorage, key, ccaID);
+    return readCurrentDraftItem(window.localStorage, key, ccaID, yearStartedAt);
   } catch {
     return { status: "unreadable" };
   }
@@ -84,8 +109,20 @@ export function usePointsEntries(args: {
   storageKeyUserID: string | null;
   range: Readonly<Range>;
   entryOpen: boolean;
+  /** When "Start new points year" last ran; older drafts are discarded. */
+  yearStartedAt: string | null;
+  /** JCRC's IHG config for a sport; null when this CCA is not one. */
+  ihg: IhgContext | null;
 }) {
-  const { ccaID, roster, storageKeyUserID, range, entryOpen } = args;
+  const {
+    ccaID,
+    roster,
+    storageKeyUserID,
+    range,
+    entryOpen,
+    yearStartedAt,
+    ihg,
+  } = args;
   const storageKey =
     storageKeyUserID === null ? null : draftKey(ccaID, storageKeyUserID);
 
@@ -103,9 +140,11 @@ export function usePointsEntries(args: {
   const loadedFor = useRef<string | null>(null);
   const keyRef = useRef(storageKey);
   const ccaRef = useRef(ccaID);
+  const yearRef = useRef(yearStartedAt);
   const unreadableRef = useRef(false);
   keyRef.current = storageKey;
   ccaRef.current = ccaID;
+  yearRef.current = yearStartedAt;
   unreadableRef.current = unreadable;
 
   const commit = useCallback((next: PointsEntry[]) => {
@@ -134,7 +173,7 @@ export function usePointsEntries(args: {
     }
     loadedFor.current = id;
     const parsed: ParsedDraft = storageKey
-      ? readStored(storageKey, ccaID)
+      ? readStored(storageKey, ccaID, yearRef.current)
       : { status: "none" };
     const draft = parsed.status === "ok" ? parsed.draft : null;
     const merged = mergeDraftWithRoster(roster, draft);
@@ -214,6 +253,11 @@ export function usePointsEntries(args: {
     [entryOpen, commit],
   );
 
+  const setIhg = useCallback(
+    (rowKey: string, on: boolean) => update(rowKey, { ihg: on }),
+    [update],
+  );
+
   const setScoreText = useCallback(
     (rowKey: string, text: string) => {
       if (!entryOpen) return;
@@ -264,9 +308,10 @@ export function usePointsEntries(args: {
       sdOk: check.sdOk,
       hints: scores.length > 0 ? adjustmentHint(check, range) : [],
       histogram: scoreHistogram(entries),
-      blockers: exportBlockers(entries, range, entryOpen),
+      tickedCount: entries.filter((e) => e.ihg).length,
+      blockers: exportBlockers(entries, range, entryOpen, ihg),
     };
-  }, [entries, range, entryOpen]);
+  }, [entries, range, entryOpen, ihg]);
 
   return {
     entries,
@@ -280,6 +325,7 @@ export function usePointsEntries(args: {
     draftsEnabled: storageKey !== null,
     update,
     setScoreText,
+    setIhg,
     clearDraft,
     discardUnreadable,
     ...derived,

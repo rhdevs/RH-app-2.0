@@ -7,7 +7,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "~/components/ui/tooltip";
-import type { Range } from "~/lib/points/constants";
+import type { IhgContext, Range } from "~/lib/points/constants";
+import { ihgResultLabel } from "./usePointsEntries";
 
 /** Status, the allowed range in plain words, and any waiver note. */
 export default function PointsHeader({
@@ -16,12 +17,14 @@ export default function PointsHeader({
   range,
   isWaived,
   note,
+  ihg,
 }: {
   ccaName: string;
   entryOpen: boolean;
   range: Readonly<Range>;
   isWaived: boolean;
   note: string | null;
+  ihg: IhgContext | null;
 }) {
   return (
     <header className="space-y-3">
@@ -73,6 +76,24 @@ export default function PointsHeader({
           </TooltipContent>
         </Tooltip>
       </p>
+
+      {ihg &&
+        (ihg.result !== null && ihg.cap !== null ? (
+          <p className="text-sm text-gray-700">
+            <span className="font-medium text-gray-900">
+              IHG result: {ihgResultLabel(ihg.result)}
+            </span>{" "}
+            · up to {ihg.cap} members get the IHG points — tick them below.
+          </p>
+        ) : (
+          <p
+            className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+            role="status"
+          >
+            JCRC hasn&rsquo;t set this CCA&rsquo;s IHG result and cap yet. You
+            can enter scores and ticks now; the export waits for JCRC.
+          </p>
+        ))}
 
       {isWaived && (
         <p className="text-sm text-gray-600">

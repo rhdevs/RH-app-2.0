@@ -14,6 +14,7 @@ export type DraftRow = {
   semesterOnly: boolean;
   outgoingRole: PointsRole;
   incomingRole: PointsRole;
+  ihg: boolean;
 };
 
 export type Draft = {
@@ -53,20 +54,26 @@ export function prefillEntry(member: RosterMember): PointsEntry {
     semesterOnly: false,
     outgoingRole: member.role === "Head" ? "head" : "none",
     incomingRole: "none",
+    ihg: false,
   };
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-function isDraftRow(v: unknown): v is DraftRow {
+/** A stored row; one saved before the IHG tick existed has no `ihg`. */
+type StoredDraftRow = Omit<DraftRow, "ihg"> & { ihg?: boolean };
+
+function isDraftRow(v: unknown): v is StoredDraftRow {
   if (!isRecord(v)) return false;
   const score = v.basePoints;
   return (
     (score === null || (typeof score === "number" && Number.isFinite(score))) &&
     typeof v.semesterOnly === "boolean" &&
     ROLES.includes(v.outgoingRole as PointsRole) &&
-    ROLES.includes(v.incomingRole as PointsRole)
+    ROLES.includes(v.incomingRole as PointsRole) &&
+    // A row saved before the IHG tick existed has no ihg: read it as false.
+    (v.ihg === undefined || typeof v.ihg === "boolean")
   );
 }
 
@@ -95,7 +102,7 @@ export function parseDraft(raw: string | null, ccaID: number): ParsedDraft {
     return UNREADABLE;
   if (Number.isNaN(Date.parse(data.savedAt))) return UNREADABLE;
   if (!isRecord(data.rows)) return UNREADABLE;
-  // Rebuild every row from the four editable fields only, so a stored row can
+  // Rebuild every row from the five editable fields only, so a stored row can
   // never carry a matric, name or key that competes with the roster's.
   const rows: Record<string, DraftRow> = {};
   for (const [key, value] of Object.entries(data.rows)) {
@@ -105,6 +112,7 @@ export function parseDraft(raw: string | null, ccaID: number): ParsedDraft {
       semesterOnly: value.semesterOnly,
       outgoingRole: value.outgoingRole,
       incomingRole: value.incomingRole,
+      ihg: value.ihg === true,
     };
   }
   return {
@@ -128,6 +136,7 @@ export function buildDraft(
       semesterOnly: e.semesterOnly,
       outgoingRole: e.outgoingRole,
       incomingRole: e.incomingRole,
+      ihg: e.ihg,
     };
   }
   return {
@@ -197,6 +206,7 @@ export function mergeRosterOverEntries(
       semesterOnly: now.semesterOnly,
       outgoingRole: now.outgoingRole,
       incomingRole: now.incomingRole,
+      ihg: now.ihg,
     };
   });
   const droppedCount = current.filter((e) => !keys.has(e.rowKey)).length;
@@ -226,4 +236,34 @@ export function removeDraftItem(
   } catch {
     return false;
   }
+}
+
+/** A draft saved before "Start new points year" last ran belongs to the old year. */
+export function isDraftFromBeforeYear(
+  savedAt: string,
+  yearStartedAt: string | null,
+): boolean {
+  if (yearStartedAt === null) return false;
+  return Date.parse(savedAt) < Date.parse(yearStartedAt);
+}
+
+/**
+ * Like readDraftItem, but a draft from before the current points year is removed
+ * and reported as none, so last year's scores and ticks never refill the page.
+ */
+export function readCurrentDraftItem(
+  storage: Pick<Storage, "getItem" | "removeItem">,
+  key: string,
+  ccaID: number,
+  yearStartedAt: string | null,
+): ParsedDraft {
+  const parsed = readDraftItem(storage, key, ccaID);
+  if (
+    parsed.status === "ok" &&
+    isDraftFromBeforeYear(parsed.draft.savedAt, yearStartedAt)
+  ) {
+    removeDraftItem(storage, key);
+    return { status: "none" };
+  }
+  return parsed;
 }
