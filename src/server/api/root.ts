@@ -13,6 +13,7 @@ import { ccaRecruitmentRouter } from "./routers/ccaRecruitment";
 import { calendarRouter } from "./routers/calendar";
 import { eventRouter } from "./routers/event";
 import { disposableRouter } from "./routers/disposable";
+import { reminderRouter } from "./routers/reminder";
 import { feedbackRouter } from "./routers/feedback";
 import { jcrcPositionsRouter } from "./routers/jcrcPositions";
 import { jcrcPositionsStaffRouter } from "./routers/jcrcPositionsStaff";
@@ -81,6 +82,8 @@ export const appRouter = createTRPCRouter({
   proposal: proposalRouter,
   /** Disposable-tableware requests to the Social director, behind disposables.enabled. */
   disposable: disposableRouter,
+  /** Deadline broadcasts from directors to CCA heads, behind reminders.enabled. */
+  reminder: reminderRouter,
   /** In-app feedback to the admins, behind feedback.enabled. */
   feedback: feedbackRouter,
   // JCRC positions: views only, plus the JCRC self-handover.

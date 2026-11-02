@@ -16,6 +16,7 @@ export const DISPOSABLE_LIMITS = {
   approve: 120,
   reject: 120,
   delete: 60,
+  nudge: 30,
 } as const;
 
 export type DisposableLimitedAction = keyof typeof DISPOSABLE_LIMITS;

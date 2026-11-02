@@ -28,6 +28,14 @@ export type DueNotice = {
    * "mostUrgent"; ties keep the order the kind returned them in.
    */
   urgency?: number;
+  /**
+   * Which notices compete for the "mostUrgent" choice. Notices with the same
+   * `group` (and those with none) compete; the highest `urgency` of EACH
+   * group is kept. A kind whose notices are independent occasions (a deadline
+   * nudge per broadcast) gives each occasion its own group, so a long absence
+   * collapses the stages of one occasion and not the occasions themselves.
+   */
+  group?: string;
 };
 
 /**
