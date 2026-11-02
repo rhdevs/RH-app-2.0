@@ -67,3 +67,16 @@ describe("headsThisCca", () => {
     expect(slugs([{ ccaID: 9005 }])).toEqual(["members", "points"]);
   });
 });
+
+describe("visibleSections and Disposables", () => {
+  it("hides the Disposables tab from a viewer who does not head this CCA", () => {
+    const withDisposables = [{ slug: "members" }, { slug: "disposables" }];
+    expect(visibleSections(withDisposables, false).map((s) => s.slug)).toEqual([
+      "members",
+    ]);
+    expect(visibleSections(withDisposables, true).map((s) => s.slug)).toEqual([
+      "members",
+      "disposables",
+    ]);
+  });
+});

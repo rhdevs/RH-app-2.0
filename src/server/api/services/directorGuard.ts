@@ -207,6 +207,53 @@ export async function isSocialDirector(
 }
 
 /**
+ * Whether this person holds `jcrc` right now: stored on their role row and not
+ * past a JcrcTerm end date, by the strict reads of this module. Used to decide
+ * who may READ the disposables screen (every JCRC member may; none may act).
+ * Not a director check: it looks at no position and no switch. Rejects if a
+ * read fails.
+ */
+export async function holdsLiveJcrc(
+  db: GuardDb,
+  userID: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return (await liveJcrcHolders(db, [userID], now)).has(userID);
+}
+
+/**
+ * The people who are the Social director right now: the live-`jcrc` holders of
+ * the position flagged `handlesDisposables`, when EXACTLY ONE position carries
+ * that flag and `directors.enabled` is on. [] with none, with two, with the
+ * switch off, or with no qualifying holder. The same rule as
+ * `isSocialDirector`, worked out for many people at once to address a notice,
+ * never to authorize anything. Rejects if a read fails.
+ */
+export async function currentSocialDirectorIDs(
+  db: GuardDb,
+  now: Date = new Date(),
+): Promise<string[]> {
+  if (!(await readDirectorsFlag(db))) return [];
+  const flagged = await db.jcrcPosition.findMany({
+    where: { handlesDisposables: true },
+    select: { id: true },
+    take: 2,
+  });
+  const only = flagged.length === 1 ? flagged[0] : undefined;
+  if (only === undefined) return [];
+  const holders = await db.jcrcPositionHolder.findMany({
+    where: { positionID: only.id, ...activeHolderWhere(now) },
+    select: { userID: true },
+  });
+  const live = await liveJcrcHolders(
+    db,
+    [...new Set(holders.map((h) => h.userID))],
+    now,
+  );
+  return [...live].sort();
+}
+
+/**
  * Run a decision, refusing if any read inside it throws. The catch is around
  * the whole decision and only ever refuses; it logs the error name alone.
  */

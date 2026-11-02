@@ -98,18 +98,32 @@ function callArguments(code: string, open: number): string {
  * than transitionProposal. Empty means none.
  */
 export function statusWriteProblems(source: string): string[] {
+  return delegateStatusWriteProblems(source, "proposal", "Proposal");
+}
+
+/**
+ * The same scan for any model: `delegate` is the Prisma client property
+ * ("proposal", "disposableRequest") and `collection` the stored name.
+ */
+export function delegateStatusWriteProblems(
+  source: string,
+  delegate: string,
+  collection: string,
+): string[] {
   const code = stripComments(source);
   const problems: string[] = [];
-  for (const m of code.matchAll(/\.proposal\b(\s*\.\s*(\w+)\s*\()?/g)) {
+  for (const m of code.matchAll(
+    new RegExp(`\\.${delegate}\\b(\\s*\\.\\s*(\\w+)\\s*\\()?`, "g"),
+  )) {
     const method = m[2];
     if (method === undefined) {
       // `const p = tx.proposal` would hide a write from this scan.
-      problems.push("proposal delegate used without a direct method call");
+      problems.push(`${delegate} delegate used without a direct method call`);
       continue;
     }
     if (READS.has(method)) continue;
     if (!WRITES.has(method)) {
-      problems.push(`unknown proposal method ${method}`);
+      problems.push(`unknown ${delegate} method ${method}`);
       continue;
     }
     const open = m.index! + m[0].length - 1;
@@ -118,21 +132,21 @@ export function statusWriteProblems(source: string): string[] {
       // The filter may name a status (that is a read); the data must not.
       const at = args.search(/\bdata\s*:/);
       if (at < 0) {
-        problems.push(`proposal.${method} without a data key`);
+        problems.push(`${delegate}.${method} without a data key`);
         continue;
       }
       args = args.slice(at);
     }
     if (/\bstatus\b/.test(args)) {
-      problems.push(`proposal.${method} names status`);
+      problems.push(`${delegate}.${method} names status`);
     }
   }
   // A raw command could write the collection without the delegate.
   if (
     /(\$runCommandRaw|\$executeRaw|\$executeRawUnsafe)/.test(code) &&
-    /["'`]Proposal["'`]/.test(code)
+    new RegExp(`["'\`]${collection}["'\`]`).test(code)
   ) {
-    problems.push("raw command on the Proposal collection");
+    problems.push(`raw command on the ${collection} collection`);
   }
   return problems;
 }
@@ -658,5 +672,150 @@ describe("approve, return and finish cannot skip the guard", () => {
       expect(c, f).not.toMatch(/getUserRoles|myPositionCcas|overseesAll/);
       expect(c, f).not.toMatch(/session\.user\.roles|useSession/);
     }
+  });
+});
+
+describe("disposables follows the same rules as proposals", () => {
+  const TRANSITION_D = "src/server/api/services/disposables/transition.ts";
+  const DISPOSABLE_FILES = SRC_FILES.filter(
+    (f) =>
+      f.startsWith("src/server/api/services/disposables/") ||
+      f === "src/server/api/routers/disposable.ts",
+  );
+  const problems = (src: string) =>
+    delegateStatusWriteProblems(src, "disposableRequest", "DisposableRequest");
+
+  it("finds the disposable files", () => {
+    expect(DISPOSABLE_FILES).toContain(TRANSITION_D);
+    expect(DISPOSABLE_FILES.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("the scan catches a disposable status write and lets reads through", () => {
+    expect(
+      problems(
+        `await tx.disposableRequest.updateMany({ where: {}, data: { status: "approved" } });`,
+      ),
+    ).toEqual(["disposableRequest.updateMany names status"]);
+    expect(problems(`const d = tx.disposableRequest; d.update({});`)).toEqual([
+      "disposableRequest delegate used without a direct method call",
+    ]);
+    expect(
+      problems(
+        `await db.$runCommandRaw({ update: "DisposableRequest", updates: [] });`,
+      ),
+    ).toEqual(["raw command on the DisposableRequest collection"]);
+    expect(
+      problems(
+        `await db.disposableRequest.findMany({ where: { status: "pending" } });`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("only transition.ts names a status in a disposable write", () => {
+    const isClient = (f: string) => /^\s*["']use client["']/.test(read(f));
+    const offenders = SRC_FILES.filter(
+      (f) => f !== TRANSITION_D && !isClient(f),
+    ).flatMap((f) => problems(read(f)).map((p) => `${f}: ${p}`));
+    expect(offenders).toEqual([]);
+  });
+
+  it("transition.ts moves the status in one compare-and-set on the status and version seen", () => {
+    const code = stripComments(read(TRANSITION_D));
+    expect(code.match(/\.disposableRequest\.updateMany\(/g)).toHaveLength(1);
+    expect(code.match(/status:\s*input\.to/g)).toHaveLength(2);
+    expect(code).toMatch(/status:\s*input\.from/);
+    expect(code).toMatch(/version:\s*input\.expectedVersion/);
+  });
+
+  it("creating a request leaves the status to the schema default", () => {
+    expect(read("prisma/schema.prisma")).toMatch(
+      /\n\s*status\s+String\s+@default\("pending"\)/,
+    );
+    expect(
+      stripComments(read("src/server/api/routers/disposable.ts")),
+    ).not.toMatch(/\bstatus\b|changeRequest/);
+  });
+
+  it("no disposable file uses a forgiving role read", () => {
+    for (const f of DISPOSABLE_FILES) {
+      const code = stripComments(read(f));
+      expect(code, f).not.toMatch(/getUserRoles|assertHeadsCca|ccaScope/);
+      expect(code, f).not.toMatch(/myPositionCcas|overseesAll/);
+      expect(code, f).not.toMatch(/session\.user\.roles/);
+      expect(code, f).not.toMatch(/\bgetServerAuthSession|\bauth\(/);
+    }
+  });
+
+  it("access.ts catches only around a whole decision, and only to refuse", () => {
+    const code = stripComments(
+      read("src/server/api/services/disposables/access.ts"),
+    );
+    expect(code.match(/\bcatch\b/g)).toHaveLength(4);
+    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(4);
+    expect(code).toMatch(/function refuseOnFailure\(err: unknown\): never/);
+  });
+
+  it("the other disposable services catch nothing, apart from the flag read and the conflict mapping", () => {
+    for (const f of DISPOSABLE_FILES) {
+      if (f.endsWith("/access.ts") || f.endsWith("/flag.ts")) continue;
+      if (f === TRANSITION_D) continue;
+      expect(stripComments(read(f)), f).not.toMatch(/\bcatch\b/);
+    }
+  });
+
+  it("transition.ts rethrows everything but a write conflict", () => {
+    const code = stripComments(read(TRANSITION_D));
+    expect(code.match(/\bcatch\b/g)).toHaveLength(2);
+    expect(
+      code.match(/if \(isWriteConflict\(err\)\) throw conflict\(\)/g),
+    ).toHaveLength(2);
+    // each catch passes a TRPCError through, then rethrows what is left
+    expect(code.match(/throw err;/g)).toHaveLength(4);
+  });
+
+  it("every gated disposable procedure runs inside sanitizeErrors, behind the flag", () => {
+    const code = stripComments(read("src/server/api/routers/disposable.ts"));
+    expect(code).toMatch(
+      /const gated = identifiedProcedure\s*\.use\(sanitizeErrors\)\s*\.use\(/,
+    );
+    expect(code).toMatch(/await assertDisposablesEnabled\(ctx\.db\)/);
+    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(9);
+    expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
+    expect(code).toMatch(
+      /entry: identifiedProcedure\s*\.use\(sanitizeErrors\)/,
+    );
+  });
+
+  it("approve and reject run the strict Social director guard first, then the budget, then the move", () => {
+    const code = stripComments(
+      read("src/server/api/services/disposables/write.ts"),
+    );
+    const start = code.indexOf("export async function decideRequest");
+    const body = code.slice(start, code.indexOf("\n}\n", start));
+    const guard = body.indexOf("await assertSocialDirector(db, userID)");
+    const limit = body.indexOf("await assertWithinLimit(");
+    const move = body.indexOf("await changeRequest(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(limit).toBeGreaterThan(guard);
+    expect(move).toBeGreaterThan(limit);
+    expect(code).not.toMatch(/input\.ccaID\b.*decide/);
+  });
+
+  it("create spends budget only after the head check", () => {
+    const code = stripComments(
+      read("src/server/api/services/disposables/write.ts"),
+    );
+    const head = code.indexOf("await assertCcaHead(db, userID, input.ccaID)");
+    const limit = code.indexOf('assertWithinLimit("create"');
+    expect(head).toBeGreaterThan(-1);
+    expect(limit).toBeGreaterThan(head);
+  });
+
+  it("the notices are written on the transaction client", () => {
+    const code = stripComments(
+      read("src/server/api/services/disposables/notices.ts"),
+    );
+    expect(code).toMatch(/notify\(tx,/);
+    expect(code).not.toMatch(/notify\(db,/);
   });
 });

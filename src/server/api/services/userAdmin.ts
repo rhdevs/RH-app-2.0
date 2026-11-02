@@ -1207,6 +1207,21 @@ export async function deleteUserAccountCascade(
       deleted.proposalCommentRead = (
         await tx.proposalCommentRead.deleteMany({ where })
       ).count;
+      // DISPOSABLE REQUESTS belong to the CCA and the Social director's queue,
+      // so the rows stay and only the references to this person are cleared
+      // (explicit nulls, as above). A decision keeps its date and note.
+      deleted.disposableRequesterCleared = (
+        await tx.disposableRequest.updateMany({
+          where: { createdBy: cid },
+          data: { createdBy: null },
+        })
+      ).count;
+      deleted.disposableDeciderCleared = (
+        await tx.disposableRequest.updateMany({
+          where: { decidedBy: cid },
+          data: { decidedBy: null },
+        })
+      ).count;
     }
 
     /* ---- (d) the User row, LAST and BY ObjectId ---------------------------

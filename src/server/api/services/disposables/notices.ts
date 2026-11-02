@@ -1,0 +1,111 @@
+import type { Prisma } from "@prisma/client";
+
+import { DISPOSABLES_HREF } from "~/lib/disposables/links";
+import { notify } from "~/server/api/services/notifications";
+import { headsOrRefuse, socialDirectorsOrRefuse } from "./access";
+import type { ChangedRequest, RemovedRequest } from "./transition";
+
+/**
+ * The inbox notices for the disposable moves (merge proposal 4.3, 4.9). Every
+ * function runs on the TRANSACTION client of the change, so the notice commits
+ * or rolls back with it, and recipients come from CcaHead rows and the strict
+ * guard, never from the request. The body is the request's title, plus the
+ * decision note for a decision; nothing else leaves the row. The person who
+ * acted is never told what they just did.
+ *
+ * No notice is written when a request is CREATED: telling the Social director
+ * about new requests is the daily digest's job (PR 14).
+ */
+
+type Tx = Prisma.TransactionClient;
+type Notified = Pick<ChangedRequest, "ccaID" | "title">;
+
+const bodyOf = (title: string, note: string | null) =>
+  (note ? `${title}: ${note}` : title).slice(0, 1000);
+
+async function toHeads(
+  tx: Tx,
+  row: Notified,
+  actorID: string,
+  spec: { kind: string; title: string; body: string },
+) {
+  const heads = (await headsOrRefuse(tx, row.ccaID)).filter(
+    (id) => id !== actorID,
+  );
+  await notify(tx, {
+    recipients: heads,
+    kind: spec.kind,
+    title: spec.title,
+    body: spec.body,
+    href: DISPOSABLES_HREF,
+  });
+}
+
+/** The Social director decided: tell the CCA's heads. */
+export function noticeDecision(
+  tx: Tx,
+  decision: "approved" | "rejected",
+  row: ChangedRequest,
+  actorID: string,
+  note: string | null,
+) {
+  return toHeads(tx, row, actorID, {
+    kind:
+      decision === "approved" ? "disposable.approved" : "disposable.rejected",
+    title:
+      decision === "approved"
+        ? "Your disposable request was approved"
+        : "Your disposable request was rejected",
+    body: bodyOf(row.title, note),
+  });
+}
+
+/**
+ * The Social director edited a request: tell the CCA's heads. `backToPending`
+ * says the edit sent an approved request back for a new decision.
+ */
+export function noticeEditedBySocialDirector(
+  tx: Tx,
+  row: ChangedRequest,
+  actorID: string,
+  backToPending: boolean,
+) {
+  return toHeads(tx, row, actorID, {
+    kind: "disposable.edited",
+    title: "Your disposable request was edited",
+    body: backToPending
+      ? bodyOf(row.title, "it was approved and is pending again")
+      : row.title,
+  });
+}
+
+/**
+ * A head edited an approved request, which is pending again: tell the Social
+ * director(s), who must decide it again. An edit that leaves a request pending
+ * needs no notice: it is already in their queue.
+ */
+export async function noticeEditedByHead(
+  tx: Tx,
+  row: ChangedRequest,
+  actorID: string,
+) {
+  const directors = (await socialDirectorsOrRefuse(tx)).filter(
+    (id) => id !== actorID,
+  );
+  await notify(tx, {
+    recipients: directors,
+    kind: "disposable.edited",
+    title: "An approved disposable request was changed",
+    body: bodyOf(row.title, "it is pending again"),
+    href: DISPOSABLES_HREF,
+  });
+}
+
+/** The Social director deleted a request: tell the CCA's heads. */
+export function noticeDeleted(tx: Tx, row: RemovedRequest, actorID: string) {
+  return toHeads(tx, row, actorID, {
+    kind: "disposable.deleted",
+    title: "Your disposable request was deleted",
+    body: row.title,
+  });
+}

@@ -207,6 +207,9 @@ describe("runDueCheck", () => {
   });
 
   it("registers the first real kind, and adding one is a list entry", () => {
-    expect(DUE_KINDS.map((k) => k.name)).toEqual(["cca_no_director"]);
+    expect(DUE_KINDS.map((k) => k.name)).toEqual([
+      "cca_no_director",
+      "disposables_no_director",
+    ]);
   });
 });

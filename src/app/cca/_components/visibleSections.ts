@@ -3,7 +3,11 @@
  * Proposals: JCRC and admin reach the other sections through the dashboard's
  * manager access, but the points page admits only the CCA's heads.
  */
-const HEADS_ONLY_SLUGS: readonly string[] = ["points", "proposals"];
+const HEADS_ONLY_SLUGS: readonly string[] = [
+  "points",
+  "proposals",
+  "disposables",
+];
 
 /**
  * Does the viewer head THIS CCA? `listMine` is "the CCAs I head", so a match means

@@ -12,6 +12,7 @@ import {
   CalendarDays,
   FileText,
   FilePenLine,
+  Package,
 } from "lucide-react";
 
 import { api } from "~/trpc/react";
@@ -35,6 +36,7 @@ const SECTIONS = [
   { slug: "events", label: "Events", icon: CalendarDays },
   { slug: "points", label: "Points", icon: ClipboardList },
   { slug: "proposals", label: "Proposals", icon: FilePenLine },
+  { slug: "disposables", label: "Disposables", icon: Package },
   { slug: "transcript", label: "Transcript", icon: FileText },
 ] as const;
 
@@ -73,20 +75,29 @@ export default function CcaDashboardShell({
       retry: false,
       staleTime: 60_000,
     }).data?.enabled === true;
+  // And the Disposables tab, until the disposables switch is known to be on.
+  const disposablesEnabled =
+    api.disposable.enabled.useQuery(undefined, {
+      retry: false,
+      staleTime: 60_000,
+    }).data?.enabled === true;
   const sections = visibleSections(
     SECTIONS,
     headsThisCca(data?.ccas, ccaID),
   ).filter(
     (s) =>
       (s.slug !== "transcript" || transcriptEnabled) &&
-      (s.slug !== "proposals" || proposalsEnabled),
+      (s.slug !== "proposals" || proposalsEnabled) &&
+      (s.slug !== "disposables" || disposablesEnabled),
   );
 
   const isActive = (slug: string) => {
     const base = `/cca/${ccaID}`;
     // The overview is an exact match; anything else would make it active on
     // every subsection, since they all start with the base path.
-    return slug === "" ? pathname === base : pathname.startsWith(`${base}/${slug}`);
+    return slug === ""
+      ? pathname === base
+      : pathname.startsWith(`${base}/${slug}`);
   };
 
   return (

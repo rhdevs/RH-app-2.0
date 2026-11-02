@@ -54,16 +54,29 @@
  */
 import { PrismaClient } from "@prisma/client";
 import {
-  canonicalUserID, isCanonicalResidentID, normalizeEmail, isExtUserID,
+  canonicalUserID,
+  isCanonicalResidentID,
+  normalizeEmail,
+  isExtUserID,
 } from "./lib/identity.mjs";
 import {
-  findAll, countWhere, numify, E_FORMAT, ROLE_VOCAB, SENTINEL_FACILITY_ID, legacyCanonicalUserID,
-  aggregateAll, isCommit, abort,
+  findAll,
+  countWhere,
+  numify,
+  E_FORMAT,
+  ROLE_VOCAB,
+  SENTINEL_FACILITY_ID,
+  legacyCanonicalUserID,
+  aggregateAll,
+  isCommit,
+  abort,
 } from "./lib/rbac.mjs";
 import {
   evaluateDirectorChecks,
   isGating,
   proposalsNeedDirectors,
+  disposablesNeedDirectors,
+  disposablesNeedIndex,
 } from "./lib/directorChecks.mjs";
 
 const db = new PrismaClient();
@@ -86,13 +99,17 @@ const W = 46;
 function line(label, value, { bad = null, note = "", info = false } = {}) {
   const isRed = Array.isArray(bad) ? bad.length > 0 : !!bad;
   const tag = isRed ? "  <- RED" : info ? "  [informational]" : "";
-  console.log(`${label.padEnd(W, ".")} ${String(value).padStart(5)}${tag}${note ? `  ${note}` : ""}`);
+  console.log(
+    `${label.padEnd(W, ".")} ${String(value).padStart(5)}${tag}${note ? `  ${note}` : ""}`,
+  );
   if (isRed) {
     const list = Array.isArray(bad) ? bad : [];
     red.push({ label, value, offenders: list });
     if (list.length) {
       const shown = ALL_NAMES ? list : list.slice(0, 20);
-      console.error(`      ${shown.join(", ")}${!ALL_NAMES && list.length > 20 ? `  … (+${list.length - 20} more; --names for all)` : ""}`);
+      console.error(
+        `      ${shown.join(", ")}${!ALL_NAMES && list.length > 20 ? `  … (+${list.length - 20} more; --names for all)` : ""}`,
+      );
     }
   }
 }
@@ -145,10 +162,16 @@ async function readAuthAllowlist() {
     // not a regex" (see preflight-scrc-validators.mjs). Ask for everything,
     // narrow in JS — one round trip, still read-only.
     const lc = await raw({ listCollections: 1 });
-    const present = (lc?.cursor?.firstBatch ?? []).some((c) => c?.name === "AuthAllowlist");
+    const present = (lc?.cursor?.firstBatch ?? []).some(
+      (c) => c?.name === "AuthAllowlist",
+    );
     if (!present) return { present: false, rows: [], error: null };
     const rows = await findAll(db, "AuthAllowlist", {
-      email: 1, pinnedUserID: 1, note: 1, addedBy: 1, addedAt: 1,
+      email: 1,
+      pinnedUserID: 1,
+      note: 1,
+      addedBy: 1,
+      addedAt: 1,
     });
     return { present: true, rows, error: null };
   } catch (e) {
@@ -177,19 +200,29 @@ function allowlistSection(allowlist, users, userRole) {
   }
 
   const rows = allowlist.rows ?? [];
-  line("AuthAllowlist rows (admin-pinned identities)", rows.length, { info: true });
+  line("AuthAllowlist rows (admin-pinned identities)", rows.length, {
+    info: true,
+  });
   if (!rows.length) {
-    console.log(`      (collection exists but holds no pins — the break-glass is unused)`);
+    console.log(
+      `      (collection exists but holds no pins — the break-glass is unused)`,
+    );
     return;
   }
 
-  const rolesByID = new Map(userRole.map((r) => [String(r.userID ?? ""), r.roles ?? []]));
-  const emailsPresent = new Set(users.map((u) => normalizeEmail(String(u.email ?? ""))));
+  const rolesByID = new Map(
+    userRole.map((r) => [String(r.userID ?? ""), r.roles ?? []]),
+  );
+  const emailsPresent = new Set(
+    users.map((u) => normalizeEmail(String(u.email ?? ""))),
+  );
 
   // --- M2: every pin must be in the EXT namespace -------------------------
   const notExt = rows
     .filter((r) => !isExtUserID(String(r.pinnedUserID ?? "")))
-    .map((r) => `${String(r.email)}->${JSON.stringify(r.pinnedUserID ?? null)}`);
+    .map(
+      (r) => `${String(r.email)}->${JSON.stringify(r.pinnedUserID ?? null)}`,
+    );
   line("  pins OUTSIDE the EXT: namespace", notExt.length, {
     bad: notExt,
     note: "mints NO identity (M2) — someone wrote this row by hand",
@@ -208,7 +241,9 @@ function allowlistSection(allowlist, users, userRole) {
   const sharedPins = [...byPin]
     .filter(([, emails]) => emails.length > 1)
     .map(([p, emails]) => `${p} <- ${emails.join(" + ")}`);
-  const dupEmails = [...byEmail].filter(([, n]) => n > 1).map(([e, n]) => `${e}(x${n})`);
+  const dupEmails = [...byEmail]
+    .filter(([, n]) => n > 1)
+    .map(([e, n]) => `${e}(x${n})`);
   line("  pins claimed by MORE THAN ONE email", sharedPins.length, {
     bad: sharedPins,
     note: "M3 BROKEN — the pin_unique index is missing (create-auth-allowlist.mjs)",
@@ -220,9 +255,11 @@ function allowlistSection(allowlist, users, userRole) {
 
   // --- the operational rule, made visible ---------------------------------
   const extAdmins = rows
-    .filter((r) => (rolesByID.get(String(r.pinnedUserID ?? "")) ?? []).includes("admin"))
+    .filter((r) =>
+      (rolesByID.get(String(r.pinnedUserID ?? "")) ?? []).includes("admin"),
+    )
     .map((r) => `${String(r.pinnedUserID)}(${String(r.email)})`);
-  line("  EXT pins holding \"admin\"", extAdmins.length, {
+  line('  EXT pins holding "admin"', extAdmins.length, {
     bad: extAdmins,
     note: "an identity minted from a row, not from an NUS address, with full admin",
   });
@@ -242,7 +279,9 @@ function allowlistSection(allowlist, users, userRole) {
   });
 
   // --- the roster, one line per pin ---------------------------------------
-  console.log(`\n      pin                       email                                    roles              User row`);
+  console.log(
+    `\n      pin                       email                                    roles              User row`,
+  );
   for (const r of rows) {
     const pin = String(r.pinnedUserID ?? "(null)");
     const email = normalizeEmail(String(r.email ?? ""));
@@ -267,6 +306,8 @@ async function directorSection() {
   let input;
   let directorsOn;
   let proposalsOn;
+  let disposablesOn;
+  let disposableIndexes;
   try {
     const [ccas, positions, links, holders, terms] = await Promise.all([
       findAll(db, "CCA", { ccaID: 1, ccaName: 1 }),
@@ -301,6 +342,26 @@ async function directorSection() {
       })
     )?.cursor?.firstBatch?.[0];
     proposalsOn = proposalsRow?.value === "on";
+    const disposablesRow = (
+      await raw({
+        find: "SystemFlag",
+        filter: { key: "disposables.enabled" },
+        limit: 1,
+      })
+    )?.cursor?.firstBatch?.[0];
+    disposablesOn = disposablesRow?.value === "on";
+    // Only needed (and only read) while the flag is on. A read that fails is
+    // null, which counts as "index missing": RED, never assumed present.
+    disposableIndexes = null;
+    if (disposablesOn) {
+      try {
+        const reply = await raw({ listIndexes: "DisposableRequest" });
+        disposableIndexes =
+          reply?.ok === 1 ? (reply?.cursor?.firstBatch ?? []) : null;
+      } catch {
+        disposableIndexes = null;
+      }
+    }
     input = {
       ccas: ccas.map((c) => ({
         ccaID: numify(c.ccaID),
@@ -346,6 +407,7 @@ async function directorSection() {
     flagArg: DIRECTORS,
     directorsOn,
     proposalsOn,
+    disposablesOn,
   };
   const gating = DIRECTORS || directorsOn;
   const { flaggedPositions, checks } = evaluateDirectorChecks(input);
@@ -366,6 +428,17 @@ async function directorSection() {
       bad: mismatch.offenders,
       note: mismatch.note,
     });
+  }
+  if (disposablesOn && !gating) {
+    console.log(
+      "      disposables.enabled is on: the Social director line is GATING",
+    );
+  }
+  for (const m of [
+    disposablesNeedDirectors({ disposablesOn, directorsOn }),
+    disposablesNeedIndex({ disposablesOn, indexes: disposableIndexes }),
+  ]) {
+    if (m) line(`  ${m.label}`, 1, { bad: m.offenders, note: m.note });
   }
   for (const c of checks) {
     const wrong = c.offenders.length > 0;
@@ -393,23 +466,40 @@ async function main() {
   console.log(`\n=== rbac-doctor.mjs ===  ${new Date().toISOString()}\n`);
 
   const users = await findAll(db, "User", { _id: 1, email: 1 });
-  const userRole = await findAll(db, "UserRole", { userID: 1, roles: 1, role: 1 });
-  const facilities = (await findAll(db, "Facilities", { facilityID: 1, facilityName: 1 }))
-    .map((f) => ({ ...f, facilityID: numify(f.facilityID) }));
-  const access = (await findAll(db, "FacilityAccess", { facilityID: 1, requiredRoles: 1, requiredRole: 1 }))
-    .map((a) => ({ ...a, facilityID: numify(a.facilityID) }));
+  const userRole = await findAll(db, "UserRole", {
+    userID: 1,
+    roles: 1,
+    role: 1,
+  });
+  const facilities = (
+    await findAll(db, "Facilities", { facilityID: 1, facilityName: 1 })
+  ).map((f) => ({ ...f, facilityID: numify(f.facilityID) }));
+  const access = (
+    await findAll(db, "FacilityAccess", {
+      facilityID: 1,
+      requiredRoles: 1,
+      requiredRole: 1,
+    })
+  ).map((a) => ({ ...a, facilityID: numify(a.facilityID) }));
 
   // D-7 break-glass, the COLLECTION variant. Read BEFORE the population loop
   // because the "INELIGIBLE" line below subtracts these addresses. Absent is
   // the normal pre-rollout state and is not an error — see allowlistSection().
   const allowlist = await readAuthAllowlist();
   const pinnedEmails = new Map(
-    (allowlist.rows ?? []).map((r) => [normalizeEmail(String(r.email ?? "")), String(r.pinnedUserID ?? "")]),
+    (allowlist.rows ?? []).map((r) => [
+      normalizeEmail(String(r.email ?? "")),
+      String(r.pinnedUserID ?? ""),
+    ]),
   );
 
   // --- population -------------------------------------------------------
   const eligible = new Map();
-  const nonNus = [], blank = [], nonE = [], collisions = [], pinned = [];
+  const nonNus = [],
+    blank = [],
+    nonE = [],
+    collisions = [],
+    pinned = [];
   for (const u of users) {
     const e = String(u.email ?? "");
     const id = canonicalUserID(e);
@@ -434,49 +524,105 @@ async function main() {
   line("users(total)", users.length);
   line("users(eligible, canonical has no @)", eligible.size);
   line("users(pinned via AuthAllowlist — sign in as EXT)", pinned.length, {
-    info: true, note: "NOT locked out; see the allowlist section" });
-  if (pinned.length) console.log(`      ${(ALL_NAMES ? pinned : pinned.slice(0, 20)).join(", ")}`);
+    info: true,
+    note: "NOT locked out; see the allowlist section",
+  });
+  if (pinned.length)
+    console.log(
+      `      ${(ALL_NAMES ? pinned : pinned.slice(0, 20)).join(", ")}`,
+    );
   line("users(INELIGIBLE — cannot sign in under D-7)", nonNus.length, {
-    info: true, note: "migration list; pinned addresses SUBTRACTED" });
-  if (nonNus.length) console.log(`      ${(ALL_NAMES ? nonNus : nonNus.slice(0, 20)).join(", ")}`);
-  line("canonical id collisions", collisions.length, { bad: collisions, note: "merged accounts" });
+    info: true,
+    note: "migration list; pinned addresses SUBTRACTED",
+  });
+  if (nonNus.length)
+    console.log(
+      `      ${(ALL_NAMES ? nonNus : nonNus.slice(0, 20)).join(", ")}`,
+    );
+  line("canonical id collisions", collisions.length, {
+    bad: collisions,
+    note: "merged accounts",
+  });
   line("canonical id empty (blank email)", blank.length, { bad: blank });
-  line("canonical id not E-format", nonE.length, { info: true, note: "LEGITIMATE — never exclude (L-27)" });
+  line("canonical id not E-format", nonE.length, {
+    info: true,
+    note: "LEGITIMATE — never exclude (L-27)",
+  });
 
   // --- the D-7 break-glass allowlist ------------------------------------
   allowlistSection(allowlist, users, userRole);
 
   // --- stored baseline (the flip gate) ----------------------------------
-  const withResident = new Set(userRole.filter((r) => (r.roles ?? []).includes("resident")).map((r) => r.userID));
-  const missingResident = [...eligible.keys()].filter((id) => !withResident.has(id));
+  const withResident = new Set(
+    userRole
+      .filter((r) => (r.roles ?? []).includes("resident"))
+      .map((r) => r.userID),
+  );
+  const missingResident = [...eligible.keys()].filter(
+    (id) => !withResident.has(id),
+  );
   // Inverse: a stored resident under an id with no eligible NUS account behind
   // it. That is a mis-keyed grant — the row exists but no session matches it.
   const unbackedResident = [...withResident].filter((id) => !eligible.has(id));
 
   line("UserRole rows with stored resident", withResident.size);
   line("  eligible users MISSING it", missingResident.length, {
-    bad: missingResident, note: "live lockout list; BLOCKS the flip past off" });
-  line("  resident held with NO eligible account", unbackedResident.length, { bad: unbackedResident });
+    bad: missingResident,
+    note: "live lockout list; BLOCKS the flip past off",
+  });
+  line("  resident held with NO eligible account", unbackedResident.length, {
+    bad: unbackedResident,
+  });
 
   // --- shape invariants (the deploy gate) -------------------------------
-  const noArr = userRole.filter((r) => !Array.isArray(r.roles)).map((r) => r.userID);
-  const noLeg = userRole.filter((r) => r.role === undefined).map((r) => r.userID);
-  const nonCanonical = userRole.filter((r) => !isCanonicalResidentID(String(r.userID ?? ""))).map((r) => r.userID);
+  const noArr = userRole
+    .filter((r) => !Array.isArray(r.roles))
+    .map((r) => r.userID);
+  const noLeg = userRole
+    .filter((r) => r.role === undefined)
+    .map((r) => r.userID);
+  const nonCanonical = userRole
+    .filter((r) => !isCanonicalResidentID(String(r.userID ?? "")))
+    .map((r) => r.userID);
   const dupCounts = new Map();
-  for (const r of userRole) dupCounts.set(r.userID, (dupCounts.get(r.userID) ?? 0) + 1);
-  const dupUR = [...dupCounts].filter(([, n]) => n > 1).map(([id, n]) => `${id}(x${n})`);
-  const strays = [...new Set(userRole.flatMap((r) => (r.roles ?? []).filter((s) => !ROLE_VOCAB.includes(s))))];
+  for (const r of userRole)
+    dupCounts.set(r.userID, (dupCounts.get(r.userID) ?? 0) + 1);
+  const dupUR = [...dupCounts]
+    .filter(([, n]) => n > 1)
+    .map(([id, n]) => `${id}(x${n})`);
+  const strays = [
+    ...new Set(
+      userRole.flatMap((r) =>
+        (r.roles ?? []).filter((s) => !ROLE_VOCAB.includes(s)),
+      ),
+    ),
+  ];
 
   line("UserRole rows missing roles[]", noArr.length, { bad: noArr });
-  line("UserRole rows missing legacy 'role'", noLeg.length, { bad: noLeg, note: "I-2; BLOCKS the Phase 2 deploy" });
-  line("UserRole keyed on a non-canonical id", nonCanonical.length, { bad: nonCanonical, note: "I-1" });
-  line("UserRole duplicate userID rows", dupUR.length, { bad: dupUR, note: "did the @unique index build?" });
-  line("out-of-vocabulary role strings", strays.length, { bad: strays, note: "no $jsonSchema guards roles[]" });
+  line("UserRole rows missing legacy 'role'", noLeg.length, {
+    bad: noLeg,
+    note: "I-2; BLOCKS the Phase 2 deploy",
+  });
+  line("UserRole keyed on a non-canonical id", nonCanonical.length, {
+    bad: nonCanonical,
+    note: "I-1",
+  });
+  line("UserRole duplicate userID rows", dupUR.length, {
+    bad: dupUR,
+    note: "did the @unique index build?",
+  });
+  line("out-of-vocabulary role strings", strays.length, {
+    bad: strays,
+    note: "no $jsonSchema guards roles[]",
+  });
 
-  const missingHash = await countWhere(db, "User", { passwordHash: { $exists: false } });
+  const missingHash = await countWhere(db, "User", {
+    passwordHash: { $exists: false },
+  });
   line("User rows missing passwordHash", missingHash, {
     bad: missingHash ? ["(count only — see inventory-rbac.mjs)"] : null,
-    note: "needs passwordHash String? in schema" });
+    note: "needs passwordHash String? in schema",
+  });
 
   // --- orphans under the OLD key (doc 01 Step 4) ------------------------
   let orphanGroups = [];
@@ -490,46 +636,91 @@ async function main() {
     }
   }
   line("orphans under the OLD key", orphanGroups.length, {
-    bad: orphanGroups, note: "BLOCKS the Phase 2 deploy" });
+    bad: orphanGroups,
+    note: "BLOCKS the Phase 2 deploy",
+  });
 
   // --- facilities -------------------------------------------------------
-  const realFacilities = facilities.filter((f) => f.facilityID !== SENTINEL_FACILITY_ID);
+  const realFacilities = facilities.filter(
+    (f) => f.facilityID !== SENTINEL_FACILITY_ID,
+  );
   const configured = new Set(access.map((a) => a.facilityID));
-  const unconfigured = realFacilities.filter((f) => !configured.has(f.facilityID))
+  const unconfigured = realFacilities
+    .filter((f) => !configured.has(f.facilityID))
     .map((f) => `${f.facilityID} (${f.facilityName})`);
-  const storesAdmin = access.filter((a) => (a.requiredRoles ?? []).includes("admin")).map((a) => a.facilityID);
-  const faNoLegacy = access.filter((a) => a.requiredRole === undefined).map((a) => a.facilityID);
-  const faResidentMirror = access.filter((a) => a.requiredRole === "resident").map((a) => a.facilityID);
+  const storesAdmin = access
+    .filter((a) => (a.requiredRoles ?? []).includes("admin"))
+    .map((a) => a.facilityID);
+  const faNoLegacy = access
+    .filter((a) => a.requiredRole === undefined)
+    .map((a) => a.facilityID);
+  const faResidentMirror = access
+    .filter((a) => a.requiredRole === "resident")
+    .map((a) => a.facilityID);
 
   line("facilities (excl. -1)", realFacilities.length);
-  line("  with a FacilityAccess row", realFacilities.length - unconfigured.length);
-  line("  UNCONFIGURED", unconfigured.length, { bad: unconfigured, note: "would default to resident; blocks the flip" });
-  line("  storing \"admin\" in requiredRoles", storesAdmin.length, { bad: storesAdmin });
-  line("FacilityAccess missing legacy scalar", faNoLegacy.length, { bad: faNoLegacy, note: "I-2" });
-  line("FacilityAccess requiredRole=\"resident\"", faResidentMirror.length, {
-    bad: faResidentMirror, note: "a Phase-2 revert would DENY these rooms to all non-admins (06 §0.1)" });
+  line(
+    "  with a FacilityAccess row",
+    realFacilities.length - unconfigured.length,
+  );
+  line("  UNCONFIGURED", unconfigured.length, {
+    bad: unconfigured,
+    note: "would default to resident; blocks the flip",
+  });
+  line('  storing "admin" in requiredRoles', storesAdmin.length, {
+    bad: storesAdmin,
+  });
+  line("FacilityAccess missing legacy scalar", faNoLegacy.length, {
+    bad: faNoLegacy,
+    note: "I-2",
+  });
+  line('FacilityAccess requiredRole="resident"', faResidentMirror.length, {
+    bad: faResidentMirror,
+    note: "a Phase-2 revert would DENY these rooms to all non-admins (06 §0.1)",
+  });
 
   // --- deferred privilege ----------------------------------------------
   let pending = [];
-  try { pending = await findAll(db, "PendingRoleGrant"); } catch { /* collection may not exist yet */ }
+  try {
+    pending = await findAll(db, "PendingRoleGrant");
+  } catch {
+    /* collection may not exist yet */
+  }
   const nowMs = Date.now();
   // admin | jcrc | scrc — every PRIVILEGED grantable role. Must stay in step
   // with the identical filter in verify-legacy-drop.mjs, which BLOCKS the drop;
   // this one only reports, so a divergence shows up here as a quiet undercount.
   // cca_head cannot travel the deferred path (no ASSIGNABLE_BY entry).
-  const privPending = pending.filter((p) => (p.roles ?? []).some((r) => r === "admin" || r === "jcrc" || r === "scrc" || r === "hall_office"));
-  const expired = pending.filter((p) => p.expiresAt && new Date(p.expiresAt?.$date ?? p.expiresAt).getTime() <= nowMs);
+  const privPending = pending.filter((p) =>
+    (p.roles ?? []).some(
+      (r) =>
+        r === "admin" || r === "jcrc" || r === "scrc" || r === "hall_office",
+    ),
+  );
+  const expired = pending.filter(
+    (p) =>
+      p.expiresAt &&
+      new Date(p.expiresAt?.$date ?? p.expiresAt).getTime() <= nowMs,
+  );
   line("PendingRoleGrant: outstanding", pending.length);
   line("  of which admin/jcrc/scrc/hall_office", privPending.length, {
     bad: privPending.map((p) => `${p.userID}:${JSON.stringify(p.roles)}`),
-    note: "requires named sign-off before the legacy drop" });
+    note: "requires named sign-off before the legacy drop",
+  });
   line("  expired, unclaimed", expired.length, { info: true });
 
   // --- enforcement + shadow denials -------------------------------------
-  const flag = (await raw({ find: "SystemFlag", filter: { key: "rbac.booking.enforcement" }, limit: 1 }))
-    ?.cursor?.firstBatch?.[0];
+  const flag = (
+    await raw({
+      find: "SystemFlag",
+      filter: { key: "rbac.booking.enforcement" },
+      limit: 1,
+    })
+  )?.cursor?.firstBatch?.[0];
   const mode = flag?.value ?? "(no row — env floor applies, default off)";
-  console.log(`${"enforcement mode".padEnd(W, ".")} ${String(mode).padStart(5)}`);
+  console.log(
+    `${"enforcement mode".padEnd(W, ".")} ${String(mode).padStart(5)}`,
+  );
 
   let shadow = 0;
   try {
@@ -537,11 +728,15 @@ async function main() {
       action: "booking.denied.shadow",
       at: { $gte: { $date: new Date(nowMs - 24 * 3600 * 1000).toISOString() } },
     });
-  } catch { /* collection may not exist yet */ }
+  } catch {
+    /* collection may not exist yet */
+  }
   line("shadow denials, last 24h", shadow, {
     // Not RED by itself — a non-zero count is the SIGNAL the permissive soak
     // exists to produce. It is a human go/no-go, not a machine gate.
-    info: true, note: "go/no-go for \"enforce\"" });
+    info: true,
+    note: 'go/no-go for "enforce"',
+  });
 
   await directorSection();
 
@@ -549,11 +744,14 @@ async function main() {
   console.log(`\n================================`);
   if (red.length) {
     console.error(`RED LINES: ${red.length}`);
-    for (const r of red) console.error(`  RED  ${r.label.replace(/\.+$/, "")} = ${r.value}`);
+    for (const r of red)
+      console.error(`  RED  ${r.label.replace(/\.+$/, "")} = ${r.value}`);
     process.exitCode = 1;
     return;
   }
-  console.log(`All lines green${String(mode) === "off" ? ` (enforcement mode: off, as expected pre-flip)` : ""}.`);
+  console.log(
+    `All lines green${String(mode) === "off" ? ` (enforcement mode: off, as expected pre-flip)` : ""}.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -576,21 +774,36 @@ async function main() {
 /** Collections keyed by a plain `userID` string. Superset of merge-accounts.mjs's
  *  DEPENDENTS — this is a census, not a reassignment, so nothing is excluded for
  *  being out of scope. */
-const OWNED_BY_USERID = ["Bookings", "BookingLogs", "Posts", "UserCCA", "Gym", "Order", "UserMatric", "UserRole"];
+const OWNED_BY_USERID = [
+  "Bookings",
+  "BookingLogs",
+  "Posts",
+  "UserCCA",
+  "Gym",
+  "Order",
+  "UserMatric",
+  "UserRole",
+];
 /** Written by the droplet's Python backends, never by this repo (08 §2 caveat). */
 const DROPLET_OWNED = ["Posts", "UserCCA", "Gym", "Order", "BookingLogs"];
 
 const stat = (label, value, note = "") =>
-  console.log(`${label.padEnd(W, ".")} ${String(value).padStart(5)}${note ? `  ${note}` : ""}`);
-const sample = (list) => (ALL_NAMES ? list : list.slice(0, 20)).join(", ")
-  + (!ALL_NAMES && list.length > 20 ? `  … (+${list.length - 20} more; --names for all)` : "");
+  console.log(
+    `${label.padEnd(W, ".")} ${String(value).padStart(5)}${note ? `  ${note}` : ""}`,
+  );
+const sample = (list) =>
+  (ALL_NAMES ? list : list.slice(0, 20)).join(", ") +
+  (!ALL_NAMES && list.length > 20
+    ? `  … (+${list.length - 20} more; --names for all)`
+    : "");
 
 /** Renders a $group _id for humans. Extended JSON hands back {$oid:…} for an
  *  ObjectId, and `""` prints as nothing at all unless it is quoted — which is
  *  precisely the value this whole exercise is about. */
 function keyLabel(v) {
   if (v === null || v === undefined) return "(missing/null)";
-  if (typeof v === "object") return v.$oid ? `ObjectId(${v.$oid})` : JSON.stringify(v);
+  if (typeof v === "object")
+    return v.$oid ? `ObjectId(${v.$oid})` : JSON.stringify(v);
   return v === "" ? `""(EMPTY)` : String(v);
 }
 
@@ -610,18 +823,30 @@ async function nonNusReport() {
   // means the operator believes they are running a migration; refuse rather than
   // print a measurement under a banner they will misread.
   if (isCommit()) {
-    return abort("--nonnus is a READ-ONLY measurement and has no write path. Drop --commit / APPLY=yes.");
+    return abort(
+      "--nonnus is a READ-ONLY measurement and has no write path. Drop --commit / APPLY=yes.",
+    );
   }
 
-  console.log(`\n=== rbac-doctor.mjs --nonnus (READ-ONLY, 08 §2) ===  ${new Date().toISOString()}`);
-  console.log(`No writes are issued by this mode. Nothing here gates a deploy.\n`);
+  console.log(
+    `\n=== rbac-doctor.mjs --nonnus (READ-ONLY, 08 §2) ===  ${new Date().toISOString()}`,
+  );
+  console.log(
+    `No writes are issued by this mode. Nothing here gates a deploy.\n`,
+  );
 
   /** Records a command that FAILED, so a missing collection can never be read as
    *  a measured zero. */
   const unreadable = [];
   async function countChecked(coll, filter) {
-    const r = await aggregateAll(db, coll, [{ $match: filter }, { $count: "n" }]);
-    if (!r.ok) { unreadable.push(`${coll}: ${r.errmsg}`); return null; }
+    const r = await aggregateAll(db, coll, [
+      { $match: filter },
+      { $count: "n" },
+    ]);
+    if (!r.ok) {
+      unreadable.push(`${coll}: ${r.errmsg}`);
+      return null;
+    }
     return numify(r.rows[0]?.n);
   }
 
@@ -633,10 +858,13 @@ async function nonNusReport() {
   // it never read — the exact fabricated zero aggregateAll exists to prevent.
   // This is the number the whole §3 branch choice hangs on, so it gets the
   // ok-checked path like every other count below.
-  const usersRead = await aggregateAll(db, "User", [{ $project: { email: 1, userID: 1 } }]);
+  const usersRead = await aggregateAll(db, "User", [
+    { $project: { email: 1, userID: 1 } },
+  ]);
   if (!usersRead.ok) unreadable.push(`User (population): ${usersRead.errmsg}`);
   const users = usersRead.rows;
-  const nonNus = [], blankEmail = [];
+  const nonNus = [],
+    blankEmail = [];
   for (const u of users) {
     const email = String(u.email ?? "");
     // C9 — READ THIS BEFORE CHANGING THE COMPARISON BACK.
@@ -667,31 +895,44 @@ async function nonNusReport() {
   console.log(`--- [1] non-NUS User rows (08 §2a) ---`);
   if (!usersRead.ok) {
     console.log(`  UNREADABLE — ${usersRead.errmsg}`);
-    console.log(`  Every count below is over ZERO User rows and means NOTHING. Fix this first.`);
+    console.log(
+      `  Every count below is over ZERO User rows and means NOTHING. Fix this first.`,
+    );
   }
   stat("users(total)", users.length);
   stat("users(non-NUS — the affected population)", nonNus.length);
   stat("users(blank email — not people, listed apart)", blankEmail.length);
-  if (blankEmail.length) console.log(`      ${sample(blankEmail.map((u) => String(u._id?.$oid ?? u._id)))}`);
+  if (blankEmail.length)
+    console.log(
+      `      ${sample(blankEmail.map((u) => String(u._id?.$oid ?? u._id)))}`,
+    );
 
   if (!nonNus.length) {
     console.log(`\n      (none — nothing to key under a legacy value)`);
   } else {
-    console.log(`\n  email                                    User.userID      legacy runtime key`);
+    console.log(
+      `\n  email                                    User.userID      legacy runtime key`,
+    );
     for (const u of nonNus) {
       // legacyCanonicalUserID, NOT an inline re-derivation: two copies of the
       // pre-merge transform drift, and the whole hunt is only correct if this
       // is byte-identical to what wrote the rows.
       const legacy = legacyCanonicalUserID(u.email);
-      console.log(`  ${String(u.email).padEnd(40)} ${String(u.userID ?? "(null)").padEnd(16)} ${legacy}`);
+      console.log(
+        `  ${String(u.email).padEnd(40)} ${String(u.userID ?? "(null)").padEnd(16)} ${legacy}`,
+      );
     }
   }
 
   // --- (2) what they own under the legacy key ---------------------------
   console.log(`\n--- [2] rows owned under the legacy key (08 §2b) ---`);
-  const owners = [];   // non-NUS users with at least one row somewhere
-  if (!nonNus.length) console.log(`  (no non-NUS users — nothing is keyed on a legacy value)`);
-  else console.log(`  email                                      rows  per-collection breakdown`);
+  const owners = []; // non-NUS users with at least one row somewhere
+  if (!nonNus.length)
+    console.log(`  (no non-NUS users — nothing is keyed on a legacy value)`);
+  else
+    console.log(
+      `  email                                      rows  per-collection breakdown`,
+    );
   for (const u of nonNus) {
     const legacy = legacyCanonicalUserID(u.email);
     const hits = [];
@@ -708,17 +949,26 @@ async function nonNusReport() {
 
     const total = hits.reduce((s, h) => s + Number(h.split(":").pop()), 0);
     if (total) owners.push({ email: u.email, legacy, total, hits });
-    console.log(`  ${String(u.email).padEnd(40)} ${String(total).padStart(5)}  ${hits.join("  ") || "(no rows anywhere)"}`);
+    console.log(
+      `  ${String(u.email).padEnd(40)} ${String(total).padStart(5)}  ${hits.join("  ") || "(no rows anywhere)"}`,
+    );
   }
   console.log(``);
-  stat("non-NUS users owning at least one row", owners.length,
-    owners.length ? "REAL DATA — see the verdict" : "");
+  stat(
+    "non-NUS users owning at least one row",
+    owners.length,
+    owners.length ? "REAL DATA — see the verdict" : "",
+  );
 
   // --- (3) rows the §1.1 hazard already wrote ---------------------------
   console.log(`\n--- [3] unattributable Bookings (08 §2, the "" hazard) ---`);
-  const grouped = await aggregateAll(db, "Bookings",
-    [{ $group: { _id: "$userID", n: { $sum: 1 } } }, { $sort: { n: -1 } }]);
-  let emptyRows = 0, junk = [], junkRows = 0;
+  const grouped = await aggregateAll(db, "Bookings", [
+    { $group: { _id: "$userID", n: { $sum: 1 } } },
+    { $sort: { n: -1 } },
+  ]);
+  let emptyRows = 0,
+    junk = [],
+    junkRows = 0;
   if (!grouped.ok) {
     unreadable.push(`Bookings (group): ${grouped.errmsg}`);
     console.log(`  UNREADABLE — ${grouped.errmsg}`);
@@ -729,7 +979,11 @@ async function nonNusReport() {
     // and must not be re-reported here as junk.
     const live = new Set();
     for (const u of users) {
-      for (const k of [canonicalUserID(u.email), String(u.userID ?? ""), legacyCanonicalUserID(u.email)]) {
+      for (const k of [
+        canonicalUserID(u.email),
+        String(u.userID ?? ""),
+        legacyCanonicalUserID(u.email),
+      ]) {
         // C9: canonicalUserID may now be null, and this set is matched against
         // Bookings.userID values at :366 — a null must never become a member.
         // The `if (k)` truthiness guard already handles that (null is falsy,
@@ -745,24 +999,41 @@ async function nonNusReport() {
     for (const g of grouped.rows) {
       const n = numify(g.n);
       const key = typeof g._id === "string" ? g._id : null;
-      if (key === "") { emptyRows += n; continue; }
+      if (key === "") {
+        emptyRows += n;
+        continue;
+      }
       if (key !== null && (E_FORMAT.test(key) || live.has(key))) continue;
       junk.push(`${keyLabel(g._id)}(${n})`);
       junkRows += n;
     }
   }
-  stat("Bookings keyed on \"\" (written since the merge)", emptyRows,
-    emptyRows ? "each is unattributable AND collides in the userDict join" : "");
-  stat("other keys matching no E-format id, no live user", junk.length,
-    junkRows ? `${junkRows} rows` : "");
+  stat(
+    'Bookings keyed on "" (written since the merge)',
+    emptyRows,
+    emptyRows ? "each is unattributable AND collides in the userDict join" : "",
+  );
+  stat(
+    "other keys matching no E-format id, no live user",
+    junk.length,
+    junkRows ? `${junkRows} rows` : "",
+  );
   if (junk.length) console.log(`      ${sample(junk)}`);
 
   // --- (4) key-format census for the droplet-owned collections ----------
-  console.log(`\n--- [4] key-format census, droplet-owned collections (08 §2d) ---`);
+  console.log(
+    `\n--- [4] key-format census, droplet-owned collections (08 §2d) ---`,
+  );
   let anyNonE = false;
   for (const coll of DROPLET_OWNED) {
-    const g = await aggregateAll(db, coll, [{ $group: { _id: "$userID", n: { $sum: 1 } } }]);
-    if (!g.ok) { unreadable.push(`${coll} (group): ${g.errmsg}`); console.log(`  ${coll.padEnd(14)} UNREADABLE — ${g.errmsg}`); continue; }
+    const g = await aggregateAll(db, coll, [
+      { $group: { _id: "$userID", n: { $sum: 1 } } },
+    ]);
+    if (!g.ok) {
+      unreadable.push(`${coll} (group): ${g.errmsg}`);
+      console.log(`  ${coll.padEnd(14)} UNREADABLE — ${g.errmsg}`);
+      continue;
+    }
     const buckets = new Map();
     for (const row of g.rows) {
       const b = bucketOf(row._id);
@@ -771,8 +1042,12 @@ async function nonNusReport() {
       e.rows += numify(row.n);
       buckets.set(b, e);
     }
-    const parts = [...buckets].map(([b, e]) => `${b}:${e.keys.length}k/${e.rows}r`);
-    console.log(`  ${coll.padEnd(14)} ${parts.join("  ") || "(empty collection)"}`);
+    const parts = [...buckets].map(
+      ([b, e]) => `${b}:${e.keys.length}k/${e.rows}r`,
+    );
+    console.log(
+      `  ${coll.padEnd(14)} ${parts.join("  ") || "(empty collection)"}`,
+    );
     for (const [b, e] of buckets) {
       if (b === "E-format") continue;
       anyNonE = true;
@@ -780,25 +1055,41 @@ async function nonNusReport() {
     }
   }
   if (anyNonE) {
-    console.log(`\n  CAVEAT (08 §2). Posts / UserCCA / Gym / Order / BookingLogs are written by`);
-    console.log(`  the Python backends on the droplet, NOT by this repo. A non-E bucket above`);
-    console.log(`  means at least one of them keys on something this codebase does not control.`);
-    console.log(`  If any of it is the legacy email-ish value, remediation must be COORDINATED`);
-    console.log(`  with those services first — that is a scope expansion, not a detail.`);
+    console.log(
+      `\n  CAVEAT (08 §2). Posts / UserCCA / Gym / Order / BookingLogs are written by`,
+    );
+    console.log(
+      `  the Python backends on the droplet, NOT by this repo. A non-E bucket above`,
+    );
+    console.log(
+      `  means at least one of them keys on something this codebase does not control.`,
+    );
+    console.log(
+      `  If any of it is the legacy email-ish value, remediation must be COORDINATED`,
+    );
+    console.log(
+      `  with those services first — that is a scope expansion, not a detail.`,
+    );
   }
 
   if (unreadable.length) {
-    console.log(`\n  COMMANDS THAT FAILED (NOT measured zeroes — resolve before deciding):`);
+    console.log(
+      `\n  COMMANDS THAT FAILED (NOT measured zeroes — resolve before deciding):`,
+    );
     for (const u of unreadable) console.log(`      ${u}`);
   }
 
   // --- verdict ----------------------------------------------------------
   console.log(`\n================================`);
-  console.log(`08 §3 branch indicators — the CHOICE IS THE OPERATOR'S, not this script's.`);
+  console.log(
+    `08 §3 branch indicators — the CHOICE IS THE OPERATOR'S, not this script's.`,
+  );
   console.log(`  non-NUS users ............ ${nonNus.length}`);
   console.log(`  of those, owning data .... ${owners.length}`);
   console.log(`  ""-keyed Bookings ........ ${emptyRows}`);
-  console.log(`  other unattributable ..... ${junkRows} rows / ${junk.length} keys`);
+  console.log(
+    `  other unattributable ..... ${junkRows} rows / ${junk.length} keys`,
+  );
   console.log(``);
   // A branch recommendation printed over a failed read is worse than no
   // recommendation: the operator records the zero in 08 §3 and unblocks the
@@ -807,36 +1098,76 @@ async function nonNusReport() {
   // command failed, the numbers above are a partial census and no branch
   // follows from them.
   if (unreadable.length) {
-    console.log(`NO BRANCH VERDICT. ${unreadable.length} command(s) failed (listed above), so the`);
-    console.log(`counts above are a PARTIAL census, not a measurement. Do NOT record any of them`);
-    console.log(`in 08 §3 and do NOT move the auth switch off "off". Resolve the failures — most`);
-    console.log(`likely a missing read privilege or a collection absent on this cluster — and`);
+    console.log(
+      `NO BRANCH VERDICT. ${unreadable.length} command(s) failed (listed above), so the`,
+    );
+    console.log(
+      `counts above are a PARTIAL census, not a measurement. Do NOT record any of them`,
+    );
+    console.log(
+      `in 08 §3 and do NOT move the auth switch off "off". Resolve the failures — most`,
+    );
+    console.log(
+      `likely a missing read privilege or a collection absent on this cluster — and`,
+    );
     console.log(`re-run until this section prints a branch.`);
   } else if (!nonNus.length) {
-    console.log(`Consistent with BRANCH A (empty). No account is affected, so no re-key is`);
-    console.log(`warranted. Keep §1 regardless — it closes the hazard permanently. Record this`);
-    console.log(`zero, WITH TODAY'S DATE, in 08 §3 before the auth switch moves off "off".`);
+    console.log(
+      `Consistent with BRANCH A (empty). No account is affected, so no re-key is`,
+    );
+    console.log(
+      `warranted. Keep §1 regardless — it closes the hazard permanently. Record this`,
+    );
+    console.log(
+      `zero, WITH TODAY'S DATE, in 08 §3 before the auth switch moves off "off".`,
+    );
   } else if (!owners.length) {
-    console.log(`Consistent with BRANCH B (accounts exist, none owns data). Deleting them is`);
-    console.log(`plausible — but this script cannot tell a junk account from a real person who`);
-    console.log(`has simply never booked. Read the addresses above and decide. If you delete:`);
-    console.log(`read cascade.ts first (07 §5 — an orphaned UserRole is inherited by a later`);
+    console.log(
+      `Consistent with BRANCH B (accounts exist, none owns data). Deleting them is`,
+    );
+    console.log(
+      `plausible — but this script cannot tell a junk account from a real person who`,
+    );
+    console.log(
+      `has simply never booked. Read the addresses above and decide. If you delete:`,
+    );
+    console.log(
+      `read cascade.ts first (07 §5 — an orphaned UserRole is inherited by a later`,
+    );
     console.log(`account re-created from the same email) and back up first.`);
   } else {
-    console.log(`Consistent with BRANCH C (real people with real data) for ${owners.length} account(s):`);
-    for (const o of owners) console.log(`      ${o.email}  ${o.total} rows  [${o.hits.join(" ")}]`);
-    console.log(`Branch C is warranted ONLY for someone with no NUS address at all. If any of`);
-    console.log(`the above also has one, merge-accounts.mjs is the cheaper answer. A re-key`);
-    console.log(`needs the AuthAllowlist / EXT: contradiction resolved first (08 §3 Branch C).`);
+    console.log(
+      `Consistent with BRANCH C (real people with real data) for ${owners.length} account(s):`,
+    );
+    for (const o of owners)
+      console.log(`      ${o.email}  ${o.total} rows  [${o.hits.join(" ")}]`);
+    console.log(
+      `Branch C is warranted ONLY for someone with no NUS address at all. If any of`,
+    );
+    console.log(
+      `the above also has one, merge-accounts.mjs is the cheaper answer. A re-key`,
+    );
+    console.log(
+      `needs the AuthAllowlist / EXT: contradiction resolved first (08 §3 Branch C).`,
+    );
   }
   if (emptyRows) {
-    console.log(`\n${emptyRows} ""-keyed Bookings exist REGARDLESS of the branch: they are`);
-    console.log(`unattributable and they collide with each other in the userDict join. They must`);
-    console.log(`be cleaned or attributed under every branch (08 "Done when").`);
+    console.log(
+      `\n${emptyRows} ""-keyed Bookings exist REGARDLESS of the branch: they are`,
+    );
+    console.log(
+      `unattributable and they collide with each other in the userDict join. They must`,
+    );
+    console.log(
+      `be cleaned or attributed under every branch (08 "Done when").`,
+    );
   }
   console.log(`\nThis mode wrote nothing.`);
 }
 
 main()
-  .catch((e) => { console.error(e); process.exitCode = 1; })
+  .catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  })
   .finally(() => db.$disconnect());
