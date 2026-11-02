@@ -30,6 +30,7 @@ vi.mock("~/trpc/react", () => {
         approve: { useMutation: mutation },
         reject: { useMutation: mutation },
         delete: { useMutation: mutation },
+        nudge: { useMutation: mutation },
       },
     },
   };

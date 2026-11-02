@@ -16,6 +16,8 @@ import { directorProposalHref } from "~/lib/proposals/links";
 import { unreadLabel } from "~/lib/proposals/unreadText";
 import { formatDateTime } from "~/app/events/_lib/format";
 import { describeReviewFailure } from "../_lib/reviewText";
+import BroadcastsSection from "./BroadcastsSection";
+import DigestSection from "./DigestSection";
 
 const COUNT_ORDER: Exclude<ProposalStatus, "draft">[] = [
   "in_review",
@@ -28,15 +30,34 @@ const COUNT_ORDER: Exclude<ProposalStatus, "draft">[] = [
 const toEpoch = (d: Date | string) => Math.floor(new Date(d).getTime() / 1000);
 
 /**
- * The director's home: counts by status, the review queue (submitted proposals
- * only, oldest first) and the CCAs this person vets with their heads. NOT a
- * guard: both procedures work out the caller's CCAs from the stored rows, and
- * refuse anyone who directs none.
+ * The director's home. Three independent sections, each checking its own
+ * switch and who may see it on the server: today's disposables collections
+ * (the Social director only), deadline reminders (a director of a CCA), and the
+ * proposals review. One being off or refused never hides the others.
+ */
+export default function DirectorHome() {
+  return (
+    <div className="space-y-8">
+      <h1 className="text-2xl font-semibold text-gray-900">
+        Director&apos;s home
+      </h1>
+      <DigestSection />
+      <BroadcastsSection />
+      <ProposalsSection />
+    </div>
+  );
+}
+
+/**
+ * Counts by status, the review queue (submitted proposals only, oldest first)
+ * and the CCAs this person vets with their heads. NOT a guard: both procedures
+ * work out the caller's CCAs from the stored rows, and refuse anyone who
+ * directs none.
  *
  * A failed read is an ERROR on the page. It is never drawn as an empty queue,
  * because "nothing to review" would look like success.
  */
-export default function DirectorHome() {
+function ProposalsSection() {
   const enabled = api.proposal.enabled.useQuery(undefined, {
     retry: false,
     staleTime: 60_000,
@@ -94,10 +115,6 @@ export default function DirectorHome() {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-semibold text-gray-900">
-        Director&apos;s home
-      </h1>
-
       <section aria-labelledby="director-counts">
         <h2
           id="director-counts"
