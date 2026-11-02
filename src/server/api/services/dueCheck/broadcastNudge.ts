@@ -10,6 +10,9 @@ import type { DueKind, DueNotice } from "./types";
 
 const HEX_ID = /^[a-f\d]{24}$/i;
 
+/** Most active, unexpired broadcasts one run reads; far above a real term. */
+export const BROADCAST_SCAN_MAX = 500;
+
 /**
  * Deadline nudges for the heads of a broadcast's CCAs (F22): 3 days and 1 day
  * before the deadline, written at the head's due check, not by a clock.
@@ -18,7 +21,8 @@ const HEX_ID = /^[a-f\d]{24}$/i;
  *    the due check is run for one person, and a person is nudged only for a CCA
  *    they head at this moment. A head replaced since the broadcast was sent
  *    gets nothing, and their replacement does.
- *  - A target marked done is never nudged, and a cancelled broadcast is not.
+ *  - A target marked done is never nudged, and a cancelled or expired
+ *    broadcast is not even read (active, deadline today or later, bounded).
  *  - A stage is due from its day until the deadline day. A stage whose day is
  *    not after the day the broadcast was sent is skipped: the send notice
  *    already told them.
@@ -48,28 +52,53 @@ export const broadcastNudgeKind: DueKind = {
     });
     const ccaIDs = [...new Set(headed.map((h) => h.ccaID))];
     if (ccaIDs.length === 0) return [];
-    const open = await db.reminderTarget.findMany({
-      where: { ccaID: { in: ccaIDs }, doneAt: null },
-      select: { broadcastID: true, ccaID: true },
-    });
-    const ids = [...new Set(open.map((t) => t.broadcastID))].filter((id) =>
-      HEX_ID.test(id),
-    );
-    let skipped = open.filter((t) => !HEX_ID.test(t.broadcastID)).length;
-    if (ids.length === 0) return logSkipped(skipped);
+
+    // Broadcasts first: only active ones whose deadline has not passed, soonest
+    // first, through the (status, deadline) index. Cancelled and expired
+    // broadcasts, and their targets, are never read.
     const rows = await db.reminderBroadcast.findMany({
-      where: { id: { in: ids }, status: "active" },
+      where: { status: "active", deadline: { gte: dayKey } },
+      orderBy: { deadline: "asc" },
+      take: BROADCAST_SCAN_MAX + 1,
       select: BROADCAST_SELECT,
     });
+    if (rows.length > BROADCAST_SCAN_MAX) {
+      console.error(
+        JSON.stringify({
+          evt: "reminder_nudge_scan_capped",
+          error: "ScanCapReached",
+          count: BROADCAST_SCAN_MAX,
+        }),
+      );
+    }
+    let skipped = 0;
     const broadcasts = new Map<
       string,
       ReturnType<typeof storedBroadcast.parse>
     >();
-    for (const row of rows) {
+    for (const row of rows.slice(0, BROADCAST_SCAN_MAX)) {
       const parsed = storedBroadcast.safeParse(row);
-      if (parsed.success) broadcasts.set(parsed.data.id, parsed.data);
-      else skipped += 1;
+      if (parsed.success && HEX_ID.test(parsed.data.id)) {
+        broadcasts.set(parsed.data.id, parsed.data);
+      } else skipped += 1;
     }
+    if (broadcasts.size === 0) return logSkipped(skipped);
+    const open = await db.reminderTarget.findMany({
+      where: {
+        broadcastID: { in: [...broadcasts.keys()] },
+        ccaID: { in: ccaIDs },
+        doneAt: null,
+      },
+      select: { broadcastID: true, ccaID: true },
+    });
+    const names = new Map(
+      (
+        await db.cCA.findMany({
+          where: { ccaID: { in: ccaIDs } },
+          select: { ccaID: true, ccaName: true },
+        })
+      ).map((r) => [r.ccaID, r.ccaName]),
+    );
 
     const items: DueNotice[] = [];
     for (const target of open) {
@@ -89,7 +118,7 @@ export const broadcastNudgeKind: DueKind = {
               0,
               200,
             ),
-          body: `Deadline ${b.deadline}. Open Reminders and mark it done when your CCA has finished.`,
+          body: `${names.get(target.ccaID) ?? `CCA ${target.ccaID}`}: deadline ${b.deadline}. Open Reminders and mark it done when your CCA has finished.`,
           href: REMINDERS_HREF,
         });
       }

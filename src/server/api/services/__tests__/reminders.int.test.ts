@@ -991,6 +991,51 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await noticesFor(U.headA, "reminder.nudge")).toHaveLength(1);
       });
 
+      it("a head of two addressed CCAs gets two nudges that name their CCA", async () => {
+        await seed([A, B]);
+        expect((await nudge(U.headAB, "2026-11-09")).written).toBe(2);
+        const bodies = (await noticesFor(U.headAB, "reminder.nudge"))
+          .map((n) => n.body ?? "")
+          .sort();
+        expect(bodies[0]).toContain(`CCA ${A}`);
+        expect(bodies[1]).toContain(`CCA ${B}`);
+        expect(bodies[0]).not.toBe(bodies[1]);
+      });
+
+      it("never reads the targets of cancelled or expired broadcasts, and nudges nothing for them", async () => {
+        const live = await seed([A], { title: "TEST live" });
+        const cancelled = await seed([A], {
+          title: "TEST cancelled",
+          status: "cancelled",
+        });
+        const expired = await seed([A], {
+          title: "TEST expired",
+          deadline: "2026-11-05",
+          createdAt: new Date("2026-10-20T04:00:00Z"),
+        });
+        const asked: string[] = [];
+        const spying = proxied(db, (prop) =>
+          prop === "reminderTarget"
+            ? {
+                findMany: (args: {
+                  where: { broadcastID: { in: string[] } };
+                }) => {
+                  asked.push(...args.where.broadcastID.in);
+                  return db.reminderTarget.findMany(args as never);
+                },
+              }
+            : undefined,
+        );
+        const res = await runDueCheck(spying, U.headA, {
+          kinds: [nudgeKind],
+          now: at("2026-11-09"),
+        });
+        expect(res.written).toBe(1);
+        expect(asked).toEqual([live]);
+        expect(asked).not.toContain(cancelled);
+        expect(asked).not.toContain(expired);
+      });
+
       it("the default kinds include the nudge and the digest", async () => {
         await seed([A]);
         const res = await runDueCheck(db, U.headA, { now: at("2026-11-09") });
@@ -1087,6 +1132,24 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect((await digest(U.social, at("2026-11-03"))).written).toBe(0);
       });
 
+      it("logs only a count when a bad row is skipped (A2)", async () => {
+        const spy = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        await approvedRow({ collectionDay: "2026-11-02", title: "Good" });
+        await approvedRow({
+          collectionDay: "2026-11-02",
+          plates: 999_999,
+          title: "SecretBadTitle",
+        });
+        expect((await digest(U.social, at("2026-11-02"))).written).toBe(1);
+        const logged = spy.mock.calls.map((c) => String(c[0]));
+        expect(logged).toContain(
+          JSON.stringify({ evt: "collection_digest_rows_skipped", skipped: 1 }),
+        );
+        expect(logged.join(" ")).not.toContain("SecretBadTitle");
+      });
+
       it("the due kind writes nothing for anyone else", async () => {
         await approvedRow({ collectionDay: "2026-11-02" });
         for (const who of [U.headA, U.dirAB, U.admin, U.jcrc]) {
@@ -1148,6 +1211,36 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(rows[0]?.noticeKey).toBe(
           `request.nudge:${row.id}:${today()}|${U.social}`,
         );
+      });
+
+      it("the head's list row carries can.nudge, the Social director's does not, and the button's call works", async () => {
+        const row = await pending();
+        const headRow = (await asDisposable(U.headA).list({})).items.find(
+          (i) => i.id === row.id,
+        );
+        expect(headRow?.can).toMatchObject({ nudge: true, edit: false });
+        const otherHead = (await asDisposable(U.headB).list({})).items.find(
+          (i) => i.id === row.id,
+        );
+        expect(otherHead).toBeUndefined();
+        const socialRow = (await asDisposable(U.social).list({})).items.find(
+          (i) => i.id === row.id,
+        );
+        expect(socialRow?.can.nudge).toBe(false);
+        expect(await asDisposable(U.headA).nudge({ id: row.id })).toMatchObject(
+          {
+            status: "sent",
+          },
+        );
+        await asDisposable(U.social).approve({
+          id: row.id,
+          version: 0,
+          note: null,
+        });
+        const after = (await asDisposable(U.headA).list({})).items.find(
+          (i) => i.id === row.id,
+        );
+        expect(after?.can.nudge).toBe(false);
       });
 
       it("anyone who does not head the CCA gets the missing-row answer", async () => {

@@ -134,6 +134,7 @@ function toView(
     can: requestActions({
       isSocialDirector: viewer.isSocialDirector,
       status: row.status,
+      isHeadOfCca: viewer.headedCcaIDs.includes(row.ccaID),
     }),
   };
 }

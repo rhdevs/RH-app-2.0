@@ -36,7 +36,13 @@ export const collectionDigestKind: DueKind = {
     if (flag?.value !== "on") return [];
     if (!(await isSocialDirector(db, userID, now))) return [];
 
-    const { rows } = await approvedOn(db, dayKey);
+    const { rows, skipped } = await approvedOn(db, dayKey);
+    if (skipped > 0) {
+      // A count only: never a value from the bad row (A2).
+      console.error(
+        JSON.stringify({ evt: "collection_digest_rows_skipped", skipped }),
+      );
+    }
     if (rows.length === 0) return [];
     const times = [...new Set(rows.map((r) => r.collectionTime))].sort();
     return [
