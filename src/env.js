@@ -44,6 +44,18 @@ export const env = createEnv({
     // breakage to the feature that needs it.
     BLOB_READ_WRITE_TOKEN: z.string().optional(),
     /**
+     * Read-write token of the SEPARATE, PRIVATE Vercel Blob store that holds
+     * milestone evidence photos (PR 15). A private store is its own store:
+     * access is fixed when the store is created, so this is NOT the
+     * `cca-images` token above and the two must never be swapped.
+     *
+     * OPTIONAL at build time, like BLOB_READ_WRITE_TOKEN, and for the same
+     * reason. Unlike it, a missing value never falls back to the public
+     * store: the evidence code refuses the upload and the read
+     * (MILESTONE_STORAGE_NOT_CONFIGURED), see services/milestoneBlob.ts.
+     */
+    MILESTONE_BLOB_READ_WRITE_TOKEN: z.string().optional(),
+    /**
      * Signing key for the rotating event check-in QR token.
      *
      * DECLARED OPTIONAL, REQUIRED IN FACT — the same shape as
@@ -93,6 +105,8 @@ export const env = createEnv({
     APP_URL: process.env.APP_URL,
     BCRYPT_ROUNDS: process.env.BCRYPT_ROUNDS,
     BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
+    MILESTONE_BLOB_READ_WRITE_TOKEN:
+      process.env.MILESTONE_BLOB_READ_WRITE_TOKEN,
     EVENT_QR_SECRET: process.env.EVENT_QR_SECRET,
   },
   /**
