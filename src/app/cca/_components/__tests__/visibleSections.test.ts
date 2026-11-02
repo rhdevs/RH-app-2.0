@@ -93,3 +93,16 @@ describe("visibleSections and Evidence", () => {
     ]);
   });
 });
+
+describe("visibleSections and Milestones", () => {
+  it("hides the Milestones tab from a viewer who does not head this CCA", () => {
+    const withMilestones = [{ slug: "members" }, { slug: "milestones" }];
+    expect(visibleSections(withMilestones, false).map((s) => s.slug)).toEqual([
+      "members",
+    ]);
+    expect(visibleSections(withMilestones, true).map((s) => s.slug)).toEqual([
+      "members",
+      "milestones",
+    ]);
+  });
+});
