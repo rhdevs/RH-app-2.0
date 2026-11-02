@@ -21,6 +21,18 @@ const U = { good: "E9990701", bad: "E9990702", other: "E9990703" };
 const IDS = Object.values(U);
 const DIRECTORS_FLAG = "directors.enabled";
 const PROPOSALS_FLAG = "proposals.enabled";
+/**
+ * Every switch the doctor reads. Each one changes what it prints (a RED line,
+ * an index check), so a leftover value in the local database would fail a test
+ * that never touched it. The run pins all of them off and puts them back.
+ */
+const DOCTOR_FLAGS = [
+  DIRECTORS_FLAG,
+  PROPOSALS_FLAG,
+  "disposables.enabled",
+  "reminders.enabled",
+  "milestones.enabled",
+] as const;
 const WATCHED = [
   "jcrcPosition",
   "jcrcPositionCca",
@@ -36,8 +48,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
   { timeout: 180_000 },
   () => {
     let db: PrismaClient;
-    let originalFlag: string | null = null;
-    let originalProposals: string | null = null;
+    const originalFlags = new Map<string, string | null>();
 
     const run = (...args: string[]) => {
       const r = spawnSync(process.execPath, [SCRIPT, "--names", ...args], {
@@ -160,25 +171,25 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     beforeAll(async () => {
       ({ db } = await import("~/server/db"));
-      originalFlag =
-        (await db.systemFlag.findUnique({ where: { key: DIRECTORS_FLAG } }))
-          ?.value ?? null;
-      originalProposals =
-        (await db.systemFlag.findUnique({ where: { key: PROPOSALS_FLAG } }))
-          ?.value ?? null;
+      for (const key of DOCTOR_FLAGS) {
+        originalFlags.set(
+          key,
+          (await db.systemFlag.findUnique({ where: { key } }))?.value ?? null,
+        );
+      }
     });
     beforeEach(async () => {
       await clean();
-      await setDirectors(null);
-      await setProposals(null);
+      for (const key of DOCTOR_FLAGS) await setFlag(key, null);
       await stashOtherFlags();
     });
     afterAll(async () => {
       if (db) {
         await clean();
         await restoreOtherFlags();
-        await setDirectors(originalFlag);
-        await setProposals(originalProposals);
+        for (const key of DOCTOR_FLAGS) {
+          await setFlag(key, originalFlags.get(key) ?? null);
+        }
         await db.$disconnect();
       }
     });
