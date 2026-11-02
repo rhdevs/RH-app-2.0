@@ -42,14 +42,25 @@ describe("blindness (Q15, A55) in the response shape", () => {
     expect("assessment" in v).toBe(false);
   });
 
-  it("a head who has not rated never sees the director's rating", () => {
+  it("a head who never rated sees the director's rating once the filing is frozen (B150)", () => {
     const v = visibleParts(
       head,
       sub({ headScore: null, headText: null, headRatedAt: null, frozen: true }),
       assessment,
     );
-    expect("assessment" in v).toBe(false);
+    expect(v.assessment?.score).toBe(3);
     expect(v.locked).toBe(true);
+    expect(v.head ?? null).toBeNull();
+  });
+
+  it("a head who has not rated learns nothing of a rating before the freeze", () => {
+    const v = visibleParts(
+      head,
+      sub({ headScore: null, headText: null, headRatedAt: null }),
+      null,
+    );
+    expect("assessment" in v).toBe(false);
+    expect(v.locked).toBe(false);
   });
 
   it("once both are in, both sides see both", () => {

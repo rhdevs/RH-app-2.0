@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
+import type { seenToken as SeenToken } from "../milestones/view";
 import type { runDueCheck as RunDueCheck } from "~/server/api/services/dueCheck/runner";
 import {
   afterAll,
@@ -94,6 +95,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let createCaller: typeof CreateCaller;
     let runDueCheck: typeof RunDueCheck;
     let resetCache: () => void;
+    let seenToken: typeof SeenToken;
     const original: Record<string, string | null> = {};
     let ip = 0;
     let seq = 0;
@@ -308,6 +310,29 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
     };
 
+    /** A director rates the filing exactly as they loaded it (B151). */
+    const rate = async (
+      userID: string,
+      input: {
+        ref: Parameters<ReturnType<typeof as>["rate"]>[0]["ref"];
+        score: number;
+        text: string;
+      },
+      client = db,
+    ) => {
+      const sub = await db.milestoneSubmission.findUnique({
+        where: {
+          milestoneKey:
+            input.ref.kind === "event"
+              ? `event:${input.ref.eventID}`
+              : `proposal:${input.ref.proposalID.toLowerCase()}`,
+        },
+        select: { id: true, version: true },
+      });
+      const seen = sub ? seenToken(sub.id, sub.version) : "0".repeat(16);
+      return as(userID, client).rate({ ...input, seen });
+    };
+
     type Ref = Awaited<ReturnType<typeof makeEvent>>;
     /** Head A files a rating and one photo. Returns the filing version. */
     const file = async (
@@ -332,6 +357,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ({ db } = await import("~/server/db"));
       ({ createCaller } = await import("~/server/api/root"));
       ({ runDueCheck } = await import("~/server/api/services/dueCheck/runner"));
+      ({ seenToken } = await import("../milestones/view"));
       ({ resetNotificationsFlagCache: resetCache } = await import(
         "~/server/api/services/notifications"
       ));
@@ -408,7 +434,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             ),
           ).toBe(NOT_OPEN);
           expect(
-            await errorOf(as(U.dirA).rate({ ref, score: 3, text: "x" })),
+            await errorOf(rate(U.dirA, { ref, score: 3, text: "x" })),
           ).toBe(NOT_OPEN);
         },
       );
@@ -571,10 +597,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           U.headB,
           U.resident,
         ]) {
-          expect(
-            await errorOf(as(u).rate({ ref, score: 3, text: "x" })),
-            u,
-          ).toBe(NOT_FOUND);
+          expect(await errorOf(rate(u, { ref, score: 3, text: "x" })), u).toBe(
+            NOT_FOUND,
+          );
         }
         expect(
           await db.milestoneAssessment.count({ where: { ccaID: A } }),
@@ -616,9 +641,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           ),
         ).toBe(NOT_FOUND);
         await db.jcrcPositionHolder.deleteMany({ where: { userID: U.dirA } });
-        expect(
-          await errorOf(as(U.dirA).rate({ ref, score: 3, text: "x" })),
-        ).toBe(NOT_FOUND);
+        expect(await errorOf(rate(U.dirA, { ref, score: 3, text: "x" }))).toBe(
+          NOT_FOUND,
+        );
         expect(await errorOf(as(U.dirA).year({ ccaID: A }))).toBe(NOT_FOUND);
       });
 
@@ -644,7 +669,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const dirDown = withFailingRead("jcrcPositionHolder");
         await file(ref);
         expect(
-          await errorOf(as(U.dirA, dirDown).rate({ ref, score: 3, text: "x" })),
+          await errorOf(rate(U.dirA, { ref, score: 3, text: "x" }, dirDown)),
         ).toBe(CHECK_FAILED);
         expect(
           await db.milestoneAssessment.count({ where: { ccaID: A } }),
@@ -657,9 +682,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect((await as(U.headA).enabled()).enabled).toBe(false);
         expect(await errorOf(as(U.headA).get({ ref }))).toBe(DISABLED);
         expect(await errorOf(as(U.headA).mine())).toBe(DISABLED);
-        expect(
-          await errorOf(as(U.dirA).rate({ ref, score: 3, text: "x" })),
-        ).toBe(DISABLED);
+        expect(await errorOf(rate(U.dirA, { ref, score: 3, text: "x" }))).toBe(
+          DISABLED,
+        );
       });
 
       it("input is checked: score 1 to 5, bounded text", async () => {
@@ -717,7 +742,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
       });
 
-      it("a head sees no director rating until they have filed", async () => {
+      it("a head who never rated sees the director's rating once the filing is frozen (B150)", async () => {
         const ref = await makeEvent();
         const photo = await seedPhoto();
         // Another head attached a photo; head A has not rated.
@@ -726,18 +751,42 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           expectedVersion: null,
           evidenceIDs: [photo.id],
         });
-        await as(U.dirA).rate({ ref, score: 2, text: "Thin" });
+        await rate(U.dirA, { ref, score: 2, text: "Thin" });
         const seen = await as(U.headA).get({ ref });
-        expect("assessment" in seen).toBe(false);
-        expect(JSON.stringify(seen)).not.toContain("Thin");
         expect(seen.locked).toBe(true);
+        expect(seen.assessment).toMatchObject({ score: 2, text: "Thin" });
         expect(seen.head ?? null).toBeNull();
+        const year = await as(U.headA).year({ ccaID: A });
+        expect(year.items[0]?.assessment).toMatchObject({ score: 2 });
+      });
+
+      it("before the director rates, a head learns nothing of a rating", async () => {
+        const ref = await makeEvent();
+        const photo = await seedPhoto();
+        await as(U.headA2).attach({
+          ref,
+          expectedVersion: null,
+          evidenceIDs: [photo.id],
+        });
+        const seen = await as(U.headA).get({ ref });
+        expect(seen.locked).toBe(false);
+        expect("assessment" in seen).toBe(false);
+      });
+
+      it("only a director is handed the token for the filing they loaded (B151)", async () => {
+        const ref = await makeEvent();
+        await file(ref);
+        const asDirector = await as(U.dirA).get({ ref });
+        expect(asDirector.seen).toMatch(/^[0-9a-f]{16}$/);
+        expect(JSON.stringify(asDirector)).not.toContain("Went well");
+        const asHead = await as(U.headA).get({ ref });
+        expect("seen" in asHead).toBe(false);
       });
 
       it("once both are in, both see both", async () => {
         const ref = await makeEvent();
         await file(ref);
-        await as(U.dirA).rate({ ref, score: 3, text: "Fair" });
+        await rate(U.dirA, { ref, score: 3, text: "Fair" });
         for (const u of [U.headA, U.dirA]) {
           const seen = await as(u).get({ ref });
           expect(seen.head).toMatchObject({ score: 4, text: "Went well" });
@@ -762,7 +811,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       it("after the director submits, the head's filing is frozen", async () => {
         const ref = await makeEvent();
         const { version, photo } = await file(ref);
-        await as(U.dirA).rate({ ref, score: 3, text: "Fair" });
+        await rate(U.dirA, { ref, score: 3, text: "Fair" });
         expect(
           await errorOf(
             as(U.headA).saveRating({
@@ -809,7 +858,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           }),
         ).toBe(1);
         expect(
-          await errorOf(as(U.dirA2).rate({ ref, score: 1, text: "again" })),
+          await errorOf(rate(U.dirA2, { ref, score: 1, text: "again" })),
         ).toBe("CONFLICT:MILESTONE_ALREADY_RATED");
       });
 
@@ -878,8 +927,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const ref = await makeEvent();
         await file(ref);
         const results = await Promise.all([
-          errorOf(as(U.dirA).rate({ ref, score: 3, text: "a" })),
-          errorOf(as(U.dirA2).rate({ ref, score: 2, text: "b" })),
+          errorOf(rate(U.dirA, { ref, score: 3, text: "a" })),
+          errorOf(rate(U.dirA2, { ref, score: 2, text: "b" })),
         ]);
         expect(results.filter((r) => r === "ok")).toHaveLength(1);
         expect(results.find((r) => r !== "ok")).toMatch(
@@ -898,9 +947,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           score: 3,
           text: "x",
         });
-        expect(
-          await errorOf(as(U.dirA).rate({ ref, score: 3, text: "x" })),
-        ).toBe("PRECONDITION_FAILED:MILESTONE_NOTHING_TO_RATE");
+        expect(await errorOf(rate(U.dirA, { ref, score: 3, text: "x" }))).toBe(
+          "PRECONDITION_FAILED:MILESTONE_NOTHING_TO_RATE",
+        );
         const row = await db.milestoneSubmission.findFirstOrThrow({
           where: { ccaID: A },
         });
@@ -910,7 +959,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       it("a director who also heads the CCA may rate it, with a visible label", async () => {
         const ref = await makeEvent();
         await file(ref);
-        await as(U.both).rate({ ref, score: 5, text: "Mine" });
+        await rate(U.both, { ref, score: 5, text: "Mine" });
         const seen = await as(U.headA).get({ ref });
         expect(seen.assessment).toMatchObject({ score: 5, selfRated: true });
       });
@@ -1009,10 +1058,27 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe(1);
       });
 
-      it("a head removes evidence while unfrozen: file first, then row", async () => {
+      it("a head removes evidence while unfrozen: row in the transaction, file after (B153)", async () => {
+        const ref = await makeEvent();
+        const { version, photo } = await file(ref);
+        await as(U.headA).detach({
+          ref,
+          expectedVersion: version,
+          evidenceID: photo.id,
+        });
+        expect(
+          await db.milestoneEvidence.count({ where: { id: photo.id } }),
+        ).toBe(0);
+        expect(fake.state.removed).toContain(photo.pathname);
+      });
+
+      it("a store that cannot delete the file does not undo the detach: the sweep collects it (B153)", async () => {
         const ref = await makeEvent();
         const { version, photo } = await file(ref);
         fake.state.removeFails = true;
+        const log = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
         expect(
           await errorOf(
             as(U.headA).detach({
@@ -1021,21 +1087,87 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               evidenceID: photo.id,
             }),
           ),
-        ).toMatch(/^INTERNAL_SERVER_ERROR/);
-        expect(
-          await db.milestoneEvidence.count({ where: { id: photo.id } }),
-        ).toBe(1);
-        fake.state.removeFails = false;
-        const now = (await as(U.headA).get({ ref })).version!;
-        await as(U.headA).detach({
-          ref,
-          expectedVersion: now,
-          evidenceID: photo.id,
-        });
+        ).toBe("ok");
         expect(
           await db.milestoneEvidence.count({ where: { id: photo.id } }),
         ).toBe(0);
-        expect(fake.state.removed).toContain(photo.pathname);
+        expect(fake.files.has(photo.pathname)).toBe(true);
+        expect(log.mock.calls.map((c) => String(c[0])).join(" ")).toContain(
+          "milestone_blob_remove_failed",
+        );
+        log.mockRestore();
+      });
+
+      it("detach first, then rate: the rating of an emptied filing is refused", async () => {
+        const ref = await makeEvent();
+        const { version, photo } = await file(ref);
+        await as(U.headA).detach({
+          ref,
+          expectedVersion: version,
+          evidenceID: photo.id,
+        });
+        expect(await errorOf(rate(U.dirA, { ref, score: 3, text: "x" }))).toBe(
+          "PRECONDITION_FAILED:MILESTONE_NOTHING_TO_RATE",
+        );
+        expect(
+          await db.milestoneAssessment.count({ where: { ccaID: A } }),
+        ).toBe(0);
+      });
+
+      it("rate first, then detach: the rated filing keeps its photo and its file", async () => {
+        const ref = await makeEvent();
+        const { version, photo } = await file(ref);
+        await rate(U.dirA, { ref, score: 3, text: "Fair" });
+        fake.state.removed.length = 0;
+        expect(
+          await errorOf(
+            as(U.headA).detach({
+              ref,
+              expectedVersion: version,
+              evidenceID: photo.id,
+            }),
+          ),
+        ).toBe(FROZEN);
+        expect(
+          await db.milestoneEvidence.count({ where: { id: photo.id } }),
+        ).toBe(1);
+        expect(fake.state.removed).toEqual([]);
+      });
+
+      it("a rating that lands between the detach's read and its write wins: nothing is stripped", async () => {
+        const ref = await makeEvent();
+        const { version, photo } = await file(ref);
+        // The detach reads the filing as unfrozen; the director then rates.
+        const stale = proxied(db, (prop) =>
+          prop === "milestoneSubmission"
+            ? {
+                findUnique: async (args: never) => {
+                  const row = await db.milestoneSubmission.findUnique(args);
+                  await rate(U.dirA, { ref, score: 3, text: "Fair" });
+                  return row;
+                },
+                updateMany: db.milestoneSubmission.updateMany.bind(
+                  db.milestoneSubmission,
+                ),
+              }
+            : undefined,
+        );
+        fake.state.removed.length = 0;
+        const out = await errorOf(
+          as(U.headA, stale).detach({
+            ref,
+            expectedVersion: version,
+            evidenceID: photo.id,
+          }),
+        );
+        expect(out).toMatch(/^CONFLICT:MILESTONE_(FROZEN|CONFLICT)$/);
+        expect(
+          await db.milestoneEvidence.count({ where: { id: photo.id } }),
+        ).toBe(1);
+        expect(fake.state.removed).toEqual([]);
+        expect(
+          await db.milestoneAssessment.count({ where: { ccaID: A } }),
+        ).toBe(1);
       });
 
       it("the serving route's access check still works for attached items", async () => {
@@ -1076,9 +1208,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }),
           ),
         ).toBe(NOT_OPEN);
-        expect(
-          await errorOf(as(U.dirA).rate({ ref, score: 3, text: "x" })),
-        ).toBe(NOT_OPEN);
+        expect(await errorOf(rate(U.dirA, { ref, score: 3, text: "x" }))).toBe(
+          NOT_OPEN,
+        );
         expect(
           (await as(U.dirA).year({ ccaID: A })).items.map((i) => i.canceled),
         ).toEqual([true]);
@@ -1161,7 +1293,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
         expect(rows).toHaveLength(1);
         expect(rows[0]!.title).toBe("2 milestones are waiting");
-        expect(rows[0]!.body).toBe("2 to file.");
+        expect(rows[0]!.body).toBe(
+          "2 to file in the last 90 days. Older ones are on the yearly view.",
+        );
         await runDueCheck(db, U.headA, { now });
         expect(
           await db.notification.count({ where: { userID: U.headA, kind } }),
@@ -1179,13 +1313,15 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const row = await db.notification.findFirstOrThrow({
           where: { userID: U.dirA },
         });
-        expect(row.body).toBe("1 to rate.");
+        expect(row.body).toBe(
+          "1 to rate in the last 90 days. Older ones are on the yearly view.",
+        );
       });
 
       it("nothing due gets nothing; rated, canceled and not-yet-ended items do not count", async () => {
         const rated = await makeEvent();
         await file(rated);
-        await as(U.dirA).rate({ ref: rated, score: 3, text: "ok" });
+        await rate(U.dirA, { ref: rated, score: 3, text: "ok" });
         await makeEvent({ status: "canceled" });
         await makeEvent({ hoursAgo: -4 });
         await makeEvent({ ccaID: null });
@@ -1265,6 +1401,211 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
     });
 
+    describe("review fixes (B149 to B152)", () => {
+      const eventClaim = (proposalID: string, ageMs = 0) =>
+        db.proposal.update({
+          where: { id: proposalID },
+          data: {
+            eventID: 123_456_001,
+            eventClaimedAt: new Date(Date.now() - ageMs),
+          },
+        });
+
+      it("a proposal with an Event claim takes no filing, fresh or abandoned", async () => {
+        const fresh = await makeProposal();
+        await eventClaim(fresh.proposalID);
+        const stale = await makeProposal();
+        await eventClaim(stale.proposalID, 10 * 60_000);
+        for (const ref of [fresh, stale]) {
+          expect(
+            await errorOf(
+              as(U.headA).saveRating({
+                ref,
+                expectedVersion: null,
+                score: 4,
+                text: "x",
+              }),
+            ),
+          ).toBe(NOT_OPEN);
+          expect(
+            await db.milestoneSubmission.count({
+              where: { milestoneKey: `proposal:${ref.proposalID}` },
+            }),
+          ).toBe(0);
+        }
+      });
+
+      it("a claim that lands right after the first look takes the new filing back out", async () => {
+        const ref = await makeProposal();
+        const photo = await seedPhoto();
+        // The open check sees no claim; the check after the filing commits does.
+        let looks = 0;
+        const late = proxied(db, (prop) =>
+          prop === "proposal"
+            ? {
+                findUnique: async (args: never) => {
+                  looks += 1;
+                  if (looks === 2) await eventClaim(ref.proposalID);
+                  return db.proposal.findUnique(args);
+                },
+              }
+            : undefined,
+        );
+        expect(
+          await errorOf(
+            as(U.headA, late).attach({
+              ref,
+              expectedVersion: null,
+              evidenceIDs: [photo.id],
+            }),
+          ),
+        ).toBe(NOT_OPEN);
+        expect(
+          await db.milestoneSubmission.count({
+            where: { milestoneKey: `proposal:${ref.proposalID}` },
+          }),
+        ).toBe(0);
+        expect(
+          (
+            await db.milestoneEvidence.findUniqueOrThrow({
+              where: { id: photo.id },
+            })
+          ).submissionID,
+        ).toBeNull();
+      });
+
+      it("a director cannot rate a filing that changed since they loaded it, and can after reloading", async () => {
+        const ref = await makeEvent();
+        const { version } = await file(ref);
+        const loaded = await as(U.dirA).get({ ref });
+        await as(U.headA).saveRating({
+          ref,
+          expectedVersion: version,
+          score: 1,
+          text: "Second thoughts",
+        });
+        expect(
+          await errorOf(
+            as(U.dirA).rate({ ref, seen: loaded.seen!, score: 3, text: "x" }),
+          ),
+        ).toBe(CONFLICT);
+        expect(
+          await db.milestoneAssessment.count({ where: { ccaID: A } }),
+        ).toBe(0);
+        const fresh = await as(U.dirA).get({ ref });
+        expect(fresh.seen).not.toBe(loaded.seen);
+        await as(U.dirA).rate({ ref, seen: fresh.seen!, score: 3, text: "ok" });
+        expect(
+          await db.milestoneAssessment.count({ where: { ccaID: A } }),
+        ).toBe(1);
+      });
+
+      it("a head's save between the director's check and the freeze is refused too", async () => {
+        const ref = await makeEvent();
+        const { version } = await file(ref);
+        const loaded = await as(U.dirA).get({ ref });
+        const racing = proxied(db, (prop) =>
+          prop === "milestoneSubmission"
+            ? {
+                findUnique: async (args: never) => {
+                  const row = await db.milestoneSubmission.findUnique(args);
+                  await as(U.headA).saveRating({
+                    ref,
+                    expectedVersion: version,
+                    score: 2,
+                    text: "Changed",
+                  });
+                  return row;
+                },
+                updateMany: db.milestoneSubmission.updateMany.bind(
+                  db.milestoneSubmission,
+                ),
+              }
+            : undefined,
+        );
+        expect(
+          await errorOf(
+            as(U.dirA, racing).rate({
+              ref,
+              seen: loaded.seen!,
+              score: 3,
+              text: "x",
+            }),
+          ),
+        ).toBe(CONFLICT);
+        expect(
+          await db.milestoneAssessment.count({ where: { ccaID: A } }),
+        ).toBe(0);
+      });
+
+      it("a person who is both head and director counts once per milestone", async () => {
+        const ref = await makeEvent();
+        const photo = await seedPhoto();
+        await as(U.headA2).attach({
+          ref,
+          expectedVersion: null,
+          evidenceIDs: [photo.id],
+        });
+        const res = await runDueCheck(db, U.both, { now: new Date() });
+        expect(res.written).toBe(1);
+        const row = await db.notification.findFirstOrThrow({
+          where: { userID: U.both, kind: "milestone.waiting" },
+        });
+        expect(row.title).toBe("1 milestone is waiting");
+        expect(row.body).toBe(
+          "1 to file, 1 to rate in the last 90 days. Older ones are on the yearly view.",
+        );
+      });
+
+      it("counts a milestone that ended 89 days ago and not one that ended 91 days ago", async () => {
+        await makeEvent({ hoursAgo: 91 * 24 });
+        await runDueCheck(db, U.headA, { now: new Date() });
+        expect(
+          await db.notification.count({ where: { userID: U.headA } }),
+        ).toBe(0);
+        await makeEvent({ hoursAgo: 89 * 24 });
+        await db.rateLimit.deleteMany({
+          where: { key: `notifications.dueCheck:${U.headA}` },
+        });
+        await runDueCheck(db, U.headA, { now: new Date() });
+        const row = await db.notification.findFirstOrThrow({
+          where: { userID: U.headA },
+        });
+        expect(row.title).toBe("1 milestone is waiting");
+      });
+
+      it("says at least, and logs only a count, when a scan cap is hit", async () => {
+        const end = nowSec() - 5 * HOUR;
+        await db.event.createMany({
+          data: Array.from({ length: 301 }, (_, i) => ({
+            eventID: EV0 + 5000 + i,
+            createdBy: U.headA,
+            title: `TEST event cap ${i}`,
+            status: "published",
+            ccaID: A,
+            startTime: end - HOUR,
+            endTime: end,
+          })),
+        });
+        const log = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        await runDueCheck(db, U.headA, { now: new Date() });
+        const row = await db.notification.findFirstOrThrow({
+          where: { userID: U.headA },
+        });
+        expect(row.title).toBe("at least 300 milestones are waiting");
+        const logged = log.mock.calls.map((c) => String(c[0])).join("\n");
+        expect(logged).toContain(
+          '{"evt":"milestone_reminder_capped","waiting":300}',
+        );
+        expect(logged).not.toContain("TEST event");
+        log.mockRestore();
+        const mine = await as(U.headA).mine();
+        expect(mine.capped).toBe(true);
+      });
+    });
+
     describe("account deletion", () => {
       it("keeps the CCA's record, clears the names and leaves no power", async () => {
         const { loadAdminUserTarget, deleteUserAccountCascade } = await import(
@@ -1272,7 +1613,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
         const ref = await makeEvent();
         await file(ref);
-        await as(U.dirA).rate({ ref, score: 3, text: "Fair" });
+        await rate(U.dirA, { ref, score: 3, text: "Fair" });
         const head = await db.user.create({
           data: { email: "e9991601@u.nus.edu", userID: U.headA },
         });
