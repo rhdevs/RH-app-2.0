@@ -2,7 +2,6 @@ import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
 import {
-  currentSocialDirectorIDs,
   holdsLiveJcrc,
   isSocialDirector,
 } from "~/server/api/services/directorGuard";
@@ -11,8 +10,8 @@ import {
  * Who may touch disposable requests, decided from the stored rows every time
  * (merge proposal 4.9, A9, A54).
  *
- * - A HEAD (a `CcaHead` row for THIS CCA) files requests and reads and edits
- *   that CCA's own.
+ * - A HEAD (a `CcaHead` row for THIS CCA) files requests and reads that CCA's
+ *   own. A head does not edit, delete or decide (A9, 4.9).
  * - The SOCIAL DIRECTOR (the strict guard's `isSocialDirector`: the holder of
  *   the exactly-one `handlesDisposables` position, with a live `jcrc`)
  *   approves, rejects, edits and deletes any request.
@@ -27,7 +26,7 @@ import {
  * views). The reads have no catch around any single one; a catch wraps the
  * WHOLE decision, only ever refuses, and logs the error name alone (a driver
  * message can carry stored values). During a database fault nobody can act
- * until it passes. A source scan in disposableSourceScans.test.ts keeps those
+ * until it passes. A source scan in proposalSourceScans.test.ts keeps those
  * imports out and keeps this file the only one with a catch.
  */
 
@@ -113,21 +112,6 @@ export async function assertCcaHead(
   }
   if (!allowed) {
     throw new TRPCError({ code: "FORBIDDEN", message: NOT_CCA_HEAD });
-  }
-}
-
-/**
- * The current Social director(s), for the notice that a head changed an
- * approved request. A read that throws refuses and, run on a transaction
- * client, rolls the change back.
- */
-export async function socialDirectorsOrRefuse(
-  db: Parameters<typeof currentSocialDirectorIDs>[0],
-): Promise<string[]> {
-  try {
-    return await currentSocialDirectorIDs(db);
-  } catch (err) {
-    return refuseOnFailure(err);
   }
 }
 

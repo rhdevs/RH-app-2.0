@@ -27,9 +27,3 @@ const MOVES: Record<DisposableStatus, readonly DisposableStatus[]> = {
 
 export const canMove = (from: DisposableStatus, to: DisposableStatus) =>
   MOVES[from].includes(to);
-
-/** The head's edit: allowed while the request is pending or approved. */
-export const HEAD_EDITABLE: readonly DisposableStatus[] = [
-  "pending",
-  "approved",
-];

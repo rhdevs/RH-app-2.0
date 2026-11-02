@@ -28,11 +28,12 @@ const fieldClass =
   "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600";
 
 /**
- * The request form. With `requestID` it edits that request (the head of its
- * CCA, or the Social director); without, it files a new one for a CCA the
+ * The request form. With `requestID` it edits that request (the Social
+ * director); without, it files a new one for a CCA the
  * person heads. NOT a guard: the procedures check the flag and who may do it.
- * Editing an approved request sends it back to the Social director, and the
- * form says so before it is saved.
+ * Only the Social director edits (heads create and read). Editing an approved
+ * request sends it back to pending and tells the CCA's heads, and the form
+ * says so before it is saved.
  */
 export default function DisposableForm({
   requestID,
@@ -106,6 +107,13 @@ export default function DisposableForm({
   }
   if (editing && loaded.isLoading) {
     return <p className="text-sm text-gray-500">Loading request…</p>;
+  }
+  if (editing && loaded.data && !loaded.data.can.edit) {
+    return (
+      <p role="alert" className="text-sm text-gray-600">
+        Only the Social director can edit a request.
+      </p>
+    );
   }
   if (editing && (loaded.isError || !loaded.data)) {
     return (
@@ -269,8 +277,8 @@ export default function DisposableForm({
 
       {backToPending && (
         <p role="note" className="text-sm text-amber-700">
-          This request is approved. Saving a change sends it back to the Social
-          director to be approved again.
+          This request is approved. Saving a change sends it back to pending and
+          tells the CCA&apos;s heads.
         </p>
       )}
       {errors.length > 0 && (

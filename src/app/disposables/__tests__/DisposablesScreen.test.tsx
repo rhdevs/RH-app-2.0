@@ -118,19 +118,19 @@ describe("the disposables screen", () => {
     expect(render()).toContain("do not have access");
   });
 
-  it("a head sees Edit but no decision buttons, and a New request link", () => {
+  it("a head sees no action buttons, and a New request link", () => {
     listQuery.mockReturnValue(
       data({
         items: [
           row({
-            can: { approve: false, reject: false, edit: true, delete: false },
+            can: { approve: false, reject: false, edit: false, delete: false },
           }),
         ],
       }),
     );
     const html = render();
     expect(html).toContain("Choir supper");
-    expect(html).toContain("Edit");
+    expect(html).not.toContain(">Edit<");
     expect(html).toContain('href="/disposables/new"');
     // Buttons only: the status filter also lists "Approved" and "Rejected".
     expect(html).not.toContain(">Approve<");

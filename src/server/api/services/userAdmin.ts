@@ -1043,6 +1043,18 @@ export async function deleteUserAccountCascade(
       //    by whoever next signs in on this NUS address.
       deleted.userRole = (await tx.userRole.deleteMany({ where })).count;
 
+      // 2b. JcrcPositionHolder and JcrcTerm — DIRECTOR POWER, keyed on the same
+      //     canonical id as UserRole, so they are authority rows and go with it.
+      //     Left behind, a holder row with no `endsAt` makes whoever next holds
+      //     `jcrc` on this NUS address a director at once (and the Social
+      //     director, if it is that position). Only canonical-keyed rows are
+      //     cleaned, as everywhere in this block: a legacy-keyed row is the
+      //     hand-audited script's job (see ABSENT_CANONICAL_ID above).
+      deleted.jcrcPositionHolder = (
+        await tx.jcrcPositionHolder.deleteMany({ where })
+      ).count;
+      deleted.jcrcTerm = (await tx.jcrcTerm.deleteMany({ where })).count;
+
       // 3. PendingRoleGrant — a bearer credential for this exact address. Left
       //    behind, it is redeemed by whoever next controls it.
       deleted.pendingRoleGrant = (

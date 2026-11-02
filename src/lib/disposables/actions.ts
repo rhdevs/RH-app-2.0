@@ -1,4 +1,4 @@
-import { HEAD_EDITABLE, type DisposableStatus } from "./status";
+import type { DisposableStatus } from "./status";
 
 /**
  * Which buttons a viewer may be shown on one request. The SERVER computes this
@@ -7,9 +7,8 @@ import { HEAD_EDITABLE, type DisposableStatus } from "./status";
  *
  *  - The Social director (the holder of the one `handlesDisposables` position)
  *    decides, edits and deletes any request, for any CCA.
- *  - A head edits their own CCA's request while it is pending or approved.
- *  - Everyone else, directors and JCRC members included, sees and acts on
- *    nothing (A9, A54).
+ *  - Everyone else, a CCA's own head included, directors and JCRC members
+ *    too, can act on nothing (A9, 4.9: a head creates and reads only).
  */
 export type RequestActions = {
   approve: boolean;
@@ -20,14 +19,13 @@ export type RequestActions = {
 
 export function requestActions(input: {
   isSocialDirector: boolean;
-  headsCca: boolean;
   status: DisposableStatus;
 }): RequestActions {
-  const { isSocialDirector, headsCca, status } = input;
+  const { isSocialDirector, status } = input;
   return {
     approve: isSocialDirector && status === "pending",
     reject: isSocialDirector && status === "pending",
-    edit: isSocialDirector || (headsCca && HEAD_EDITABLE.includes(status)),
+    edit: isSocialDirector,
     delete: isSocialDirector,
   };
 }

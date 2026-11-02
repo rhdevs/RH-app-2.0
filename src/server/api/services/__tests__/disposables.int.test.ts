@@ -221,6 +221,25 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       count: () => Promise.reject(new Error("db down")),
     });
 
+    /**
+     * A database whose "is this proposal taken" pre-check always finds nothing,
+     * so concurrent writers reach the partial unique index itself.
+     */
+    const withoutDuplicatePrecheck = (): PrismaClient =>
+      proxied(db, (prop) =>
+        prop === "disposableRequest"
+          ? new Proxy(db.disposableRequest, {
+              get(t, p) {
+                if (p === "findFirst") return () => Promise.resolve(null);
+                const v = Reflect.get(t, p) as unknown;
+                return typeof v === "function"
+                  ? (v as (...x: unknown[]) => unknown).bind(t)
+                  : v;
+              },
+            })
+          : undefined,
+      );
+
     const withFailingRead = (table: string): PrismaClient =>
       proxied(db, (prop) => (prop === table ? failingTable() : undefined));
 
@@ -916,7 +935,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
     });
 
-    describe("edit", () => {
+    describe("edit (the Social director only)", () => {
       const edited = (made: { id: string; version: number }, over = {}) => ({
         id: made.id,
         version: made.version,
@@ -925,10 +944,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ...over,
       });
 
-      it("a head edits a pending request in place: still pending, version up, no notice", async () => {
+      it("the Social director edits a pending request in place: still pending, version up, heads told", async () => {
         const made = await file();
 
-        const res = await as(U.headA2).update(
+        const res = await as(U.social).update(
           edited(made, { plates: 10, title: "Smaller" }) as never,
         );
 
@@ -937,14 +956,16 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           plates: 10,
           title: "Smaller",
         });
+        expect(await noticesFor(U.headA, "disposable.edited")).toHaveLength(1);
         expect(await noticesFor(U.social)).toEqual([]);
       });
 
-      it("editing an approved request returns it to pending, clears the decision and tells the Social director", async () => {
+      it("editing an approved request returns it to pending, clears the decision and tells the heads (Q22)", async () => {
         const made = await file();
         await as(U.social).approve({ id: made.id, version: 0, note: "ok" });
+        await db.notification.deleteMany({ where: { userID: { in: IDS } } });
 
-        const res = await as(U.headA).update(
+        const res = await as(U.social).update(
           edited({ id: made.id, version: 1 }, { cups: 99 }) as never,
         );
 
@@ -956,45 +977,17 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           decidedAt: null,
           decisionNote: null,
         });
-        const notes = await noticesFor(U.social, "disposable.edited");
-        expect(notes).toHaveLength(1);
-        expect(notes[0]!.body).toContain("pending again");
-        // Another head is not the actor; the editing head is not told.
-        expect(await noticesFor(U.headA, "disposable.edited")).toEqual([]);
+        for (const head of [U.headA, U.headA2]) {
+          const notes = await noticesFor(head, "disposable.edited");
+          expect(notes).toHaveLength(1);
+          expect(notes[0]!.body).toContain("pending again");
+        }
+        expect(await noticesFor(U.social)).toEqual([]);
       });
 
-      it("a head cannot edit a rejected request, or another CCA's", async () => {
+      it("the Social director edits a rejected request and it stays rejected", async () => {
         const made = await file();
         await as(U.social).reject({ id: made.id, version: 0, note: null });
-
-        expect(
-          await errorOf(
-            as(U.headA).update(edited({ id: made.id, version: 1 }) as never),
-          ),
-        ).toBe("FORBIDDEN:DISPOSABLE_NOT_EDITABLE");
-        const pending = await file();
-        expect(
-          await errorOf(as(U.headB).update(edited(pending) as never)),
-        ).toBe(NOT_FOUND);
-      });
-
-      it.each([
-        ["a JCRC member", U.jcrc],
-        ["a director", U.vetter],
-        ["an admin", U.admin],
-        ["a resident", U.resident],
-      ])("%s who is not the Social director cannot edit", async (_n, id) => {
-        const made = await file();
-        expect(await errorOf(as(id).update(edited(made) as never))).toBe(
-          NOT_FOUND,
-        );
-        expect((await stored(made.id)).version).toBe(0);
-      });
-
-      it("the Social director edits any request, even a rejected one, and tells the heads", async () => {
-        const made = await file();
-        await as(U.social).reject({ id: made.id, version: 0, note: null });
-        await db.notification.deleteMany({ where: { userID: U.headA } });
 
         const res = await as(U.social).update(
           edited({ id: made.id, version: 1 }, { spoons: 3 }) as never,
@@ -1005,54 +998,130 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           spoons: 3,
           status: "rejected",
         });
-        expect(await noticesFor(U.headA, "disposable.edited")).toHaveLength(1);
-        expect(await noticesFor(U.social)).toEqual([]);
       });
 
-      it("the Social director editing an approved request sends it back to pending", async () => {
+      it.each([
+        ["a head of the same CCA", U.headA],
+        ["another head of the same CCA", U.headA2],
+        ["a head of another CCA", U.headB],
+        ["a director of the requesting CCA", U.vetter],
+        ["an admin", U.admin],
+        ["a JCRC member", U.jcrc],
+        ["an RF", U.scrc],
+        ["a resident", U.resident],
+      ])(
+        "%s is refused update, delete, approve and reject with the same answer, whatever the session claims",
+        async (_n, id) => {
+          const made = await file();
+          const caller = as(id);
+          const answers = [
+            await errorOf(caller.update(edited(made) as never)),
+            await errorOf(caller.delete({ id: made.id })),
+            await errorOf(
+              caller.approve({ id: made.id, version: 0, note: null }),
+            ),
+            await errorOf(
+              caller.reject({ id: made.id, version: 0, note: null }),
+            ),
+          ];
+          expect(answers).toEqual([
+            NOT_SOCIAL,
+            NOT_SOCIAL,
+            NOT_SOCIAL,
+            NOT_SOCIAL,
+          ]);
+          expect(await stored(made.id)).toMatchObject({
+            version: 0,
+            status: "pending",
+            title: "Hall dinner",
+          });
+        },
+      );
+
+      it("a head update of an approved request changes nothing and writes no notice", async () => {
         const made = await file();
         await as(U.social).approve({ id: made.id, version: 0, note: null });
+        await db.notification.deleteMany({ where: { userID: { in: IDS } } });
 
-        const res = await as(U.social).update(
-          edited({ id: made.id, version: 1 }) as never,
+        const res = await errorOf(
+          as(U.headA).update(edited({ id: made.id, version: 1 }) as never),
         );
 
-        expect(res.status).toBe("pending");
+        expect(res).toBe(NOT_SOCIAL);
+        expect(await stored(made.id)).toMatchObject({
+          status: "approved",
+          version: 1,
+        });
+        expect(await noticesFor(U.social)).toEqual([]);
+        expect(await noticesFor(U.headA)).toEqual([]);
+      });
+
+      it("an unknown id is NOT_FOUND for the Social director", async () => {
+        expect(
+          await errorOf(
+            as(U.social).update(
+              edited({ id: "a".repeat(24), version: 0 }) as never,
+            ),
+          ),
+        ).toBe(NOT_FOUND);
       });
 
       it("a stale version is a CONFLICT; two edits at once let one win", async () => {
         const made = await file();
-        await as(U.headA).update(edited(made) as never);
-        expect(await errorOf(as(U.headA).update(edited(made) as never))).toBe(
+        await as(U.social).update(edited(made) as never);
+        expect(await errorOf(as(U.social).update(edited(made) as never))).toBe(
           CONFLICT,
         );
 
         const fresh = await file({ title: "second" });
         const results = await Promise.all([
-          errorOf(as(U.headA).update(edited(fresh, { title: "one" }) as never)),
           errorOf(
-            as(U.headA2).update(edited(fresh, { title: "two" }) as never),
+            as(U.social).update(edited(fresh, { title: "one" }) as never),
+          ),
+          errorOf(
+            as(U.social).update(edited(fresh, { title: "two" }) as never),
           ),
         ]);
         expect(results.filter((r) => r === "ok")).toHaveLength(1);
         expect((await stored(fresh.id)).version).toBe(1);
       });
 
-      it("a head racing a decision: either the decision or the edit wins, never both", async () => {
+      it("an edit racing a decision: one wins, never both", async () => {
         const made = await file();
 
         const results = await Promise.all([
           errorOf(
             as(U.social).approve({ id: made.id, version: 0, note: null }),
           ),
-          errorOf(as(U.headA).update(edited(made, { plates: 1 }) as never)),
+          errorOf(as(U.social).update(edited(made, { plates: 1 }) as never)),
         ]);
 
         expect(results.filter((r) => r === "ok")).toHaveLength(1);
         expect((await stored(made.id)).version).toBe(1);
       });
 
-      it("validates the edit like a new request, including a past day", async () => {
+      it("approve racing delete: the row ends up gone, and an approved notice exists only if the approval won", async () => {
+        const made = await file();
+
+        const [approved, deleted] = await Promise.all([
+          errorOf(
+            as(U.social).approve({ id: made.id, version: 0, note: null }),
+          ),
+          errorOf(as(U.social).delete({ id: made.id })),
+        ]);
+
+        expect(deleted).toBe("ok");
+        expect(["ok", NOT_FOUND, CONFLICT]).toContain(approved);
+        expect(
+          await db.disposableRequest.count({ where: { id: made.id } }),
+        ).toBe(0);
+        expect((await noticesFor(U.headA, "disposable.approved")).length).toBe(
+          approved === "ok" ? 1 : 0,
+        );
+        expect(await noticesFor(U.headA, "disposable.deleted")).toHaveLength(1);
+      });
+
+      it("validates the edit like a new request", async () => {
         const made = await file();
         for (const over of [
           { plates: 0, cups: 0, bowls: 0, forks: 0, spoons: 0 },
@@ -1061,26 +1130,101 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           { plates: 501 },
         ]) {
           expect(
-            (await errorOf(as(U.headA).update(edited(made, over) as never))) !==
-              "ok",
+            (await errorOf(
+              as(U.social).update(edited(made, over) as never),
+            )) !== "ok",
             JSON.stringify(over),
           ).toBe(true);
         }
         expect((await stored(made.id)).version).toBe(0);
       });
 
-      it("an edit cannot move the request to another CCA or change its proposal link to another CCA's", async () => {
+      it("the day is checked only when it changes: other fields of a request whose day has passed can be corrected", async () => {
+        const old = await db.disposableRequest.create({
+          data: {
+            ccaID: CCA_A,
+            createdBy: U.headA,
+            title: "Old",
+            description: "",
+            plates: 5,
+            cups: 0,
+            bowls: 0,
+            forks: 0,
+            spoons: 0,
+            collectionDay: "2020-01-01",
+            collectionTime: "10:00",
+          },
+        });
+        const same = {
+          id: old.id,
+          version: 0,
+          ...input({ collectionDay: "2020-01-01", title: "Corrected" }),
+          ccaID: undefined,
+        };
+
+        expect(await errorOf(as(U.social).update(same as never))).toBe("ok");
+        expect(await stored(old.id)).toMatchObject({
+          title: "Corrected",
+          collectionDay: "2020-01-01",
+        });
+        expect(
+          await errorOf(
+            as(U.social).update({
+              ...same,
+              version: 1,
+              collectionDay: "2020-02-02",
+            } as never),
+          ),
+        ).toBe("BAD_REQUEST:DISPOSABLE_DATE_PAST");
+        expect(
+          await errorOf(as(U.social).update({ ...same, version: 1 } as never)),
+        ).toBe("ok");
+        expect(
+          await errorOf(
+            as(U.social).update({
+              ...same,
+              version: 2,
+              collectionDay: DAY,
+            } as never),
+          ),
+        ).toBe("ok");
+      });
+
+      it("an edit cannot move the request to another CCA or link another CCA proposal", async () => {
         const made = await file();
         const other = await makeProposal(CCA_B);
 
         const res = await errorOf(
-          as(U.headA).update(
+          as(U.social).update(
             edited(made, { ccaID: CCA_B, proposalID: other.id }) as never,
           ),
         );
 
         expect(res).toBe("BAD_REQUEST:DISPOSABLE_BAD_PROPOSAL");
         expect((await stored(made.id)).ccaID).toBe(CCA_A);
+      });
+
+      it("two edits racing to link one proposal: one wins, the other is told it is taken", async () => {
+        const proposal = await makeProposal(CCA_A);
+        const a = await file({ title: "a" });
+        const b = await file({ title: "b" });
+        const noPrecheck = withoutDuplicatePrecheck();
+
+        const results = await Promise.all([
+          errorOf(
+            as(U.social, EVERYTHING, noPrecheck).update(
+              edited(a, { proposalID: proposal.id }) as never,
+            ),
+          ),
+          errorOf(
+            as(U.social, EVERYTHING, noPrecheck).update(
+              edited(b, { proposalID: proposal.id }) as never,
+            ),
+          ),
+        ]);
+
+        expect(results.filter((r) => r === "ok")).toHaveLength(1);
+        expect(results).toContain("CONFLICT:DISPOSABLE_PROPOSAL_TAKEN");
       });
     });
 
@@ -1177,6 +1321,72 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(text).toContain("disposable_access_read_failed");
         expect(text).not.toContain("db down");
         expect(text).not.toContain(U.headA);
+      });
+    });
+
+    describe("one request per proposal, under a race", () => {
+      it("simultaneous creates for one proposal: one wins and the rest are told it is taken", async () => {
+        const proposal = await makeProposal(CCA_A);
+        const noPrecheck = withoutDuplicatePrecheck();
+
+        const results = await Promise.all(
+          [U.headA, U.headA2, U.headA, U.headA2].map((id) =>
+            errorOf(
+              as(id, EVERYTHING, noPrecheck).create(
+                input({ proposalID: proposal.id }) as never,
+              ),
+            ),
+          ),
+        );
+
+        expect(results.filter((r) => r === "ok")).toHaveLength(1);
+        expect(results.filter((r) => r !== "ok")).toEqual([
+          "CONFLICT:DISPOSABLE_PROPOSAL_TAKEN",
+          "CONFLICT:DISPOSABLE_PROPOSAL_TAKEN",
+          "CONFLICT:DISPOSABLE_PROPOSAL_TAKEN",
+        ]);
+        expect(
+          await db.disposableRequest.count({
+            where: { proposalID: proposal.id },
+          }),
+        ).toBe(1);
+      });
+
+      it("with the normal pre-check the same race gives the same answer", async () => {
+        const proposal = await makeProposal(CCA_A);
+
+        const results = await Promise.all(
+          [U.headA, U.headA2].map((id) =>
+            errorOf(as(id).create(input({ proposalID: proposal.id }) as never)),
+          ),
+        );
+
+        expect(results.filter((r) => r === "ok")).toHaveLength(1);
+        expect(results).toContain("CONFLICT:DISPOSABLE_PROPOSAL_TAKEN");
+      });
+    });
+
+    describe("the collection day is the Singapore day (UTC+8)", () => {
+      it("at 15:59 UTC the Singapore day is still the 14th; at 16:00 UTC it is the 15th", async () => {
+        const { createRequest } = await import(
+          "~/server/api/services/disposables/write"
+        );
+        const day14 = input({ collectionDay: "2099-06-14" }) as never;
+
+        const before = new Date("2099-06-14T15:59:59.999Z");
+        const after = new Date("2099-06-14T16:00:00.000Z");
+
+        await createRequest(db, U.headA, day14, before);
+        await expect(createRequest(db, U.headA, day14, after)).rejects.toThrow(
+          "DISPOSABLE_DATE_PAST",
+        );
+        // The 15th is fine from the new Singapore day on.
+        await createRequest(
+          db,
+          U.headA,
+          input({ collectionDay: "2099-06-15" }) as never,
+          after,
+        );
       });
     });
 
@@ -1330,6 +1540,65 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           decisionNote: "ok",
         });
         expect((await stored(theirs.id)).createdBy).toBe(U.headB);
+      });
+
+      it("a deleted Social director or director does not come back with a re-granted jcrc", async () => {
+        const { loadAdminUserTarget, deleteUserAccountCascade } = await import(
+          "../userAdmin"
+        );
+        const { isSocialDirector, isDirectorOf } = await import(
+          "~/server/api/services/directorGuard"
+        );
+        const social = await db.user.create({
+          data: { email: "e9991304@u.nus.edu", userID: U.social },
+        });
+        const vetter = await db.user.create({
+          data: { email: "e9991306@u.nus.edu", userID: U.vetter },
+        });
+        await db.jcrcTerm.createMany({
+          data: [U.social, U.vetter].map((userID) => ({
+            userID,
+            endsAt: new Date("2099-01-01T00:00:00Z"),
+          })),
+        });
+        expect(await isSocialDirector(db, U.social)).toBe(true);
+        expect(await isDirectorOf(db, U.vetter, CCA_A)).toBe(true);
+
+        for (const user of [social, vetter]) {
+          const res = await deleteUserAccountCascade(
+            db,
+            await loadAdminUserTarget(db, user.id),
+            U.admin,
+          );
+          expect(res.deleted).toMatchObject({
+            jcrcPositionHolder: 1,
+            jcrcTerm: 1,
+          });
+        }
+        expect(
+          await db.jcrcPositionHolder.count({
+            where: { userID: { in: [U.social, U.vetter] } },
+          }),
+        ).toBe(0);
+        expect(
+          await db.jcrcTerm.count({
+            where: { userID: { in: [U.social, U.vetter] } },
+          }),
+        ).toBe(0);
+
+        // The same NUS ids are granted jcrc again.
+        await setRoles(U.social, ["resident", "jcrc"]);
+        await setRoles(U.vetter, ["resident", "jcrc"]);
+
+        expect(await isSocialDirector(db, U.social)).toBe(false);
+        expect(await isDirectorOf(db, U.vetter, CCA_A)).toBe(false);
+        const made = await file();
+        expect(
+          await errorOf(
+            as(U.social).approve({ id: made.id, version: 0, note: null }),
+          ),
+        ).toBe(NOT_SOCIAL);
+        expect((await stored(made.id)).status).toBe("pending");
       });
     });
   },

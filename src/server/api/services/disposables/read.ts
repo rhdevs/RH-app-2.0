@@ -133,7 +133,6 @@ function toView(
       row.createdBy !== null ? (people.get(row.createdBy) ?? null) : null,
     can: requestActions({
       isSocialDirector: viewer.isSocialDirector,
-      headsCca: viewer.headedCcaIDs.includes(row.ccaID),
       status: row.status,
     }),
   };

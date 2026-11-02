@@ -10,9 +10,12 @@ import {
 import {
   createTRPCRouter,
   identifiedProcedure,
+  mapUniqueViolation,
   protectedProcedure,
   sanitizeErrors,
 } from "~/server/api/trpc";
+import { DISPOSABLE_PROPOSAL_INDEX } from "~/lib/disposables/indexes";
+import { DISPOSABLE_PROPOSAL_TAKEN } from "~/server/api/services/disposables/write";
 import {
   assertDisposablesEnabled,
   isDisposablesEnabled,
@@ -41,18 +44,19 @@ import {
  *  - create / headCcas / proposalChoices: a head of that CCA only;
  *  - list / get: that CCA's heads, and every JCRC member for all (a head of
  *    another CCA is refused even the read);
- *  - update: the request's CCA's head while it is pending or approved, or the
- *    Social director;
- *  - approve / reject / delete: the Social director only (the holder of the
+ *  - update / approve / reject / delete: the Social director only (the holder of the
  *    exactly-one handlesDisposables position), by the strict guard.
  * An admin who is none of these is refused. Status is never an input and never
  * written here: the services call `transition.ts`, the only status writer.
+ * A race for one proposal's single request ends in DISPOSABLE_PROPOSAL_TAKEN,
+ * mapped from the partial unique index's violation (mapUniqueViolation).
  * Every write carries a per-person hourly ceiling
  * (services/disposables/limits.ts). Errors pass through `sanitizeErrors`, so a
  * database error reaches the caller as "Something went wrong.".
  */
 const gated = identifiedProcedure
   .use(sanitizeErrors)
+  .use(mapUniqueViolation(DISPOSABLE_PROPOSAL_INDEX, DISPOSABLE_PROPOSAL_TAKEN))
   .use(async ({ ctx, next }) => {
     await assertDisposablesEnabled(ctx.db);
     return next();

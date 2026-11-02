@@ -7,7 +7,7 @@ import { isWriteConflict } from "~/lib/transcript/writeConflict";
 /**
  * THE ONLY CODE THAT WRITES `DisposableRequest.status` (merge proposal 4.9),
  * apart from the schema default, "pending", applied when a request is created;
- * disposableSourceScans.test.ts scans the source to keep it so. It is also the
+ * proposalSourceScans.test.ts scans the source to keep it so. It is also the
  * one place that changes or removes a request after it exists, and the one
  * place a write conflict is turned into CONFLICT.
  *

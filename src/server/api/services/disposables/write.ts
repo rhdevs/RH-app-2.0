@@ -1,7 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
-import { requestActions } from "~/lib/disposables/actions";
 import { isDisposableStatus } from "~/lib/disposables/status";
 import { sgtDayKey } from "~/lib/time/sgt";
 import {
@@ -11,12 +10,11 @@ import {
   type DisposableUpdateInput,
 } from "~/lib/schemas/disposable";
 import { assertSocialDirector } from "~/server/api/services/directorGuard";
-import { assertCcaHead, DISPOSABLE_NOT_FOUND, loadViewer } from "./access";
+import { assertCcaHead, DISPOSABLE_NOT_FOUND } from "./access";
 import { assertWithinLimit } from "./limits";
 import {
   noticeDecision,
   noticeDeleted,
-  noticeEditedByHead,
   noticeEditedBySocialDirector,
 } from "./notices";
 import {
@@ -28,7 +26,6 @@ import {
 export const DISPOSABLE_DATE_PAST = "DISPOSABLE_DATE_PAST";
 export const DISPOSABLE_BAD_PROPOSAL = "DISPOSABLE_BAD_PROPOSAL";
 export const DISPOSABLE_PROPOSAL_TAKEN = "DISPOSABLE_PROPOSAL_TAKEN";
-export const DISPOSABLE_NOT_EDITABLE = "DISPOSABLE_NOT_EDITABLE";
 
 const notFound = () =>
   new TRPCError({ code: "NOT_FOUND", message: DISPOSABLE_NOT_FOUND });
@@ -120,11 +117,14 @@ export async function createRequest(
 }
 
 /**
- * Edit a request: its CCA's head while it is pending or approved, or the
- * Social director at any time. Editing an APPROVED request sends it back to
- * pending (Q22). Everyone else gets the same NOT_FOUND a missing id gets.
- * The save is a compare-and-set on the version the editor loaded and the
- * status it saw, so a stale tab or a race with a decision gets CONFLICT.
+ * Edit a request: the Social director only, at any time (A9, 4.9: a head
+ * creates and reads, nothing more). Everyone else, the CCA's own head
+ * included, gets the guard's refusal. Editing an APPROVED request sends it
+ * back to pending (Q22) and tells the CCA's heads. The save is a
+ * compare-and-set on the version the editor loaded and the status it saw, so
+ * a stale tab or a race with a decision gets CONFLICT. The collection day is
+ * checked against today only when it is being CHANGED, so a request whose day
+ * has passed can still have its other fields corrected.
  */
 export async function updateRequest(
   db: PrismaClient,
@@ -132,31 +132,20 @@ export async function updateRequest(
   input: DisposableUpdateInput,
   now: Date = new Date(),
 ): Promise<{ id: string; version: number; status: string }> {
+  await assertSocialDirector(db, userID);
+  await assertWithinLimit("update", userID);
   const row = await db.disposableRequest.findUnique({
     where: { id: input.id },
-    select: { ccaID: true, status: true, version: true },
+    select: { ccaID: true, status: true, version: true, collectionDay: true },
   });
   if (!row) throw notFound();
-  const viewer = await loadViewer(db, userID);
-  const headsCca = viewer.headedCcaIDs.includes(row.ccaID);
-  if (!viewer.isSocialDirector && !headsCca) throw notFound();
   if (!isDisposableStatus(row.status)) throw notFound();
-  const actions = requestActions({
-    isSocialDirector: viewer.isSocialDirector,
-    headsCca,
-    status: row.status,
-  });
-  if (!actions.edit) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: DISPOSABLE_NOT_EDITABLE,
-    });
-  }
-  await assertWithinLimit("update", userID);
   if (row.version !== input.version) {
     throw new TRPCError({ code: "CONFLICT", message: DISPOSABLE_CONFLICT });
   }
-  assertNotPast(input.collectionDay, now);
+  if (input.collectionDay !== row.collectionDay) {
+    assertNotPast(input.collectionDay, now);
+  }
   await assertProposalLinkable(db, row.ccaID, input.proposalID, input.id);
 
   const backToPending = row.status === "approved";
@@ -184,11 +173,7 @@ export async function updateRequest(
     },
     {
       inTransaction: (tx, changedRow) =>
-        viewer.isSocialDirector
-          ? noticeEditedBySocialDirector(tx, changedRow, userID, backToPending)
-          : backToPending
-            ? noticeEditedByHead(tx, changedRow, userID)
-            : Promise.resolve(),
+        noticeEditedBySocialDirector(tx, changedRow, userID, backToPending),
     },
   );
   return { id: changed.id, version: changed.version, status: changed.status };

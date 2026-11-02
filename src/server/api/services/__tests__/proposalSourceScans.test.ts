@@ -750,8 +750,8 @@ describe("disposables follows the same rules as proposals", () => {
     const code = stripComments(
       read("src/server/api/services/disposables/access.ts"),
     );
-    expect(code.match(/\bcatch\b/g)).toHaveLength(4);
-    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(4);
+    expect(code.match(/\bcatch\b/g)).toHaveLength(3);
+    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(3);
     expect(code).toMatch(/function refuseOnFailure\(err: unknown\): never/);
   });
 
@@ -799,6 +799,35 @@ describe("disposables follows the same rules as proposals", () => {
     expect(limit).toBeGreaterThan(guard);
     expect(move).toBeGreaterThan(limit);
     expect(code).not.toMatch(/input\.ccaID\b.*decide/);
+  });
+
+  it("update and delete run the strict Social director guard first, and a head has no edit path (A9)", () => {
+    const code = stripComments(
+      read("src/server/api/services/disposables/write.ts"),
+    );
+    for (const fn of ["updateRequest", "deleteRequest"]) {
+      const start = code.indexOf(`export async function ${fn}`);
+      const end = code.indexOf(String.fromCharCode(10, 125, 10), start);
+      const body = code.slice(start, end);
+      const guard = body.indexOf("await assertSocialDirector(db, userID)");
+      const limit = body.indexOf("await assertWithinLimit(");
+      expect(guard, fn).toBeGreaterThan(-1);
+      expect(limit, fn).toBeGreaterThan(guard);
+      expect(body.indexOf("findUnique"), fn).toBeGreaterThan(limit);
+    }
+    expect(code).not.toMatch(/loadViewer|headedCcaIDs|HEAD_EDITABLE/);
+    expect(code).not.toMatch(/noticeEditedByHead/);
+    expect(stripComments(read("src/lib/disposables/actions.ts"))).not.toMatch(
+      /headsCca|HEAD_EDITABLE/,
+    );
+  });
+
+  it("the router maps only the proposal index violation, in the middleware, not in a catch", () => {
+    const code = stripComments(read("src/server/api/routers/disposable.ts"));
+    expect(code).toMatch(
+      /\.use\(sanitizeErrors\)\s*\.use\(\s*mapUniqueViolation\(\s*DISPOSABLE_PROPOSAL_INDEX,\s*DISPOSABLE_PROPOSAL_TAKEN,?\s*\)/,
+    );
+    expect(code).not.toMatch(/catch/);
   });
 
   it("create spends budget only after the head check", () => {

@@ -541,6 +541,35 @@ describe("disposablesNeedIndex: disposables on, partial index missing", () => {
     }
   });
 
+  it("is green when the raw command returns the key as extended JSON", () => {
+    for (const key of [
+      { proposalID: { $numberInt: "1" } },
+      { proposalID: { $numberLong: "1" } },
+      { proposalID: { $numberDouble: "1.0" } },
+    ]) {
+      expect(
+        disposablesNeedIndex({
+          disposablesOn: true,
+          indexes: [{ ...good, key }],
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it("is RED when the extended-JSON key names a different field or direction", () => {
+    for (const key of [
+      { proposalID: { $numberInt: "-1" } },
+      { ccaID: { $numberInt: "1" } },
+    ]) {
+      expect(
+        disposablesNeedIndex({
+          disposablesOn: true,
+          indexes: [{ ...good, key }],
+        }),
+      ).not.toBeNull();
+    }
+  });
+
   it("an unreadable index list counts as missing, never as present", () => {
     expect(
       disposablesNeedIndex({ disposablesOn: true, indexes: null }),

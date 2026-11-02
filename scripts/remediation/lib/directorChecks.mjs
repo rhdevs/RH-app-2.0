@@ -23,6 +23,8 @@
  * (see `isGating`).
  */
 
+import { sameKey } from "../create-transcript-indexes.mjs";
+
 /** Who holds `jcrc` right now: stored on their role row and not past a step-out. */
 export function liveJcrcSet(userRoles, terms, now) {
   const ended = new Set(
@@ -219,7 +221,7 @@ export function disposablesNeedIndex({ disposablesOn, indexes }) {
     (i) =>
       i?.name === want.name &&
       i.unique === true &&
-      JSON.stringify(i.key) === JSON.stringify(want.key) &&
+      sameKey(i.key, want.key) &&
       JSON.stringify(i.partialFilterExpression) ===
         JSON.stringify(want.partialFilterExpression),
   );

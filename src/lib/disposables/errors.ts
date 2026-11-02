@@ -14,7 +14,7 @@ const KNOWN: ReadonlyArray<readonly [string, string]> = [
     "That proposal already has a disposables request.",
   ],
   ["DISPOSABLE_BAD_PROPOSAL", "Choose one of your own CCA's proposals."],
-  ["DISPOSABLE_NOT_EDITABLE", "This request can no longer be edited by you."],
+  ["NOT_SOCIAL_DIRECTOR", "Only the Social director can do that."],
   ["DISPOSABLE_BAD_MOVE", "That is not possible for a request in this state."],
   ["DISPOSABLE_NOT_FOUND", "That request no longer exists."],
   ["NOT_CCA_HEAD", "Only a head of this CCA can do that."],

@@ -67,7 +67,7 @@ export const disposablesNoDirectorKind: DueKind = {
           waiting === 1
             ? "1 disposable request is waiting and nobody can decide it"
             : `${waiting} disposable requests are waiting and nobody can decide them`,
-        body: "No one with a current JCRC role holds the one position that handles disposables. Set it on the director positions panel.",
+        body: "No one can currently act as Social director, so requests cannot be decided. Check the director positions panel: exactly one position should handle disposables and be held by someone with a current JCRC role.",
         href: NO_SOCIAL_DIRECTOR_HREF,
       },
     ];

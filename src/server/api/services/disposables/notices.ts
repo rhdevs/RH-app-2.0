@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 
 import { DISPOSABLES_HREF } from "~/lib/disposables/links";
 import { notify } from "~/server/api/services/notifications";
-import { headsOrRefuse, socialDirectorsOrRefuse } from "./access";
+import { headsOrRefuse } from "./access";
 import type { ChangedRequest, RemovedRequest } from "./transition";
 
 /**
@@ -76,28 +76,6 @@ export function noticeEditedBySocialDirector(
     body: backToPending
       ? bodyOf(row.title, "it was approved and is pending again")
       : row.title,
-  });
-}
-
-/**
- * A head edited an approved request, which is pending again: tell the Social
- * director(s), who must decide it again. An edit that leaves a request pending
- * needs no notice: it is already in their queue.
- */
-export async function noticeEditedByHead(
-  tx: Tx,
-  row: ChangedRequest,
-  actorID: string,
-) {
-  const directors = (await socialDirectorsOrRefuse(tx)).filter(
-    (id) => id !== actorID,
-  );
-  await notify(tx, {
-    recipients: directors,
-    kind: "disposable.edited",
-    title: "An approved disposable request was changed",
-    body: bodyOf(row.title, "it is pending again"),
-    href: DISPOSABLES_HREF,
   });
 }
 
