@@ -80,3 +80,16 @@ describe("visibleSections and Disposables", () => {
     ]);
   });
 });
+
+describe("visibleSections and Evidence", () => {
+  it("hides the Evidence tab from a viewer who does not head this CCA", () => {
+    const withEvidence = [{ slug: "members" }, { slug: "evidence" }];
+    expect(visibleSections(withEvidence, false).map((s) => s.slug)).toEqual([
+      "members",
+    ]);
+    expect(visibleSections(withEvidence, true).map((s) => s.slug)).toEqual([
+      "members",
+      "evidence",
+    ]);
+  });
+});

@@ -12,6 +12,7 @@ const enabledQuery = vi.fn();
 const feedbackQuery = vi.fn();
 const proposalQuery = vi.fn();
 const disposableQuery = vi.fn();
+const evidenceQuery = vi.fn();
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/admin" }));
 vi.mock("~/app/_components/header", () => ({ default: () => null }));
@@ -29,6 +30,9 @@ vi.mock("~/trpc/react", () => ({
     },
     disposable: {
       enabled: { useQuery: (...a: unknown[]) => disposableQuery(...a) },
+    },
+    milestoneEvidence: {
+      enabled: { useQuery: (...a: unknown[]) => evidenceQuery(...a) },
     },
     cca: {
       listMine: {
@@ -49,6 +53,12 @@ const capabilities = {
   reachDashboard: true,
   manageCcaHeads: true,
 } as unknown as Capabilities;
+
+// Every other tab's tests leave the Evidence tab off.
+beforeEach(() => {
+  evidenceQuery.mockReset();
+  evidenceQuery.mockReturnValue({ data: { enabled: false } });
+});
 
 const admin = () =>
   renderToStaticMarkup(
@@ -182,5 +192,30 @@ describe("the CCA Disposables tab", () => {
     disposableQuery.mockReturnValue({ data: { enabled: true } });
 
     expect(cca()).toContain("/cca/7/disposables");
+  });
+});
+
+describe("the CCA Evidence tab", () => {
+  beforeEach(() => {
+    enabledQuery.mockReset();
+    enabledQuery.mockReturnValue({ data: { enabled: false } });
+    proposalQuery.mockReset();
+    proposalQuery.mockReturnValue({ data: { enabled: false } });
+    disposableQuery.mockReset();
+    disposableQuery.mockReturnValue({ data: { enabled: false } });
+    evidenceQuery.mockReset();
+  });
+
+  it.each(answers)("is hidden while the switch is %s", (_n, answer) => {
+    evidenceQuery.mockReturnValue(answer);
+
+    expect(cca()).not.toContain("/cca/7/evidence");
+    expect(cca()).toContain("Overview");
+  });
+
+  it("shows once the switch is on", () => {
+    evidenceQuery.mockReturnValue({ data: { enabled: true } });
+
+    expect(cca()).toContain("/cca/7/evidence");
   });
 });
