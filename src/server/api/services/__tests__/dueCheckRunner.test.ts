@@ -212,6 +212,7 @@ describe("runDueCheck", () => {
       "disposables_no_director",
       "collection_digest",
       "broadcast_nudge",
+      "milestones",
     ]);
   });
 });

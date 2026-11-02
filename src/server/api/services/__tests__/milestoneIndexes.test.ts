@@ -69,19 +69,43 @@ const shape = (list: Index[]) =>
   list.map((i) => `${i.name} ${JSON.stringify(i.key)} ${i.unique}`).sort();
 
 const MODEL = "MilestoneEvidence";
+const FILING_MODELS = ["MilestoneSubmission", "MilestoneAssessment"] as const;
 const ALL_NAMES = Object.keys(TARGETS).flatMap((m) =>
   TARGETS[m]!.map((i) => `${m}.${i.name}`),
 );
 
 describe("create-milestone-indexes.mjs mirrors prisma/schema.prisma", () => {
-  it("targets the evidence collection (PR 16 adds its two to the same map)", () => {
-    expect(Object.keys(TARGETS)).toEqual([MODEL]);
+  it("targets the evidence collection and the two PR 16 collections", () => {
+    expect(Object.keys(TARGETS).sort()).toEqual(
+      [MODEL, ...FILING_MODELS].sort(),
+    );
   });
 
   it("every schema index is in TARGETS, with the same keys and uniqueness", () => {
-    const declared = schemaIndexes(modelBody(MODEL));
-    expect(declared.length).toBeGreaterThan(0);
-    expect(shape(TARGETS[MODEL]!)).toEqual(shape(declared));
+    for (const model of [MODEL, ...FILING_MODELS]) {
+      const declared = schemaIndexes(modelBody(model));
+      expect(declared.length).toBeGreaterThan(0);
+      expect(shape(TARGETS[model]!)).toEqual(shape(declared));
+    }
+  });
+
+  it("one filing per milestone and one rating per filing are unique", () => {
+    expect(
+      TARGETS.MilestoneSubmission!.find(
+        (i) => i.name === "milestone_submission_key",
+      ),
+    ).toEqual({
+      name: "milestone_submission_key",
+      key: { milestoneKey: 1 },
+      unique: true,
+    });
+    expect(TARGETS.MilestoneAssessment).toEqual([
+      {
+        name: "milestone_assessment_submission",
+        key: { submissionID: 1 },
+        unique: true,
+      },
+    ]);
   });
 
   it("the pathname is unique, so one blob is one row", () => {
@@ -96,9 +120,13 @@ describe("create-milestone-indexes.mjs mirrors prisma/schema.prisma", () => {
 
   it("no index expires, and the model has no academicYear", () => {
     expect(
-      TARGETS[MODEL]!.some((i) => i.expireAfterSeconds !== undefined),
+      Object.values(TARGETS).some((list) =>
+        list.some((i) => i.expireAfterSeconds !== undefined),
+      ),
     ).toBe(false);
-    expect(modelBody(MODEL)).not.toMatch(/academicYear/);
+    for (const model of [MODEL, ...FILING_MODELS]) {
+      expect(modelBody(model)).not.toMatch(/academicYear/);
+    }
   });
 
   it("the evidence stores a pathname and no address", () => {

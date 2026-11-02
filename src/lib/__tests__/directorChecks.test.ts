@@ -730,3 +730,50 @@ describe("milestonesNeedDirectors and milestonesNeedIndex", () => {
     ).toBeNull();
   });
 });
+
+describe("milestoneFilingNeedIndex", () => {
+  const sub = {
+    name: "milestone_submission_key",
+    key: { milestoneKey: 1 },
+    unique: true,
+  };
+  const asm = {
+    name: "milestone_assessment_submission",
+    key: { submissionID: 1 },
+    unique: true,
+  };
+  type Fn = (s: {
+    milestonesOn: boolean;
+    byModel: Record<string, unknown[] | null>;
+  }) => { offenders: string[] } | null;
+  const load = async () =>
+    ((await import(/* @vite-ignore */ lib)) as { milestoneFilingNeedIndex: Fn })
+      .milestoneFilingNeedIndex;
+
+  it("is green with both unique indexes, and silent with the flag off", async () => {
+    const check = await load();
+    expect(
+      check({
+        milestonesOn: true,
+        byModel: { MilestoneSubmission: [sub], MilestoneAssessment: [asm] },
+      }),
+    ).toBeNull();
+    expect(check({ milestonesOn: false, byModel: {} })).toBeNull();
+  });
+
+  it("is RED naming each missing, non-unique or unreadable index", async () => {
+    const check = await load();
+    expect(
+      check({
+        milestonesOn: true,
+        byModel: {
+          MilestoneSubmission: [{ ...sub, unique: false }],
+          MilestoneAssessment: null,
+        },
+      })?.offenders,
+    ).toEqual([
+      "MilestoneSubmission.milestone_submission_key",
+      "MilestoneAssessment.milestone_assessment_submission",
+    ]);
+  });
+});
