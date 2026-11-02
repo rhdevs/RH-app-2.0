@@ -1257,6 +1257,15 @@ export async function deleteUserAccountCascade(
           data: { doneBy: null },
         })
       ).count;
+      // MILESTONE EVIDENCE belongs to the CCA, so the photos (and their files in
+      // the private store) stay for the heads and directors who come after. Only
+      // the uploader reference is cleared, as an explicit null.
+      deleted.milestoneEvidenceUploaderCleared = (
+        await tx.milestoneEvidence.updateMany({
+          where: { uploadedBy: cid },
+          data: { uploadedBy: null },
+        })
+      ).count;
     }
 
     /* ---- (d) the User row, LAST and BY ObjectId ---------------------------
