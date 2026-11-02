@@ -13,6 +13,7 @@ import {
   notFound,
 } from "./errors";
 import type { MilestoneDb } from "./file";
+import { seenToken } from "./view";
 import { assertMilestonesEnabled } from "./flag";
 import { assertWithinLimit } from "./limits";
 
@@ -51,7 +52,7 @@ export async function rateMilestone(
 
   const filing = await db.milestoneSubmission.findUnique({
     where: { milestoneKey: milestoneKey(input.ref) },
-    select: { id: true, frozenAt: true },
+    select: { id: true, frozenAt: true, version: true },
   });
   if (filing === null) {
     throw new TRPCError({
@@ -60,13 +61,21 @@ export async function rateMilestone(
     });
   }
   if (filing.frozenAt !== null) throw conflict(MILESTONE_ALREADY_RATED);
+  // The rating is of the filing the director looked at (B151).
+  if (input.seen !== seenToken(filing.id, filing.version)) throw conflict();
 
   await db.$transaction(async (tx) => {
     const frozen = await tx.milestoneSubmission.updateMany({
-      where: { id: filing.id, frozenAt: null },
+      where: { id: filing.id, frozenAt: null, version: filing.version },
       data: { frozenAt: now, version: { increment: 1 } },
     });
-    if (frozen.count !== 1) throw conflict(MILESTONE_ALREADY_RATED);
+    if (frozen.count !== 1) {
+      const now2 = await tx.milestoneSubmission.findUnique({
+        where: { id: filing.id },
+        select: { frozenAt: true },
+      });
+      throw now2?.frozenAt ? conflict(MILESTONE_ALREADY_RATED) : conflict();
+    }
     // After the freeze, so a head's detach that just won cannot leave a rating
     // of nothing: the count is read in the same transaction.
     const photos = await tx.milestoneEvidence.count({

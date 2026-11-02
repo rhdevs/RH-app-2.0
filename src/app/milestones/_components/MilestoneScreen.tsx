@@ -391,15 +391,19 @@ function DirectorSection({
       </h2>
       <p className="text-sm text-gray-500">
         Look at the photos, then rate. This is final: once you submit, the
-        heads&apos; filing is locked, and the heads see your rating only if they
-        have filed theirs.
+        heads&apos; filing is locked and the heads can see your rating. Your
+        rating is of the photos you loaded; if a head changes them first, you
+        will be asked to reload.
       </p>
       <RatingForm
         label="Your"
         busy={rate.isPending}
         submitLabel="Submit rating"
         onSubmit={(score, text) =>
-          void rate.mutateAsync({ ref, score, text }).then(onChange, onError)
+          m.seen !== undefined &&
+          void rate
+            .mutateAsync({ ref, seen: m.seen, score, text })
+            .then(onChange, onError)
         }
       />
     </section>

@@ -1,6 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 
-import { toEpochSec } from "~/lib/milestones/open";
+import {
+  MILESTONE_WAITING_WINDOW_DAYS,
+  toEpochSec,
+} from "~/lib/milestones/open";
 import { MILESTONE_MAX_EVIDENCE } from "~/lib/schemas/milestone";
 import { neededFrom } from "~/lib/milestones/visibility";
 import { milestoneSeats } from "./access";
@@ -25,10 +28,14 @@ import { assertWithinLimit } from "./limits";
  * nothing; the screen shows an error, never "nothing waiting").
  */
 
-/** How far back a waiting milestone is counted. */
-export const MILESTONE_WAITING_WINDOW_DAYS = 90;
+export { MILESTONE_WAITING_WINDOW_DAYS };
 
-export type WaitingCounts = { toFile: number; toRate: number };
+export type WaitingCounts = {
+  toFile: number;
+  toRate: number;
+  /** Distinct milestones needing this person: a head and director counts once. */
+  waiting: number;
+};
 
 export type WaitingResult = {
   perCca: Map<number, WaitingCounts>;
@@ -114,7 +121,12 @@ export async function waitingFor(
       null,
     );
     if (needs.length === 0) continue;
-    const counts = perCca.get(item.ccaID) ?? { toFile: 0, toRate: 0 };
+    const counts = perCca.get(item.ccaID) ?? {
+      toFile: 0,
+      toRate: 0,
+      waiting: 0,
+    };
+    counts.waiting += 1;
     if (needs.includes("file")) counts.toFile += 1;
     if (needs.includes("rate")) counts.toRate += 1;
     perCca.set(item.ccaID, counts);

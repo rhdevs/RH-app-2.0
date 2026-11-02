@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { MILESTONE_WAITING_WINDOW_DAYS } from "~/lib/milestones/open";
 import { api } from "~/trpc/react";
 import { describeMilestoneError } from "../_lib/errors";
 import MilestonesFlag from "./MilestonesFlag";
@@ -60,11 +61,13 @@ function Rows({ heading }: { heading: boolean }) {
                 <span className="flex gap-2 text-xs">
                   {r.head && (
                     <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-gray-700">
+                      {mine.data.capped ? "at least " : ""}
                       {r.toFile} to file
                     </span>
                   )}
                   {r.director && (
                     <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 font-medium text-emerald-800">
+                      {mine.data.capped ? "at least " : ""}
                       {r.toRate} to rate
                     </span>
                   )}
@@ -76,9 +79,15 @@ function Rows({ heading }: { heading: boolean }) {
       )}
       {mine.data?.capped && (
         <p className="text-xs text-gray-500">
-          Counts cover the most recent milestones only.
+          Too many recent milestones to count them all, so the numbers are a
+          minimum.
         </p>
       )}
+      <p className="text-xs text-gray-500">
+        Counts cover milestones that ended in the last{" "}
+        {MILESTONE_WAITING_WINDOW_DAYS} days. Open a CCA for the full yearly
+        record.
+      </p>
     </section>
   );
 }

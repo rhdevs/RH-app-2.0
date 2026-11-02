@@ -75,6 +75,8 @@ export const milestoneDetachInput = z.object({
 
 export const milestoneRateInput = z.object({
   ref: milestoneRefSchema,
+  /** The `seen` token of the view the director rated from (B151). */
+  seen: z.string().regex(/^[0-9a-f]{16}$/),
   score,
   text,
 });

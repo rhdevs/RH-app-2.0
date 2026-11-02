@@ -8,7 +8,10 @@
  *  - The HEAD's score, text and whether they have rated are hidden from a
  *    director until a director has submitted.
  *  - The DIRECTOR's score and text are hidden from a head until that head has
- *    rated. A head who has not rated learns only that the filing is locked.
+ *    rated OR the filing is frozen. A director's rating freezes the filing, and
+ *    a frozen filing can no longer take a self-rating (B141), so a head who
+ *    never rated would otherwise never see it (B150). Before the freeze there
+ *    is no director rating to see, so the head learns nothing early.
  *  - Once both are in, both sides see both.
  *  - Evidence is visible to both before any rating: it is what is rated.
  * A person who is both a head and a director of the CCA is a head for what they
@@ -59,7 +62,7 @@ export function visibleParts(
         }
       : null;
   }
-  if (assessment !== null && (viewer.director || headRated)) {
+  if (assessment !== null && (viewer.director || headRated || locked)) {
     out.assessment = assessment;
   }
   return out;

@@ -21,6 +21,7 @@ import {
   EVIDENCE_TOO_OLD,
   evidenceNotFound,
   MILESTONE_FROZEN,
+  MILESTONE_NOT_OPEN,
   MILESTONE_TOO_MANY_PHOTOS,
   notFound,
 } from "./errors";
@@ -128,6 +129,37 @@ async function takeFiling(
   return { id: existing.id, version: expectedVersion + 1 };
 }
 
+/**
+ * After a proposal's FIRST filing commits, read the proposal again. If an
+ * Event was claimed meanwhile (the Create event button wrote its claim before
+ * it looked for this filing), take the new filing back out and refuse: the
+ * two writes cannot both stand (B149). The Event side checks for the filing
+ * after its own claim, so whichever lands second sees the other.
+ */
+async function backOutIfEventClaimed(
+  db: MilestoneDb,
+  m: ResolvedMilestone,
+  created: { id: string } | null,
+): Promise<void> {
+  if (created === null || m.ref.kind !== "proposal") return;
+  const p = await db.proposal.findUnique({
+    where: { id: m.ref.proposalID.toLowerCase() },
+    select: { eventID: true },
+  });
+  if (p?.eventID === null || p?.eventID === undefined) return;
+  await db.milestoneEvidence.updateMany({
+    where: { submissionID: created.id },
+    data: { submissionID: null },
+  });
+  await db.milestoneSubmission.deleteMany({
+    where: { id: created.id, frozenAt: null },
+  });
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: MILESTONE_NOT_OPEN,
+  });
+}
+
 /** Save (or replace) the head's self-rating. */
 export async function saveHeadRating(
   db: MilestoneDb,
@@ -137,7 +169,7 @@ export async function saveHeadRating(
 ): Promise<{ version: number }> {
   const m = await openForHead(db, userID, input.ref, now);
   await assertWithinLimit("file", userID);
-  return db.$transaction(async (tx) => {
+  const out = await db.$transaction(async (tx) => {
     const filing = await takeFiling(
       tx,
       m,
@@ -145,7 +177,9 @@ export async function saveHeadRating(
       { headScore: input.score, headText: input.text, userID },
       now,
     );
-    if (input.expectedVersion === null) return { version: filing.version };
+    if (input.expectedVersion === null) {
+      return { version: filing.version, created: { id: filing.id } };
+    }
     const applied = await tx.milestoneSubmission.updateMany({
       where: {
         id: filing.id,
@@ -161,8 +195,10 @@ export async function saveHeadRating(
       },
     });
     if (applied.count !== 1) throw await whyRefused(tx, filing.id);
-    return { version: filing.version };
+    return { version: filing.version, created: null };
   });
+  await backOutIfEventClaimed(db, m, out.created);
+  return { version: out.version };
 }
 
 /**
@@ -197,7 +233,7 @@ export async function attachEvidence(
   }
   await assertWithinLimit("attach", userID);
 
-  return db.$transaction(async (tx) => {
+  const out = await db.$transaction(async (tx) => {
     const filing = await takeFiling(tx, m, input.expectedVersion, null, now);
     if (input.expectedVersion !== null) {
       const applied = await tx.milestoneSubmission.updateMany({
@@ -233,16 +269,25 @@ export async function attachEvidence(
     if (moved.count !== ids.length) {
       throw conflict(EVIDENCE_ATTACH_CONFLICT);
     }
-    return { version: filing.version, attached: moved.count };
+    return {
+      version: filing.version,
+      attached: moved.count,
+      created: input.expectedVersion === null ? { id: filing.id } : null,
+    };
   });
+  await backOutIfEventClaimed(db, m, out.created);
+  return { version: out.version, attached: out.attached };
 }
 
 /**
- * Remove one attached photo while the filing is not frozen. The version is
- * taken first (a compare-and-set that also proves the filing is unfrozen and
- * unchanged), then the FILE is removed from the private store, then the row.
- * A store that cannot delete leaves the row, so a retry works and no row ever
- * points at a file that is gone. Frozen evidence is refused.
+ * Remove one attached photo while the filing is not frozen. ONE transaction
+ * takes the version (a compare-and-set that also proves the filing is unfrozen
+ * and unchanged) and deletes the row, so a director's rating either freezes the
+ * filing before this (refused) or finds the photo already gone, never strips a
+ * photo from a rated filing. The FILE is removed from the private store after
+ * the commit, best effort; one the store missed is collected by the orphan
+ * sweep (B128). This reverses the earlier storage-first order (B144) for this
+ * path only. Frozen evidence is refused.
  */
 export async function detachEvidence(
   db: MilestoneDb,
@@ -269,21 +314,23 @@ export async function detachEvidence(
   });
   if (photo === null) throw evidenceNotFound();
 
-  const applied = await db.milestoneSubmission.updateMany({
-    where: { id: filing.id, version: input.expectedVersion, frozenAt: null },
-    data: { version: { increment: 1 } },
-  });
-  if (applied.count !== 1) {
-    throw await whyRefused(db, filing.id);
-  }
-  if (!(await storage.remove(photo.pathname))) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "EVIDENCE_STORAGE_UNAVAILABLE",
+  await db.$transaction(async (tx) => {
+    const applied = await tx.milestoneSubmission.updateMany({
+      where: {
+        id: filing.id,
+        version: input.expectedVersion,
+        frozenAt: null,
+      },
+      data: { version: { increment: 1 } },
     });
-  }
-  await db.milestoneEvidence.deleteMany({
-    where: { id: photo.id, submissionID: filing.id },
+    if (applied.count !== 1) throw await whyRefused(tx, filing.id);
+    const gone = await tx.milestoneEvidence.deleteMany({
+      where: { id: photo.id, submissionID: filing.id },
+    });
+    if (gone.count !== 1) throw evidenceNotFound();
   });
+  if (!(await storage.remove(photo.pathname))) {
+    console.error(JSON.stringify({ evt: "milestone_blob_remove_failed" }));
+  }
   return { version: input.expectedVersion + 1 };
 }

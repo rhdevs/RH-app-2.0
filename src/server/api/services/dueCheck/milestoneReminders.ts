@@ -1,5 +1,6 @@
 import { MILESTONES_FLAG_KEY } from "~/server/api/services/milestones/flag";
 import { milestoneSeats } from "~/server/api/services/milestones/access";
+import { MILESTONE_WAITING_WINDOW_DAYS } from "~/lib/milestones/open";
 import { waitingFor } from "~/server/api/services/milestones/waiting";
 import type { DueKind } from "./types";
 
@@ -39,12 +40,21 @@ export const milestoneRemindersKind: DueKind = {
     const waiting = await waitingFor(db, seats, now);
     let toFile = 0;
     let toRate = 0;
+    let total = 0;
     for (const c of waiting.perCca.values()) {
       toFile += c.toFile;
       toRate += c.toRate;
+      total += c.waiting;
     }
-    const total = toFile + toRate;
     if (total === 0) return [];
+    // A scan cap was hit, so the count may be low: say "at least", and log the
+    // cap by count only (B152).
+    const atLeast = waiting.capped ? "at least " : "";
+    if (waiting.capped) {
+      console.error(
+        JSON.stringify({ evt: "milestone_reminder_capped", waiting: total }),
+      );
+    }
     const parts: string[] = [];
     if (toFile > 0) parts.push(`${toFile} to file`);
     if (toRate > 0) parts.push(`${toRate} to rate`);
@@ -52,10 +62,10 @@ export const milestoneRemindersKind: DueKind = {
       {
         key: `due.milestones:${dayKey}`,
         title:
-          total === 1
+          total === 1 && !waiting.capped
             ? "1 milestone is waiting"
-            : `${total} milestones are waiting`,
-        body: `${parts.join(", ")}.`,
+            : `${atLeast}${total} milestones are waiting`,
+        body: `${parts.join(", ")} in the last ${MILESTONE_WAITING_WINDOW_DAYS} days. Older ones are on the yearly view.`,
         href: MILESTONE_REMINDER_HREF,
       },
     ];

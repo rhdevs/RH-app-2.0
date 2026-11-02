@@ -83,6 +83,13 @@ export function proposalMilestoneEnd(p: MilestoneProposalRow): number | null {
   return endOf(p.plannedEnd, p.plannedStart);
 }
 
+/**
+ * How far back a waiting milestone is counted, in days. Deliberate (B152): so
+ * nobody is nagged forever. An older unfiled milestone drops out of the counts
+ * and the reminder, and stays on the CCA's yearly view, the full record.
+ */
+export const MILESTONE_WAITING_WINDOW_DAYS = 90;
+
 /** THE ended check: the end is strictly before now (both epoch seconds). */
 export function hasEnded(endSec: number | null, nowSec: number): boolean {
   return endSec !== null && endSec < nowSec;

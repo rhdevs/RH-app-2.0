@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { z } from "zod";
 
 import { MILESTONE_MAX_EVIDENCE } from "~/lib/schemas/milestone";
@@ -37,6 +39,14 @@ export type EvidenceItem = {
   createdAt: Date;
 };
 
+/**
+ * An opaque token for "the filing as this director loaded it": it changes when
+ * the head saves, attaches or removes a photo. It carries no count and says
+ * nothing about whether the head has rated (B151).
+ */
+export const seenToken = (id: string, version: number): string =>
+  createHash("sha256").update(`${id}:${version}`).digest("hex").slice(0, 16);
+
 export type MilestoneView = {
   ref: MilestoneRef;
   title: string;
@@ -53,6 +63,8 @@ export type MilestoneView = {
   locked: boolean;
   /** Heads only: the filing's version, to send back with a save. */
   version?: number | null;
+  /** Directors only, when a filing exists: send it back with the rating. */
+  seen?: string;
   head?: { score: number; text: string; ratedAt: Date | null } | null;
   assessment?: AssessmentParts;
   canFile: boolean;
@@ -129,6 +141,7 @@ export async function getMilestone(
     canRate: open && needs.includes("rate"),
   };
   if (roles.head) view.version = sub?.version ?? null;
+  if (roles.director && sub) view.seen = seenToken(sub.id, sub.version);
   if (seen.headVisible) view.head = seen.head ?? null;
   if (seen.assessment) view.assessment = seen.assessment;
   return view;
