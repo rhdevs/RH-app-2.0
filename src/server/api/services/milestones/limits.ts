@@ -6,14 +6,16 @@ import { rateLimit } from "~/lib/rateLimit";
  * Per-person hourly ceilings on the evidence calls, one counter per action, in
  * the same window the proposals and reminders use. A head uploads a handful of
  * photos for a milestone; `view` is higher because one screen of thumbnails is
- * one request each. Only a script or a stuck client reaches these.
+ * one request each. Only a script or a stuck client reaches these. The view
+ * ceiling is 3000: responses are `no-store`, so every reload fetches every
+ * thumbnail again, and a page can show 50 of them.
  */
 export const EVIDENCE_WINDOW_MS = 60 * 60 * 1000;
 export const EVIDENCE_LIMITS = {
   upload: 40,
   record: 40,
   remove: 60,
-  view: 600,
+  view: 3000,
 } as const;
 
 export type EvidenceLimitedAction = keyof typeof EVIDENCE_LIMITS;

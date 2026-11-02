@@ -28,6 +28,8 @@ vi.mock("~/server/api/services/milestones/write", () => ({
 }));
 vi.mock("~/server/api/services/milestoneBlob", () => ({
   MILESTONE_STORAGE_NOT_CONFIGURED: "MILESTONE_STORAGE_NOT_CONFIGURED",
+  // The real one maps SDK error classes to codes; the stand-in names the error.
+  evidenceErrorCode: (e: unknown) => (e instanceof Error ? e.name : typeof e),
   evidenceStorage: { read: mocks.read, remove: vi.fn() },
   handleEvidenceUpload: mocks.handleUpload,
 }));
@@ -76,7 +78,8 @@ describe("GET /api/milestone-evidence/[id]", () => {
     const res = await get();
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/webp");
-    expect(res.headers.get("content-length")).toBe("1000");
+    // No length header: the SDK can report 0, and a wrong one cuts the photo off.
+    expect(res.headers.get("content-length")).toBeNull();
     expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-disposition")).toBe(
@@ -91,6 +94,31 @@ describe("GET /api/milestone-evidence/[id]", () => {
       ID,
     );
     expect(mocks.read).toHaveBeenCalledWith(evidence.pathname);
+  });
+
+  it("sends the whole photo when the store reports a size of 0", async () => {
+    mocks.read.mockImplementation(() =>
+      Promise.resolve({
+        size: 0,
+        contentType: "image/webp",
+        stream: bytes(1000, 4),
+      }),
+    );
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-length")).toBeNull();
+    expect((await res.arrayBuffer()).byteLength).toBe(1000);
+  });
+
+  it("still cuts off a body longer than the bound when the store reports a size of 0", async () => {
+    mocks.read.mockResolvedValue({
+      size: 0,
+      contentType: "image/webp",
+      stream: bytes(5 * 1024 * 1024, 5),
+    });
+    const res = await get();
+    expect(res.status).toBe(200);
+    await expect(res.arrayBuffer()).rejects.toThrow();
   });
 
   it("names the file by the stored type, never by anything the file claims", async () => {
@@ -261,6 +289,10 @@ describe("POST /api/milestone-evidence/upload", () => {
       maximumSizeInBytes: 4 * 1024 * 1024,
       addRandomSuffix: true,
     });
+    // A token lasts about five minutes, not the SDK's default hour.
+    const validUntil = options.validUntil as number;
+    expect(validUntil).toBeGreaterThan(Date.now() + 4 * 60 * 1000);
+    expect(validUntil).toBeLessThanOrEqual(Date.now() + 5 * 60 * 1000);
     expect(JSON.stringify(options)).not.toMatch(/svg/i);
     expect(mocks.authorizeUpload).toHaveBeenCalledWith(
       expect.anything(),

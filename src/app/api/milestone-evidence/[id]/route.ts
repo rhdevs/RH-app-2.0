@@ -9,7 +9,10 @@ import {
 } from "~/lib/schemas/milestoneEvidence";
 import { auth } from "~/server/auth";
 import { db } from "~/server/db";
-import { evidenceStorage } from "~/server/api/services/milestoneBlob";
+import {
+  evidenceErrorCode,
+  evidenceStorage,
+} from "~/server/api/services/milestoneBlob";
 import { authorizeEvidenceRead } from "~/server/api/services/milestones/read";
 
 /**
@@ -80,7 +83,7 @@ export async function GET(
     console.error(
       JSON.stringify({
         evt: "milestone_evidence_read_failed",
-        error: err instanceof Error ? err.name : typeof err,
+        error: evidenceErrorCode(err),
       }),
     );
     return bare(503);
@@ -103,7 +106,7 @@ export async function GET(
     console.error(
       JSON.stringify({
         evt: "milestone_evidence_store_read_failed",
-        error: err instanceof Error ? err.name : typeof err,
+        error: evidenceErrorCode(err),
       }),
     );
     return bare(503);
@@ -119,7 +122,9 @@ export async function GET(
     status: 200,
     headers: {
       "Content-Type": evidence.contentType,
-      "Content-Length": String(stored.size),
+      // No Content-Length: the SDK reports a size of 0 when the store sends no
+      // length header, which would cut the photo off. The body is bounded by
+      // boundedStream instead, and goes out chunked.
       "Content-Disposition": `inline; filename="evidence.${extensionFor(evidence.contentType)}"`,
       "Cache-Control": NO_STORE,
       "X-Content-Type-Options": "nosniff",
