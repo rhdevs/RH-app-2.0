@@ -147,13 +147,16 @@ async function backOutIfEventClaimed(
     select: { eventID: true },
   });
   if (p?.eventID === null || p?.eventID === undefined) return;
-  await db.milestoneEvidence.updateMany({
-    where: { submissionID: created.id },
-    data: { submissionID: null },
-  });
-  await db.milestoneSubmission.deleteMany({
-    where: { id: created.id, frozenAt: null },
-  });
+  const filingID = created.id;
+  await db.$transaction([
+    db.milestoneEvidence.updateMany({
+      where: { submissionID: filingID },
+      data: { submissionID: null },
+    }),
+    db.milestoneSubmission.deleteMany({
+      where: { id: filingID, frozenAt: null },
+    }),
+  ]);
   throw new TRPCError({
     code: "PRECONDITION_FAILED",
     message: MILESTONE_NOT_OPEN,

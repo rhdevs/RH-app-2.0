@@ -59,13 +59,13 @@ function Rows({ heading }: { heading: boolean }) {
                   {r.ccaName}
                 </span>
                 <span className="flex gap-2 text-xs">
-                  {r.head && (
+                  {r.head && !(mine.data.capped && r.toFile === 0) && (
                     <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-gray-700">
                       {mine.data.capped ? "at least " : ""}
                       {r.toFile} to file
                     </span>
                   )}
-                  {r.director && (
+                  {r.director && !(mine.data.capped && r.toRate === 0) && (
                     <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 font-medium text-emerald-800">
                       {mine.data.capped ? "at least " : ""}
                       {r.toRate} to rate
