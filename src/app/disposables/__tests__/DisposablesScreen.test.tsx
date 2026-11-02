@@ -36,6 +36,7 @@ vi.mock("~/trpc/react", () => {
   };
 });
 
+const { requestActions } = await import("~/lib/disposables/actions");
 const { default: DisposablesScreen } = await import(
   "~/app/disposables/_components/DisposablesScreen"
 );
@@ -60,7 +61,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   decidedAt: null,
   createdAt: "2027-03-01T00:00:00.000Z",
   requestedBy: "Sam Head",
-  can: { approve: false, reject: false, edit: false, delete: false },
+  can: requestActions({ isSocialDirector: false, status: "pending" }),
   ...over,
 });
 
@@ -124,7 +125,7 @@ describe("the disposables screen", () => {
       data({
         items: [
           row({
-            can: { approve: false, reject: false, edit: false, delete: false },
+            can: requestActions({ isSocialDirector: false, status: "pending" }),
           }),
         ],
       }),
@@ -145,7 +146,11 @@ describe("the disposables screen", () => {
         viewer: { isSocialDirector: true, canCreate: false },
         items: [
           row({
-            can: { approve: true, reject: true, edit: true, delete: true },
+            can: requestActions({
+              isSocialDirector: true,
+              isHeadOfCca: true,
+              status: "pending",
+            }),
           }),
         ],
       }),
@@ -155,6 +160,32 @@ describe("the disposables screen", () => {
       expect(html).toContain(`>${label}<`);
     }
     expect(html).not.toContain("New request");
+  });
+
+  it("shows Nudge only to a head of the CCA on a pending request, from the real action rules", () => {
+    const nudgeFor = (
+      who: { isSocialDirector: boolean; isHeadOfCca: boolean },
+      status: "pending" | "approved",
+    ) => {
+      listQuery.mockReturnValue(
+        data({
+          items: [row({ status, can: requestActions({ ...who, status }) })],
+        }),
+      );
+      return render().includes(">Nudge the Social director<");
+    };
+    expect(
+      nudgeFor({ isSocialDirector: false, isHeadOfCca: true }, "pending"),
+    ).toBe(true);
+    expect(
+      nudgeFor({ isSocialDirector: false, isHeadOfCca: true }, "approved"),
+    ).toBe(false);
+    expect(
+      nudgeFor({ isSocialDirector: false, isHeadOfCca: false }, "pending"),
+    ).toBe(false);
+    expect(
+      nudgeFor({ isSocialDirector: true, isHeadOfCca: true }, "pending"),
+    ).toBe(false);
   });
 
   it("renders the quantities, the date and a note as text", () => {

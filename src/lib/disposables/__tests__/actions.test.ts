@@ -13,12 +13,14 @@ describe("requestActions", () => {
       reject: true,
       edit: true,
       delete: true,
+      nudge: false,
     });
     expect(requestActions({ ...social, status: "approved" })).toEqual({
       approve: false,
       reject: false,
       edit: true,
       delete: true,
+      nudge: false,
     });
     expect(requestActions({ ...social, status: "rejected" }).edit).toBe(true);
   });
@@ -30,8 +32,31 @@ describe("requestActions", () => {
         reject: false,
         edit: false,
         delete: false,
+        nudge: false,
       });
     }
+  });
+
+  it("only a head of the CCA nudges, only while pending, and never the Social director", () => {
+    const head = { isSocialDirector: false, isHeadOfCca: true };
+    expect(requestActions({ ...head, status: "pending" }).nudge).toBe(true);
+    expect(requestActions({ ...head, status: "approved" }).nudge).toBe(false);
+    expect(requestActions({ ...head, status: "rejected" }).nudge).toBe(false);
+    expect(requestActions({ ...other, status: "pending" }).nudge).toBe(false);
+    expect(
+      requestActions({
+        isSocialDirector: true,
+        isHeadOfCca: true,
+        status: "pending",
+      }).nudge,
+    ).toBe(false);
+    // A head gets nothing else.
+    expect(requestActions({ ...head, status: "pending" })).toMatchObject({
+      approve: false,
+      reject: false,
+      edit: false,
+      delete: false,
+    });
   });
 });
 

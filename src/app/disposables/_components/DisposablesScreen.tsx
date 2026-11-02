@@ -329,7 +329,7 @@ function RequestItem({ row }: { row: Row }) {
               <Link href={disposableHref(row.id)}>Edit</Link>
             </Button>
           )}
-          {row.can.edit && row.status === "pending" && (
+          {row.can.nudge && (
             <Button
               size="sm"
               variant="ghost"
