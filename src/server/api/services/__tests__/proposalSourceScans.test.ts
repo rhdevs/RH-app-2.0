@@ -1142,10 +1142,50 @@ describe("milestone evidence follows the same rules, and never touches the publi
     expect(code.match(publicToken)).toHaveLength(1);
     expect(code).toMatch(/const publicToken = env\.BLOB_READ_WRITE_TOKEN/);
     // Every SDK call names the private token, and none can omit it.
-    expect(code.match(/\btoken:\s+(?!string\b)/g)).toHaveLength(4);
-    expect(code.match(/\btoken: evidenceToken\(\)/g)).toHaveLength(4);
+    expect(code.match(/\btoken:\s+(?!string\b)/g)).toHaveLength(5);
+    expect(code.match(/\btoken: evidenceToken\(\)/g)).toHaveLength(5);
     expect(code).toMatch(/get\(pathname,\s*\{\s*access: "private",/);
     expect(code).not.toMatch(/access:\s*["']public["']/);
+  });
+
+  it("head and del are given the full address, never a bare pathname", () => {
+    const code = stripComments(read(BLOB));
+    expect(code).toMatch(/head\(blobAddress\(pathname\),/);
+    expect(code).toMatch(/del\(blobAddress\(pathname\),/);
+    expect(code).not.toMatch(/\bawait (head|del)\(pathname/);
+  });
+
+  it("the upload token is short-lived, and the serving route sends no length header", () => {
+    const upload = stripComments(
+      read("src/app/api/milestone-evidence/upload/route.ts"),
+    );
+    expect(upload).toMatch(
+      /validUntil: Date\.now\(\) \+ EVIDENCE_TOKEN_VALID_MS/,
+    );
+    const serve = stripComments(
+      read("src/app/api/milestone-evidence/[id]/route.ts"),
+    );
+    expect(serve).not.toMatch(/Content-Length/i);
+  });
+
+  it("a full CCA never deletes the file it refused, and no log names an error by its bare name", () => {
+    const write = stripComments(
+      read("src/server/api/services/milestones/write.ts"),
+    );
+    // Stale rows, files with no row, a bad file, an explicit removal: no others.
+    expect(write.match(/storage\.remove\(/g)).toHaveLength(4);
+    // The cap check in recordEvidence is the last one, just before the create.
+    const capStart = write.lastIndexOf(
+      "if (held >= EVIDENCE_MAX_UNATTACHED) {",
+    );
+    const capEnd = write.indexOf("db.milestoneEvidence.create", capStart);
+    expect(capStart).toBeGreaterThan(-1);
+    expect(capEnd).toBeGreaterThan(capStart);
+    expect(write.slice(capStart, capEnd)).not.toMatch(/remove/);
+    for (const f of EVIDENCE_FILES) {
+      if (f.endsWith("/access.ts") || f === BLOB) continue;
+      expect(stripComments(read(f)), f).not.toMatch(/\.name : typeof/);
+    }
   });
 
   it("the uploader sends to the private store only", () => {

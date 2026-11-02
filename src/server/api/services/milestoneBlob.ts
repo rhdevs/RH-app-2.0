@@ -1,4 +1,22 @@
-import { BlobNotFoundError, del, get, head } from "@vercel/blob";
+import {
+  BlobAccessError,
+  BlobClientTokenExpiredError,
+  BlobContentTypeNotAllowedError,
+  BlobError,
+  BlobFileTooLargeError,
+  BlobNotFoundError,
+  BlobPathnameMismatchError,
+  BlobRequestAbortedError,
+  BlobServiceNotAvailable,
+  BlobServiceRateLimited,
+  BlobStoreNotFoundError,
+  BlobStoreSuspendedError,
+  BlobUnknownError,
+  del,
+  get,
+  head,
+  list,
+} from "@vercel/blob";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
 import { env } from "~/env";
@@ -70,6 +88,10 @@ export type StoredEvidenceHead = { size: number; contentType: string };
 export type StoredEvidenceRead = StoredEvidenceHead & {
   stream: ReadableStream<Uint8Array>;
 };
+export type StoredEvidenceListing = { pathname: string; uploadedAt: Date };
+
+/** Page size when listing; the caller's `limit` caps the total. */
+const LIST_PAGE_SIZE = 100;
 
 /** What the evidence services need from the store; tests pass a fake. */
 export interface EvidenceStorage {
@@ -77,6 +99,12 @@ export interface EvidenceStorage {
   host(): string;
   /** The blob's size and type, or null when it is not in the store. */
   head(pathname: string): Promise<StoredEvidenceHead | null>;
+  /**
+   * Up to `limit` blobs whose pathname starts with `prefix`. Never throws: a
+   * listing that fails is logged by code and answers an empty list, so the
+   * sweep that wanted it is skipped and nothing else is blocked.
+   */
+  listBlobs(prefix: string, limit: number): Promise<StoredEvidenceListing[]>;
   /** The blob's bytes, or null when it is not in the store. */
   read(pathname: string): Promise<StoredEvidenceRead | null>;
   /**
@@ -87,8 +115,47 @@ export interface EvidenceStorage {
   remove(pathname: string): Promise<boolean>;
 }
 
-function errorName(err: unknown): string {
+/**
+ * The SDK's errors never set `name`, so every one of them would log as "Error".
+ * This answers a short fixed code from the error's CLASS instead, which carries
+ * no store address, token, pathname or message. The subclasses come before the
+ * base class. Any other error is named by its own `name` (a Prisma or network
+ * error class), and anything that is not an Error by its type.
+ */
+const SDK_ERROR_CODES: readonly (readonly [
+  abstract new (...args: never[]) => Error,
+  string,
+])[] = [
+  [BlobNotFoundError, "blob_not_found"],
+  [BlobAccessError, "blob_access_denied"],
+  [BlobStoreNotFoundError, "blob_store_not_found"],
+  [BlobStoreSuspendedError, "blob_store_suspended"],
+  [BlobServiceNotAvailable, "blob_service_unavailable"],
+  [BlobServiceRateLimited, "blob_rate_limited"],
+  [BlobRequestAbortedError, "blob_request_aborted"],
+  [BlobClientTokenExpiredError, "blob_token_expired"],
+  [BlobFileTooLargeError, "blob_file_too_large"],
+  [BlobContentTypeNotAllowedError, "blob_content_type_not_allowed"],
+  [BlobPathnameMismatchError, "blob_pathname_mismatch"],
+  [BlobUnknownError, "blob_unknown"],
+  [BlobError, "blob_error"],
+];
+
+export function evidenceErrorCode(err: unknown): string {
+  for (const [cls, code] of SDK_ERROR_CODES) {
+    if (err instanceof cls) return code;
+  }
   return err instanceof Error ? err.name : typeof err;
+}
+
+/**
+ * The address of a blob in the private store. `head` and `del` are given the
+ * full address rather than the bare pathname: the docs accept either, but every
+ * documented example passes the address, so that is the form certain to work.
+ */
+function blobAddress(pathname: string): string {
+  const storeID = storeIdOf(evidenceToken());
+  return `https://${privateStoreHost(storeID!)}/${pathname}`;
 }
 
 export const evidenceStorage: EvidenceStorage = {
@@ -99,12 +166,43 @@ export const evidenceStorage: EvidenceStorage = {
 
   async head(pathname) {
     try {
-      const meta = await head(pathname, { token: evidenceToken() });
+      const meta = await head(blobAddress(pathname), {
+        token: evidenceToken(),
+      });
       return { size: meta.size, contentType: meta.contentType };
     } catch (err) {
       if (err instanceof BlobNotFoundError) return null;
       throw err;
     }
+  },
+
+  async listBlobs(prefix, limit) {
+    const found: StoredEvidenceListing[] = [];
+    try {
+      let cursor: string | undefined;
+      while (found.length < limit) {
+        const page = await list({
+          prefix,
+          limit: Math.min(LIST_PAGE_SIZE, limit - found.length),
+          cursor,
+          token: evidenceToken(),
+        });
+        for (const blob of page.blobs) {
+          found.push({ pathname: blob.pathname, uploadedAt: blob.uploadedAt });
+        }
+        if (!page.hasMore || !page.cursor) break;
+        cursor = page.cursor;
+      }
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          evt: "milestone_evidence_list_failed",
+          error: evidenceErrorCode(err),
+        }),
+      );
+      return [];
+    }
+    return found.slice(0, limit);
   },
 
   async read(pathname) {
@@ -122,14 +220,14 @@ export const evidenceStorage: EvidenceStorage = {
 
   async remove(pathname) {
     try {
-      await del(pathname, { token: evidenceToken() });
+      await del(blobAddress(pathname), { token: evidenceToken() });
       return true;
     } catch (err) {
       if (err instanceof BlobNotFoundError) return true;
       console.error(
         JSON.stringify({
           evt: "milestone_evidence_delete_failed",
-          error: errorName(err),
+          error: evidenceErrorCode(err),
         }),
       );
       return false;

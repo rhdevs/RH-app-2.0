@@ -4,10 +4,12 @@ import { NextResponse } from "next/server";
 import {
   EVIDENCE_CONTENT_TYPES,
   EVIDENCE_MAX_BYTES,
+  EVIDENCE_TOKEN_VALID_MS,
 } from "~/lib/schemas/milestoneEvidence";
 import { auth } from "~/server/auth";
 import { db } from "~/server/db";
 import {
+  evidenceErrorCode,
   evidenceStorage,
   handleEvidenceUpload,
   MILESTONE_STORAGE_NOT_CONFIGURED,
@@ -78,6 +80,9 @@ export async function POST(request: Request): Promise<NextResponse> {
           allowedContentTypes: [...EVIDENCE_CONTENT_TYPES],
           maximumSizeInBytes: EVIDENCE_MAX_BYTES,
           addRandomSuffix: true,
+          // About five minutes, not the SDK's hour: one token can send many
+          // files, and a file with no row is invisible to the cap.
+          validUntil: Date.now() + EVIDENCE_TOKEN_VALID_MS,
           tokenPayload: JSON.stringify({ ccaID }),
         };
       },
@@ -95,7 +100,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       console.error(
         JSON.stringify({
           evt: "milestone_upload_failed",
-          error: error instanceof Error ? error.name : typeof error,
+          error: evidenceErrorCode(error),
         }),
       );
     }

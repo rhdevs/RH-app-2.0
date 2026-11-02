@@ -6,7 +6,9 @@ import {
   EVIDENCE_CONTENT_TYPES,
   EVIDENCE_MAX_BYTES,
   EVIDENCE_MAX_UNATTACHED,
+  EVIDENCE_ORPHAN_SCAN_MAX,
   EVIDENCE_UNATTACHED_TTL_MS,
+  evidenceFolder,
   evidencePathFromUrl,
   parseEvidencePath,
 } from "~/lib/schemas/milestoneEvidence";
@@ -92,6 +94,49 @@ export async function cleanupStaleEvidence(
   return cleared;
 }
 
+/**
+ * Remove up to EVIDENCE_CLEANUP_BATCH files in this CCA's folder that were
+ * uploaded more than the window ago and have NO row at all: an upload whose
+ * photo was never recorded (the browser closed, the record refused, or a token
+ * used to send files the app never heard about). They are invisible to the cap
+ * and to cleanupStaleEvidence, so this lists the folder, bounded to
+ * EVIDENCE_ORPHAN_SCAN_MAX, and checks the candidates against the rows. A file
+ * that has a row, attached or not, is never touched here. Only names that are
+ * exactly one of our evidence pathnames in THIS CCA's folder are considered.
+ * A listing that fails comes back empty (the storage module logs it), so the
+ * upload that triggered this is not blocked. Returns how many were removed.
+ */
+export async function cleanupOrphanEvidence(
+  db: Pick<EvidenceDb, "milestoneEvidence">,
+  storage: Pick<EvidenceStorage, "listBlobs" | "remove">,
+  ccaID: number,
+  now: Date = new Date(),
+): Promise<number> {
+  const cutoff = now.getTime() - EVIDENCE_UNATTACHED_TTL_MS;
+  const listed = await storage.listBlobs(
+    evidenceFolder(ccaID),
+    EVIDENCE_ORPHAN_SCAN_MAX,
+  );
+  const old = listed
+    .slice(0, EVIDENCE_ORPHAN_SCAN_MAX)
+    .filter((b) => b.uploadedAt.getTime() < cutoff)
+    .filter((b) => parseEvidencePath(b.pathname)?.ccaID === ccaID)
+    .map((b) => b.pathname);
+  if (old.length === 0) return 0;
+
+  const known = await db.milestoneEvidence.findMany({
+    where: { pathname: { in: old } },
+    select: { pathname: true },
+  });
+  const hasRow = new Set(known.map((r) => r.pathname));
+  let removed = 0;
+  for (const pathname of old.filter((p) => !hasRow.has(p))) {
+    if (removed >= EVIDENCE_CLEANUP_BATCH) break;
+    if (await storage.remove(pathname)) removed += 1;
+  }
+  return removed;
+}
+
 async function assertRoomForOne(
   db: Pick<EvidenceDb, "milestoneEvidence">,
   ccaID: number,
@@ -120,7 +165,7 @@ async function assertRoomForOne(
  */
 export async function authorizeEvidenceUpload(
   db: EvidenceDb,
-  storage: Pick<EvidenceStorage, "remove">,
+  storage: Pick<EvidenceStorage, "remove" | "listBlobs">,
   userID: string,
   pathname: string,
   now: Date = new Date(),
@@ -135,6 +180,7 @@ export async function authorizeEvidenceUpload(
   }
   await assertEvidenceHead(db, userID, target.ccaID);
   await cleanupStaleEvidence(db, storage, target.ccaID, now);
+  await cleanupOrphanEvidence(db, storage, target.ccaID, now);
   await assertRoomForOne(db, target.ccaID);
   await assertWithinLimit("upload", userID);
   return { ccaID: target.ccaID };
@@ -147,7 +193,8 @@ export async function authorizeEvidenceUpload(
  * else) and requires it to be THIS CCA's folder, then asks the store itself
  * what the file is. Size and type come from the store, not the browser, and a
  * file that is not an allowed image within the size bound is deleted and
- * refused. The caller must head the CCA now.
+ * refused. A valid file refused only because the CCA is full is LEFT in the
+ * store (see the cap check). The caller must head the CCA now.
  */
 export async function recordEvidence(
   db: EvidenceDb,
@@ -196,7 +243,10 @@ export async function recordEvidence(
     where: { ccaID: input.ccaID, submissionID: null },
   });
   if (held >= EVIDENCE_MAX_UNATTACHED) {
-    await storage.remove(pathname);
+    // The file is NOT deleted here. Another record of the same address may have
+    // just saved a row that points at it, and deleting would leave that row
+    // with no file. A file that ends up with no row is cleared by
+    // cleanupOrphanEvidence on a later upload.
     throw new TRPCError({ code: "CONFLICT", message: EVIDENCE_TOO_MANY });
   }
 

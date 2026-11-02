@@ -38,6 +38,20 @@ export const EVIDENCE_UNATTACHED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Most stale photos one upload will clear, so a backlog cannot make it slow. */
 export const EVIDENCE_CLEANUP_BATCH = 10;
 
+/**
+ * How long an upload token lasts: about five minutes, enough to send one photo.
+ * The SDK's default is an hour, and one token can send many files, none of which
+ * would have a row to count against the cap.
+ */
+export const EVIDENCE_TOKEN_VALID_MS = 5 * 60 * 1000;
+
+/**
+ * Most blobs one cleanup lists under a CCA's folder when it looks for files
+ * that have no row (uploaded but never recorded). The listing is bounded, so a
+ * big folder is swept over several uploads, not read whole.
+ */
+export const EVIDENCE_ORPHAN_SCAN_MAX = 200;
+
 const EXT_TYPE: Record<string, EvidenceContentType> = {
   webp: "image/webp",
   png: "image/png",

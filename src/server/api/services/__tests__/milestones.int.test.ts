@@ -28,17 +28,36 @@ import { isLocalDevDatabase } from "../transcript/__tests__/localDbGate";
 
 const fake = vi.hoisted(() => {
   const host = "teststore.private.blob.vercel-storage.com";
-  const files = new Map<string, { size: number; contentType: string }>();
+  const files = new Map<
+    string,
+    { size: number; contentType: string; uploadedAt?: Date }
+  >();
   const state = {
     removeFails: false,
     removed: [] as string[],
     heads: 0,
+    lists: [] as { prefix: string; limit: number }[],
+    listFails: false,
   };
   const storage = {
     host: () => host,
     head: (pathname: string) => {
       state.heads += 1;
       return Promise.resolve(files.get(pathname) ?? null);
+    },
+    // Like the real module: bounded by `limit`, and an empty list on a fault.
+    listBlobs: (prefix: string, limit: number) => {
+      state.lists.push({ prefix, limit });
+      if (state.listFails) return Promise.resolve([]);
+      return Promise.resolve(
+        [...files.entries()]
+          .filter(([pathname]) => pathname.startsWith(prefix))
+          .slice(0, limit)
+          .map(([pathname, meta]) => ({
+            pathname,
+            uploadedAt: meta.uploadedAt ?? new Date(),
+          })),
+      );
     },
     read: (pathname: string) => {
       const meta = files.get(pathname);
@@ -292,6 +311,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       fake.state.removeFails = false;
       fake.state.removed.length = 0;
       fake.state.heads = 0;
+      fake.state.lists.length = 0;
+      fake.state.listFails = false;
       for (const key of FLAGS) await setFlag(key, "on");
       for (const id of [U.headA, U.headA2, U.headB]) {
         await setRoles(id, ["resident", "cca_head"]);
@@ -781,7 +802,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await rows()).toBe(1);
       });
 
-      it("at the cap, deletes the new file and refuses", async () => {
+      it("at the cap, refuses and leaves the file for cleanup", async () => {
         const cap = (await import("~/lib/schemas/milestoneEvidence"))
           .EVIDENCE_MAX_UNATTACHED;
         for (let i = 0; i < cap; i += 1) await seed(A);
@@ -789,8 +810,43 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await errorOf(as(U.headA).record({ ccaID: A, url }))).toBe(
           "CONFLICT:EVIDENCE_TOO_MANY",
         );
-        expect(fake.files.has(pathOf(A))).toBe(false);
+        // Not deleted: a racing record of this address may point a row at it.
+        expect(fake.files.has(pathOf(A))).toBe(true);
+        expect(fake.state.removed).toEqual([]);
         expect(await rows()).toBe(cap);
+      });
+
+      it("two records of one file near the cap never leave a row without its file", async () => {
+        const cap = (await import("~/lib/schemas/milestoneEvidence"))
+          .EVIDENCE_MAX_UNATTACHED;
+        for (let i = 0; i < cap - 1; i += 1) await seed(A);
+        const url = put(A);
+        const results = await Promise.all([
+          errorOf(as(U.headA).record({ ccaID: A, url })),
+          errorOf(as(U.headA2).record({ ccaID: A, url })),
+        ]);
+        // One wins. The other meets the unique index or the cap, whichever
+        // the timing gives; neither may delete the file the winner points at.
+        expect(results.filter((r) => r === "ok")).toHaveLength(1);
+        expect(
+          results.filter((r) => r !== "ok" && !/DUPLICATE|TOO_MANY/.test(r)),
+        ).toEqual([]);
+        expect(fake.files.has(pathOf(A))).toBe(true);
+        expect(fake.state.removed).toEqual([]);
+        expect(
+          await db.milestoneEvidence.count({ where: { pathname: pathOf(A) } }),
+        ).toBe(1);
+      });
+
+      it("a refused record at the cap can be retried once room is made", async () => {
+        const cap = (await import("~/lib/schemas/milestoneEvidence"))
+          .EVIDENCE_MAX_UNATTACHED;
+        const first = await seed(A);
+        for (let i = 1; i < cap; i += 1) await seed(A);
+        const url = put(A);
+        await errorOf(as(U.headA).record({ ccaID: A, url }));
+        await as(U.headA).remove({ id: first.id });
+        expect(await errorOf(as(U.headA).record({ ccaID: A, url }))).toBe("ok");
       });
 
       it("the 41st record in an hour is rate limited", async () => {
@@ -910,6 +966,171 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
         expect(fake.state.removed).toEqual([]);
         expect(await rows()).toBe(1);
+      });
+    });
+
+    describe("lazy cleanup of files with no row", () => {
+      const old = () => new Date(Date.now() - 8 * DAY_MS);
+      const orphan = (
+        ccaID: number,
+        name: string,
+        uploadedAt: Date,
+        ext = "webp",
+      ) => {
+        const pathname = pathOf(ccaID, name, ext);
+        fake.files.set(pathname, {
+          size: 1000,
+          contentType: "image/webp",
+          uploadedAt,
+        });
+        return pathname;
+      };
+      const upload = () =>
+        service.authorizeEvidenceUpload(
+          db,
+          fake.storage,
+          U.headA,
+          pathOf(A, "evidence"),
+        );
+
+      it("removes an old file that has no row, on a later upload", async () => {
+        const gone = orphan(A, "evidence-orphan1", old());
+        expect(await upload()).toEqual({ ccaID: A });
+        expect(fake.state.removed).toEqual([gone]);
+        expect(fake.files.has(gone)).toBe(false);
+        expect(fake.state.lists).toEqual([
+          {
+            prefix: `milestone-evidence/${A}/`,
+            limit: (await import("~/lib/schemas/milestoneEvidence"))
+              .EVIDENCE_ORPHAN_SCAN_MAX,
+          },
+        ]);
+      });
+
+      it("keeps a recent file with no row (its record may still be coming)", async () => {
+        const fresh = orphan(A, "evidence-orphan2", new Date());
+        const nearly = orphan(
+          A,
+          "evidence-orphan3",
+          new Date(Date.now() - 6 * DAY_MS),
+        );
+        await upload();
+        expect(fake.state.removed).toEqual([]);
+        expect(fake.files.has(fresh)).toBe(true);
+        expect(fake.files.has(nearly)).toBe(true);
+      });
+
+      it("keeps the file of any row, attached or not, however old the file", async () => {
+        const unattached = await seed(A);
+        const attached = await seed(A, {
+          createdAt: old(),
+          submissionID: "sub-1",
+        });
+        for (const row of [unattached, attached]) {
+          fake.files.set(row.pathname, {
+            size: 1000,
+            contentType: "image/webp",
+            uploadedAt: old(),
+          });
+        }
+        await upload();
+        expect(fake.state.removed).toEqual([]);
+        expect(fake.files.has(unattached.pathname)).toBe(true);
+        expect(fake.files.has(attached.pathname)).toBe(true);
+        expect(await rows()).toBe(2);
+      });
+
+      it("looks only in this CCA's folder and only at our evidence names", async () => {
+        const other = orphan(B, "evidence-orphan4", old());
+        const odd = orphan(A, "notes", old(), "txt");
+        const gone = orphan(A, "evidence-orphan5", old());
+        await upload();
+        expect(fake.state.removed).toEqual([gone]);
+        expect(fake.files.has(other)).toBe(true);
+        expect(fake.files.has(odd)).toBe(true);
+      });
+
+      it("removes at most one batch per upload", async () => {
+        const batch = (await import("~/lib/schemas/milestoneEvidence"))
+          .EVIDENCE_CLEANUP_BATCH;
+        for (let i = 0; i < batch + 4; i += 1) {
+          orphan(A, `evidence-many${i}`, old());
+        }
+        await upload();
+        expect(fake.state.removed).toHaveLength(batch);
+        expect(fake.files.size).toBe(4);
+      });
+
+      it("looks at no more files than the scan bound", async () => {
+        const max = (await import("~/lib/schemas/milestoneEvidence"))
+          .EVIDENCE_ORPHAN_SCAN_MAX;
+        const cleared = await service.cleanupOrphanEvidence(
+          db,
+          {
+            remove: fake.storage.remove,
+            // A store that ignores the limit still cannot make it read more:
+            // the first `max` files are recent, the 50 after them are old.
+            listBlobs: () =>
+              Promise.resolve(
+                Array.from({ length: max + 50 }, (_v, i) => ({
+                  pathname: pathOf(A, `evidence-bound${i}`),
+                  uploadedAt: i < max ? new Date() : old(),
+                })),
+              ),
+          },
+          A,
+        );
+        expect(cleared).toBe(0);
+        expect(fake.state.removed).toEqual([]);
+      });
+
+      it("a failed listing does not block the upload", async () => {
+        const kept = orphan(A, "evidence-orphan6", old());
+        fake.state.listFails = true;
+        expect(await upload()).toEqual({ ccaID: A });
+        expect(fake.state.removed).toEqual([]);
+        expect(fake.files.has(kept)).toBe(true);
+      });
+
+      it("a failed delete leaves the file for the next upload", async () => {
+        const kept = orphan(A, "evidence-orphan7", old());
+        fake.state.removeFails = true;
+        expect(await upload()).toEqual({ ccaID: A });
+        expect(fake.files.has(kept)).toBe(true);
+        fake.state.removeFails = false;
+        await upload();
+        expect(fake.files.has(kept)).toBe(false);
+      });
+
+      it("does not run for a person who may not upload", async () => {
+        orphan(A, "evidence-orphan8", old());
+        await errorOf(
+          service.authorizeEvidenceUpload(
+            db,
+            fake.storage,
+            U.admin,
+            pathOf(A, "evidence"),
+          ),
+        );
+        expect(fake.state.lists).toEqual([]);
+        expect(fake.state.removed).toEqual([]);
+      });
+
+      it("a file left by a full-CCA record is swept once it is old enough", async () => {
+        const cap = (await import("~/lib/schemas/milestoneEvidence"))
+          .EVIDENCE_MAX_UNATTACHED;
+        for (let i = 0; i < cap; i += 1) await seed(A);
+        const url = put(A);
+        await errorOf(as(U.headA).record({ ccaID: A, url }));
+        expect(fake.files.has(pathOf(A))).toBe(true);
+        await db.milestoneEvidence.deleteMany({ where: { ccaID: A } });
+        fake.files.set(pathOf(A), {
+          size: 5000,
+          contentType: "image/webp",
+          uploadedAt: old(),
+        });
+        await upload();
+        expect(fake.files.has(pathOf(A))).toBe(false);
       });
     });
 
