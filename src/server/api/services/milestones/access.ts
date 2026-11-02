@@ -1,7 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
-import { isDirectorOf } from "~/server/api/services/directorGuard";
+import {
+  directedCcaIDs,
+  isDirectorOf,
+} from "~/server/api/services/directorGuard";
 
 /**
  * Who may touch a CCA's milestone evidence, decided from the stored rows every
@@ -117,4 +120,109 @@ export async function assertEvidenceReader(
   }
   if (viewer === null) throw denial(NOT_EVIDENCE_READER, options);
   return viewer;
+}
+
+/* ---- milestone filing (PR 16) ---------------------------------------------- */
+
+export const NOT_MILESTONE_HEAD = "NOT_MILESTONE_HEAD";
+export const NOT_MILESTONE_DIRECTOR = "NOT_MILESTONE_DIRECTOR";
+export const MILESTONE_NOT_FOUND = "MILESTONE_NOT_FOUND";
+
+/** Which seats of a CCA this person holds right now. */
+export type MilestoneRoles = { head: boolean; director: boolean };
+
+/**
+ * A denial on a path that starts from an id the caller sent is one NOT_FOUND
+ * (`MILESTONE_NOT_FOUND`), so an event or proposal id cannot be used to probe
+ * which ones exist or which CCA owns them.
+ */
+function milestoneDenial(code: string, hideExistence: boolean): TRPCError {
+  return hideExistence
+    ? new TRPCError({ code: "NOT_FOUND", message: MILESTONE_NOT_FOUND })
+    : new TRPCError({ code: "FORBIDDEN", message: code });
+}
+
+/** One whole decision, never partially trusted: any failed read refuses. */
+async function guarded<T>(decide: () => Promise<T>): Promise<T> {
+  try {
+    return await decide();
+  } catch (err) {
+    return refuseOnFailure(err);
+  }
+}
+
+/**
+ * Both seats, from two strict reads: a `CcaHead` row for THIS CCA, and the
+ * director guard. Neither means refused. Admins, RFs, JCRC members without a
+ * position, holders of other positions and directors of other CCAs have
+ * neither. A person with both gets both.
+ */
+export async function assertMilestoneParty(
+  db: EvidenceAccessDb,
+  userID: string,
+  ccaID: number,
+  hideExistence = false,
+): Promise<MilestoneRoles> {
+  const roles = await guarded(async () => ({
+    head: await headsCca(db, userID, ccaID),
+    director: await isDirectorOf(db, userID, ccaID),
+  }));
+  if (!roles.head && !roles.director) {
+    throw milestoneDenial(NOT_MILESTONE_HEAD, hideExistence);
+  }
+  return roles;
+}
+
+/** A head of this CCA now; the guard's answer is not needed. */
+export async function assertMilestoneHead(
+  db: EvidenceAccessDb,
+  userID: string,
+  ccaID: number,
+  hideExistence = false,
+): Promise<void> {
+  const head = await guarded(() => headsCca(db, userID, ccaID));
+  if (!head) throw milestoneDenial(NOT_MILESTONE_HEAD, hideExistence);
+}
+
+/**
+ * A director of this CCA now (the strict guard). Also says whether they head
+ * the CCA, because a director who also heads it may rate their own CCA and the
+ * rating then carries a label.
+ */
+export async function assertMilestoneDirector(
+  db: EvidenceAccessDb,
+  userID: string,
+  ccaID: number,
+  hideExistence = false,
+): Promise<{ alsoHead: boolean }> {
+  const roles = await guarded(async () => {
+    if (!(await isDirectorOf(db, userID, ccaID))) {
+      return { director: false, head: false };
+    }
+    return { director: true, head: await headsCca(db, userID, ccaID) };
+  });
+  if (!roles.director)
+    throw milestoneDenial(NOT_MILESTONE_DIRECTOR, hideExistence);
+  return { alsoHead: roles.head };
+}
+
+/**
+ * The CCAs this person heads and the CCAs they direct, both from strict
+ * reads, for the lists that start from a person (the home entries). A failed
+ * read refuses.
+ */
+export async function milestoneSeats(
+  db: EvidenceAccessDb,
+  userID: string,
+): Promise<{ headed: number[]; directed: number[] }> {
+  return guarded(async () => {
+    const heads = await db.ccaHead.findMany({
+      where: { userID },
+      select: { ccaID: true },
+    });
+    return {
+      headed: [...new Set(heads.map((h) => h.ccaID))].sort((a, b) => a - b),
+      directed: await directedCcaIDs(db, userID),
+    };
+  });
 }

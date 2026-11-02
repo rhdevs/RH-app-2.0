@@ -2,6 +2,7 @@ import { broadcastNudgeKind } from "./broadcastNudge";
 import { ccaNoDirectorKind } from "./ccaNoDirector";
 import { collectionDigestKind } from "./collectionDigest";
 import { disposablesNoDirectorKind } from "./disposablesNoDirector";
+import { milestoneRemindersKind } from "./milestoneReminders";
 import type { DueKind } from "./types";
 
 /**
@@ -10,8 +11,8 @@ import type { DueKind } from "./types";
  * needs a new index must have its script run before its flag goes on.
  *
  * PR 13 registered the no-Social-director notice. PR 14 registered the
- * collection digest and the broadcast deadline nudges; phase 5 (milestone
- * reminders) registers here. The nudge kind needs the ReminderTarget indexes,
+ * collection digest and the broadcast deadline nudges; PR 16 registers the milestone
+ * reminders. The nudge kind needs the ReminderTarget indexes,
  * so its script must run before `reminders.enabled` goes on.
  */
 export const DUE_KINDS: readonly DueKind[] = [
@@ -19,4 +20,5 @@ export const DUE_KINDS: readonly DueKind[] = [
   disposablesNoDirectorKind,
   collectionDigestKind,
   broadcastNudgeKind,
+  milestoneRemindersKind,
 ];

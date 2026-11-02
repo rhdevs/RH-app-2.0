@@ -337,3 +337,46 @@ export function milestonesNeedIndex({ milestonesOn, indexes }) {
     note: "run create-milestone-indexes.mjs --commit before the flag",
   };
 }
+
+/** The unique indexes PR 16 added: one filing per milestone, one rating per filing. */
+export const MILESTONE_FILING_INDEXES = [
+  {
+    model: "MilestoneSubmission",
+    name: "milestone_submission_key",
+    key: { milestoneKey: 1 },
+  },
+  {
+    model: "MilestoneAssessment",
+    name: "milestone_assessment_submission",
+    key: { submissionID: 1 },
+  },
+];
+
+/**
+ * `milestones.enabled` on while a filing unique index is not in place: "one
+ * filing per event" and "one director rating per filing" would rest on no
+ * constraint. `byModel` maps a model name to its `listIndexes` firstBatch, or
+ * null when it could not be read (an unanswered question is missing). Returns
+ * the RED line, or null when fine (or when the flag is not on).
+ *
+ * @param {{ milestonesOn: boolean, byModel: Record<string, any[] | null> }} state
+ * @returns {{ label: string, offenders: string[], note: string } | null}
+ */
+export function milestoneFilingNeedIndex({ milestonesOn, byModel }) {
+  if (milestonesOn !== true) return null;
+  const missing = MILESTONE_FILING_INDEXES.filter(
+    (want) =>
+      !(byModel?.[want.model] ?? []).some(
+        (i) =>
+          i?.name === want.name &&
+          i.unique === true &&
+          sameKey(i.key, want.key),
+      ),
+  ).map((w) => `${w.model}.${w.name}`);
+  if (missing.length === 0) return null;
+  return {
+    label: "milestones.enabled is on but a milestone filing index is missing",
+    offenders: missing,
+    note: "run create-milestone-indexes.mjs --commit before the flag",
+  };
+}

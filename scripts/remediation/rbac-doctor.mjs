@@ -79,6 +79,7 @@ import {
   disposablesNeedIndex,
   milestonesNeedDirectors,
   milestonesNeedIndex,
+  milestoneFilingNeedIndex,
   remindersNeedDirectors,
   remindersNeedIndex,
 } from "./lib/directorChecks.mjs";
@@ -316,6 +317,7 @@ async function directorSection() {
   let reminderIndexes;
   let milestonesOn;
   let milestoneIndexes;
+  let milestoneFilingIndexes;
   try {
     const [ccas, positions, links, holders, terms] = await Promise.all([
       findAll(db, "CCA", { ccaID: 1, ccaName: 1 }),
@@ -396,8 +398,18 @@ async function directorSection() {
       })
     )?.cursor?.firstBatch?.[0];
     milestonesOn = milestonesRow?.value === "on";
+    milestoneFilingIndexes = {};
     milestoneIndexes = null;
     if (milestonesOn) {
+      for (const model of ["MilestoneSubmission", "MilestoneAssessment"]) {
+        try {
+          const reply = await raw({ listIndexes: model });
+          milestoneFilingIndexes[model] =
+            reply?.ok === 1 ? (reply?.cursor?.firstBatch ?? []) : null;
+        } catch {
+          milestoneFilingIndexes[model] = null;
+        }
+      }
       try {
         const reply = await raw({ listIndexes: "MilestoneEvidence" });
         milestoneIndexes =
@@ -491,6 +503,10 @@ async function directorSection() {
     remindersNeedIndex({ remindersOn, indexes: reminderIndexes }),
     milestonesNeedDirectors({ milestonesOn, directorsOn }),
     milestonesNeedIndex({ milestonesOn, indexes: milestoneIndexes }),
+    milestoneFilingNeedIndex({
+      milestonesOn,
+      byModel: milestoneFilingIndexes,
+    }),
   ]) {
     if (m) line(`  ${m.label}`, 1, { bad: m.offenders, note: m.note });
   }
