@@ -7,7 +7,8 @@
  *   collected -> returned
  *
  * Rejected, returned and canceled are final. A loan HOLDS STOCK while it is
- * approved or collected (and its event is not canceled; see lib/equipment/stock.ts).
+ * approved or collected; an approved one lets go if its event is canceled or
+ * declined before collection (holdsStockFor below).
  */
 
 export const LOAN_STATUSES = [
@@ -40,6 +41,24 @@ export function isLoanStatus(s: string): s is LoanStatus {
 /** Approved and collected loans hold stock. */
 export const holdsStock = (status: LoanStatus): boolean =>
   status === "approved" || status === "collected";
+
+/**
+ * Whether a loan holds stock given how its event stands. A collected loan
+ * ALWAYS holds (the kit is physically out, whatever happened to the event). An
+ * approved loan that has not been collected stops holding when its event is
+ * canceled or declined; a gone event still holds (it may be a mistaken delete).
+ */
+export const holdsStockFor = (
+  status: LoanStatus,
+  eventState: "ok" | "canceled" | "declined" | "gone",
+): boolean =>
+  status === "collected" ||
+  (status === "approved" &&
+    eventState !== "canceled" &&
+    eventState !== "declined");
+
+/** The longest a loan may run from collection to return: 60 days. */
+export const LOAN_WINDOW_MAX_SECONDS = 60 * 24 * 60 * 60;
 
 /** The statuses that hold stock, for a database filter. */
 export const STOCK_HOLDING_STATUSES: readonly LoanStatus[] = [

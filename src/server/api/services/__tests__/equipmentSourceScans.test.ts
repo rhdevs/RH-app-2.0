@@ -238,3 +238,68 @@ describe("equipment loans: the digest stays read-only", () => {
     expect(code).not.toMatch(/\bcatch\b/);
   });
 });
+
+describe("equipment loans: review fixes", () => {
+  it("the director note after a return is the same compare-and-set, keeping the status", () => {
+    const code = stripComments(read(TRANSITION));
+    expect(code.match(/\.equipmentLoan\.updateMany\(/g)).toHaveLength(1);
+    expect(code).toMatch(/input\.amend/);
+    // The return fields are written only when it is a real return.
+    expect(code).toMatch(/input\.to === "returned" && !input\.amend/);
+  });
+
+  it("a director cancel is written to its own fields, never to the decision fields", () => {
+    const code = stripComments(read(TRANSITION));
+    expect(code).toMatch(
+      /input\.decision && input\.to === "canceled"[\s\S]*?data\.canceledBy[\s\S]*?data\.canceledAt[\s\S]*?data\.cancelReason[\s\S]*?else if \(input\.decision\)/,
+    );
+    const create = stripComments(
+      read("src/server/api/services/equipment/write.ts"),
+    );
+    for (const field of ["canceledBy", "canceledAt", "cancelReason"]) {
+      expect(create).toContain(`${field}: null`);
+    }
+  });
+
+  it("no read after a commit sits outside the best-effort notice path", () => {
+    const decide = stripComments(
+      read("src/server/api/services/equipment/decide.ts"),
+    );
+    expect(decide).not.toMatch(/titleOf|\bdb\.event\b/);
+    const notices = stripComments(
+      read("src/server/api/services/equipment/notices.ts"),
+    );
+    // The title is read at the "title" stage inside the one try/catch in send().
+    expect(notices.match(/\bcatch\b/g)).toHaveLength(1);
+    expect(notices).toMatch(
+      /stage = "title";\s*const \{ title, body \} = n\.compose\(await n\.eventTitle\(\)\)/,
+    );
+  });
+
+  it("the preview has its own rate limit, and the form waits 400 ms before asking", () => {
+    const write = stripComments(
+      read("src/server/api/services/equipment/write.ts"),
+    );
+    expect(write).toMatch(/assertWithinLimit\("check"/);
+    const form = stripComments(
+      read("src/app/equipment/_components/LoanForm.tsx"),
+    );
+    expect(form).toMatch(/CHECK_DEBOUNCE_MS\s*=\s*400/);
+    expect(form).toMatch(
+      /useDebounceValue\(candidateKey,\s*CHECK_DEBOUNCE_MS\)/,
+    );
+  });
+
+  it("the photo read re-checks the loan folder, and the collect door checks the event", () => {
+    const read_ = stripComments(
+      read("src/server/api/services/equipment/read.ts"),
+    );
+    expect(read_).toMatch(
+      /returnPhoto\.startsWith\(equipmentPhotoFolder\(id\)\)/,
+    );
+    const decide = stripComments(
+      read("src/server/api/services/equipment/decide.ts"),
+    );
+    expect(decide).toMatch(/\{\s*guard:\s*collectGuard\s*\}/);
+  });
+});

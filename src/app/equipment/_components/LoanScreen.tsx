@@ -17,7 +17,7 @@ import StatusBadge from "./StatusBadge";
 const fieldClass =
   "w-full rounded-md border border-gray-300 dark:border-border bg-white dark:bg-card px-2 py-1.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600";
 
-type Mode = "idle" | "approve" | "reject" | "cancel" | "return";
+type Mode = "idle" | "approve" | "reject" | "cancel" | "return" | "note";
 
 /**
  * One equipment loan, with the actions the SERVER says this viewer may take
@@ -69,7 +69,12 @@ export default function LoanScreen({ loanID }: { loanID: string }) {
     onSuccess: done,
     onError: failed,
   });
+  const note = api.equipment.note.useMutation({
+    onSuccess: done,
+    onError: failed,
+  });
   const busy =
+    note.isPending ||
     approve.isPending ||
     reject.isPending ||
     cancel.isPending ||
@@ -112,11 +117,20 @@ export default function LoanScreen({ loanID }: { loanID: string }) {
           {formatDateRange(l.collectAt, l.returnAt)}
           {l.requestedBy ? ` · asked by ${l.requestedBy}` : ""}
         </p>
-        {l.eventState === "canceled" && (
-          <p className="text-sm text-amber-700 dark:text-amber-300">
-            The event is canceled, so this loan holds no stock.
-          </p>
-        )}
+        {(l.eventState === "canceled" || l.eventState === "declined") &&
+          l.status === "approved" && (
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              The event is {l.eventState}, so this loan holds no stock and
+              cannot be collected.
+            </p>
+          )}
+        {(l.eventState === "canceled" || l.eventState === "declined") &&
+          l.status === "collected" && (
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              The event is {l.eventState}, but the kit is out, so this loan
+              still holds stock until it is returned.
+            </p>
+          )}
       </header>
 
       <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white dark:divide-border dark:border-border dark:bg-card">
@@ -144,6 +158,16 @@ export default function LoanScreen({ loanID }: { loanID: string }) {
           </div>
         )}
         {l.reason && <div>Reason: {l.reason}</div>}
+        {l.canceledAt && (
+          <div>
+            Canceled{" "}
+            {formatDateTime(
+              Math.floor(new Date(l.canceledAt).getTime() / 1000),
+            )}
+            {l.canceledBy ? ` by ${l.canceledBy}` : ""}
+          </div>
+        )}
+        {l.cancelReason && <div>Cancel reason: {l.cancelReason}</div>}
         {l.directorNote && (
           <div>Note from the Social director: {l.directorNote}</div>
         )}
@@ -238,6 +262,20 @@ export default function LoanScreen({ loanID }: { loanID: string }) {
             Mark returned
           </Button>
         )}
+        {l.can.note && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              setError(null);
+              setMode(mode === "note" ? "idle" : "note");
+              setText(l.directorNote ?? "");
+            }}
+          >
+            {l.directorNote ? "Edit note" : "Add a note"}
+          </Button>
+        )}
         {l.can.cancel && (
           <Button
             size="sm"
@@ -291,6 +329,30 @@ export default function LoanScreen({ loanID }: { loanID: string }) {
               : mode === "reject"
                 ? "rejection"
                 : "cancellation"}
+          </Button>
+        </div>
+      )}
+      {mode === "note" && (
+        <div className="space-y-2 rounded-md border border-gray-200 p-3 dark:border-border">
+          <label className="block text-sm text-gray-700 dark:text-foreground">
+            Note for the event&apos;s leaders
+            <textarea
+              className={`${fieldClass} mt-1`}
+              rows={3}
+              maxLength={DIRECTOR_NOTE_MAX}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+          </label>
+          <Button
+            size="sm"
+            disabled={busy || text.trim() === ""}
+            onClick={() => {
+              setError(null);
+              note.mutate({ ...ref, directorNote: text });
+            }}
+          >
+            Save note
           </Button>
         </div>
       )}

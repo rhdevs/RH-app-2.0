@@ -3,10 +3,12 @@ import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
 
 import { eventStateOf } from "~/lib/disposables/events";
+import { LOAN_WINDOW_MAX_SECONDS } from "~/lib/equipment/status";
 import { shortMessage } from "~/lib/equipment/stock";
 import type {
   loanApproveInput,
   loanDirectorCancelInput,
+  loanNoteInput,
   loanRejectInput,
   loanReturnInput,
 } from "~/lib/schemas/equipment";
@@ -18,12 +20,16 @@ import {
   type EquipmentAccessDb,
 } from "./access";
 import { assertWithinLimit } from "./limits";
-import { noticeDecision, noticeReturned } from "./notices";
-import { checkReturnPhoto } from "./photo";
+import { noticeDecision, noticeNoted, noticeReturned } from "./notices";
+import { checkReturnPhoto, removeOtherPhotos } from "./photo";
 import { loadLoan } from "./read";
 import { stockProblems } from "./stock";
 import { moveLoan, type LoanRow } from "./transition";
-import { EQUIPMENT_BAD_ITEM, EQUIPMENT_ITEM_RETIRED } from "./write";
+import {
+  EQUIPMENT_BAD_ITEM,
+  EQUIPMENT_ITEM_RETIRED,
+  EQUIPMENT_WINDOW_TOO_LONG,
+} from "./write";
 
 /**
  * The moves after filing: approve, reject, cancel, collect, return. Who may
@@ -32,31 +38,23 @@ import { EQUIPMENT_BAD_ITEM, EQUIPMENT_ITEM_RETIRED } from "./write";
  * event leaders), BEFORE the budget is spent and before the loan is moved. The
  * move itself, and the only write of `status`, is transition.ts.
  *
- * Notices are sent after the move has committed, best effort (notices.ts).
+ * Notices are sent after the move has committed, best effort (notices.ts):
+ * every read a notice needs after the commit is inside that best-effort path,
+ * so a read that fails after the commit never turns a saved change into an
+ * error. The same holds for the clean-up of spare photos after a return.
  */
 
 export const EQUIPMENT_BAD_WINDOW = "EQUIPMENT_BAD_WINDOW";
 export const EQUIPMENT_EVENT_CLOSED = "EQUIPMENT_EVENT_CLOSED";
+export const EQUIPMENT_NOT_RETURNED = "EQUIPMENT_NOT_RETURNED";
 
 type DecideDb = EquipmentAccessDb & PrismaClient;
 
 const bad = (message: string) =>
   new TRPCError({ code: "BAD_REQUEST", message });
 
-/** The title of the event for a notice. */
-async function titleOf(
-  db: Pick<PrismaClient, "event">,
-  eventID: number,
-): Promise<string | null> {
-  const event = await db.event.findUnique({
-    where: { eventID },
-    select: { title: true },
-  });
-  return (event?.title?.trim() ?? "") || null;
-}
-
 /**
- * Run INSIDE the approval transaction. Refuses a bad window, an event that is
+ * Run INSIDE the approval transaction. Refuses a bad or too long window, an event that is
  * no longer happening, a missing or retired item, and a shortage at any instant
  * of the window (naming the item and the loans holding it); then writes every
  * item the loan names (version + 1) so a concurrent approval that shares an
@@ -72,6 +70,9 @@ async function approvalGuard(
     loan.returnAt <= loan.collectAt
   ) {
     throw bad(EQUIPMENT_BAD_WINDOW);
+  }
+  if (loan.returnAt - loan.collectAt > LOAN_WINDOW_MAX_SECONDS) {
+    throw bad(EQUIPMENT_WINDOW_TOO_LONG);
   }
   const event = await tx.event.findUnique({
     where: { eventID: loan.eventID },
@@ -130,14 +131,7 @@ export async function approveLoan(
     },
     { guard: approvalGuard, retryConflicts: true },
   );
-  await noticeDecision(
-    db,
-    "approved",
-    moved,
-    await titleOf(db, moved.eventID),
-    userID,
-    input.directorNote,
-  );
+  await noticeDecision(db, "approved", moved, userID, input.directorNote);
   return { id: moved.id };
 }
 
@@ -158,14 +152,7 @@ export async function rejectLoan(
     actorID: userID,
     decision: { reason: input.reason },
   });
-  await noticeDecision(
-    db,
-    "rejected",
-    moved,
-    await titleOf(db, moved.eventID),
-    userID,
-    input.reason,
-  );
+  await noticeDecision(db, "rejected", moved, userID, input.reason);
   return { id: moved.id };
 }
 
@@ -184,7 +171,9 @@ async function assertMayAct(
 
 /**
  * Cancel before collection: the event leaders or the Social director. When the
- * director cancels, the decision is recorded and the requester is told.
+ * director cancels, who, when and why are recorded in the loan's own cancel
+ * fields (the approval it may follow is left as it was) and the requester is
+ * told.
  */
 export async function cancelLoan(
   db: DecideDb,
@@ -204,16 +193,29 @@ export async function cancelLoan(
     ...(director && { decision: { reason: input.reason } }),
   });
   if (director) {
-    await noticeDecision(
-      db,
-      "canceled",
-      moved,
-      await titleOf(db, moved.eventID),
-      userID,
-      input.reason,
-    );
+    await noticeDecision(db, "canceled", moved, userID, input.reason);
   }
   return { id: moved.id };
+}
+
+/**
+ * Run INSIDE the collect transaction: the kit may not be handed over for an
+ * event that is canceled or declined. (A COLLECTED loan keeps holding stock
+ * whatever happens to its event afterwards; this is the door that keeps a
+ * released loan from quietly taking its stock back.)
+ */
+async function collectGuard(
+  tx: Prisma.TransactionClient,
+  loan: LoanRow,
+): Promise<void> {
+  const event = await tx.event.findUnique({
+    where: { eventID: loan.eventID },
+    select: { status: true },
+  });
+  const state = eventStateOf(event);
+  if (state === "canceled" || state === "declined") {
+    throw bad(EQUIPMENT_EVENT_CLOSED);
+  }
 }
 
 export async function collectLoan(
@@ -224,14 +226,18 @@ export async function collectLoan(
   const loan = await loadLoan(db, input.id);
   await assertMayAct(db, userID, loan.ccaID);
   await assertWithinLimit("collect", userID);
-  const moved = await moveLoan(db, {
-    id: input.id,
-    expectedVersion: input.version,
-    expectedCcaID: loan.ccaID,
-    from: "approved",
-    to: "collected",
-    actorID: userID,
-  });
+  const moved = await moveLoan(
+    db,
+    {
+      id: input.id,
+      expectedVersion: input.version,
+      expectedCcaID: loan.ccaID,
+      from: "approved",
+      to: "collected",
+      actorID: userID,
+    },
+    { guard: collectGuard },
+  );
   return { id: moved.id };
 }
 
@@ -242,7 +248,7 @@ export async function collectLoan(
  */
 export async function returnLoan(
   db: DecideDb,
-  storage: Pick<EvidenceStorage, "host" | "head" | "remove">,
+  storage: Pick<EvidenceStorage, "host" | "head" | "remove" | "listBlobs">,
   userID: string,
   input: z.infer<typeof loanReturnInput>,
 ): Promise<{ id: string }> {
@@ -269,13 +275,36 @@ export async function returnLoan(
       await dropUnusedPhoto(db, storage, loan.id, photo.pathname);
     throw err;
   }
-  await noticeReturned(
-    db,
-    moved,
-    await titleOf(db, moved.eventID),
-    userID,
-    photo !== null,
-  );
+  await removeOtherPhotos(storage, loan.id, photo?.pathname ?? null);
+  await noticeReturned(db, moved, userID, photo !== null);
+  return { id: moved.id };
+}
+
+/**
+ * The Social director sets or replaces the note on a RETURNED loan. Only the
+ * strict director guard; the version is compared and set like every write, so a
+ * note written over a page that is out of date is refused with CONFLICT. The
+ * requester is told, best effort, with a link.
+ */
+export async function noteLoan(
+  db: DecideDb,
+  userID: string,
+  input: z.infer<typeof loanNoteInput>,
+): Promise<{ id: string }> {
+  await assertDirector(db, userID);
+  await assertWithinLimit("note", userID);
+  const loan = await loadLoan(db, input.id);
+  if (loan.status !== "returned") throw bad(EQUIPMENT_NOT_RETURNED);
+  const moved = await moveLoan(db, {
+    id: input.id,
+    expectedVersion: input.version,
+    expectedCcaID: loan.ccaID,
+    from: "returned",
+    to: "returned",
+    actorID: userID,
+    amend: { directorNote: input.directorNote },
+  });
+  await noticeNoted(db, moved, userID, input.directorNote);
   return { id: moved.id };
 }
 

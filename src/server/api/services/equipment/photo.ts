@@ -126,6 +126,37 @@ export async function authorizeReturnPhotoUpload(
   return { loanID: target.loanID };
 }
 
+/**
+ * After a loan has been returned: remove every OTHER file in its photo folder
+ * (spare uploads from retries), keeping only the photo the loan now holds, or
+ * nothing when it was returned without one. Best effort after the commit: a
+ * failure is logged by error name only and never fails the return.
+ */
+export async function removeOtherPhotos(
+  storage: Pick<EvidenceStorage, "listBlobs" | "remove">,
+  loanID: string,
+  keep: string | null,
+): Promise<void> {
+  try {
+    const listed = await storage.listBlobs(
+      equipmentPhotoFolder(loanID),
+      EVIDENCE_ORPHAN_SCAN_MAX,
+    );
+    for (const blob of listed) {
+      if (blob.pathname === keep) continue;
+      if (parseEquipmentPhotoPath(blob.pathname)?.loanID !== loanID) continue;
+      await storage.remove(blob.pathname);
+    }
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        evt: "equipment_photo_cleanup_failed",
+        err: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+  }
+}
+
 export type CheckedPhoto = {
   pathname: string;
   contentType: string;

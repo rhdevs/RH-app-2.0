@@ -11,6 +11,7 @@ import {
   loanDirectorCancelInput,
   loanIdInput,
   loanListInput,
+  loanNoteInput,
   loanRejectInput,
   loanReturnInput,
 } from "~/lib/schemas/equipment";
@@ -26,6 +27,7 @@ import {
   approveLoan,
   cancelLoan,
   collectLoan,
+  noteLoan,
   rejectLoan,
   returnLoan,
 } from "~/server/api/services/equipment/decide";
@@ -63,6 +65,7 @@ import { fileLoan, previewLoan } from "~/server/api/services/equipment/write";
  *    it refuses a shortage at any instant of the window and runs in one
  *    transaction that also writes the items it names;
  *  - cancel / collect / markReturned: the event leaders or the Social director;
+ *  - note: the Social director only, on a returned loan;
  *  - list / get: the board readers (every CCA head, every live JCRC holder,
  *    the Social director and admins). The photo is served by its own route
  *    (api/equipment-return/[id]), which only the director and the leaders pass.
@@ -170,6 +173,13 @@ export const equipmentRouter = createTRPCRouter({
     .input(loanReturnInput)
     .mutation(({ ctx, input }) =>
       returnLoan(ctx.db, evidenceStorage, ctx.session.user.userID, input),
+    ),
+
+  /** The Social director sets or replaces the note on a returned loan. */
+  note: gated
+    .input(loanNoteInput)
+    .mutation(({ ctx, input }) =>
+      noteLoan(ctx.db, ctx.session.user.userID, input),
     ),
 
   createItem: gated

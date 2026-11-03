@@ -166,11 +166,13 @@ export default function EquipmentBoard() {
                 {" · "}
                 {formatDateRange(loan.collectAt, loan.returnAt)}
               </p>
-              {loan.eventState === "canceled" && (
-                <p className="text-xs text-amber-700 dark:text-amber-300">
-                  The event is canceled, so this loan holds no stock.
-                </p>
-              )}
+              {(loan.eventState === "canceled" ||
+                loan.eventState === "declined") &&
+                loan.status === "approved" && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    The event is {loan.eventState}, so this loan holds no stock.
+                  </p>
+                )}
               <p className="mt-1 text-sm text-gray-700 dark:text-foreground">
                 {loan.lines
                   .map((l) => `${l.quantity} x ${l.name ?? "removed item"}`)

@@ -6,7 +6,8 @@ import { rateLimit } from "~/lib/rateLimit";
  * Per-person hourly ceilings on the equipment writes, one counter per action,
  * in the same window the disposables use. An event files a loan or two; the
  * Social director works a queue, so a decision gets a ceiling well above a
- * day's review. `upload` and `view` are for the return photo. Only a script or a
+ * day's review. `check` is the form's live preview, which asks as the person
+ * types. `upload` and `view` are for the return photo. Only a script or a
  * stuck client reaches these.
  */
 export const EQUIPMENT_WINDOW_MS = 60 * 60 * 1000;
@@ -17,6 +18,8 @@ export const EQUIPMENT_LIMITS = {
   cancel: 60,
   collect: 60,
   return: 60,
+  note: 60,
+  check: 300,
   item: 120,
   upload: 40,
   view: 600,

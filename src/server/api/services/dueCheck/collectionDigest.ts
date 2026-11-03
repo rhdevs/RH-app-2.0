@@ -26,7 +26,9 @@ import type { DueKind } from "./types";
  * Equipment (14b): while `equipment.enabled` is on, the same notice also counts
  * the equipment loans that are overdue (approved or collected, past their
  * return time) and names a few by event and CCA, "hall-wide" when there is
- * none. A day with overdue loans and no collections still gets the notice.
+ * none. An approved loan that was never collected, for an event that was
+ * canceled or declined, is left out. A scan that reaches its bound says
+ * "100+" instead of an exact-looking count. A day with overdue loans and no collections still gets the notice.
  *
  * A request approved later the same day is covered only if no digest was
  * written yet; a person who already has the day's notice is not told twice.
@@ -75,13 +77,15 @@ export const collectionDigestKind: DueKind = {
       bodies.push(`Collection times: ${times.join(", ")}.`);
     }
     if (overdue.count > 0) {
+      // A scan that hit its bound says "100+", never an exact-looking count.
+      const shownCount = overdue.more ? `${overdue.count}+` : overdue.count;
       const many =
-        overdue.count === 1
+        shownCount === 1
           ? "1 overdue equipment loan"
-          : `${overdue.count} overdue equipment loans`;
+          : `${shownCount} overdue equipment loans`;
       titles.push(many);
       bodies.push(
-        `Overdue equipment: ${overdue.labels.join(", ")}${overdue.count > overdue.labels.length ? ", and more" : ""}.`,
+        `Overdue equipment: ${overdue.labels.join(", ")}${overdue.more || overdue.count > overdue.labels.length ? ", and more" : ""}.`,
       );
     }
     return [

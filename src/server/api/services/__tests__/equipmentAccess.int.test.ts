@@ -185,6 +185,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           cancel: (c) => c.cancel({ id, version: 0, reason: null }),
           collect: (c) => c.collect({ id, version: 0 }),
           markReturned: (c) => c.markReturned({ id, version: 0, url: null }),
+          note: (c) => c.note({ id, version: 0, directorNote: "Note" }),
           createItem: (c) =>
             c.createItem({ name: "TEST X", note: "", quantity: 1 }),
           updateItem: (c) =>
@@ -766,6 +767,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           cancel: false,
           collect: false,
           markReturned: false,
+          note: false,
         });
         const asLeader = await k.as(U.headA).get({ id: a.id });
         expect(asLeader).toMatchObject({

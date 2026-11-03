@@ -28,7 +28,15 @@ const KNOWN: ReadonlyArray<readonly [string, string]> = [
   ["EQUIPMENT_BAD_WINDOW", "The return must be after the collection."],
   [
     "EQUIPMENT_EVENT_CLOSED",
-    "The event is canceled, declined or gone, so this loan cannot be approved.",
+    "The event is canceled, declined or gone, so this loan cannot be approved or collected.",
+  ],
+  [
+    "EQUIPMENT_WINDOW_TOO_LONG",
+    "A loan can run for at most 60 days from collection to return.",
+  ],
+  [
+    "EQUIPMENT_NOT_RETURNED",
+    "A note can be added only after the kit has been returned.",
   ],
   ["EQUIPMENT_BAD_FILE", "That photo could not be used. Try another one."],
   ["EQUIPMENT_NOT_UPLOADED", "That photo was not found. Upload it again."],

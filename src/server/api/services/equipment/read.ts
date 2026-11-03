@@ -8,8 +8,9 @@ import {
   TAG_PROBLEM_CODES,
   type EventState,
 } from "~/lib/disposables/events";
+import { equipmentPhotoFolder } from "~/lib/equipment/photo";
 import {
-  holdsStock,
+  holdsStockFor,
   isOverdue,
   LOAN_STATUSES,
   STOCK_HOLDING_STATUSES,
@@ -56,6 +57,9 @@ const storedLoan = z.object({
   returnedBy: z.string().nullable(),
   returnPhoto: z.string().nullable(),
   directorNote: z.string().nullable(),
+  canceledBy: z.string().nullable(),
+  canceledAt: z.date().nullable(),
+  cancelReason: z.string().nullable(),
   createdAt: z.date(),
 });
 export type StoredLoan = z.infer<typeof storedLoan>;
@@ -78,6 +82,9 @@ const SELECT = {
   returnedBy: true,
   returnPhoto: true,
   directorNote: true,
+  canceledBy: true,
+  canceledAt: true,
+  cancelReason: true,
   createdAt: true,
 } as const;
 
@@ -105,7 +112,10 @@ export type LoanView = {
   version: number;
   /** Approved or collected, and past its return time. */
   overdue: boolean;
-  /** Holding stock now: approved or collected, and the event is not canceled. */
+  /**
+   * Holding stock now: collected (always), or approved and the event is not
+   * canceled or declined.
+   */
   holdsStock: boolean;
   createdAt: string;
 };
@@ -117,6 +127,8 @@ export type LoanActions = {
   cancel: boolean;
   collect: boolean;
   markReturned: boolean;
+  /** Set or replace the director note on a returned loan. */
+  note: boolean;
 };
 
 export type ViewerRole = "director" | "leader" | "reader";
@@ -127,6 +139,10 @@ export type LoanDetail = LoanView & {
   directorNote: string | null;
   decidedAt: string | null;
   decidedBy: string | null;
+  /** A director cancel, kept apart from the approval it may follow. */
+  canceledAt: string | null;
+  canceledBy: string | null;
+  cancelReason: string | null;
   collectedAt: string | null;
   returnedAt: string | null;
   returnedBy: string | null;
@@ -173,7 +189,7 @@ async function contextFor(
     people: await displayNames(
       db,
       rows.flatMap((r) =>
-        [r.requestedBy, r.decidedBy, r.returnedBy].filter(
+        [r.requestedBy, r.decidedBy, r.returnedBy, r.canceledBy].filter(
           (p): p is string => p !== null,
         ),
       ),
@@ -215,7 +231,7 @@ function toView(row: StoredLoan, c: Context): LoanView {
     status: row.status,
     version: row.version,
     overdue: isOverdue(row, c.nowSeconds),
-    holdsStock: holdsStock(row.status) && state !== "canceled",
+    holdsStock: holdsStockFor(row.status, state),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -223,6 +239,7 @@ function toView(row: StoredLoan, c: Context): LoanView {
 export function actionsFor(
   status: LoanStatus,
   viewerIs: ViewerRole,
+  eventState: EventState = "ok",
 ): LoanActions {
   const director = viewerIs === "director";
   const acts = director || viewerIs === "leader";
@@ -230,8 +247,13 @@ export function actionsFor(
     approve: director && status === "requested",
     reject: director && status === "requested",
     cancel: acts && (status === "requested" || status === "approved"),
-    collect: acts && status === "approved",
+    collect:
+      acts &&
+      status === "approved" &&
+      eventState !== "canceled" &&
+      eventState !== "declined",
     markReturned: acts && status === "collected",
+    note: director && status === "returned",
   };
 }
 
@@ -351,6 +373,12 @@ export async function getLoan(
     ...toView(row, context),
     reason: sees ? row.reason : null,
     directorNote: sees ? row.directorNote : null,
+    canceledAt: sees ? (row.canceledAt?.toISOString() ?? null) : null,
+    canceledBy:
+      sees && row.canceledBy !== null
+        ? (context.people.get(row.canceledBy) ?? null)
+        : null,
+    cancelReason: sees ? row.cancelReason : null,
     decidedAt: sees ? (row.decidedAt?.toISOString() ?? null) : null,
     decidedBy:
       sees && row.decidedBy !== null
@@ -363,7 +391,11 @@ export async function getLoan(
         ? null
         : (context.people.get(row.returnedBy) ?? null),
     hasPhoto: sees && row.returnPhoto !== null,
-    can: actionsFor(row.status, viewerIs),
+    can: actionsFor(
+      row.status,
+      viewerIs,
+      context.events.get(row.eventID)?.state,
+    ),
     viewerIs,
   };
 }
@@ -400,6 +432,9 @@ export async function authorizePhotoRead(
   }
   const who = await directorOrLeader(db, userID, row.ccaID ?? null);
   if (!who.director && !who.leader) throw hidden();
+  // Defence in depth: the stored name must sit in THIS loan folder, so a row
+  // written wrongly can never serve another loan's file.
+  if (!row.returnPhoto.startsWith(equipmentPhotoFolder(id))) throw hidden();
   return {
     pathname: row.returnPhoto,
     contentType: row.returnPhotoType,

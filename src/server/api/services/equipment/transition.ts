@@ -30,6 +30,9 @@ import {
  * transaction again, from fresh reads, at most twice more (three tries in
  * all), then refuses with EQUIPMENT_TRY_AGAIN.
  *
+ * A director note after the return (`amend`) is the same transaction and the
+ * same compare-and-set, with the status left as it is.
+ *
  * Whether the actor MAY make the move is the caller's job, done before this
  * call. This function checks only that the move exists in the table.
  */
@@ -73,8 +76,18 @@ export type MoveInput = {
   from: LoanStatus;
   to: LoanStatus;
   actorID: string;
-  /** Approve, reject and a director's cancel record who decided and why. */
+  /**
+   * Approve and reject record who decided and why (decidedBy, decidedAt,
+   * reason). A director's cancel records into its own fields (canceledBy,
+   * canceledAt, cancelReason), so the approval it follows is kept as it was.
+   */
   decision?: { reason: string | null; directorNote?: string | null };
+  /**
+   * Set or replace the director note on a returned loan. The one move that
+   * keeps the status (from and to are both "returned"); it bumps the version
+   * like every write, so it is the same compare-and-set.
+   */
+  amend?: { directorNote: string };
   /** Returning with a photo: the checked pathname, type and size. */
   photo?: { pathname: string; contentType: string; size: number } | null;
 };
@@ -92,7 +105,12 @@ function dataFor(
     status: input.to,
     version: { increment: 1 },
   };
-  if (input.decision) {
+  if (input.amend) data.directorNote = input.amend.directorNote;
+  if (input.decision && input.to === "canceled") {
+    data.canceledBy = input.actorID;
+    data.canceledAt = now;
+    data.cancelReason = input.decision.reason;
+  } else if (input.decision) {
     data.decidedBy = input.actorID;
     data.decidedAt = now;
     data.reason = input.decision.reason;
@@ -101,7 +119,7 @@ function dataFor(
     }
   }
   if (input.to === "collected") data.collectedAt = now;
-  if (input.to === "returned") {
+  if (input.to === "returned" && !input.amend) {
     data.returnedAt = now;
     data.returnedBy = input.actorID;
     data.returnPhoto = input.photo?.pathname ?? null;
@@ -158,7 +176,10 @@ export async function moveLoan(
   input: MoveInput,
   options: { guard?: Guard; retryConflicts?: boolean } = {},
 ): Promise<LoanRow> {
-  if (!canMove(input.from, input.to)) {
+  const allowed = input.amend
+    ? input.from === "returned" && input.to === "returned"
+    : canMove(input.from, input.to);
+  if (!allowed) {
     throw new TRPCError({ code: "BAD_REQUEST", message: EQUIPMENT_BAD_MOVE });
   }
   try {

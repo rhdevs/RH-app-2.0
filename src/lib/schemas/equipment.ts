@@ -107,6 +107,10 @@ export const loanDirectorCancelInput = loanActInput.extend({
     .default(null),
 });
 /** `url` is the address the photo upload returned; omitted when there is no photo. */
+/** A note from the Social director on a loan that has been returned. */
+export const loanNoteInput = loanActInput.extend({
+  directorNote: text(DIRECTOR_NOTE_MAX).pipe(z.string().min(1, "Write a note")),
+});
 export const loanReturnInput = loanActInput.extend({
   url: z.string().min(1).max(2048).nullable().default(null),
 });

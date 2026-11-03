@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import type { z } from "zod";
 
 import { tagProblem, TAG_PROBLEM_CODES } from "~/lib/disposables/events";
+import { LOAN_WINDOW_MAX_SECONDS } from "~/lib/equipment/status";
 import type { ShortDetail } from "~/lib/equipment/stock";
 import type { loanCreateInput } from "~/lib/schemas/equipment";
 import { assertEventLeader, type EquipmentAccessDb } from "./access";
@@ -16,8 +17,9 @@ import { stockProblems, type StockItem } from "./stock";
  *  1. the event exists (the same answer for everyone);
  *  2. the person leads that event's CCA now (disposables' `mayFile`, strict);
  *  3. the event can still be borrowed for (not canceled, declined or ended);
- *  4. the hourly budget (only for a real filing, not the form's preview);
- *  5. every item exists and none is retired.
+ *  4. the loan runs for no more than 60 days (the same cap approval enforces);
+ *  5. the hourly budget (only for a real filing, not the form's preview);
+ *  6. every item exists and none is retired.
  * Filing holds no stock. It answers with "looks short" warnings: the lines the
  * hall could not cover if everything already approved stays approved.
  */
@@ -25,6 +27,7 @@ import { stockProblems, type StockItem } from "./stock";
 export const EQUIPMENT_BAD_EVENT = "EQUIPMENT_BAD_EVENT";
 export const EQUIPMENT_BAD_ITEM = "EQUIPMENT_BAD_ITEM";
 export const EQUIPMENT_ITEM_RETIRED = "EQUIPMENT_ITEM_RETIRED";
+export const EQUIPMENT_WINDOW_TOO_LONG = "EQUIPMENT_WINDOW_TOO_LONG";
 
 type FilingDb = EquipmentAccessDb & PrismaClient;
 type CreateInput = z.infer<typeof loanCreateInput>;
@@ -72,7 +75,14 @@ export async function resolveFiling(
   };
 }
 
-/** Step 5, and the warnings. */
+/** Step 4. */
+function assertWindowLength(input: CreateInput): void {
+  if (input.returnAt - input.collectAt > LOAN_WINDOW_MAX_SECONDS) {
+    throw bad(EQUIPMENT_WINDOW_TOO_LONG);
+  }
+}
+
+/** Step 6, and the warnings. */
 async function checkLines(
   db: FilingDb,
   input: CreateInput,
@@ -96,7 +106,11 @@ async function checkLines(
   return { items, warnings };
 }
 
-/** The form's live "looks short" preview. Writes nothing and spends no budget. */
+/**
+ * The form's live "looks short" preview. Writes no loan. It spends its own
+ * hourly budget (`check`), after the access check, so a script cannot use it
+ * to hammer the stock reads.
+ */
 export async function previewLoan(
   db: FilingDb,
   userID: string,
@@ -104,6 +118,8 @@ export async function previewLoan(
   now: Date = new Date(),
 ): Promise<{ warnings: ShortDetail[] }> {
   await resolveFiling(db, userID, input.eventID, now);
+  assertWindowLength(input);
+  await assertWithinLimit("check", userID);
   const { warnings } = await checkLines(db, input);
   return { warnings };
 }
@@ -122,6 +138,7 @@ export async function fileLoan(
   now: Date = new Date(),
 ): Promise<FiledLoan> {
   const event = await resolveFiling(db, userID, input.eventID, now);
+  assertWindowLength(input);
   await assertWithinLimit("file", userID);
   const { warnings } = await checkLines(db, input);
   // Every optional field is written explicitly: a missing key never matches a
@@ -147,14 +164,16 @@ export async function fileLoan(
       returnPhotoType: null,
       returnPhotoSize: null,
       directorNote: null,
+      canceledBy: null,
+      canceledAt: null,
+      cancelReason: null,
       version: 0,
     },
     select: { id: true },
   });
   await noticeRequested(
     db,
-    { id: created.id, requestedBy: userID },
-    event.title,
+    { id: created.id, requestedBy: userID, eventID: event.eventID },
     input.lines.length,
     userID,
   );

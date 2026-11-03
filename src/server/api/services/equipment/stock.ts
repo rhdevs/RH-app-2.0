@@ -1,7 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 
 import { eventStateOf } from "~/lib/disposables/events";
-import { STOCK_HOLDING_STATUSES } from "~/lib/equipment/status";
+import {
+  holdsStockFor,
+  STOCK_HOLDING_STATUSES,
+  type LoanStatus,
+} from "~/lib/equipment/status";
 import {
   findShortfall,
   type HeldLoan,
@@ -9,11 +13,13 @@ import {
 } from "~/lib/equipment/stock";
 
 /**
- * The stock rule (A68), read from stored rows. A loan HOLDS stock while it is
- * approved or collected, and only if its event is not canceled; that is worked
- * out here, when read, and the event router is not touched. A loan whose event
- * row is gone still holds (the event may have been deleted by mistake, and the
- * kit may be out). An overdue loan holds only inside its own window.
+ * The stock rule (A68), read from stored rows. A COLLECTED loan always holds
+ * stock: the kit is physically out, whatever became of its event. An APPROVED
+ * loan that has not been collected holds it only while its event is not
+ * canceled or declined; that is worked out here, when read, and the event
+ * router is not touched. A loan whose event row is gone still holds (the event
+ * may have been deleted by mistake). An overdue loan holds only inside its own
+ * window.
  *
  * Every function takes the client it should read with: callers that need the
  * answer to be safe against a concurrent approval pass the TRANSACTION client
@@ -27,7 +33,7 @@ export type Window = { collectAt: number; returnAt: number };
 
 type HoldingLoan = Window & { id: string; eventID: number; lines: Line[] };
 
-/** Loans holding stock whose window meets `window`, canceled events excluded. */
+/** Loans holding stock whose window meets `window` (holdsStockFor decides). */
 export async function holdingLoans(
   db: StockDb,
   window: Window,
@@ -43,15 +49,17 @@ export async function holdingLoans(
     select: {
       id: true,
       eventID: true,
+      status: true,
       collectAt: true,
       returnAt: true,
       lines: { select: { itemID: true, quantity: true } },
     },
   });
-  return withoutCanceledEvents(db, rows);
+  return withoutReleased(db, rows);
 }
 
-async function withoutCanceledEvents<T extends { eventID: number }>(
+/** Drop the loans that no longer hold: approved ones whose event closed. */
+async function withoutReleased<T extends { eventID: number; status: string }>(
   db: Pick<PrismaClient, "event">,
   rows: T[],
 ): Promise<T[]> {
@@ -62,8 +70,11 @@ async function withoutCanceledEvents<T extends { eventID: number }>(
     select: { eventID: true, status: true },
   });
   const byID = new Map(events.map((e) => [e.eventID, e]));
-  return rows.filter(
-    (r) => eventStateOf(byID.get(r.eventID) ?? null) !== "canceled",
+  return rows.filter((r) =>
+    holdsStockFor(
+      r.status as LoanStatus,
+      eventStateOf(byID.get(r.eventID) ?? null),
+    ),
   );
 }
 
@@ -176,12 +187,13 @@ export async function overbookedBy(
     select: {
       id: true,
       eventID: true,
+      status: true,
       collectAt: true,
       returnAt: true,
       lines: { select: { itemID: true, quantity: true } },
     },
   });
-  const holders = (await withoutCanceledEvents(db, rows)).filter((h) =>
+  const holders = (await withoutReleased(db, rows)).filter((h) =>
     h.lines.some((l) => l.itemID === item.id),
   );
   if (holders.length === 0) return null;

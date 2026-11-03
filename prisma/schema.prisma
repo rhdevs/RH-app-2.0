@@ -1893,6 +1893,10 @@ model EquipmentLoan {
   returnPhotoSize Int?
   /// An optional note from the director, shown to the event's leaders.
   directorNote    String?
+  /// A director cancel is kept apart from the approval it may follow.
+  canceledBy      String?
+  canceledAt      DateTime?
+  cancelReason    String?
   /// Bumped on every change; every write is a compare-and-set on it.
   version         Int             @default(0)
   createdAt       DateTime        @default(now())

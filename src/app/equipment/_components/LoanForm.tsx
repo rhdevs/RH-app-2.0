@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useDebounceValue } from "usehooks-ts";
 
 import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
@@ -24,6 +25,9 @@ const fieldClass =
   "rounded-md border border-gray-300 dark:border-border bg-white dark:bg-card px-2 py-1.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600";
 
 type Line = { itemID: string; quantity: string };
+
+/** How long the form waits after the last change before it asks for the preview. */
+export const CHECK_DEBOUNCE_MS = 400;
 
 /**
  * "Borrow equipment" for one event. The event and its CCA come from the event
@@ -72,10 +76,19 @@ export default function LoanForm({ eventID }: { eventID: number | undefined }) {
     returnAt: localInputToEpoch(back) ?? 0,
   };
   const parsed = loanCreateInput.safeParse(candidate);
-  const check = api.equipment.check.useQuery(
-    parsed.success ? parsed.data : candidate,
-    { retry: false, enabled: on && parsed.success },
-  );
+  // The preview is asked for only once typing has paused, so a person editing
+  // the times or quantities does not spend the hourly budget one key at a time.
+  const candidateKey = parsed.success ? JSON.stringify(parsed.data) : "";
+  const [settledKey] = useDebounceValue(candidateKey, CHECK_DEBOUNCE_MS);
+  const settled = useMemo(() => {
+    if (settledKey === "") return null;
+    const again = loanCreateInput.safeParse(JSON.parse(settledKey));
+    return again.success ? again.data : null;
+  }, [settledKey]);
+  const check = api.equipment.check.useQuery(settled ?? candidate, {
+    retry: false,
+    enabled: on && settled !== null,
+  });
   const create = api.equipment.create.useMutation({
     onSuccess: (res) => router.push(equipmentLoanHref(res.id)),
     onError: (e) => setError(equipmentErrorMessage(e.message)),
@@ -230,6 +243,11 @@ export default function LoanForm({ eventID }: { eventID: number | undefined }) {
         )}
       </fieldset>
 
+      {check.isError && settled !== null && (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          {equipmentErrorMessage(check.error.message)}
+        </p>
+      )}
       {check.data?.warnings.map((w) => (
         <ShortNotice key={w.itemID} detail={w} />
       ))}

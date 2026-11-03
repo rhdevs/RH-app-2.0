@@ -11,7 +11,9 @@ import {
   LOAN_STATUSES,
   canMove,
   holdsStock,
+  holdsStockFor,
   isOverdue,
+  LOAN_WINDOW_MAX_SECONDS,
 } from "~/lib/equipment/status";
 import {
   findShortfall,
@@ -22,7 +24,9 @@ import {
 } from "~/lib/equipment/stock";
 import {
   loanCreateInput,
+  DIRECTOR_NOTE_MAX,
   loanListInput,
+  loanNoteInput,
   loanRejectInput,
 } from "~/lib/schemas/equipment";
 
@@ -52,6 +56,29 @@ describe("loan status moves", () => {
 
   it("holds stock only while approved or collected", () => {
     expect(LOAN_STATUSES.filter(holdsStock)).toEqual(["approved", "collected"]);
+  });
+
+  it("holds stock by status and event: collected always, approved only while the event is open", () => {
+    const states = ["ok", "canceled", "declined", "gone"] as const;
+    for (const state of states) {
+      expect([state, holdsStockFor("collected", state)]).toEqual([state, true]);
+      expect([state, holdsStockFor("approved", state)]).toEqual([
+        state,
+        state === "ok" || state === "gone",
+      ]);
+      for (const status of [
+        "requested",
+        "rejected",
+        "returned",
+        "canceled",
+      ] as const) {
+        expect(holdsStockFor(status, state)).toBe(false);
+      }
+    }
+  });
+
+  it("caps a loan window at 60 days", () => {
+    expect(LOAN_WINDOW_MAX_SECONDS).toBe(60 * 86_400);
   });
 
   it("is overdue only when holding stock past the return time", () => {
@@ -286,7 +313,41 @@ describe("schemas", () => {
   });
 });
 
+describe("the director note after a return", () => {
+  it("needs a version and a note of 1 to 500 characters, cleaned", () => {
+    expect(
+      loanNoteInput.safeParse({ id: ID, version: 3, directorNote: "  Bent  " }),
+    ).toMatchObject({ success: true, data: { directorNote: "Bent" } });
+    for (const bad of ["", "   ", "x".repeat(DIRECTOR_NOTE_MAX + 1)]) {
+      expect(
+        loanNoteInput.safeParse({ id: ID, version: 3, directorNote: bad })
+          .success,
+      ).toBe(false);
+    }
+    expect(
+      loanNoteInput.safeParse({ id: ID, directorNote: "Hi" }).success,
+    ).toBe(false);
+    expect(
+      loanNoteInput.safeParse({
+        id: ID,
+        version: 0,
+        directorNote: "x".repeat(DIRECTOR_NOTE_MAX),
+      }).success,
+    ).toBe(true);
+  });
+});
+
 describe("equipmentErrorMessage", () => {
+  it("explains the new refusals", () => {
+    expect(equipmentErrorMessage("EQUIPMENT_WINDOW_TOO_LONG")).toMatch(
+      /60 days/,
+    );
+    expect(equipmentErrorMessage("EQUIPMENT_NOT_RETURNED")).toMatch(/returned/);
+    expect(equipmentErrorMessage("EQUIPMENT_EVENT_CLOSED")).toMatch(
+      /collected/,
+    );
+  });
+
   it("names the item for a stock refusal", () => {
     const msg = shortMessage({
       itemID: ID,
