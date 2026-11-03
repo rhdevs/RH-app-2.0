@@ -13,6 +13,7 @@ import {
   UPLOAD_MAX_BYTES,
   type CcaImageKind,
 } from "~/lib/schemas/cca";
+import { resizeToWebp } from "~/app/events/_lib/resizeImage";
 
 /**
  * Pick an image, downscale it in the browser, upload it straight to Vercel
@@ -30,38 +31,6 @@ import {
  * simple, and orphans are reconcilable later by diffing `list()` against
  * CcaProfile.
  */
-
-/** Downscale to fit within maxW×maxH, preserving aspect ratio, re-encoded WebP. */
-async function resizeToWebp(
-  file: File,
-  maxW: number,
-  maxH: number,
-): Promise<Blob> {
-  // `imageOrientation: "from-image"` applies EXIF rotation. Without it, photos
-  // taken in portrait on a phone upload sideways — canvas drawImage ignores
-  // EXIF on its own.
-  const bitmap = await createImageBitmap(file, {
-    imageOrientation: "from-image",
-  });
-
-  const scale = Math.min(1, maxW / bitmap.width, maxH / bitmap.height);
-  const w = Math.max(1, Math.round(bitmap.width * scale));
-  const h = Math.max(1, Math.round(bitmap.height * scale));
-
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("CANVAS_UNAVAILABLE");
-  ctx.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close();
-
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, "image/webp", 0.85),
-  );
-  if (!blob) throw new Error("ENCODE_FAILED");
-  return blob;
-}
 
 export default function CcaImageField({
   ccaID,
@@ -102,7 +71,7 @@ export default function CcaImageField({
 
       const blob = await upload(ccaUploadPath(ccaID, kind), resized, {
         access: "public",
-        contentType: "image/webp",
+        contentType: resized.type || "image/jpeg",
         handleUploadUrl: "/api/cca/upload",
       });
 

@@ -14,6 +14,8 @@ import {
   KeyRound,
   SlidersHorizontal,
   FileText,
+  Network,
+  Award,
 } from "lucide-react";
 
 import Header from "~/app/_components/header";
@@ -49,6 +51,14 @@ const ADMIN_TABS = [
     icon: Users2,
     requires: "viewAnyCcaRoster",
   },
+  // JCRC positions: views only (the "My positions" filter) and the JCRC
+  // self-handover. admin + jcrc, the holders of manageCcaHeads.
+  {
+    href: "/admin/positions",
+    label: "Positions",
+    icon: Network,
+    requires: "manageCcaHeads",
+  },
   // CCA create/rename, heads and members — admin only, and additionally behind
   // the cca.management.enabled kill switch checked in the procedures.
   {
@@ -71,6 +81,14 @@ const ADMIN_TABS = [
     href: "/admin/points",
     label: "Points",
     icon: SlidersHorizontal,
+    requires: "manageCcaPointsRanges",
+  },
+  // AUX: JCRC flags AUX events, fixes their attendance and gives awards. Same
+  // capability as Points; the segment layout re-checks it with a live read.
+  {
+    href: "/admin/aux-points",
+    label: "AUX",
+    icon: Award,
     requires: "manageCcaPointsRanges",
   },
   {

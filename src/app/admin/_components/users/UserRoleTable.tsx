@@ -64,7 +64,12 @@ export default function UserRoleTable() {
       role:
         roleFilter === "all"
           ? undefined
-          : (roleFilter as "admin" | "jcrc" | "cca_head" | "scrc"),
+          : (roleFilter as
+              | "admin"
+              | "jcrc"
+              | "cca_head"
+              | "scrc"
+              | "hall_office"),
       limit: 25,
     },
     {

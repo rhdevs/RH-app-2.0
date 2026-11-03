@@ -241,13 +241,13 @@ export function inspectWriteReply(reply, label) {
  *  rbac-doctor.mjs calls "out of vocabulary": a role added to the app but not
  *  here makes the doctor RED on every legitimate grant, which is why "scrc" is
  *  added HERE FIRST, before anyone can hold it. */
-export const ROLE_VOCAB = ["admin", "jcrc", "cca_head", "resident", "scrc"];
+export const ROLE_VOCAB = ["admin", "jcrc", "cca_head", "resident", "scrc", "hall_office"];
 
 /** Values legal in FacilityAccess.requiredRoles. A DIFFERENT enum from
  *  GRANTABLE_ROLES. "admin" is an implicit bypass and is NEVER stored.
  *  "scrc" is here because the SCRC Room (facilityID 17) is gated on
  *  ["jcrc","scrc"] — the hall office books its own room. */
-export const FACILITY_ROLES = ["resident", "jcrc", "cca_head", "scrc"];
+export const FACILITY_ROLES = ["resident", "jcrc", "cca_head", "scrc", "hall_office"];
 
 /**
  * Highest privilege first. Single source of truth for the legacy mirror.

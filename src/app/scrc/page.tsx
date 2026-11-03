@@ -77,8 +77,8 @@ export default function ScrcPage() {
           There’s nothing here for your account
         </p>
         <p className="mt-1 text-sm text-gray-500">
-          You can reach the Hall Office page, but none of its tools are open to
-          you. Contact an admin.
+          You can reach the Staff page, but none of its tools are open to you.
+          Contact an admin.
         </p>
       </div>
     );

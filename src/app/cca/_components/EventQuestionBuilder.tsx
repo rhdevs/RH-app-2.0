@@ -31,7 +31,7 @@ import {
   type EventQuestionType,
   type QuestionDraft,
 } from "~/lib/schemas/eventQuestion";
-import { mapError } from "./EventManage";
+import { eventErrorMessage } from "~/app/events/_lib/eventErrors";
 
 type OwnerQuestion =
   RouterOutputs["event"]["getQuestionsForOwner"]["questions"][number];
@@ -122,7 +122,18 @@ function rowHasErrors(e: RowErrors): boolean {
  * in another tab can never hand this component stale data through a prop that
  * outlives its own refetch.
  */
-export default function EventQuestionBuilder({ eventID }: { eventID: number }) {
+export default function EventQuestionBuilder({
+  eventID,
+  onDirtyChange,
+}: {
+  eventID: number;
+  /**
+   * Told whenever the builder gains or loses unsaved edits, so the parent can
+   * hold Publish: the server only ever sees saved questions, and publishing
+   * with an unsaved form would put the old one live.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const utils = api.useUtils();
   const query = api.event.getQuestionsForOwner.useQuery({ eventID });
   const save = api.event.saveQuestions.useMutation();
@@ -147,6 +158,10 @@ export default function EventQuestionBuilder({ eventID }: { eventID: number }) {
       );
     }
   }, [query.data, rows]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   if (query.isPending || rows === null) {
     return <div className="h-24 animate-pulse rounded-lg bg-gray-100" />;
@@ -175,12 +190,13 @@ export default function EventQuestionBuilder({ eventID }: { eventID: number }) {
           <p className="text-sm font-medium text-gray-900">
             These questions are locked
           </p>
+          {/* Zero signups but frozen: the event is live while JCRC review is
+              on, where the reviewed form is what goes out. */}
           <p className="mt-1 text-sm text-gray-600">
-            {signupCount} {peopleHave} already signed up and answered these
-            questions. Changing them now would leave those answers pointing at
-            questions that no longer exist, so the form is fixed for this
-            event. If you need a different form, cancel this event and
-            duplicate it.
+            {signupCount > 0
+              ? `${signupCount} ${peopleHave} already signed up and answered these questions. Changing them now would leave those answers pointing at questions that no longer exist, so the form is fixed for this event.`
+              : "The event is live, so the form JCRC reviewed is the one residents fill in."}{" "}
+            If you need a different form, cancel this event and duplicate it.
           </p>
         </div>
       </section>
@@ -310,7 +326,7 @@ export default function EventQuestionBuilder({ eventID }: { eventID: number }) {
       setRows(null);
       await utils.event.getQuestionsForOwner.invalidate({ eventID });
     } catch (e) {
-      setError(mapError(e));
+      setError(eventErrorMessage(e));
     }
   }
 

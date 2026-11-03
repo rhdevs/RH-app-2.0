@@ -23,6 +23,7 @@ import {
   withFacilityLock,
 } from "../services/booking";
 import { JCRC_ROLE, CCA_HEAD_ROLE } from "../services/roles";
+import { EVENT_AUTO_BOOKING_PREFIX } from "../services/eventPublish";
 import {
   SERIES_MAX_OCCURRENCES,
   seriesWindowSchema,
@@ -564,6 +565,10 @@ export const facilityBookingRouter = createTRPCRouter({
       where: {
         userID,
         endTime: { gte: currentTime },
+        // An event's room is booked in its author's name, but it belongs to
+        // the event, not to them: it is managed from the event page, and
+        // listing it here let one member cancel the whole event's room.
+        NOT: { description: { startsWith: EVENT_AUTO_BOOKING_PREFIX } },
       },
     });
     const bookingsWithDetails = await Promise.all(

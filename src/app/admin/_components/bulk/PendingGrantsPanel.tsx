@@ -204,6 +204,7 @@ export default function PendingGrantsPanel() {
                     | "jcrc"
                     | "cca_head"
                     | "scrc"
+                    | "hall_office"
                   )[],
                 })),
                 expiresInDays: days,

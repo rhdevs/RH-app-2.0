@@ -114,25 +114,29 @@ describe("formula guard on the bundle export", () => {
           members: [{ matric: "A9900001Z", name }],
         },
       ],
+      aux: {
+        year: "AY2026/27",
+        rows: [{ matric: "A9900002Z", name, aux: 1 }],
+      },
       exportedAt: AT,
     });
 
   it.each(CASES)("guards a name starting with %j", (lead, cellText) => {
-    expect(bundle("Test CCA", `${lead}x`, "")).toContain(
-      `,A9900001Z,${cellText},12,`,
-    );
+    const csv = bundle("Test CCA", `${lead}x`, "");
+    expect(csv).toContain(`,A9900001Z,${cellText},12,`);
+    expect(csv).toContain(`,A9900002Z,${cellText},`);
   });
 
   it.each(CASES)("guards a CCA name starting with %j", (lead, cellText) => {
     const csv = bundle(`${lead}x`, "Test Member", "");
-    expect(csv).toContain(`1,settings,waiver,9001,${cellText},`);
-    expect(csv).toContain(`1,cca,,9001,${cellText},`);
-    expect(csv).toContain(`1,flat,,9001,${cellText},A9900001Z,`);
+    expect(csv).toContain(`2,settings,waiver,9001,${cellText},`);
+    expect(csv).toContain(`2,cca,,9001,${cellText},`);
+    expect(csv).toContain(`2,flat,,9001,${cellText},A9900001Z,`);
   });
 
   it.each(CASES)("guards a note starting with %j", (lead, cellText) => {
     const csv = bundle("Test CCA", "Test Member", `${lead}x`);
-    expect(csv).toContain(`,10,14,2,5,${cellText},${AT.toISOString()}`);
+    expect(csv).toContain(`,10,14,2,5,${cellText},,${AT.toISOString()}`);
   });
 });
 

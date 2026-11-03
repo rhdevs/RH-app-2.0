@@ -93,6 +93,7 @@ export default function CcaHeadBulkWizard() {
               | "jcrc"
               | "cca_head"
               | "scrc"
+              | "hall_office"
             )[],
             via: r.via,
             confidence: r.confidence,

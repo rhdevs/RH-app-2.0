@@ -2380,6 +2380,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               ResidentWithhold: db.residentWithhold,
               ManualMembership: db.manualMembership,
               ResidentEvent: db.residentEvent,
+              AuxAward: db.auxAward,
+              AuxRecord: db.auxRecord,
+              AuxRecordAttendee: db.auxRecordAttendee,
             } as Record<string, { count: (a: object) => Promise<number> }>
           )[name]!;
           out[name] = await delegate.count({ where: { academicYear: ay } });
@@ -2483,6 +2486,33 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
         await db.residentEvent.create({
           data: { academicYear: OLD, userID: R12.id, action: "unlock" },
+        });
+        // AUX (proposal Part 3) is kept per year too: one row of each.
+        await db.auxAward.create({
+          data: {
+            academicYear: OLD,
+            userID: R12.id,
+            amount: 1,
+            reason: "test",
+            awardedOn: new Date("2025-09-01T00:00:00Z"),
+            createdBy: JCRC.id,
+          },
+        });
+        const auxRecord = await db.auxRecord.create({
+          data: {
+            academicYear: OLD,
+            title: "test",
+            heldOn: new Date("2025-09-01T00:00:00Z"),
+            createdBy: JCRC.id,
+          },
+        });
+        await db.auxRecordAttendee.create({
+          data: {
+            recordID: auxRecord.id,
+            academicYear: OLD,
+            userID: R12.id,
+            addedBy: JCRC.id,
+          },
         });
         // A participant belongs to one activity, so each activity is copied
         // first and its people follow it under the new id.

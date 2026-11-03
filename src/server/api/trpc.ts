@@ -13,7 +13,12 @@ import { ZodError } from "zod";
 
 import { auth } from "~/server/auth";
 import { db } from "~/server/db";
-import { ADMIN_ROLE, JCRC_ROLE, SCRC_ROLE } from "~/server/api/services/roles";
+import {
+  ADMIN_ROLE,
+  HALL_OFFICE_ROLE,
+  JCRC_ROLE,
+  SCRC_ROLE,
+} from "~/server/api/services/roles";
 import { isMatricRequired } from "~/server/api/services/access";
 import { isMinimalProfileRole } from "~/lib/profileCompleteness";
 
@@ -438,7 +443,8 @@ export const roleManagerProcedure = roleProcedure(JCRC_ROLE);
  * A jcrc is deliberately NOT admitted: appointing the JCRC is hall-office work,
  * and D-3 already says a jcrc may not grant jcrc.
  */
-export const scrcProcedure = roleProcedure(SCRC_ROLE);
+// Both staff roles (RFs and Hall Office) reach the staff surface.
+export const scrcProcedure = roleProcedure(SCRC_ROLE, HALL_OFFICE_ROLE);
 
 /**
  * READ-ONLY oversight of CCAs and events: admin, jcrc or scrc.
@@ -450,4 +456,10 @@ export const scrcProcedure = roleProcedure(SCRC_ROLE);
  * keep their existing, narrower builders and their own guards. Do not adopt
  * this builder for anything that writes.
  */
-export const oversightProcedure = roleProcedure(JCRC_ROLE, SCRC_ROLE);
+// Hall Office is admitted for the CCA roster oversight; the event oversight
+// procedures still refuse it through the `viewEventsReadOnly` capability.
+export const oversightProcedure = roleProcedure(
+  JCRC_ROLE,
+  SCRC_ROLE,
+  HALL_OFFICE_ROLE,
+);

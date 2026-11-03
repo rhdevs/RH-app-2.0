@@ -13,12 +13,14 @@ import type { SettingsWaiver } from "~/lib/points/settingsCsv";
 
 /**
  * The ONE file JCRC gives the sandbox: mean/SD ranges and waivers, every CCA
- * (type, sport flag, IHG result and cap) and the flat-points members. Config
- * and membership only, no scores. Built in the browser from data the server
- * returned to JCRC.
+ * (type, sport flag, IHG result and cap), the flat-points members and each
+ * resident's AUX count for the points year. Config, membership and AUX counts
+ * only, no scores; the AUX cap and conversion live in the sandbox. Built in
+ * the browser from data the server returned to JCRC.
  *
  * MUST MATCH rh-points-sandbox src/import/parseBundle.ts; both repos pin the
- * same fixture. Every line has exactly 18 cells.
+ * same fixture. Every line has exactly 19 cells. Version 2 added the `aux`
+ * column and section.
  */
 export const BUNDLE_EXPORT_HEADER = [
   "formatVersion",
@@ -38,10 +40,11 @@ export const BUNDLE_EXPORT_HEADER = [
   "sdMin",
   "sdMax",
   "note",
+  "aux",
   "exportedAt",
 ] as const;
 
-export const BUNDLE_SECTIONS = ["settings", "cca", "flat"] as const;
+export const BUNDLE_SECTIONS = ["settings", "cca", "flat", "aux"] as const;
 
 const CRLF = "\r\n";
 
@@ -56,6 +59,9 @@ export type BundleCca = {
   ihgCap: number | null;
 };
 
+/** One resident's AUX count for the year: a row of the `aux` section. */
+export type BundleAux = { matric: string; name: string; aux: number };
+
 type BundleRow = Partial<Record<(typeof BUNDLE_EXPORT_HEADER)[number], string>>;
 
 const byCcaID = <T extends { ccaID: number }>(a: T, b: T): number =>
@@ -66,6 +72,8 @@ export function buildBundleCsv(args: {
   waivers: readonly SettingsWaiver[];
   ccas: readonly BundleCca[];
   flat: readonly FlatCsvCca[];
+  /** The points year (written as each aux row's scope) and its counts. */
+  aux: { year: string; rows: readonly BundleAux[] };
   exportedAt: Date;
 }): string {
   const version = String(BUNDLE_FORMAT_VERSION);
@@ -125,6 +133,27 @@ export function buildBundleCsv(args: {
       });
     }),
   );
+  const auxRows = args.aux.rows
+    .filter((a) => a.aux !== 0)
+    .map((a) => {
+      if (!isValidMatric(a.matric)) {
+        throw new Error("Cannot export: a resident's matric is not valid.");
+      }
+      if (!Number.isInteger(a.aux) || a.aux < 0) {
+        throw new Error("Cannot export: an AUX count is not a whole number.");
+      }
+      return { ...a, matric: a.matric.toUpperCase() };
+    })
+    .sort((a, b) => (a.matric < b.matric ? -1 : a.matric > b.matric ? 1 : 0))
+    .map((a) =>
+      line({
+        section: "aux",
+        scope: args.aux.year,
+        matric: a.matric,
+        name: csvCell(a.name, true),
+        aux: String(a.aux),
+      }),
+    );
   return (
     [
       BUNDLE_EXPORT_HEADER.join(","),
@@ -132,6 +161,7 @@ export function buildBundleCsv(args: {
       ...waiverRows,
       ...ccaRows,
       ...flatRows,
+      ...auxRows,
     ].join(CRLF) + CRLF
   );
 }

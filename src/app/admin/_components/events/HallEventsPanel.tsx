@@ -25,8 +25,8 @@ export default function HallEventsPanel() {
           page, so the old sentence was contradicted a few hundred pixels down.
         */}
         <p className="mt-1 text-sm text-gray-500">
-          Events the JCRC runs itself. Register and publish them here in one
-          step, without waiting for a review.
+          Events the JCRC runs itself. Publish them here in one step, without
+          waiting for a review.
         </p>
       </div>
 

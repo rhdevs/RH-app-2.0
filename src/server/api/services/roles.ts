@@ -1,6 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
-import { EXT_ID, canonicalUserID, isCanonicalResidentID,
+import {
+  EXT_ID,
+  canonicalUserID,
+  isCanonicalResidentID,
   isExtUserID,
 } from "~/lib/identity";
 
@@ -57,7 +60,14 @@ export type { CanonicalUserID } from "~/lib/identity";
  *
  * PRECEDENCE is deliberately NOT on that list. See its own comment.
  */
-export const ROLES = ["admin", "jcrc", "cca_head", "resident", "scrc"] as const;
+export const ROLES = [
+  "admin",
+  "jcrc",
+  "cca_head",
+  "resident",
+  "scrc",
+  "hall_office",
+] as const;
 // The v1 pseudo-role "user" is DELETED from the vocabulary (00-overview.md
 // §2.2); `resident` is the floor. Do not re-add it — an unused enum member is a
 // read-boundary hazard (07-cca-future.md §1.4).
@@ -83,10 +93,31 @@ import {
   JCRC_ROLE,
   CCA_HEAD_ROLE,
   SCRC_ROLE,
+  HALL_OFFICE_ROLE,
   BASELINE_ROLE,
 } from "~/lib/roleNames";
 
-export { ADMIN_ROLE, JCRC_ROLE, CCA_HEAD_ROLE, SCRC_ROLE, BASELINE_ROLE };
+export {
+  ADMIN_ROLE,
+  JCRC_ROLE,
+  CCA_HEAD_ROLE,
+  SCRC_ROLE,
+  HALL_OFFICE_ROLE,
+  BASELINE_ROLE,
+};
+
+/**
+ * The staff roles: `scrc` (Resident Fellows) and `hall_office`. They share
+ * every staff power (the /scrc dashboard, the JCRC roster, read-only CCA
+ * rosters) and the `scrc.enabled` kill switch. The ONE difference today is
+ * that `hall_office` has no event views. Read SCRC_ROLE's comment below for
+ * why neither may ever be folded into `manager`.
+ */
+export const STAFF_ROLES = [SCRC_ROLE, HALL_OFFICE_ROLE] as const;
+
+export function holdsStaffRole(roles: readonly string[]): boolean {
+  return STAFF_ROLES.some((r) => roles.includes(r));
+}
 /**
  * Hall Office / SCRC. A STAFF-SIDE role, not a student-leadership one, and the
  * narrowest privileged role in the vocabulary.
@@ -159,7 +190,13 @@ export const DEFAULT_ROLE = "user" as const;
  * from the session, absent from the actor set assertCanMutateRoles computes
  * ASSIGNABLE_BY from, and therefore completely inert with no error anywhere.
  */
-export const GRANTABLE_ROLES = ["admin", "jcrc", "cca_head", "scrc"] as const;
+export const GRANTABLE_ROLES = [
+  "admin",
+  "jcrc",
+  "cca_head",
+  "scrc",
+  "hall_office",
+] as const;
 export type GrantableRole = (typeof GRANTABLE_ROLES)[number];
 
 /**
@@ -179,6 +216,7 @@ export const FACILITY_ROLES = [
   "jcrc",
   "cca_head",
   "scrc",
+  "hall_office",
 ] as const;
 export type FacilityRole = (typeof FACILITY_ROLES)[number];
 
@@ -196,6 +234,11 @@ export const AUDIT_ACTIONS = [
   "ccaHead.grant",
   "ccaHead.revoke",
   "ccaHead.transfer",
+  // JCRC self-handover (services/jcrcHandover.ts): one row per successor,
+  // written by the OUTGOING member. The `jcrc` grant itself is a separate
+  // "set" row from applyRoleChange; this one names the positions and the
+  // step-out date in `reason`.
+  "jcrc.handover",
   // CCA management (/admin/manage-ccas). There is deliberately NO "cca.delete":
   // no surface deletes a CCA, and deleteCcaCascade is script-only and guarded.
   // Do not add one without re-reading cascade.ts — a delete that reaches
@@ -327,12 +370,30 @@ export const AUDIT_ACTIONS = [
   "event.cancel",
   "event.duplicate",
   "event.attendees.export",
+  // Direct publish (review off) and edits to a live event. A live edit is
+  // audited, unlike a draft save, because residents have already signed up to
+  // what it changes.
+  "event.publish",
+  "event.edit",
+  "event.delete",
   // Part C. A CHECK-IN IS NOT AUDITED — the EventAttendance row IS the
   // record and carries who, when and by whom; a parallel audit row would
   // duplicate it in a table that pages 25 at a time. AN UNDO IS, because it
   // ERASES a claim about where a person physically was, and after it there
   // is no row left to carry that fact.
   "event.checkin.undo",
+  // AUX (Part 3). Every write is audited: AUX counts towards points, and the
+  // JCRC can add or remove a resident's attendance by hand.
+  "aux.event.flag",
+  "aux.event.unflag",
+  "aux.attendee.add",
+  "aux.attendee.remove",
+  "aux.record.create",
+  "aux.record.edit",
+  "aux.record.delete",
+  "aux.award.create",
+  "aux.award.edit",
+  "aux.award.delete",
   // Admin CRUD over USER DETAILS (/admin/users detail dialog). NOTE what is
   // absent: no "user.create" (signup + PendingRoleGrant own onboarding) and no
   // role action — these endpoints are NOT a second writer of UserRole.roles
@@ -483,11 +544,12 @@ export const ASSIGNABLE_BY: Record<string, readonly GrantableRole[]> =
   Object.assign(
     Object.create(null) as Record<string, readonly GrantableRole[]>,
     {
-      admin: ["admin", "jcrc", "scrc"] as const,
+      admin: ["admin", "jcrc", "scrc", "hall_office"] as const,
       jcrc: [] as const,
       cca_head: [] as const,
       resident: [] as const,
       scrc: ["jcrc"] as const,
+      hall_office: ["jcrc"] as const,
       user: [] as const,
     },
   );
@@ -510,11 +572,12 @@ export const REVOCABLE_FROM_OTHERS_BY: Record<
 > = Object.assign(
   Object.create(null) as Record<string, readonly GrantableRole[]>,
   {
-    admin: ["admin", "jcrc", "scrc"] as const,
+    admin: ["admin", "jcrc", "scrc", "hall_office"] as const,
     jcrc: [] as const,
     cca_head: [] as const,
     resident: [] as const,
     scrc: ["jcrc"] as const,
+    hall_office: ["jcrc"] as const,
     user: [] as const,
   },
 );
@@ -561,7 +624,12 @@ export const REVOCABLE_FROM_OTHERS_BY: Record<
  * `resident` is in no pair and must never be: it is the sticky baseline, so a
  * pair containing it would make some role set unreachable rather than forbidden.
  */
-export const EXCLUSIVE_ROLE_PAIRS = [[JCRC_ROLE, SCRC_ROLE]] as const;
+// `hall_office` inherits the same pair for the same reason: it holds the same
+// ["jcrc"] grant power as `scrc`.
+export const EXCLUSIVE_ROLE_PAIRS = [
+  [JCRC_ROLE, SCRC_ROLE],
+  [JCRC_ROLE, HALL_OFFICE_ROLE],
+] as const;
 
 /**
  * The deny reason if `roles` contains a forbidden pair, else null.
@@ -1460,6 +1528,9 @@ export function computeCapabilities(roles: readonly string[]): Capabilities {
   // FALSE for every manager-tier field below, and the only safe way to
   // guarantee that is for `manager` to stay literally `admin || jcrc`.
   const scrc = roles.includes(SCRC_ROLE);
+  // Hall Office: every RF power except the event views (proposals go to JCRC
+  // and the RFs only).
+  const staff = scrc || roles.includes(HALL_OFFICE_ROLE);
   return {
     reachDashboard: manager,
     listUsers: manager,
@@ -1505,9 +1576,9 @@ export function computeCapabilities(roles: readonly string[]): Capabilities {
     // WIDENING OF NOTHING — admin and jcrc already reach both surfaces through
     // manageCcaHeads / reviewEvents, so those two fields are additive for
     // `scrc` and behaviour-identical for everyone else.
-    reachScrcDashboard: admin || scrc,
-    manageJcrcRoster: admin || scrc,
-    viewCcaRostersReadOnly: manager || scrc,
+    reachScrcDashboard: admin || staff,
+    manageJcrcRoster: admin || staff,
+    viewCcaRostersReadOnly: manager || staff,
     viewEventsReadOnly: manager || scrc,
   };
 }

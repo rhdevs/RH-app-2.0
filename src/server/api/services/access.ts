@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { dropEndedJcrcRole } from "./jcrcTerm";
 import {
   ADMIN_ROLE,
   JCRC_ROLE,
@@ -242,7 +243,9 @@ export async function getUserRoles(
   if (!userID) return [];
   const row = await db.userRole.findUnique({ where: { userID } });
   const stored = row?.roles?.length ? row.roles : row?.role ? [row.role] : [];
-  return normalizeStoredRoles(stored);
+  // A handed-over JCRC term ends `jcrc` on its step-out date, before the
+  // lazy sweep removes it from storage. See services/jcrcTerm.ts.
+  return dropEndedJcrcRole(db, userID, normalizeStoredRoles(stored));
 }
 
 export async function isAdmin(

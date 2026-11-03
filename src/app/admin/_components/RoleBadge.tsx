@@ -25,9 +25,14 @@ const ROLE_STYLES: Record<
     cls: "bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-100",
   },
   scrc: {
-    label: "Hall Office",
+    label: "SCRC (RFs)",
     cls: "bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-100",
-    title: "Hall Office / SCRC. Can appoint JCRC and book the SCRC Room.",
+    title: "Resident Fellows. Can appoint JCRC and book the SCRC Room.",
+  },
+  hall_office: {
+    label: "Hall Office",
+    cls: "bg-orange-100 text-orange-800 border-orange-300 hover:bg-orange-100",
+    title: "Hall Office staff. Can appoint JCRC and book the SCRC Room.",
   },
   cca_head: {
     label: "CCA Head",

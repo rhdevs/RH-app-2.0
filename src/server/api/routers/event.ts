@@ -12,7 +12,7 @@ import {
   requireMatric,
 } from "~/server/api/trpc";
 import { getUserRoles } from "~/server/api/services/access";
-import { computeCapabilities } from "~/server/api/services/roles";
+import { JCRC_ROLE, computeCapabilities } from "~/server/api/services/roles";
 import { assertHeadsCca } from "~/server/api/services/ccaScope";
 import {
   isLiveCcaMember,
@@ -41,6 +41,7 @@ import {
   assertQuestionsEditable,
   isAttendanceEnabled,
   nextEventId,
+  questionsEditableScope,
   withEventLock,
 } from "~/server/api/services/events";
 import {
@@ -48,13 +49,27 @@ import {
   resolveFacility,
   withFacilityLock,
 } from "~/server/api/services/booking";
+import { sgtDayKey, sgtWeekStartKey } from "~/lib/time/sgt";
+import {
+  EVENT_AUTO_BOOKING_PREFIX,
+  bookEventFacility,
+  isEventReviewRequired,
+  missingForPublish,
+} from "~/server/api/services/eventPublish";
+import {
+  assertCapacityFits,
+  planLiveEdit,
+  type LiveEdit,
+} from "~/server/api/services/eventLiveEdit";
 import { canonicalUserID } from "~/lib/identity";
 import {
   createEventInput,
   updateEventInput,
   decideInput,
   reviewerCancelInput,
+  cancelEventInput,
   eventIdInput,
+  listAllEventsInput,
   eventSignupInput,
   ccaIdInput,
   normalizeStatus,
@@ -215,20 +230,26 @@ async function assertMayScan(
   }
 
   if (event.ccaID == null) {
-    // A HALL EVENT HAS NO MEMBERSHIP SET TO RE-VALIDATE AGAINST. The only
-    // meaningful live check is the capability itself, re-read by the caller
-    // (I-5). In practice this branch is unreachable from the UI, because every
-    // hall nominee must hold manageHallEvents and branch 1 already admitted
-    // them — which is why no nominee picker is rendered for hall events at all.
-    if (!computeCapabilities(roles).manageHallEvents) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
-    }
+    // A HALL EVENT HAS NO MEMBERSHIP SET TO RE-VALIDATE AGAINST, so being on
+    // the list is enough. Volunteers at hall events (AUX events in particular)
+    // are ordinary residents, not holders of manageHallEvents. Taking someone
+    // off the door is done by removing them from the list.
     return;
   }
 
   if (!(await isLiveCcaMember(db, event.ccaID, userID))) {
     throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
   }
+}
+
+/**
+ * A where-clause matching the status we read. Mongo stores an omitted nullable
+ * field as ABSENT, and `status: null` alone does not match absent.
+ */
+function statusIs(status: string | null) {
+  return status == null
+    ? { OR: [{ status: null }, { status: { isSet: false } }] }
+    : { status };
 }
 
 /**
@@ -334,7 +355,11 @@ async function resolveAttendees(
   const matricByKey = new Map(matrics.map((m) => [m.userID, m.matric]));
   const profileByKey = new Map<
     string,
-    { displayName: string | null; telegramHandle: string | null; block: number | null }
+    {
+      displayName: string | null;
+      telegramHandle: string | null;
+      block: number | null;
+    }
   >();
   for (const u of users) {
     const cid = canonicalUserID(u.email);
@@ -344,7 +369,8 @@ async function resolveAttendees(
       block: u.block,
     };
     if (cid && !profileByKey.has(cid)) profileByKey.set(cid, value);
-    if (u.userID && !profileByKey.has(u.userID)) profileByKey.set(u.userID, value);
+    if (u.userID && !profileByKey.has(u.userID))
+      profileByKey.set(u.userID, value);
   }
 
   for (const userID of userIDs) {
@@ -512,6 +538,8 @@ const SCRC_HIDDEN_EVENT_FIELDS = {
   decidedBy: null,
   updatedBy: null,
   scannerUserIDs: [],
+  auxSetBy: null,
+  auxSetAt: null,
 } as const satisfies Partial<Record<keyof Event, null | readonly string[]>>;
 
 /**
@@ -868,16 +896,22 @@ export const eventRouter = createTRPCRouter({
    * WHAT IS WRITABLE IS DECIDED BY `editScope` ON THE STORED STATUS, imported
    * rather than re-derived, so the client and the server cannot drift:
    *   "all"     draft / changes_requested — every field
-   *   "public"  published — bannerUrl, photoUrls, publicDescription only
+   *   "public"  published — banner, photos, public description, door timing,
+   *             and (see planLiveEdit) capacity, time and location; the title
+   *             and the internal description stay as published
    *   "none"    submitted / declined / canceled — refused with EVENT_LOCKED
    *
-   * A PAYLOAD CARRYING title WHILE PUBLISHED IS NOT AN ERROR; the field is
-   * silently ignored. The head's browser may hold a stale status, and erroring
-   * would lose their banner edit to a race. The server states the truth; the UI
-   * does not offer the fields.
+   * NOTHING IS SILENTLY DROPPED any more. A published save that would change
+   * the title or description is refused with FIELD_LOCKED, so a head is never
+   * told "saved" for an edit that did not happen. Repeating the stored value is
+   * fine, so a client may send the whole form.
    *
-   * NO AUDIT ROW. Field saves are not state-machine transitions — see
-   * AUDIT_ACTIONS in services/roles.ts for why.
+   * THE WRITE IS CONDITIONAL on the status read at the start, so a save in
+   * flight while the event is cancelled fails with EVENT_CHANGED.
+   *
+   * Draft saves are not audited (field saves are not transitions — see
+   * AUDIT_ACTIONS in services/roles.ts). A change to a LIVE event is, as
+   * `event.edit`, because residents who signed up are affected.
    */
   update: identifiedProcedure
     .input(updateEventInput)
@@ -935,6 +969,25 @@ export const eventRouter = createTRPCRouter({
       // null is what makes the strict filter agree with all three.
       if (input.publicDescription !== undefined)
         data.publicDescription = input.publicDescription.trim() || null;
+      // A LIVE EVENT KEEPS ITS BANNER AND PUBLIC DESCRIPTION. Residents are
+      // looking at them; removing either would leave a broken card.
+      if (scope === "public") {
+        if (input.bannerUrl === null) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "BANNER_REQUIRED",
+          });
+        }
+        if (
+          input.publicDescription !== undefined &&
+          input.publicDescription.trim() === ""
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "PUBLIC_DESCRIPTION_REQUIRED",
+          });
+        }
+      }
       if (input.bannerUrl !== undefined) data.bannerUrl = input.bannerUrl;
       if (input.photoUrls !== undefined) data.photoUrls = input.photoUrls;
 
@@ -960,20 +1013,36 @@ export const eventRouter = createTRPCRouter({
         data.attendanceClosesAt = input.attendanceClosesAt;
       }
 
-      if (scope === "all") {
-        // Merge-then-check: a client may send endTime alone, so validate against
-        // the value on file, not only the payload (the schema can only see both
-        // when both are present).
-        const nextStart = input.startTime ?? event.startTime;
-        const nextEnd =
-          input.endTime === undefined ? event.endTime : input.endTime;
-        if (nextStart != null && nextEnd != null && nextEnd <= nextStart) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "END_BEFORE_START",
-          });
-        }
+      // Merge-then-check: a client may send endTime alone, so validate against
+      // the value on file, not only the payload (the schema can only see both
+      // when both are present).
+      const nextStart = input.startTime ?? event.startTime;
+      const nextEnd =
+        input.endTime === undefined ? event.endTime : input.endTime;
+      if (nextStart != null && nextEnd != null && nextEnd <= nextStart) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "END_BEFORE_START",
+        });
+      }
+      // The door must close after it opens (merged with the stored values).
+      const nextOpens =
+        input.attendanceOpensAt === undefined
+          ? event.attendanceOpensAt
+          : input.attendanceOpensAt;
+      const nextCloses =
+        input.attendanceClosesAt === undefined
+          ? event.attendanceClosesAt
+          : input.attendanceClosesAt;
+      if (nextOpens != null && nextCloses != null && nextCloses <= nextOpens) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "DOOR_CLOSES_BEFORE_OPEN",
+        });
+      }
 
+      let liveEdit: LiveEdit | null = null;
+      if (scope === "all") {
         if (input.title !== undefined) data.title = input.title;
         if (input.description !== undefined)
           data.description = input.description;
@@ -995,9 +1064,55 @@ export const eventRouter = createTRPCRouter({
             data.location = f.name;
           }
         }
+      } else {
+        // Refuse a too-low capacity BEFORE any room moves; it is checked again
+        // under the signup lock at the write.
+        if (input.capacity !== undefined && input.capacity !== event.capacity) {
+          await assertCapacityFits(ctx.db, input.eventID, input.capacity);
+        }
+        liveEdit = await planLiveEdit(ctx.db, event, input);
+        Object.assign(data, liveEdit.data);
       }
 
-      await ctx.db.event.update({ where: { eventID: input.eventID }, data });
+      // THE WRITE IS CONDITIONAL ON THE STATUS READ ABOVE. A save already in
+      // flight when the event is cancelled (or published) must not land on the
+      // row in its new state.
+      const write = () =>
+        ctx.db.event.updateMany({
+          where: { eventID: input.eventID, ...statusIs(event.status) },
+          data,
+        });
+      // A capacity change on a live event is checked and written under the
+      // signup lock, so a signup cannot slip in between.
+      let applied: { count: number };
+      try {
+        applied =
+          liveEdit?.capacityChanged === true
+            ? await withEventLock(ctx.db, input.eventID, async () => {
+                await assertCapacityFits(ctx.db, input.eventID, input.capacity);
+                return write();
+              })
+            : await write();
+      } catch (err) {
+        // The row never moved, so the rooms go back to match it.
+        await liveEdit?.undo();
+        throw err;
+      }
+      if (applied.count === 0) {
+        await liveEdit?.undo();
+        throw new TRPCError({ code: "CONFLICT", message: "EVENT_CHANGED" });
+      }
+      await liveEdit?.finish();
+      if (liveEdit && liveEdit.changed.length > 0) {
+        await writeAudit(ctx.db, {
+          actorUserID: userID,
+          actorRoles: roles,
+          targetCcaID: event.ccaID ?? undefined,
+          targetEventID: event.eventID,
+          action: "event.edit",
+          reason: `Changed ${liveEdit.changed.join(", ")}`,
+        });
+      }
 
       // Delete blobs this save replaced/removed (non-fatal). Every URL here was
       // proven ours by updateEventInput; `event.*` came from our row.
@@ -1011,7 +1126,8 @@ export const eventRouter = createTRPCRouter({
       }
       if (input.photoUrls !== undefined) {
         const kept = new Set(input.photoUrls);
-        for (const url of event.photoUrls) if (!kept.has(url)) replaced.push(url);
+        for (const url of event.photoUrls)
+          if (!kept.has(url)) replaced.push(url);
       }
       if (replaced.length > 0) {
         try {
@@ -1044,6 +1160,15 @@ export const eventRouter = createTRPCRouter({
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
       const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
 
+      // Review is off unless `events.review.required` is on; heads then use
+      // `publish`. The queue code stays so review can come back without a
+      // code change.
+      if (!(await isEventReviewRequired(ctx.db))) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "REVIEW_OFF",
+        });
+      }
       if (editScope(normalizeStatus(event.status)) !== "all") {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
@@ -1051,19 +1176,8 @@ export const eventRouter = createTRPCRouter({
         });
       }
       // Completeness is enforced HERE, not on every save, so partial progress
-      // can be stored.
-      const missing: string[] = [];
-      if (!event.title?.trim()) missing.push("title");
-      if (!event.description?.trim()) missing.push("description");
-      if (event.startTime == null) missing.push("startTime");
-      if (!event.location?.trim()) missing.push("location");
-      if (!event.bannerUrl) missing.push("banner");
-      if (!event.publicDescription?.trim()) missing.push("publicDescription");
-      // A facility can only be auto-booked with a definite end time, so require
-      // it when a facility was chosen (free-text locations don't need one).
-      if (event.facilityID != null && event.endTime == null) {
-        missing.push("endTime");
-      }
+      // can be stored. Shared with `publish`.
+      const missing = missingForPublish(event);
       if (missing.length > 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -1128,6 +1242,134 @@ export const eventRouter = createTRPCRouter({
         reason: event.title ?? undefined,
       });
       return { status: "submitted" as const };
+    }),
+
+  /** Event settings the head's and JCRC's screens need. */
+  settings: identifiedProcedure.query(async ({ ctx }) => {
+    await assertEventsEnabled(ctx.db);
+    return { reviewRequired: await isEventReviewRequired(ctx.db) };
+  }),
+
+  /**
+   * Publish directly: `draft` / `changes_requested` -> `published`, with no
+   * JCRC review. Used while `events.review.required` is off (the default), for
+   * CCA and hall events alike.
+   *
+   * It checks what approval used to: the required fields (missingForPublish)
+   * and a free facility slot. The facility is booked BEFORE the status write,
+   * and a clash REFUSES the publish naming what is in the way, where `decide`
+   * only flags it. A head can fix a clash; a reviewer could not.
+   *
+   * Unsaved signup questions are the client's to save first: the server only
+   * ever sees saved ones.
+   */
+  publish: identifiedProcedure
+    .input(eventIdInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
+
+      if (await isEventReviewRequired(ctx.db)) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "REVIEW_REQUIRED",
+        });
+      }
+      if (editScope(normalizeStatus(event.status)) !== "all") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_PUBLISHABLE",
+        });
+      }
+      const missing = missingForPublish(event);
+      if (missing.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `INCOMPLETE:${missing.join(",")}`,
+        });
+      }
+
+      // Book first: a clash throws FACILITY_CLASH and nothing is written.
+      const bookingID =
+        event.facilityID != null &&
+        event.startTime != null &&
+        event.endTime != null
+          ? await bookEventFacility(ctx.db, event, {
+              facilityID: event.facilityID,
+              startTime: event.startTime,
+              endTime: event.endTime,
+            })
+          : null;
+
+      // Same negative guard as submitForReview: null status normalises to
+      // draft, which is publishable.
+      const now = new Date();
+      // Lost a race, or the write threw: give the room straight back, or a
+      // retry would clash with this event's own booking.
+      const releaseBooking = async () => {
+        if (bookingID == null) return;
+        await ctx.db.bookings
+          .deleteMany({ where: { bookingID } })
+          .catch((err: unknown) =>
+            console.error(
+              JSON.stringify({
+                evt: "event_publish_booking_release_failed",
+                eventID: input.eventID,
+                bookingID,
+                err: err instanceof Error ? err.name : "unknown",
+              }),
+            ),
+          );
+      };
+      let applied: { count: number };
+      try {
+        applied = await ctx.db.event.updateMany({
+          where: {
+            eventID: input.eventID,
+            NOT: {
+              status: {
+                in: ["submitted", "published", "declined", "canceled"],
+              },
+            },
+          },
+          data: {
+            status: "published",
+            publishedAt: now,
+            bookingID,
+            autoBookFailed: false,
+            decidedAt: null,
+            decidedBy: null,
+            decisionReason: null,
+            updatedAt: now,
+            updatedBy: userID,
+          },
+        });
+      } catch (err) {
+        await releaseBooking();
+        throw err;
+      }
+      if (applied.count === 0) {
+        await releaseBooking();
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_PUBLISHABLE",
+        });
+      }
+
+      await writeAudit(ctx.db, {
+        actorUserID: userID,
+        actorRoles: roles,
+        targetCcaID: event.ccaID ?? undefined,
+        targetEventID: event.eventID,
+        action: "event.publish",
+        reason:
+          bookingID != null
+            ? `${event.title ?? ""}; booked facility #${event.facilityID}`
+            : (event.title ?? undefined),
+      });
+      return { status: "published" as const, bookingID };
     }),
 
   /**
@@ -1225,7 +1467,7 @@ export const eventRouter = createTRPCRouter({
    * is a new destructive primitive, and nothing is gained by it.
    */
   cancelEvent: identifiedProcedure
-    .input(eventIdInput)
+    .input(cancelEventInput)
     .mutation(async ({ ctx, input }) => {
       await assertEventsEnabled(ctx.db);
       const userID = ctx.session.user.userID;
@@ -1237,6 +1479,14 @@ export const eventRouter = createTRPCRouter({
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "NOT_CANCELABLE",
+        });
+      }
+      // Residents who signed up are told why, so a live event needs a reason.
+      const reason = input.reason?.trim() || null;
+      if (status === "published" && reason === null) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "REASON_REQUIRED",
         });
       }
 
@@ -1256,17 +1506,25 @@ export const eventRouter = createTRPCRouter({
       // `bookingID` IS DELIBERATELY NOT NULLED HERE. releaseEventBooking now
       // re-reads it after this write and clears it once the booking is gone —
       // nulling it first is what threw away the pointer.
-      const applied = await ctx.db.event.updateMany({
-        where: {
-          eventID: input.eventID,
-          NOT: { status: { in: ["declined", "canceled"] } },
-        },
-        data: {
-          status: "canceled",
-          updatedAt: new Date(),
-          updatedBy: userID,
-        },
-      });
+      //
+      // UNDER THE EVENT LOCK, so a question save in flight (which re-reads the
+      // status inside the same lock) cannot land after the cancel.
+      const applied = await withEventLock(ctx.db, input.eventID, () =>
+        ctx.db.event.updateMany({
+          where: {
+            eventID: input.eventID,
+            NOT: { status: { in: ["declined", "canceled"] } },
+          },
+          data: {
+            status: "canceled",
+            decisionReason: reason,
+            decidedAt: new Date(),
+            decidedBy: userID,
+            updatedAt: new Date(),
+            updatedBy: userID,
+          },
+        }),
+      );
       if (applied.count === 0) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
@@ -1282,9 +1540,98 @@ export const eventRouter = createTRPCRouter({
         targetCcaID: event.ccaID ?? undefined,
         targetEventID: event.eventID,
         action: "event.cancel",
-        reason: event.title ?? undefined,
+        reason: [event.title, reason].filter(Boolean).join("; ") || undefined,
       });
       return { status: "canceled" as const };
+    }),
+
+  /**
+   * Delete a draft outright. Only an event that has never been published (or
+   * submitted) can go: nobody outside the committee has seen it, it holds no
+   * room and no signups, so there is nothing to tell anyone. Anything further
+   * along is cancelled instead, which keeps the record.
+   *
+   * The status in the delete's `where` is the one read here, so a draft that
+   * is published in another tab meanwhile is not deleted.
+   */
+  deleteDraft: identifiedProcedure
+    .input(eventIdInput)
+    .mutation(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const userID = ctx.session.user.userID;
+      const roles = await getUserRoles(ctx.db, userID); // I-5 live read
+      const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
+
+      if (
+        normalizeStatus(event.status) !== "draft" ||
+        event.publishedAt != null ||
+        event.bookingID != null
+      ) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_DELETABLE",
+        });
+      }
+
+      const removed = await withEventLock(ctx.db, input.eventID, async () => {
+        const signups = await ctx.db.eventSignup.count({
+          where: { eventID: input.eventID },
+        });
+        if (signups > 0) return { count: 0 };
+        const gone = await ctx.db.event.deleteMany({
+          where: { eventID: input.eventID, ...statusIs(event.status) },
+        });
+        // Questions go with the row, still under the lock. A failure leaves
+        // only unreachable questions behind, never a half-deleted event.
+        if (gone.count > 0) {
+          await ctx.db.eventQuestion
+            .deleteMany({ where: { eventID: input.eventID } })
+            .catch((err: unknown) =>
+              console.error(
+                JSON.stringify({
+                  evt: "event_questions_delete_failed",
+                  eventID: input.eventID,
+                  err: err instanceof Error ? err.name : "unknown",
+                }),
+              ),
+            );
+        }
+        return gone;
+      });
+      if (removed.count === 0) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "NOT_DELETABLE",
+        });
+      }
+
+      const blobs = [event.bannerUrl, ...event.photoUrls].filter(
+        (u): u is string => Boolean(u),
+      );
+      if (blobs.length > 0) {
+        try {
+          await del(blobs);
+        } catch (err) {
+          console.error(
+            JSON.stringify({
+              evt: "event_blob_delete_failed",
+              eventID: input.eventID,
+              count: blobs.length,
+              error: err instanceof Error ? err.name : "unknown",
+            }),
+          );
+        }
+      }
+
+      await writeAudit(ctx.db, {
+        actorUserID: userID,
+        actorRoles: roles,
+        targetCcaID: event.ccaID ?? undefined,
+        targetEventID: event.eventID,
+        action: "event.delete",
+        reason: event.title ?? undefined,
+      });
+      return { ok: true as const };
     }),
 
   /**
@@ -1331,17 +1678,20 @@ export const eventRouter = createTRPCRouter({
       // "not terminal": the owning head can cancel, and `decide` can still be
       // stamping this row's bookingID, between the read above and this write.
       // Same atomic match, same NOT_CANCELABLE for the loser.
-      const applied = await ctx.db.event.updateMany({
-        where: { eventID: input.eventID, status: "published" },
-        data: {
-          status: "canceled",
-          decisionReason: input.reason,
-          decidedAt: new Date(),
-          decidedBy: userID,
-          updatedAt: new Date(),
-          updatedBy: userID,
-        },
-      });
+      // Under the event lock, like cancelEvent.
+      const applied = await withEventLock(ctx.db, input.eventID, () =>
+        ctx.db.event.updateMany({
+          where: { eventID: input.eventID, status: "published" },
+          data: {
+            status: "canceled",
+            decisionReason: input.reason,
+            decidedAt: new Date(),
+            decidedBy: userID,
+            updatedAt: new Date(),
+            updatedBy: userID,
+          },
+        }),
+      );
       if (applied.count === 0) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
@@ -1504,10 +1854,41 @@ export const eventRouter = createTRPCRouter({
       const userID = ctx.session.user.userID;
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
       const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
+      // "New" on the JCRC All events list lasts until a JCRC member other than
+      // its author opens it. One field, set once; a failed write only leaves it
+      // marked New, so it never fails the read.
+      if (
+        event.jcrcSeenAt == null &&
+        event.createdBy !== userID &&
+        roles.includes(JCRC_ROLE)
+      ) {
+        await ctx.db.event
+          .updateMany({
+            // Mongo stores an omitted nullable field as absent, and `null`
+            // alone does not match absent.
+            where: {
+              eventID: event.eventID,
+              OR: [{ jcrcSeenAt: null }, { jcrcSeenAt: { isSet: false } }],
+            },
+            data: { jcrcSeenAt: new Date() },
+          })
+          .catch((err: unknown) => {
+            console.error(
+              JSON.stringify({
+                evt: "event_seen_mark_failed",
+                eventID: event.eventID,
+                error: err instanceof Error ? err.name : "unknown",
+              }),
+            );
+          });
+      }
       const signupCount = await ctx.db.eventSignup.count({
         where: { eventID: input.eventID },
       });
-      return { event: { ...event, status: normalizeStatus(event.status) }, signupCount };
+      return {
+        event: { ...event, status: normalizeStatus(event.status) },
+        signupCount,
+      };
     }),
 
   getSignupStats: identifiedProcedure
@@ -1524,10 +1905,10 @@ export const eventRouter = createTRPCRouter({
         orderBy: { createdAt: "asc" },
       });
 
-      // Signups per calendar day (UTC date key) — the client cumulates.
+      // Signups per Singapore calendar day — the client cumulates.
       const perDay = new Map<string, number>();
       for (const s of signups) {
-        const day = (s.createdAt ?? new Date()).toISOString().slice(0, 10);
+        const day = sgtDayKey(s.createdAt ?? new Date());
         perDay.set(day, (perDay.get(day) ?? 0) + 1);
       }
       const byDay = [...perDay.entries()]
@@ -1702,19 +2083,20 @@ export const eventRouter = createTRPCRouter({
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
       const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
 
-      const [questions, signupCount] = await Promise.all([
+      const [questions, signupCount, reviewRequired] = await Promise.all([
         ctx.db.eventQuestion.findMany({
           where: { eventID: input.eventID },
           orderBy: { order: "asc" },
           select: PUBLIC_QUESTION_FIELDS,
         }),
         ctx.db.eventSignup.count({ where: { eventID: input.eventID } }),
+        isEventReviewRequired(ctx.db),
       ]);
       return {
         questions,
         signupCount,
         frozen:
-          editScope(normalizeStatus(event.status)) === "none" ||
+          !questionsEditableScope(event.status, !reviewRequired) ||
           signupCount > 0,
       };
     }),
@@ -1750,11 +2132,24 @@ export const eventRouter = createTRPCRouter({
       // scope-free — and never re-derived inline.
       const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
 
+      const allowPublished = !(await isEventReviewRequired(ctx.db));
       return withEventLock(ctx.db, input.eventID, async () => {
         // INSIDE THE LOCK, NOT BEFORE IT. Outside, a signup can land between
         // the check and the write, and the first answer is then validated
         // against a form that changed.
-        await assertQuestionsEditable(ctx.db, event);
+        //
+        // AND ON A FRESH READ. The row loaded above may be stale: a cancel
+        // that landed since would otherwise let these writes through. Cancels
+        // take the same lock for their status write, so this read is the
+        // status for the whole save.
+        const fresh = await ctx.db.event.findUnique({
+          where: { eventID: input.eventID },
+          select: { eventID: true, status: true },
+        });
+        if (!fresh) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
+        }
+        await assertQuestionsEditable(ctx.db, fresh, { allowPublished });
 
         const existing = await ctx.db.eventQuestion.findMany({
           where: { eventID: input.eventID },
@@ -1920,6 +2315,78 @@ export const eventRouter = createTRPCRouter({
   }),
 
   /**
+   * The JCRC "All events" list: every CCA's events and the hall's, filtered by
+   * status. JCRC oversight now happens after the fact, so this replaces the
+   * review queue as the JCRC's way in. Rows link to the ordinary manage page,
+   * where the manager bypass in assertHeadsCca lets any JCRC member edit or
+   * cancel.
+   *
+   * The My positions / All CCAs switch filters these rows on the client and
+   * never on the server (views only, as in PR1).
+   *
+   * `isNew` is true until a JCRC member other than the author opens the event
+   * (getForOwner sets jcrcSeenAt).
+   */
+  listAll: roleManagerProcedure
+    .input(listAllEventsInput)
+    .query(async ({ ctx, input }) => {
+      await assertEventsEnabled(ctx.db);
+      const roles = await getUserRoles(ctx.db, ctx.session.user.userID); // I-5
+      if (!computeCapabilities(roles).reviewEvents) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "CAPABILITY_REQUIRED:reviewEvents",
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const where =
+        input.filter === "canceled"
+          ? { status: "canceled" }
+          : input.filter === "draft"
+            ? { NOT: { status: { in: ["published", "canceled", "declined"] } } }
+            : { status: "published" };
+      const rows = await ctx.db.event.findMany({
+        where,
+        orderBy: { startTime: input.filter === "past" ? "desc" : "asc" },
+      });
+      // "Live" and "past" split published events on when they END, matching
+      // the resident timeline: a started event is still on.
+      const isOver = (e: {
+        startTime: number | null;
+        endTime: number | null;
+      }) => e.startTime != null && (e.endTime ?? e.startTime) < now;
+      const events =
+        input.filter === "published"
+          ? rows.filter((e) => !isOver(e))
+          : input.filter === "past"
+            ? rows.filter(isOver)
+            : rows;
+      const [names, counts] = await Promise.all([
+        attachCcaNames(ctx.db, nameableCcaIDs(events)),
+        signupCounts(
+          ctx.db,
+          events.map((e) => e.eventID),
+        ),
+      ]);
+      return {
+        events: events.map((e) => ({
+          eventID: e.eventID,
+          ccaID: e.ccaID,
+          ccaName: ownerName(e.ccaID, names),
+          title: e.title,
+          status: normalizeStatus(e.status),
+          startTime: e.startTime,
+          endTime: e.endTime,
+          location: e.location,
+          signupCount: counts.get(e.eventID) ?? 0,
+          isNew: e.jcrcSeenAt == null,
+          isAux: e.auxYear != null,
+          cancelReason: e.status === "canceled" ? e.decisionReason : null,
+        })),
+      };
+    }),
+
+  /**
    * One event, for the reviewer's detail page.
    *
    * DELIBERATELY NOT NARROWED TO `submitted`. A head can withdraw an event while
@@ -2069,48 +2536,52 @@ export const eventRouter = createTRPCRouter({
         const startTime = event.startTime;
         const endTime = event.endTime;
         try {
-          const result = await withFacilityLock(ctx.db, facilityID, async () => {
-            const conflicts = await ctx.db.bookings.findMany({
-              where: {
-                facilityID,
-                AND: [
-                  { endTime: { gt: startTime } },
-                  { startTime: { lt: endTime } },
-                ],
-              },
-              select: { id: true },
-            });
-            if (conflicts.length > 0) return { booked: false as const };
-            const bookingID = await nextBookingId(ctx.db);
-            await ctx.db.bookings.create({
-              data: {
-                bookingID,
-                // 0 IS THE RESERVED "no CCA" SENTINEL — see cascade.ts's
-                // RESERVED_CCAID guard and BookingModal.tsx, which writes 0 on
-                // every booking the resident UI creates (3,841 rows and rising).
-                //
-                // A hall event has Event.ccaID null; a Bookings row CANNOT.
-                // Bookings.ccaID is a required Int and MUST NOT become nullable:
-                // that would put a SECOND value meaning "absent" into the largest
-                // collection in the database, where 0 already means it and where
-                // cascade.ts guards only 0. `event.ccaID!` would compile and then
-                // write null into a required Int, surfacing later as a Prisma
-                // throw in someone else's query, on a booking nobody can explain.
-                //
-                // Two collections, two spellings of "no CCA", and that is
-                // correct — they are different namespaces with different
-                // constraints. Do not harmonise them.
-                ccaID: event.ccaID ?? 0,
-                facilityID,
-                startTime,
-                endTime,
-                userID: event.createdBy,
-                eventName: event.title ?? `Event #${event.eventID}`,
-                description: `Auto-booked for event #${event.eventID}`,
-              },
-            });
-            return { booked: true as const, bookingID };
-          });
+          const result = await withFacilityLock(
+            ctx.db,
+            facilityID,
+            async () => {
+              const conflicts = await ctx.db.bookings.findMany({
+                where: {
+                  facilityID,
+                  AND: [
+                    { endTime: { gt: startTime } },
+                    { startTime: { lt: endTime } },
+                  ],
+                },
+                select: { id: true },
+              });
+              if (conflicts.length > 0) return { booked: false as const };
+              const bookingID = await nextBookingId(ctx.db);
+              await ctx.db.bookings.create({
+                data: {
+                  bookingID,
+                  // 0 IS THE RESERVED "no CCA" SENTINEL — see cascade.ts's
+                  // RESERVED_CCAID guard and BookingModal.tsx, which writes 0 on
+                  // every booking the resident UI creates (3,841 rows and rising).
+                  //
+                  // A hall event has Event.ccaID null; a Bookings row CANNOT.
+                  // Bookings.ccaID is a required Int and MUST NOT become nullable:
+                  // that would put a SECOND value meaning "absent" into the largest
+                  // collection in the database, where 0 already means it and where
+                  // cascade.ts guards only 0. `event.ccaID!` would compile and then
+                  // write null into a required Int, surfacing later as a Prisma
+                  // throw in someone else's query, on a booking nobody can explain.
+                  //
+                  // Two collections, two spellings of "no CCA", and that is
+                  // correct — they are different namespaces with different
+                  // constraints. Do not harmonise them.
+                  ccaID: event.ccaID ?? 0,
+                  facilityID,
+                  startTime,
+                  endTime,
+                  userID: event.createdBy,
+                  eventName: event.title ?? `Event #${event.eventID}`,
+                  description: `${EVENT_AUTO_BOOKING_PREFIX}${event.eventID}`,
+                },
+              });
+              return { booked: true as const, bookingID };
+            },
+          );
           if (result.booked) {
             // SCOPED ON `published`, and the booking is GIVEN BACK if it does
             // not apply. This write is several round trips after the status
@@ -2499,7 +2970,12 @@ export const eventRouter = createTRPCRouter({
 
       const event = await ctx.db.event.findUnique({
         where: { eventID: input.eventID },
-        select: { eventID: true, status: true, startTime: true, capacity: true },
+        select: {
+          eventID: true,
+          status: true,
+          startTime: true,
+          capacity: true,
+        },
       });
       if (!event || normalizeStatus(event.status) !== "published") {
         throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
@@ -2624,8 +3100,13 @@ export const eventRouter = createTRPCRouter({
     const eventIDs = mine.map((m) => m.eventID);
     if (eventIDs.length === 0) return { events: [] };
 
+    // A cancelled event stays on the resident's list, with the head's reason,
+    // so someone who signed up learns it is off instead of seeing it vanish.
     const events = await ctx.db.event.findMany({
-      where: { eventID: { in: eventIDs }, status: "published" },
+      where: {
+        eventID: { in: eventIDs },
+        status: { in: ["published", "canceled"] },
+      },
       orderBy: { startTime: "asc" },
     });
     const [names, counts] = await Promise.all([
@@ -2641,6 +3122,8 @@ export const eventRouter = createTRPCRouter({
         ccaName: ownerName(e.ccaID, names),
         signupCount: counts.get(e.eventID) ?? 0,
         mySignup: true,
+        cancelReason: e.status === "canceled" ? e.decisionReason : null,
+        scheduleChangedAt: e.scheduleChangedAt,
       })),
     };
   }),
@@ -3082,9 +3565,11 @@ export const eventRouter = createTRPCRouter({
         doorOpens: window?.opensAt ?? null,
         doorCloses: window?.closesAt ?? null,
         byMethod: {
-          qr: attendance.filter((a) => normalizeMethod(a.method) === "qr").length,
-          manual: attendance.filter((a) => normalizeMethod(a.method) === "manual")
+          qr: attendance.filter((a) => normalizeMethod(a.method) === "qr")
             .length,
+          manual: attendance.filter(
+            (a) => normalizeMethod(a.method) === "manual",
+          ).length,
         },
       };
     }),
@@ -3158,7 +3643,9 @@ export const eventRouter = createTRPCRouter({
               select: { eventID: true },
             }),
         eventIDs.length === 0
-          ? Promise.resolve([] as { eventID: number; wasSignedUp: boolean | null }[])
+          ? Promise.resolve(
+              [] as { eventID: number; wasSignedUp: boolean | null }[],
+            )
           : ctx.db.eventAttendance.findMany({
               where: { eventID: { in: eventIDs } },
               select: { eventID: true, wasSignedUp: true },
@@ -3199,28 +3686,35 @@ export const eventRouter = createTRPCRouter({
       // "Hall" is one row rather than one row per hall event.
       const byCcaMap = new Map<
         string,
-        { ccaID: number | null; ccaName: string | null; events: number; signups: number; checkedIn: number }
+        {
+          ccaID: number | null;
+          ccaName: string | null;
+          events: number;
+          signups: number;
+          checkedIn: number;
+        }
       >();
       for (const r of rows) {
         const key = r.ccaID == null ? "hall" : String(r.ccaID);
-        const cur =
-          byCcaMap.get(key) ??
-          { ccaID: r.ccaID, ccaName: r.ccaName, events: 0, signups: 0, checkedIn: 0 };
+        const cur = byCcaMap.get(key) ?? {
+          ccaID: r.ccaID,
+          ccaName: r.ccaName,
+          events: 0,
+          signups: 0,
+          checkedIn: 0,
+        };
         cur.events += 1;
         cur.signups += r.signups;
         cur.checkedIn += r.checkedIn;
         byCcaMap.set(key, cur);
       }
 
-      // Weeks keyed by the UTC Monday, so the buckets are stable regardless of
-      // who is reading and from where.
+      // Weeks keyed by the Singapore Monday, so the buckets are stable
+      // regardless of who is reading and from where.
       const byWeekMap = new Map<string, number>();
       for (const r of rows) {
         if (r.startTime == null) continue;
-        const d = new Date(r.startTime * 1000);
-        const day = (d.getUTCDay() + 6) % 7; // Monday = 0
-        d.setUTCDate(d.getUTCDate() - day);
-        const key = d.toISOString().slice(0, 10);
+        const key = sgtWeekStartKey(new Date(r.startTime * 1000));
         byWeekMap.set(key, (byWeekMap.get(key) ?? 0) + 1);
       }
 
@@ -3257,29 +3751,41 @@ export const eventRouter = createTRPCRouter({
       const roles = await getUserRoles(ctx.db, userID); // I-5 live read
       const event = await loadOwnedEvent(ctx.db, userID, roles, input.eventID);
 
-      if (event.ccaID == null) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: "HALL_EVENT_HAS_NO_SCANNERS",
-        });
-      }
-
       // De-duplicate before validating: the same person named twice is a slip,
       // not an error worth refusing over.
       const wanted = [...new Set(input.scannerUserIDs)];
       const ccaID = event.ccaID;
-      const checks = await Promise.all(
-        wanted.map(async (candidate) => ({
-          candidate,
-          ok: await isLiveCcaMember(ctx.db, ccaID, candidate),
-        })),
-      );
-      const notMembers = checks.filter((c) => !c.ok).map((c) => c.candidate);
-      if (notMembers.length > 0) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `NOT_MEMBERS:${notMembers.join(",")}`,
+
+      if (ccaID == null) {
+        // A hall event's volunteers come from the whole hall. The only check
+        // is that each has signed in once (holds a role row), so a typo or a
+        // stale id cannot sit on the list.
+        const known = await ctx.db.userRole.findMany({
+          where: { userID: { in: wanted } },
+          select: { userID: true },
         });
+        const knownSet = new Set(known.map((k) => k.userID));
+        const unknown = wanted.filter((id) => !knownSet.has(id));
+        if (unknown.length > 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `NOT_SIGNED_IN:${unknown.join(",")}`,
+          });
+        }
+      } else {
+        const checks = await Promise.all(
+          wanted.map(async (candidate) => ({
+            candidate,
+            ok: await isLiveCcaMember(ctx.db, ccaID, candidate),
+          })),
+        );
+        const notMembers = checks.filter((c) => !c.ok).map((c) => c.candidate);
+        if (notMembers.length > 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `NOT_MEMBERS:${notMembers.join(",")}`,
+          });
+        }
       }
 
       await ctx.db.event.updateMany({
