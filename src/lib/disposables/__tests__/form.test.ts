@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { disposableErrorMessage } from "../errors";
-import { filtersToInput, NO_FILTERS } from "../filters";
-import { emptyForm, formFromRequest, parseCreate, parseUpdate } from "../form";
+import { disposableErrorMessage, proposalEventIdIn } from "../errors";
+import { defaultCollectionDay, tagProblem } from "../events";
+import { filtersToInput, HALL_WIDE_FILTER, NO_FILTERS } from "../filters";
+import {
+  chooseEvent,
+  chooseProposal,
+  emptyForm,
+  formFromRequest,
+  parseCreate,
+  parseUpdate,
+} from "../form";
 
 const TODAY = "2027-03-10";
 const OID = "a".repeat(24);
 
 const filled = () => ({
-  ...emptyForm(7),
+  ...emptyForm(31),
   title: "  Hall dinner  ",
   quantities: { plates: "50", cups: "", bowls: "0", forks: "20", spoons: "20" },
   collectionDay: "2027-03-12",
@@ -22,10 +30,10 @@ describe("parseCreate", () => {
     expect(res).toEqual({
       ok: true,
       input: {
-        ccaID: 7,
+        eventID: 31,
+        proposalID: null,
         title: "Hall dinner",
         description: "",
-        proposalID: null,
         plates: 50,
         cups: 0,
         bowls: 0,
@@ -40,7 +48,7 @@ describe("parseCreate", () => {
   it("refuses a request for nothing", () => {
     const state = {
       ...filled(),
-      quantities: emptyForm(7).quantities,
+      quantities: emptyForm(31).quantities,
     };
 
     const res = parseCreate(state, TODAY);
@@ -58,8 +66,19 @@ describe("parseCreate", () => {
     }
   });
 
-  it("refuses a missing CCA, a blank title and a bad date or time", () => {
-    expect(parseCreate({ ...filled(), ccaID: null }, TODAY).ok).toBe(false);
+  it("sends no CCA: the form never says whose request it is", () => {
+    const res = parseCreate(filled(), TODAY);
+    expect(res.ok && "ccaID" in res.input).toBe(false);
+  });
+
+  it("refuses a request with neither an event nor a proposal", () => {
+    expect(parseCreate({ ...filled(), eventID: null }, TODAY)).toEqual({
+      ok: false,
+      errors: ["Choose the event this is for, or a proposal"],
+    });
+  });
+
+  it("refuses a blank title and a bad date or time", () => {
     expect(parseCreate({ ...filled(), title: "   " }, TODAY).ok).toBe(false);
     expect(
       parseCreate({ ...filled(), collectionDay: "2027-02-30" }, TODAY).ok,
@@ -93,16 +112,91 @@ describe("parseCreate", () => {
     ).toBe(false);
   });
 
-  it("passes a linked proposal through", () => {
-    const res = parseCreate({ ...filled(), proposalID: OID }, TODAY);
+  it("files for a proposal alone", () => {
+    const res = parseCreate(
+      { ...filled(), eventID: null, proposalID: OID },
+      TODAY,
+    );
     expect(res.ok && res.input.proposalID).toBe(OID);
+    expect(res.ok && res.input.eventID).toBe(null);
+  });
+});
+
+describe("choosing an event or a proposal", () => {
+  const start = Date.UTC(2027, 2, 20, 16, 30) / 1000; // 21 March 00:30 in Singapore
+
+  it("fills the collection day with the event start day in Singapore", () => {
+    const next = chooseEvent(
+      emptyForm(),
+      { eventID: 5, startTime: start },
+      TODAY,
+    );
+    expect(next.eventID).toBe(5);
+    expect(next.collectionDay).toBe("2027-03-21");
+  });
+
+  it("leaves a day the person typed alone", () => {
+    const typed = {
+      ...emptyForm(),
+      collectionDay: "2027-03-25",
+      collectionDayEdited: true,
+    };
+    const next = chooseEvent(typed, { eventID: 5, startTime: start }, TODAY);
+    expect(next.collectionDay).toBe("2027-03-25");
+  });
+
+  it("uses today when the event started earlier, and nothing without a start", () => {
+    expect(defaultCollectionDay(start, "2027-04-01")).toBe("2027-04-01");
+    expect(defaultCollectionDay(null, TODAY)).toBe("");
+  });
+
+  it("an event and a proposal replace each other", () => {
+    const withProposal = chooseProposal(emptyForm(5), OID);
+    expect(withProposal).toMatchObject({ eventID: null, proposalID: OID });
+    const back = chooseEvent(
+      withProposal,
+      { eventID: 6, startTime: null },
+      TODAY,
+    );
+    expect(back).toMatchObject({ eventID: 6, proposalID: "" });
+  });
+});
+
+describe("which events can be tagged", () => {
+  const NOW = 1_800_000_000;
+  const ok = { status: "published", endTime: NOW + 60, title: "Night" };
+
+  it("allows every status but canceled and declined, and an event not yet ended", () => {
+    for (const status of [
+      "draft",
+      "submitted",
+      "published",
+      "changes_requested",
+      null,
+      "nonsense",
+    ]) {
+      expect(tagProblem({ ...ok, status }, NOW), String(status)).toBeNull();
+    }
+    expect(tagProblem({ ...ok, status: "canceled" }, NOW)).toBe("canceled");
+    expect(tagProblem({ ...ok, status: "declined" }, NOW)).toBe("declined");
+  });
+
+  it("refuses an event that has ended (epoch seconds), at the very second too", () => {
+    expect(tagProblem({ ...ok, endTime: NOW - 1 }, NOW)).toBe("ended");
+    expect(tagProblem({ ...ok, endTime: NOW }, NOW)).toBe("ended");
+    expect(tagProblem({ ...ok, endTime: null }, NOW)).toBeNull();
+  });
+
+  it("refuses an event with no title", () => {
+    expect(tagProblem({ ...ok, title: "  " }, NOW)).toBe("untitled");
+    expect(tagProblem({ ...ok, title: null }, NOW)).toBe("untitled");
   });
 });
 
 describe("parseUpdate and formFromRequest", () => {
   it("round-trips a loaded request into an update input", () => {
     const state = formFromRequest({
-      ccaID: 7,
+      event: { eventID: 31 },
       title: "Hall dinner",
       description: "notes",
       proposalID: OID,
@@ -119,8 +213,12 @@ describe("parseUpdate and formFromRequest", () => {
 
     expect(res).toMatchObject({
       ok: true,
-      input: { id: OID, version: 3, plates: 5, spoons: 1, proposalID: OID },
+      input: { id: OID, version: 3, plates: 5, spoons: 1 },
     });
+    // What the request is for is not part of an edit.
+    expect(res.ok && "proposalID" in res.input).toBe(false);
+    expect(res.ok && "eventID" in res.input).toBe(false);
+    expect(res.ok && "ccaID" in res.input).toBe(false);
   });
 
   it("refuses an id that is not a request id", () => {
@@ -137,6 +235,7 @@ describe("filtersToInput", () => {
     const f = {
       status: "pending",
       ccaID: "9",
+      eventID: "",
       from: "2027-03-01",
       to: "2027-03-31",
     };
@@ -149,6 +248,17 @@ describe("filtersToInput", () => {
     expect(filtersToInput(f, 4).ccaID).toBe(4);
   });
 
+  it("asks for hall-wide requests, and for one event", () => {
+    expect(
+      filtersToInput({ ...NO_FILTERS, ccaID: HALL_WIDE_FILTER, eventID: "31" }),
+    ).toEqual({ hallWide: true, eventID: 31 });
+    // A CCA tab stays on its CCA.
+    expect(
+      filtersToInput({ ...NO_FILTERS, ccaID: HALL_WIDE_FILTER }, 4),
+    ).toEqual({ ccaID: 4 });
+    expect(filtersToInput({ ...NO_FILTERS, eventID: "abc" })).toEqual({});
+  });
+
   it("drops a status that is not one", () => {
     expect(filtersToInput({ ...NO_FILTERS, status: "draft" })).toEqual({});
   });
@@ -158,8 +268,24 @@ describe("disposableErrorMessage", () => {
   it("maps the known codes and hides everything else", () => {
     expect(disposableErrorMessage("DISPOSABLE_CONFLICT")).toMatch(/changed/);
     expect(disposableErrorMessage("RATE_LIMITED:120")).toMatch(/later/);
+    expect(disposableErrorMessage("DISPOSABLE_EVENT_CANCELED")).toMatch(
+      /canceled/,
+    );
+    expect(disposableErrorMessage("DISPOSABLE_EVENT_ENDED")).toMatch(/ended/);
+    expect(disposableErrorMessage("NOT_CCA_HEAD")).toMatch(/head/);
+    expect(disposableErrorMessage("NOT_HALL_FILER")).toMatch(/hall-wide/);
+    expect(disposableErrorMessage("DISPOSABLE_PROPOSAL_HAS_EVENT:12")).toMatch(
+      /already has an event/,
+    );
     expect(disposableErrorMessage("PrismaClientKnownRequestError boom")).toBe(
       "Something went wrong. Try again shortly.",
     );
+  });
+});
+
+describe("proposalEventIdIn", () => {
+  it("reads the event a proposal already has from the refusal", () => {
+    expect(proposalEventIdIn("DISPOSABLE_PROPOSAL_HAS_EVENT:12")).toBe(12);
+    expect(proposalEventIdIn("DISPOSABLE_PROPOSAL_TAKEN")).toBeNull();
   });
 });

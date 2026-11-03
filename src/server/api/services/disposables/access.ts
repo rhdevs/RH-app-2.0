@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 
 import {
   holdsLiveJcrc,
+  holdsStoredAdmin,
   isSocialDirector,
 } from "~/server/api/services/directorGuard";
 
@@ -10,8 +11,14 @@ import {
  * Who may touch disposable requests, decided from the stored rows every time
  * (merge proposal 4.9, A9, A54).
  *
- * - A HEAD (a `CcaHead` row for THIS CCA) files requests and reads that CCA's
- *   own. A head does not edit, delete or decide (A9, 4.9).
+ * - A HEAD (a `CcaHead` row for THIS CCA) files requests for that CCA's events
+ *   and proposals and reads that CCA's own. A head does not edit, delete or
+ *   decide (A9, 4.9).
+ * - FILING for a HALL-WIDE event (no CCA) is for the people who can create one:
+ *   a live `jcrc` (the strict guard) or an admin (a strict read of the stored
+ *   roles). Whoever filed such a request also reads it and nudges about it,
+ *   whatever they hold now (`read.ts`, `nudge.ts`). An admin or JCRC member
+ *   filing for a CCA's event is refused (A67): only that CCA's heads file.
  * - The SOCIAL DIRECTOR (the strict guard's `isSocialDirector`: the holder of
  *   the exactly-one `handlesDisposables` position, with a live `jcrc`)
  *   approves, rejects, edits and deletes any request.
@@ -32,6 +39,7 @@ import {
 
 export const NOT_DISPOSABLE_READER = "NOT_DISPOSABLE_READER";
 export const NOT_CCA_HEAD = "NOT_CCA_HEAD";
+export const NOT_HALL_FILER = "NOT_HALL_FILER";
 export const DISPOSABLE_ACCESS_CHECK_FAILED = "DISPOSABLE_ACCESS_CHECK_FAILED";
 export const DISPOSABLE_NOT_FOUND = "DISPOSABLE_NOT_FOUND";
 
@@ -98,20 +106,65 @@ export const canReadCca = (viewer: DisposableViewer, ccaID: number) =>
 export const canReadAny = (viewer: DisposableViewer) =>
   viewer.isJcrc || viewer.headedCcaIDs.length > 0;
 
-/** Refuse unless this person heads this CCA now. */
-export async function assertCcaHead(
-  db: Pick<DisposablesAccessDb, "ccaHead">,
+/** What this person may file for: the CCAs they head, and hall-wide events. */
+export type DisposableFiler = {
+  /** The CCAs this person heads now, ascending. */
+  headedCcaIDs: number[];
+  /** A live `jcrc` or an admin now (strict): may file for a hall-wide event. */
+  hallWide: boolean;
+};
+
+/**
+ * Who this person may file for. Every read is strict; any failing refuses the
+ * whole call. Does not refuse a person who may file nothing.
+ */
+export async function loadFiler(
+  db: DisposablesAccessDb,
   userID: string,
-  ccaID: number,
-): Promise<void> {
-  let allowed: boolean;
+): Promise<DisposableFiler> {
   try {
-    allowed = (await headedCcas(db, userID)).includes(ccaID);
+    const headedCcaIDs = await headedCcas(db, userID);
+    const hallWide =
+      (await holdsLiveJcrc(db, userID)) || (await holdsStoredAdmin(db, userID));
+    return { headedCcaIDs, hallWide };
   } catch (err) {
     return refuseOnFailure(err);
   }
-  if (!allowed) {
-    throw new TRPCError({ code: "FORBIDDEN", message: NOT_CCA_HEAD });
+}
+
+/**
+ * May this person file a request for something owned by `ccaID`? `null` is a
+ * hall-wide event. A CCA's event or proposal: a current head of that CCA and
+ * nobody else (an admin or JCRC member is refused). A hall-wide event: a live
+ * `jcrc` or an admin. NOT `assertHeadsCca`, which lets an admin through for
+ * any CCA. A failed read refuses.
+ */
+export async function mayFile(
+  db: DisposablesAccessDb,
+  userID: string,
+  ccaID: number | null,
+): Promise<boolean> {
+  try {
+    if (ccaID !== null) return (await headedCcas(db, userID)).includes(ccaID);
+    return (
+      (await holdsLiveJcrc(db, userID)) || (await holdsStoredAdmin(db, userID))
+    );
+  } catch (err) {
+    return refuseOnFailure(err);
+  }
+}
+
+/** Refuse unless `mayFile`. */
+export async function assertCanFile(
+  db: DisposablesAccessDb,
+  userID: string,
+  ccaID: number | null,
+): Promise<void> {
+  if (!(await mayFile(db, userID, ccaID))) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: ccaID === null ? NOT_HALL_FILER : NOT_CCA_HEAD,
+    });
   }
 }
 

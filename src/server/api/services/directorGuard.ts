@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
-import { JCRC_ROLE } from "~/lib/roleNames";
+import { ADMIN_ROLE, JCRC_ROLE } from "~/lib/roleNames";
 import { activeHolderWhere } from "~/server/api/services/jcrcPositions";
 import { normalizeStoredRoles } from "~/server/api/services/roles";
 
@@ -219,6 +219,25 @@ export async function holdsLiveJcrc(
   now: Date = new Date(),
 ): Promise<boolean> {
   return (await liveJcrcHolders(db, [userID], now)).has(userID);
+}
+
+/**
+ * Whether this person holds `admin` right now, from their STORED role row, by
+ * the same strict read as `holdsLiveJcrc`: no getUserRoles, no session, and a
+ * failed read throws. `admin` has no end date to check. Used only to decide who
+ * may file a disposable request for a hall-wide event (the people who can
+ * create one); it grants nothing else. Rejects if a read fails.
+ */
+export async function holdsStoredAdmin(
+  db: Pick<PrismaClient, "userRole">,
+  userID: string,
+): Promise<boolean> {
+  const row = await db.userRole.findUnique({
+    where: { userID },
+    select: { roles: true, role: true },
+  });
+  const raw = row?.roles?.length ? row.roles : row?.role ? [row.role] : [];
+  return normalizeStoredRoles(raw).includes(ADMIN_ROLE);
 }
 
 /**

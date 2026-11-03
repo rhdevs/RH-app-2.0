@@ -1,10 +1,10 @@
 import {
+  disposableCanFileInput,
   disposableCreateInput,
   disposableDecideInput,
   disposableDeleteInput,
   disposableIdInput,
   disposableListInput,
-  disposableProposalChoicesInput,
   disposableUpdateInput,
 } from "~/lib/schemas/disposable";
 import {
@@ -23,9 +23,10 @@ import {
 import { collectionDigest } from "~/server/api/services/disposables/digest";
 import { nudgeSocialDirector } from "~/server/api/services/disposables/nudge";
 import {
+  canFileForEvent,
+  eventChoices,
   getEntry,
   getRequest,
-  headCcaChoices,
   listRequests,
   proposalChoices,
 } from "~/server/api/services/disposables/read";
@@ -41,15 +42,22 @@ import {
  *
  * EVERY procedure but `enabled` and `entry` checks the flag first, through one
  * gated builder, so a new procedure cannot forget it. Who may act is decided
- * inside the services from stored rows, by the CCA a stored request belongs to
- * or the CCA id the browser sent, never from the session's roles:
- *  - create / headCcas / proposalChoices: a head of that CCA only;
+ * inside the services from stored rows, by the CCA the stored event or request
+ * belongs to (the browser never sends a CCA), never from the session's roles:
+ *  - create: a request is tagged to an event, or to a proposal with no event
+ *    yet. A CCA's event or proposal: a current head of that CCA only (not an
+ *    admin, not JCRC). A hall-wide event: a live JCRC member or an admin. The
+ *    event must not be canceled, declined or ended;
+ *  - eventChoices / canFile / proposalChoices: the same rules, as reads for the
+ *    form's picker and the event page's link;
  *  - list / get: that CCA's heads, and every JCRC member for all (a head of
- *    another CCA is refused even the read);
+ *    another CCA is refused even the read); whoever filed a hall-wide request
+ *    reads that one;
  *  - update / approve / reject / delete: the Social director only (the holder of the
  *    exactly-one handlesDisposables position), by the strict guard;
  *  - digest: the Social director only, by the same guard;
- *  - nudge: a head of the request's CCA (anyone else gets NOT_FOUND).
+ *  - nudge: a head of the request's CCA, or the filer of a hall-wide request
+ *    (anyone else gets NOT_FOUND).
  * An admin who is none of these is refused. Status is never an input and never
  * written here: the services call `transition.ts`, the only status writer.
  * A race for one proposal's single request ends in DISPOSABLE_PROPOSAL_TAKEN,
@@ -93,15 +101,22 @@ export const disposableRouter = createTRPCRouter({
       getRequest(ctx.db, ctx.session.user.userID, input.id),
     ),
 
-  headCcas: gated.query(({ ctx }) =>
-    headCcaChoices(ctx.db, ctx.session.user.userID),
+  /** The events this person may tag a request to (the form's picker). */
+  eventChoices: gated.query(({ ctx }) =>
+    eventChoices(ctx.db, ctx.session.user.userID),
   ),
 
-  proposalChoices: gated
-    .input(disposableProposalChoicesInput)
+  /** Whether this person may file for this event now (the event page's link). */
+  canFile: gated
+    .input(disposableCanFileInput)
     .query(({ ctx, input }) =>
-      proposalChoices(ctx.db, ctx.session.user.userID, input.ccaID),
+      canFileForEvent(ctx.db, ctx.session.user.userID, input.eventID),
     ),
+
+  /** The proposals of the CCAs this person heads (for one with no event yet). */
+  proposalChoices: gated.query(({ ctx }) =>
+    proposalChoices(ctx.db, ctx.session.user.userID),
+  ),
 
   create: gated
     .input(disposableCreateInput)

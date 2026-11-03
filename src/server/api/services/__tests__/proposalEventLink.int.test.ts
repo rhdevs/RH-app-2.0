@@ -260,17 +260,44 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         release = resolve;
       });
       const timer = setTimeout(release, 8_000);
+      const wait = async () => {
+        arrived += 1;
+        if (arrived >= parties) release();
+        await gate;
+        clearTimeout(timer);
+      };
+      // The claim runs in a transaction (it moves the proposal's disposables
+      // request with it), so the gate sits on the transaction's own client.
       const client = proxied(db, (prop) =>
-        prop === "proposal"
-          ? delegateWith("proposal", {
-              updateMany: async (args: never) => {
-                arrived += 1;
-                if (arrived >= parties) release();
-                await gate;
-                clearTimeout(timer);
-                return db.proposal.updateMany(args);
-              },
-            })
+        prop === "$transaction"
+          ? (fn: (tx: unknown) => Promise<unknown>, opts?: never) =>
+              db.$transaction(
+                (tx) =>
+                  fn(
+                    new Proxy(tx, {
+                      get(t, p) {
+                        if (p !== "proposal") {
+                          return Reflect.get(t, p) as unknown;
+                        }
+                        return new Proxy(t.proposal, {
+                          get(d, m) {
+                            if (m === "updateMany") {
+                              return async (args: never) => {
+                                await wait();
+                                return t.proposal.updateMany(args);
+                              };
+                            }
+                            const v = Reflect.get(d, m) as unknown;
+                            return typeof v === "function"
+                              ? (v as (...x: unknown[]) => unknown).bind(d)
+                              : v;
+                          },
+                        });
+                      },
+                    }),
+                  ),
+                opts,
+              )
           : undefined,
       );
       return { client, arrived: () => arrived };

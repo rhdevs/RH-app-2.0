@@ -8,6 +8,8 @@ import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { disposableErrorMessage } from "~/lib/disposables/errors";
 import {
+  chooseEvent,
+  chooseProposal,
   emptyForm,
   formFromRequest,
   ITEM_LABELS,
@@ -29,18 +31,28 @@ const fieldClass =
 
 /**
  * The request form. With `requestID` it edits that request (the Social
- * director); without, it files a new one for a CCA the
- * person heads. NOT a guard: the procedures check the flag and who may do it.
- * Only the Social director edits (heads create and read). Editing an approved
- * request sends it back to pending and tells the CCA's heads, and the form
- * says so before it is saved.
+ * director); without, it files a new one for an event, or for a proposal that
+ * has no event yet. There is no CCA field: the CCA comes from the event (or the
+ * proposal) on the server, and who may file is decided there too. NOT a guard:
+ * the procedures check the flag and who may do it.
+ *
+ * Choosing an event fills the collection date with the day the event starts,
+ * in Singapore time; the person can change it. What a request is tagged to
+ * cannot be edited (delete it and file it again), so an edit shows the tag but
+ * does not offer it. Only the Social director edits. Editing an approved
+ * request sends it back to pending and tells the CCA's heads, and the form says
+ * so before it is saved.
  */
 export default function DisposableForm({
   requestID,
   initialCcaID,
+  initialEventID,
 }: {
   requestID?: string;
+  /** Narrows the event choices to this CCA (the CCA tab's link). */
   initialCcaID?: number;
+  /** The event page's link: this event starts chosen. */
+  initialEventID?: number;
 }) {
   const router = useRouter();
   const enabled = api.disposable.enabled.useQuery(undefined, {
@@ -49,21 +61,26 @@ export default function DisposableForm({
   });
   const on = enabled.data?.enabled === true;
   const editing = requestID !== undefined;
+  const today = sgtDayKey(new Date());
 
   const loaded = api.disposable.get.useQuery(
     { id: requestID ?? "" },
     { retry: false, enabled: on && editing },
   );
-  const ccas = api.disposable.headCcas.useQuery(undefined, {
+  const events = api.disposable.eventChoices.useQuery(undefined, {
+    retry: false,
+    enabled: on && !editing,
+  });
+  const proposals = api.disposable.proposalChoices.useQuery(undefined, {
     retry: false,
     enabled: on && !editing,
   });
 
-  const [state, setState] = useState<DisposableFormState>(
-    emptyForm(initialCcaID ?? null),
-  );
+  const [state, setState] = useState<DisposableFormState>(emptyForm(null));
   const [errors, setErrors] = useState<string[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const [seeded, setSeeded] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (loaded.data && !hydrated) {
@@ -72,17 +89,20 @@ export default function DisposableForm({
     }
   }, [loaded.data, hydrated]);
   useEffect(() => {
-    // One CCA to choose from is already chosen.
-    const choices = ccas.data;
-    if (!editing && choices?.length === 1 && state.ccaID === null) {
-      setState((s) => ({ ...s, ccaID: choices[0]!.ccaID }));
+    // The event page's link: choose that event once the choices are in, if it
+    // is one the person may tag (it may have ended or been canceled since).
+    if (editing || seeded || !events.data) return;
+    setSeeded(true);
+    if (initialEventID === undefined) return;
+    const found = events.data.find((e) => e.eventID === initialEventID);
+    if (found) {
+      setState((s) => chooseEvent(s, found, today));
+    } else {
+      setNotice(
+        "That event cannot take a disposables request. Choose another event.",
+      );
     }
-  }, [ccas.data, editing, state.ccaID]);
-
-  const proposals = api.disposable.proposalChoices.useQuery(
-    { ccaID: state.ccaID ?? 1 },
-    { retry: false, enabled: on && state.ccaID !== null && !editing },
-  );
+  }, [editing, seeded, events.data, initialEventID, today]);
 
   const fail = (e: { message: string }) =>
     setErrors([disposableErrorMessage(e.message)]);
@@ -122,23 +142,45 @@ export default function DisposableForm({
       </p>
     );
   }
-  if (!editing && ccas.isLoading) {
+  if (!editing && (events.isLoading || proposals.isLoading)) {
     return <p className="text-sm text-gray-500">Loading…</p>;
   }
-  if (!editing && (ccas.isError || (ccas.data?.length ?? 0) === 0)) {
+  const eventList = (events.data ?? []).filter(
+    (e) => initialCcaID === undefined || e.ccaID === initialCcaID,
+  );
+  const proposalList = (proposals.data ?? []).filter(
+    (p) => initialCcaID === undefined || p.ccaID === initialCcaID,
+  );
+  const freeProposals = proposalList.filter(
+    (p) => !p.taken && p.eventID === null,
+  );
+  if (
+    !editing &&
+    (events.isError || proposals.isError) &&
+    eventList.length === 0 &&
+    freeProposals.length === 0
+  ) {
+    return (
+      <p role="alert" className="text-sm text-red-600">
+        Could not load what you can ask for. Try again shortly.
+      </p>
+    );
+  }
+  if (!editing && eventList.length === 0 && freeProposals.length === 0) {
     return (
       <p role="alert" className="text-sm text-gray-600">
-        Only a CCA head can ask for disposables.
+        There is nothing to ask for disposables for. A CCA head can ask for an
+        event of their CCA that has not ended or been canceled, or for one of
+        its proposals. The JCRC and admins can ask for hall-wide events.
       </p>
     );
   }
 
   const set = (patch: Partial<DisposableFormState>) =>
     setState((s) => ({ ...s, ...patch }));
-  const today = sgtDayKey(new Date());
   const backToPending = editing && loaded.data?.status === "approved";
-  const canEditLink = !editing;
   const busy = create.isPending || update.isPending;
+  const tag = loaded.data?.event ?? null;
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,27 +203,79 @@ export default function DisposableForm({
         {editing ? "Edit disposables request" : "New disposables request"}
       </h2>
 
-      {!editing && (ccas.data?.length ?? 0) > 1 && (
-        <label className="block text-sm font-medium text-gray-700">
-          CCA
-          <select
-            className={`${fieldClass} mt-1`}
-            value={state.ccaID ?? ""}
-            onChange={(e) =>
-              set({
-                ccaID: e.target.value === "" ? null : Number(e.target.value),
-                proposalID: "",
-              })
-            }
-          >
-            <option value="">Choose a CCA</option>
-            {ccas.data?.map((c) => (
-              <option key={c.ccaID} value={c.ccaID}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      {editing ? (
+        <p className="text-sm text-gray-700">
+          {tag
+            ? `For the event ${tag.title ?? "(untitled)"}${
+                tag.state === "gone" ? " (no longer exists)" : ""
+              }.`
+            : loaded.data?.proposalID
+              ? "For a proposal. It has no event yet."
+              : ""}{" "}
+          <span className="text-xs text-gray-500">
+            What a request is for cannot be changed. Delete it and file it again
+            to change that.
+          </span>
+        </p>
+      ) : (
+        <>
+          <label className="block text-sm font-medium text-gray-700">
+            Event
+            <select
+              className={`${fieldClass} mt-1`}
+              value={state.eventID ?? ""}
+              onChange={(e) => {
+                setNotice(null);
+                const chosen =
+                  eventList.find(
+                    (ev) => ev.eventID === Number(e.target.value),
+                  ) ?? null;
+                setState((s) => chooseEvent(s, chosen, today));
+              }}
+            >
+              <option value="">No event chosen</option>
+              {eventList.map((ev) => (
+                <option key={ev.eventID} value={ev.eventID}>
+                  {ev.title} ({ev.ccaName ?? "Hall-wide"})
+                </option>
+              ))}
+            </select>
+          </label>
+          {notice && (
+            <p role="status" className="text-xs text-amber-700">
+              {notice}
+            </p>
+          )}
+
+          {proposalList.length > 0 && (
+            <label className="block text-sm font-medium text-gray-700">
+              Or a proposal that has no event yet
+              <select
+                className={`${fieldClass} mt-1`}
+                value={state.proposalID}
+                onChange={(e) =>
+                  setState((s) => chooseProposal(s, e.target.value))
+                }
+              >
+                <option value="">No proposal</option>
+                {proposalList.map((p) => (
+                  <option
+                    key={p.id}
+                    value={p.id}
+                    disabled={p.taken || p.eventID !== null}
+                  >
+                    {p.title} ({p.ccaName ?? "CCA"})
+                    {p.taken
+                      ? " (already has a request)"
+                      : p.eventID !== null
+                        ? " (has an event: choose the event)"
+                        : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </>
       )}
 
       <label className="block text-sm font-medium text-gray-700">
@@ -231,7 +325,9 @@ export default function DisposableForm({
             min={today}
             className={`${fieldClass} mt-1`}
             value={state.collectionDay}
-            onChange={(e) => set({ collectionDay: e.target.value })}
+            onChange={(e) =>
+              set({ collectionDay: e.target.value, collectionDayEdited: true })
+            }
           />
         </label>
         <label className="block text-sm font-medium text-gray-700">
@@ -255,25 +351,6 @@ export default function DisposableForm({
           onChange={(e) => set({ description: e.target.value })}
         />
       </label>
-
-      {canEditLink && (proposals.data?.length ?? 0) > 0 && (
-        <label className="block text-sm font-medium text-gray-700">
-          Link to a proposal (optional)
-          <select
-            className={`${fieldClass} mt-1`}
-            value={state.proposalID}
-            onChange={(e) => set({ proposalID: e.target.value })}
-          >
-            <option value="">No proposal</option>
-            {proposals.data?.map((p) => (
-              <option key={p.id} value={p.id} disabled={p.taken}>
-                {p.title}
-                {p.taken ? " (already has a request)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
 
       {backToPending && (
         <p role="note" className="text-sm text-amber-700">

@@ -346,6 +346,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       db.disposableRequest.create({
         data: {
           ccaID: A,
+          eventID: null,
+          eventTitle: null,
           createdBy: U.headA,
           title: "Hall dinner",
           description: "x",

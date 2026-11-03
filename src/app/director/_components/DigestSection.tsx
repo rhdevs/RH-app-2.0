@@ -37,9 +37,17 @@ export default function DigestSection() {
               <p className="text-sm font-medium text-gray-900">
                 {i.collectionTime} · {i.title}
               </p>
+              {i.eventTitle && (
+                <p className="text-xs text-gray-700">
+                  For {i.eventTitle}
+                  {i.eventState === "canceled" && " (canceled)"}
+                  {i.eventState === "declined" && " (declined)"}
+                </p>
+              )}
               <p className="text-xs text-gray-500">
-                {i.ccaName ?? "A CCA"} · plates {i.plates}, cups {i.cups}, bowls{" "}
-                {i.bowls}, forks {i.forks}, spoons {i.spoons}
+                {i.hallWide ? "Hall-wide" : (i.ccaName ?? "A CCA")} · plates{" "}
+                {i.plates}, cups {i.cups}, bowls {i.bowls}, forks {i.forks},
+                spoons {i.spoons}
               </p>
             </li>
           ))}
