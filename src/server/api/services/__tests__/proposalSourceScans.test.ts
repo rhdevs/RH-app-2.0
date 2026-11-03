@@ -381,11 +381,16 @@ describe("the Event link is made once, after the approval, and never fails it", 
       body.indexOf("linkAndCreate("),
     );
     expect(body).not.toMatch(/\bthrow\b/);
-    // The only other catches are the two best-effort notices and the claim's
-    // write conflict (P2034), which reads as a lost compare-and-set.
-    expect(c.match(/\bcatch\b/g)).toHaveLength(4);
+    // The only other catches are the two best-effort notices, the bounded
+    // retry of a write conflict (P2034) on the claim and its backout, and the
+    // log-only catch on the move after the Event exists.
+    expect(c.match(/\bcatch\b/g)).toHaveLength(5);
     expect(c).toMatch(/err\.code === "P2034"/);
-    expect(c).toMatch(/if \(!conflict\) throw err;/);
+    expect(c).toMatch(
+      /if \(!isWriteConflict\(err\) \|\| tries >= CONFLICT_RETRIES\) throw err;/,
+    );
+    // The claim and its backout both use it.
+    expect(c.match(/await retryOnConflict\(/g)).toHaveLength(2);
   });
 
   it("the button checks the flag, then the head, then spends budget, then links", () => {

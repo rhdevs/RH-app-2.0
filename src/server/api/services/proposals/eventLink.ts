@@ -229,6 +229,35 @@ async function hasMilestoneFiling(db: LinkDb, id: string): Promise<boolean> {
   return row !== null;
 }
 
+/** Retries after a write conflict on the claim or its backout (3 tries in all). */
+const CONFLICT_RETRIES = 2;
+
+const isWriteConflict = (err: unknown) =>
+  err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2034";
+
+/**
+ * Run one transaction, retrying a write conflict (P2034) up to
+ * CONFLICT_RETRIES more times. The transaction also writes the proposal's
+ * disposables request, so a conflict does not by itself mean another press won
+ * the claim: after each conflict `settled` looks at the stored state and may
+ * return the answer instead of retrying. Any other error, and a conflict that
+ * outlasts the retries, is rethrown for the caller's failure path.
+ */
+async function retryOnConflict<T>(
+  attempt: () => Promise<T>,
+  settled: () => Promise<T | undefined>,
+): Promise<T> {
+  for (let tries = 0; ; tries += 1) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (!isWriteConflict(err) || tries >= CONFLICT_RETRIES) throw err;
+      const answer = await settled();
+      if (answer !== undefined) return answer;
+    }
+  }
+}
+
 async function linkAndCreate(
   db: LinkDb,
   source: Source,
@@ -258,52 +287,69 @@ async function linkAndCreate(
   };
   // One transaction: the claim and the move of the proposal's disposables
   // request, so no reader sees one without the other.
-  // A write conflict means another press is claiming the same proposal in its
-  // own transaction: this one lost, exactly as a compare-and-set that matched
-  // nothing.
-  let claimed: { count: number };
-  try {
-    claimed = await db.$transaction(async (tx) => {
-      const won = await tx.proposal.updateMany({
-        where: {
-          id: source.id,
-          ccaID: source.ccaID,
-          status: { in: statuses },
-          ...eventIDIs(expected),
-        },
-        data: { eventID, eventClaimedAt: new Date() },
+  // A write conflict can come from another press claiming the proposal, or from
+  // someone editing the request the move writes. Look at the proposal: if its
+  // event is no longer the one this press read, it lost (as a compare-and-set
+  // that matched nothing); otherwise try again with the same id.
+  const claimed = await retryOnConflict(
+    () =>
+      db.$transaction(async (tx) => {
+        const won = await tx.proposal.updateMany({
+          where: {
+            id: source.id,
+            ccaID: source.ccaID,
+            status: { in: statuses },
+            ...eventIDIs(expected),
+          },
+          data: { eventID, eventClaimedAt: new Date() },
+        });
+        if (won.count === 1) await moveProposalRequestToEvent(tx, move);
+        return won;
+      }),
+    async () => {
+      const now = await db.proposal.findUnique({
+        where: { id: source.id },
+        select: { eventID: true },
       });
-      if (won.count === 1) await moveProposalRequestToEvent(tx, move);
-      return won;
-    });
-  } catch (err) {
-    const conflict =
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2034";
-    if (!conflict) throw err;
-    claimed = { count: 0 };
-  }
+      return (now?.eventID ?? null) === expected ? undefined : { count: 0 };
+    },
+  );
   if (claimed.count !== 1) return { outcome: "lost_race" };
   // Write-then-check: the filing side re-reads the claim after it commits, so
   // whichever of the two writes lands second sees the other and backs out.
   if (await hasMilestoneFiling(db, source.id)) {
-    await db.$transaction(async (tx) => {
-      await tx.proposal.updateMany({
-        where: { id: source.id, eventID },
-        data: { eventID: expected, eventClaimedAt: source.eventClaimedAt },
-      });
-      await moveProposalRequestBack(tx, {
-        proposalID: source.id,
-        eventID,
-        to: expected,
-      });
-    });
+    await retryOnConflict(
+      () =>
+        db.$transaction(async (tx) => {
+          await tx.proposal.updateMany({
+            where: { id: source.id, eventID },
+            data: { eventID: expected, eventClaimedAt: source.eventClaimedAt },
+          });
+          await moveProposalRequestBack(tx, {
+            proposalID: source.id,
+            eventID,
+            to: expected,
+          });
+        }),
+      () => Promise.resolve(undefined),
+    );
     return { outcome: "milestone_filed" };
   }
   await createEventRow(db, eventRowFrom(source, eventID, ownerID));
   // A request filed after the claim saw the proposal's claimed id as "no
-  // event yet"; now that the Event exists, move it too (idempotent).
-  await moveProposalRequestToEvent(db, move);
+  // event yet"; now that the Event exists, move it too (idempotent). The Event
+  // is made, so a failure here is logged by code and does not undo "created".
+  await moveProposalRequestToEvent(db, move).catch((err: unknown) =>
+    console.error(
+      JSON.stringify({
+        evt: "proposal_event_request_move_failed",
+        code:
+          err instanceof Prisma.PrismaClientKnownRequestError
+            ? err.code
+            : "unknown",
+      }),
+    ),
+  );
   return { outcome: "created", eventID };
 }
 

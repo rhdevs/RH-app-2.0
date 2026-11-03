@@ -715,6 +715,254 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
     });
 
+    describe("a write conflict on the claim, a dangling claim and the picker's scan", () => {
+      /**
+       * A client whose first `failures` transactions end in a write conflict
+       * (P2034), as when someone edits the request the claim moves. Before each
+       * failure `before` may change the stored state, as a rival claim would.
+       */
+      const conflicting = async (
+        failures: number,
+        before?: (call: number) => Promise<void>,
+      ) => {
+        const { Prisma } = await import("@prisma/client");
+        let calls = 0;
+        const client = new Proxy(db, {
+          get(target, prop) {
+            if (prop === "$transaction") {
+              return async (...args: unknown[]) => {
+                calls += 1;
+                if (calls <= failures) {
+                  await before?.(calls);
+                  throw new Prisma.PrismaClientKnownRequestError("conflict", {
+                    code: "P2034",
+                    clientVersion: "test",
+                  });
+                }
+                return (
+                  target.$transaction as unknown as (
+                    ...a: unknown[]
+                  ) => Promise<unknown>
+                )(...args);
+              };
+            }
+            const v = Reflect.get(target, prop, target) as unknown;
+            return typeof v === "function"
+              ? (v as (...x: unknown[]) => unknown).bind(target)
+              : v;
+          },
+        });
+        return { client, calls: () => calls };
+      };
+
+      /** A client that runs `hook` just before the request row is written. */
+      const beforeRequestCreate = (hook: () => Promise<void>) =>
+        new Proxy(db, {
+          get(target, prop) {
+            if (prop === "disposableRequest") {
+              return new Proxy(target.disposableRequest, {
+                get(t, p) {
+                  if (p === "create") {
+                    return async (args: never) => {
+                      await hook();
+                      return (t.create as (a: never) => unknown)(args);
+                    };
+                  }
+                  const v = Reflect.get(t, p) as unknown;
+                  return typeof v === "function"
+                    ? (v as (...x: unknown[]) => unknown).bind(t)
+                    : v;
+                },
+              });
+            }
+            const v = Reflect.get(target, prop, target) as unknown;
+            return typeof v === "function"
+              ? (v as (...x: unknown[]) => unknown).bind(target)
+              : v;
+          },
+        });
+
+      const eventsOfProposal = () =>
+        db.event.findMany({
+          where: { ccaID: CCA_A, title: "TEST proposal" },
+          select: { eventID: true },
+        });
+
+      it("a conflict with no other claimer is retried, then the event is made and the request moves", async () => {
+        const proposal = await makeProposal(CCA_A);
+        const made = await as(U.headA).create(forProposal(proposal.id));
+        const { client, calls } = await conflicting(1);
+
+        const result = await link.createEventFromProposal(
+          client,
+          U.headA,
+          proposal.id,
+        );
+
+        expect(result.created).toBe(true);
+        expect(calls()).toBe(2);
+        const events = await eventsOfProposal();
+        expect(events.map((e) => e.eventID)).toEqual([result.eventID]);
+        expect(
+          (await db.proposal.findUniqueOrThrow({ where: { id: proposal.id } }))
+            .eventID,
+        ).toBe(result.eventID);
+        expect(await stored(made.id)).toMatchObject({
+          eventID: result.eventID,
+          eventTitle: "TEST proposal",
+        });
+      });
+
+      it("a conflict while another press holds the claim is a lost race, and makes nothing", async () => {
+        const proposal = await makeProposal(CCA_A);
+        const { client, calls } = await conflicting(1, async () => {
+          await db.proposal.update({
+            where: { id: proposal.id },
+            data: { eventID: 99918060, eventClaimedAt: new Date() },
+          });
+        });
+
+        const result = await link.createEventFromProposal(
+          client,
+          U.headA,
+          proposal.id,
+        );
+
+        expect(result).toEqual({ created: false, eventID: 99918060 });
+        expect(calls()).toBe(1);
+        expect(await eventsOfProposal()).toEqual([]);
+      });
+
+      it("a conflict that never clears is rethrown to the failure path, not read as already linked", async () => {
+        const proposal = await makeProposal(CCA_A);
+        const { client, calls } = await conflicting(99);
+
+        await expect(
+          link.createEventFromProposal(client, U.headA, proposal.id),
+        ).rejects.toMatchObject({ code: "P2034" });
+        expect(calls()).toBe(3);
+
+        expect(await link.draftEventAfterApproval(client, proposal.id)).toBe(
+          "failed",
+        );
+        const failed = await db.notification.findMany({
+          where: { userID: U.headA, kind: "proposal.event_draft_failed" },
+        });
+        expect(failed).toHaveLength(1);
+        expect(await eventsOfProposal()).toEqual([]);
+        expect(
+          (await db.proposal.findUniqueOrThrow({ where: { id: proposal.id } }))
+            .eventID,
+        ).toBeNull();
+      });
+
+      it("two presses with a request filed make one event and tag the request once", async () => {
+        const proposal = await makeProposal(CCA_A);
+        const made = await as(U.headA).create(forProposal(proposal.id));
+
+        const settled = await Promise.allSettled([
+          link.createEventFromProposal(db, U.headA, proposal.id),
+          link.createEventFromProposal(db, U.headA2, proposal.id),
+        ]);
+
+        const won = settled.flatMap((s) =>
+          s.status === "fulfilled" && s.value.created ? [s.value] : [],
+        );
+        expect(won).toHaveLength(1);
+        const events = await eventsOfProposal();
+        expect(events.map((e) => e.eventID)).toEqual([won[0]!.eventID]);
+        expect(await stored(made.id)).toMatchObject({
+          eventID: won[0]!.eventID,
+          eventTitle: "TEST proposal",
+          proposalID: proposal.id,
+        });
+      });
+
+      it("a filing resolved during the claim, inserted after the final move, ends tagged", async () => {
+        const { moveProposalRequestToEvent } = await import(
+          "../disposables/eventTag"
+        );
+        const proposal = await makeProposal(CCA_A);
+        const claimed = 99918070;
+        await db.proposal.update({
+          where: { id: proposal.id },
+          data: { eventID: claimed, eventClaimedAt: new Date() },
+        });
+        // The filing resolved its target during the claim (no Event row yet).
+        // Before it inserts, the Event is made and the final move runs: it
+        // finds no request.
+        const client = beforeRequestCreate(async () => {
+          await makeEvent(claimed, CCA_A, { title: "TEST proposal" });
+          await db.$transaction((tx) =>
+            moveProposalRequestToEvent(tx, {
+              proposalID: proposal.id,
+              eventID: claimed,
+              proposalTitle: "TEST proposal",
+              ccaID: CCA_A,
+            }),
+          );
+        });
+
+        const made = await write.createRequest(
+          client,
+          U.headA,
+          forProposal(proposal.id) as never,
+        );
+
+        expect(await stored(made.id)).toMatchObject({
+          eventID: claimed,
+          eventTitle: "TEST proposal",
+          ccaID: CCA_A,
+          proposalID: proposal.id,
+        });
+      });
+
+      it("a claim with no Event row (dangling or in flight) does not tag the request", async () => {
+        const proposal = await makeProposal(CCA_A);
+        const client = beforeRequestCreate(async () => {
+          await db.proposal.update({
+            where: { id: proposal.id },
+            data: { eventID: 99918071, eventClaimedAt: new Date() },
+          });
+        });
+
+        const made = await write.createRequest(
+          client,
+          U.headA,
+          forProposal(proposal.id) as never,
+        );
+
+        expect(await stored(made.id)).toMatchObject({
+          eventID: null,
+          eventTitle: null,
+          proposalID: proposal.id,
+        });
+      });
+
+      it("more than 300 old events do not crowd an upcoming one out of the picker", async () => {
+        const old = nowSeconds() - 400 * 24 * hour;
+        await db.event.createMany({
+          data: Array.from({ length: 305 }, (_, i) => ({
+            eventID: 99919000 + i,
+            ccaID: CCA_A,
+            createdBy: U.headA,
+            title: `TEST old ${i}`,
+            startTime: old + i * hour,
+            endTime: null,
+            status: "published",
+            updatedAt: new Date(),
+          })),
+        });
+
+        const choices = await as(U.headA).eventChoices();
+
+        expect(choices).toHaveLength(100);
+        expect(choices.at(-1)?.eventID).toBe(EV.a);
+        const starts = choices.map((c) => c.startTime ?? 0);
+        expect(starts).toEqual([...starts].sort((a, b) => a - b));
+      });
+    });
+
     describe("a canceled event, a renamed event and a deleted one", () => {
       it("a canceled event's requests keep their status, show as canceled, and can still be approved", async () => {
         const made = await as(U.headA).create(forEvent(EV.a));

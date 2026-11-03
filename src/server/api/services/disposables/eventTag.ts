@@ -55,8 +55,6 @@ export type TagTarget = {
     status: string | null;
     endTime: number | null;
   } | null;
-  /** `Proposal.eventID` as read, for the proposal-only race re-check. */
-  proposalEventID: number | null;
   /**
    * Set when the tag is not allowed. Raised only AFTER the caller has been
    * authorized for `ccaID`, so a stranger learns nothing about the event or the
@@ -111,7 +109,6 @@ export async function resolveTarget(
       eventTitle: snapshotOf(event.title),
       proposalID: proposal?.id ?? null,
       event,
-      proposalEventID: proposal?.eventID ?? null,
       problem: mismatch ? DISPOSABLE_EVENT_MISMATCH : null,
     };
   }
@@ -133,7 +130,6 @@ export async function resolveTarget(
     eventTitle: null,
     proposalID: p.id,
     event: null,
-    proposalEventID: p.eventID ?? null,
     problem: linked
       ? `${DISPOSABLE_PROPOSAL_HAS_EVENT}:${linked.eventID}`
       : null,
@@ -151,14 +147,17 @@ export function assertTaggable(target: TagTarget, now: Date): void {
  * Filing against a proposal while its Event is being made. The pre-check saw no
  * Event, and the Event's claim and request move can both land before this
  * request exists, so the move finds nothing. After the filing commits, read the
- * proposal again: if it now points at an Event it did not before, tag the
- * request with it instead of leaving it on the proposal. A compare-and-set on
+ * proposal again and tag the request only if the Event ROW its `eventID` names
+ * exists. A claim with no Event row is in flight or dangling (backed out or
+ * crashed): leave the request on the proposal for the final move, which runs
+ * after the row is created. So either that move sees this request, or this
+ * request was inserted after it and finds the row here. A compare-and-set on
  * `eventID: null`, so it cannot overwrite a tag the move already wrote.
  */
 export async function tagIfProposalGotAnEvent(
   db: Pick<PrismaClient, "event" | "proposal" | "disposableRequest">,
   requestID: string,
-  target: Pick<TagTarget, "proposalID" | "proposalEventID">,
+  target: Pick<TagTarget, "proposalID">,
 ): Promise<boolean> {
   if (target.proposalID === null) return false;
   const proposal = await db.proposal.findUnique({
@@ -166,19 +165,17 @@ export async function tagIfProposalGotAnEvent(
     select: { ccaID: true, title: true, eventID: true },
   });
   // Event ids start at 1, so a falsy id is no event.
-  if (!proposal?.eventID || proposal.eventID === target.proposalEventID) {
-    return false;
-  }
+  if (!proposal?.eventID) return false;
   const event = await db.event.findUnique({
     where: { eventID: proposal.eventID },
     select: { title: true },
   });
+  if (event === null) return false;
   const moved = await db.disposableRequest.updateMany({
     where: { id: requestID, proposalID: target.proposalID, eventID: null },
     data: {
       eventID: proposal.eventID,
-      eventTitle:
-        snapshotOf(event?.title ?? null) ?? proposalEventTitle(proposal.title),
+      eventTitle: snapshotOf(event.title) ?? proposalEventTitle(proposal.title),
       ccaID: proposal.ccaID,
     },
   });

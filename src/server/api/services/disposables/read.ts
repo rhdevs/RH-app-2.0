@@ -440,8 +440,9 @@ export type EventChoice = {
  * the CCAs they head, plus hall-wide events when they may file for those, that
  * are not canceled, declined or ended. The same rule the server applies when
  * filing (`tagProblem`), so the picker cannot offer what filing would refuse.
- * Bounded: the database narrows by owner and end time, then the rule is applied
- * again here (a status the query cannot express).
+ * Bounded: the database narrows by owner and end time and returns the most
+ * recent by start time, then the rule is applied again here (a status the query
+ * cannot express).
  */
 export async function eventChoices(
   db: PrismaClient,
@@ -470,7 +471,7 @@ export async function eventChoices(
         },
       ],
     },
-    orderBy: [{ startTime: "asc" }, { eventID: "asc" }],
+    orderBy: [{ startTime: "desc" }, { eventID: "desc" }],
     take: EVENT_SCAN_MAX,
     select: {
       eventID: true,
@@ -481,9 +482,12 @@ export async function eventChoices(
       endTime: true,
     },
   });
+  // Newest first so old events with no end time cannot crowd out upcoming
+  // ones; shown oldest first.
   const taggable = events
     .filter((e) => tagProblem(e, nowSeconds) === null)
-    .slice(0, EVENT_CHOICES_MAX);
+    .slice(0, EVENT_CHOICES_MAX)
+    .reverse();
   const names = await namesOf(db, [
     ...new Set(taggable.flatMap((e) => (e.ccaID !== null ? [e.ccaID] : []))),
   ]);
