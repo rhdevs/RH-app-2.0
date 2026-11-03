@@ -55,10 +55,15 @@ function Milestone({ milestoneRef: ref }: { milestoneRef: MilestoneRef }) {
     await reload();
   };
 
-  if (get.isLoading) return <p className="text-sm text-gray-500">Loading…</p>;
+  if (get.isLoading)
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   if (get.isError || !get.data) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         {describeMilestoneError(get.error?.message ?? "")}
       </p>
     );
@@ -70,12 +75,14 @@ function Milestone({ milestoneRef: ref }: { milestoneRef: MilestoneRef }) {
       <div>
         <Link
           href={`/milestones/${m.ccaID}`}
-          className="text-sm text-emerald-700 hover:underline"
+          className="text-sm text-emerald-700 hover:underline dark:text-emerald-300"
         >
           All milestones
         </Link>
-        <h1 className="mt-1 text-2xl font-semibold text-gray-900">{m.title}</h1>
-        <p className="text-sm text-gray-500">
+        <h1 className="mt-1 text-2xl font-semibold text-gray-900 dark:text-foreground">
+          {m.title}
+        </h1>
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
           {m.state === "canceled"
             ? "This event was canceled. What was filed is kept; nothing more can be added."
             : m.locked
@@ -85,7 +92,7 @@ function Milestone({ milestoneRef: ref }: { milestoneRef: MilestoneRef }) {
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
       )}
@@ -131,8 +138,12 @@ function HeadResult({ head }: { head: NonNullable<View["head"]> }) {
       <h2 id="head-result" className="text-base font-semibold">
         Head&apos;s rating
       </h2>
-      <p className="text-sm text-gray-900">{head.score} of 5</p>
-      <p className="whitespace-pre-wrap text-sm text-gray-700">{head.text}</p>
+      <p className="text-sm text-gray-900 dark:text-foreground">
+        {head.score} of 5
+      </p>
+      <p className="whitespace-pre-wrap text-sm text-gray-700 dark:text-foreground">
+        {head.text}
+      </p>
     </section>
   );
 }
@@ -147,12 +158,16 @@ function AssessmentResult({
       <h2 id="assessment-result" className="text-base font-semibold">
         Director&apos;s rating
       </h2>
-      <p className="text-sm text-gray-900">{assessment.score} of 5</p>
-      <p className="whitespace-pre-wrap text-sm text-gray-700">
+      <p className="text-sm text-gray-900 dark:text-foreground">
+        {assessment.score} of 5
+      </p>
+      <p className="whitespace-pre-wrap text-sm text-gray-700 dark:text-foreground">
         {assessment.text}
       </p>
       {assessment.selfRated && (
-        <p className="text-xs font-medium text-amber-700">{SELF_RATED_LABEL}</p>
+        <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
+          {SELF_RATED_LABEL}
+        </p>
       )}
     </section>
   );
@@ -167,15 +182,17 @@ function Photos({ milestoneRef: ref, m, onChange, onError }: SectionProps) {
         Photos
       </h2>
       {m.evidence.length === 0 ? (
-        <p className="text-sm text-gray-500">No photos attached yet.</p>
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
+          No photos attached yet.
+        </p>
       ) : (
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {m.evidence.map((p) => (
             <li
               key={p.id}
-              className="space-y-1 rounded-md border border-gray-200 bg-white p-2"
+              className="space-y-1 rounded-md border border-gray-200 bg-white p-2 dark:border-border dark:bg-card"
             >
-              <div className="relative h-32 w-full overflow-hidden rounded bg-gray-50">
+              <div className="relative h-32 w-full overflow-hidden rounded bg-gray-50 dark:bg-muted">
                 <Image
                   src={`/api/milestone-evidence/${p.id}`}
                   alt="Evidence photo"
@@ -236,12 +253,12 @@ function RatingForm({
         if (ok) onSubmit(score, text.trim());
       }}
     >
-      <label className="block text-sm text-gray-700">
+      <label className="block text-sm text-gray-700 dark:text-foreground">
         {label} score
         <select
           value={score}
           onChange={(e) => setScore(Number(e.target.value))}
-          className="ml-2 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm"
+          className="ml-2 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-border dark:bg-card"
         >
           {SCORES.map((s) => (
             <option key={s} value={s}>
@@ -249,20 +266,20 @@ function RatingForm({
             </option>
           ))}
         </select>
-        <span className="ml-1 text-xs text-gray-500">
+        <span className="ml-1 text-xs text-gray-500 dark:text-muted-foreground">
           (1 lowest, 5 highest)
         </span>
       </label>
-      <label className="block text-sm text-gray-700">
+      <label className="block text-sm text-gray-700 dark:text-foreground">
         Comment
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           maxLength={MILESTONE_TEXT_MAX}
           rows={4}
-          className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+          className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-border"
         />
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-gray-500 dark:text-muted-foreground">
           {text.length} of {MILESTONE_TEXT_MAX}
         </span>
       </label>
@@ -296,7 +313,7 @@ function HeadSection({
         <h2 id="file-heading" className="text-base font-semibold">
           Your rating
         </h2>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
           Rate how this went. You can change it until a director rates. The
           director cannot see your rating until they have given theirs.
         </p>
@@ -326,7 +343,7 @@ function HeadSection({
         <EvidencePanel ccaID={m.ccaID} />
         {(pool.data ?? []).length > 0 && (
           <div className="space-y-2">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-gray-700 dark:text-foreground">
               Attach unused photos to this milestone:
             </p>
             <ul className="flex flex-wrap gap-2">
@@ -374,7 +391,7 @@ function DirectorSection({
         <h2 id="rate-heading" className="text-base font-semibold">
           Your rating
         </h2>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
           {m.state !== "open"
             ? "This milestone can no longer be rated."
             : m.evidence.length === 0
@@ -389,7 +406,7 @@ function DirectorSection({
       <h2 id="rate-heading" className="text-base font-semibold">
         Your rating
       </h2>
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Look at the photos, then rate. This is final: once you submit, the
         heads&apos; filing is locked and the heads can see your rating. Your
         rating is of the photos you loaded; if a head changes them first, you

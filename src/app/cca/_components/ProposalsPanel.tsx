@@ -35,21 +35,29 @@ export default function ProposalsPanel({ ccaID }: { ccaID: number }) {
   );
 
   if (enabled.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (!on) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Proposals are not switched on yet.
       </p>
     );
   }
   if (list.isLoading) {
-    return <p className="text-sm text-gray-500">Loading proposals…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading proposals…
+      </p>
+    );
   }
   if (list.isError) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         Could not load the proposals. Try again shortly.
       </p>
     );
@@ -59,7 +67,9 @@ export default function ProposalsPanel({ ccaID }: { ccaID: number }) {
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-gray-900">Proposals</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-foreground">
+          Proposals
+        </h2>
         <Button asChild size="sm">
           <Link href={`/cca/${ccaID}/proposals/new`}>
             <Plus /> New proposal
@@ -68,22 +78,22 @@ export default function ProposalsPanel({ ccaID }: { ccaID: number }) {
       </div>
 
       {items.length === 0 ? (
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500">
+        <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500 dark:border-border dark:bg-card dark:text-muted-foreground">
           No proposals yet. Start one when your CCA plans something.
         </p>
       ) : (
-        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white dark:divide-border dark:border-border dark:bg-card">
           {items.map((p) => (
             <li key={p.id}>
               <Link
                 href={`/cca/${ccaID}/proposals/${p.id}`}
-                className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 hover:bg-gray-50"
+                className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 hover:bg-gray-50 dark:hover:bg-muted"
               >
                 <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-gray-900">
+                  <span className="block truncate text-sm font-medium text-gray-900 dark:text-foreground">
                     {p.title}
                   </span>
-                  <span className="block text-xs text-gray-500">
+                  <span className="block text-xs text-gray-500 dark:text-muted-foreground">
                     {isProposalCategory(p.category)
                       ? PROPOSAL_CATEGORY_LABELS[p.category]
                       : "Proposal"}
@@ -91,11 +101,11 @@ export default function ProposalsPanel({ ccaID }: { ccaID: number }) {
                 </span>
                 <span className="flex items-center gap-2">
                   {unreadLabel(p.unread) && (
-                    <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
                       {unreadLabel(p.unread)}
                     </span>
                   )}
-                  <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">
+                  <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700 dark:bg-muted dark:text-foreground">
                     {isProposalStatus(p.status)
                       ? PROPOSAL_STATUS_LABELS[p.status]
                       : "Unknown"}

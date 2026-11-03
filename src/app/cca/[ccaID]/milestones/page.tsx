@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import SurfaceTheme from "~/app/_components/theme/SurfaceTheme";
 
 import YearView from "~/app/milestones/_components/YearView";
 import { parseCcaID } from "../../_lib/ccaParam";
@@ -14,5 +15,9 @@ export default function CcaMilestonesTabPage({
 }) {
   const ccaID = parseCcaID(params.ccaID);
   if (ccaID === null) notFound();
-  return <YearView ccaID={ccaID} />;
+  return (
+    <SurfaceTheme className="dark:rounded-lg dark:p-4">
+      <YearView ccaID={ccaID} />
+    </SurfaceTheme>
+  );
 }

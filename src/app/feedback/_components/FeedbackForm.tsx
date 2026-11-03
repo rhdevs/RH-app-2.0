@@ -40,11 +40,15 @@ export default function FeedbackForm() {
   });
 
   if (enabledQuery.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (enabledQuery.data?.enabled !== true) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         In-app feedback is not switched on yet. Please use the form linked at
         the foot of the page.
       </p>
@@ -66,7 +70,9 @@ export default function FeedbackForm() {
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <fieldset>
-        <legend className="mb-1 text-sm font-medium text-gray-700">Type</legend>
+        <legend className="mb-1 text-sm font-medium text-gray-700 dark:text-foreground">
+          Type
+        </legend>
         <div className="flex gap-4">
           {FEEDBACK_CATEGORIES.map((c) => (
             <label key={c} className="flex items-center gap-2 text-sm">
@@ -85,7 +91,7 @@ export default function FeedbackForm() {
       <div>
         <label
           htmlFor="feedback-message"
-          className="mb-1 block text-sm font-medium text-gray-700"
+          className="mb-1 block text-sm font-medium text-gray-700 dark:text-foreground"
         >
           Message
         </label>
@@ -95,26 +101,29 @@ export default function FeedbackForm() {
           onChange={(e) => setMessage(e.target.value)}
           maxLength={FEEDBACK_MESSAGE_MAX}
           rows={6}
-          className="w-full rounded-lg border border-gray-300 p-3 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+          className="w-full rounded-lg border border-gray-300 p-3 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 dark:border-border"
         />
-        <p className="mt-1 text-right text-xs text-gray-500">
+        <p className="mt-1 text-right text-xs text-gray-500 dark:text-muted-foreground">
           {message.length} / {FEEDBACK_MESSAGE_MAX}
         </p>
       </div>
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
       )}
       {sent && (
-        <p role="status" className="text-sm text-emerald-700">
+        <p
+          role="status"
+          className="text-sm text-emerald-700 dark:text-emerald-300"
+        >
           Thank you. Your feedback was sent to the admins.
         </p>
       )}
       <button
         type="submit"
         disabled={submit.isPending || message.trim() === ""}
-        className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:bg-gray-300"
+        className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:bg-gray-300 dark:disabled:bg-muted"
       >
         {submit.isPending ? "Sending…" : "Send feedback"}
       </button>

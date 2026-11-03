@@ -28,7 +28,7 @@ import type { DisposableRequestView } from "~/server/api/services/disposables/re
 type Row = DisposableRequestView;
 
 const fieldClass =
-  "rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600";
+  "rounded-md border border-gray-300 dark:border-border bg-white dark:bg-card px-2 py-1.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600";
 
 /**
  * The disposables requests screen. ONE screen for everyone who may read:
@@ -77,21 +77,29 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
   }, [list.data]);
 
   if (enabled.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (!on) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Disposables requests are not switched on yet.
       </p>
     );
   }
   if (list.isLoading) {
-    return <p className="text-sm text-gray-500">Loading requests…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading requests…
+      </p>
+    );
   }
   if (list.isError || !list.data) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         {list.error?.message.includes("NOT_DISPOSABLE_READER")
           ? "You do not have access to disposables requests."
           : "Could not load the requests. Try again shortly."}
@@ -112,7 +120,7 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-gray-900">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-foreground">
           Disposables requests
         </h2>
         {viewer.canCreate && (
@@ -135,7 +143,7 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
         aria-label="Filter requests"
         onSubmit={(e) => e.preventDefault()}
       >
-        <label className="text-xs text-gray-600">
+        <label className="text-xs text-gray-600 dark:text-muted-foreground">
           Status
           <select
             className={`${fieldClass} mt-1 block`}
@@ -152,7 +160,7 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
         </label>
         {ccaID === undefined &&
           (ccaOptions.length > 1 || viewer.showHallWide) && (
-            <label className="text-xs text-gray-600">
+            <label className="text-xs text-gray-600 dark:text-muted-foreground">
               CCA
               <select
                 className={`${fieldClass} mt-1 block`}
@@ -172,7 +180,7 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
             </label>
           )}
         {eventOptions.size > 0 && (
-          <label className="text-xs text-gray-600">
+          <label className="text-xs text-gray-600 dark:text-muted-foreground">
             Event
             <select
               className={`${fieldClass} mt-1 block`}
@@ -188,7 +196,7 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
             </select>
           </label>
         )}
-        <label className="text-xs text-gray-600">
+        <label className="text-xs text-gray-600 dark:text-muted-foreground">
           Collection from
           <input
             type="date"
@@ -197,7 +205,7 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
             onChange={(e) => set({ from: e.target.value })}
           />
         </label>
-        <label className="text-xs text-gray-600">
+        <label className="text-xs text-gray-600 dark:text-muted-foreground">
           Collection to
           <input
             type="date"
@@ -217,37 +225,40 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
       </form>
 
       {!hasSocialDirector ? (
-        <p role="status" className="text-sm text-amber-700">
+        <p role="status" className="text-sm text-amber-700 dark:text-amber-300">
           Nobody holds the Social director position right now, so requests
           cannot be decided yet. The staff have been told.
         </p>
       ) : (
         !viewer.isSocialDirector &&
         !viewer.canCreate && (
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-gray-500 dark:text-muted-foreground">
             You can see these requests. Only the Social director decides them.
           </p>
         )
       )}
       {skipped > 0 && (
-        <p role="status" className="text-xs text-amber-700">
+        <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
           {skipped} request{skipped === 1 ? "" : "s"} could not be shown.
         </p>
       )}
       {more && (
-        <p role="status" className="text-xs text-gray-500">
+        <p
+          role="status"
+          className="text-xs text-gray-500 dark:text-muted-foreground"
+        >
           Showing the first 300 requests. Narrow the filters to see others.
         </p>
       )}
 
       {items.length === 0 ? (
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500">
+        <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500 dark:border-border dark:bg-card dark:text-muted-foreground">
           {viewer.canCreate
             ? "No requests match. Ask for plates, cups, bowls, forks or spoons when your CCA needs them."
             : "No requests match."}
         </p>
       ) : (
-        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white dark:divide-border dark:border-border dark:bg-card">
           {items.map((r) => (
             <RequestItem key={r.id} row={r} />
           ))}
@@ -324,51 +335,62 @@ function RequestItem({ row }: { row: Row }) {
     <li className="space-y-2 px-4 py-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-gray-900">
+          <p className="truncate text-sm font-medium text-gray-900 dark:text-foreground">
             {row.title}
           </p>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-gray-500 dark:text-muted-foreground">
             {row.hallWide ? "Hall-wide" : (row.ccaName ?? `CCA ${row.ccaID}`)}
             {row.requestedBy ? ` · ${row.requestedBy}` : ""}
           </p>
           {row.event && (
-            <p className="text-xs text-gray-700">
+            <p className="text-xs text-gray-700 dark:text-foreground">
               For {row.event.title ?? "an event"}
               {row.event.state === "gone" && " (the event no longer exists)"}
             </p>
           )}
           {row.event?.state === "canceled" && (
-            <p role="status" className="text-xs font-medium text-amber-700">
+            <p
+              role="status"
+              className="text-xs font-medium text-amber-700 dark:text-amber-300"
+            >
               This event was canceled. The request is unchanged.
             </p>
           )}
           {row.event?.state === "declined" && (
-            <p role="status" className="text-xs font-medium text-amber-700">
+            <p
+              role="status"
+              className="text-xs font-medium text-amber-700 dark:text-amber-300"
+            >
               This event was declined. The request is unchanged.
             </p>
           )}
-          <p className="text-xs text-gray-700">{quantitiesText(row)}</p>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-gray-700 dark:text-foreground">
+            {quantitiesText(row)}
+          </p>
+          <p className="text-xs text-gray-500 dark:text-muted-foreground">
             Collect {row.collectionDay} at {row.collectionTime}
           </p>
           {row.description && (
-            <p className="mt-1 whitespace-pre-wrap text-xs text-gray-600">
+            <p className="mt-1 whitespace-pre-wrap text-xs text-gray-600 dark:text-muted-foreground">
               {row.description}
             </p>
           )}
           {row.decisionNote && (
-            <p className="mt-1 text-xs text-gray-600">
+            <p className="mt-1 text-xs text-gray-600 dark:text-muted-foreground">
               Note: {row.decisionNote}
             </p>
           )}
           {row.sameEvent.length > 0 && (
-            <div className="mt-2 rounded-md bg-gray-50 px-3 py-2">
-              <p className="text-xs font-medium text-gray-700">
+            <div className="mt-2 rounded-md bg-gray-50 px-3 py-2 dark:bg-muted">
+              <p className="text-xs font-medium text-gray-700 dark:text-foreground">
                 Other requests for this event
               </p>
               <ul className="mt-1 space-y-0.5">
                 {row.sameEvent.map((o) => (
-                  <li key={o.id} className="text-xs text-gray-600">
+                  <li
+                    key={o.id}
+                    className="text-xs text-gray-600 dark:text-muted-foreground"
+                  >
                     {o.title} · {DISPOSABLE_STATUS_LABELS[o.status]} ·{" "}
                     {quantitiesText(o)} · {o.collectionDay} {o.collectionTime}
                   </li>
@@ -380,10 +402,10 @@ function RequestItem({ row }: { row: Row }) {
         <span
           className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
             row.status === "approved"
-              ? "bg-emerald-100 text-emerald-800"
+              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
               : row.status === "rejected"
-                ? "bg-red-100 text-red-800"
-                : "bg-gray-100 text-gray-700"
+                ? "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300"
+                : "bg-gray-100 text-gray-700 dark:bg-muted dark:text-foreground"
           }`}
         >
           {DISPOSABLE_STATUS_LABELS[row.status]}
@@ -432,7 +454,7 @@ function RequestItem({ row }: { row: Row }) {
         </div>
       ) : mode === "delete" ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-gray-700">
+          <span className="text-xs text-gray-700 dark:text-foreground">
             Delete this request for good?
           </span>
           <Button
@@ -449,7 +471,7 @@ function RequestItem({ row }: { row: Row }) {
         </div>
       ) : (
         <div className="space-y-2">
-          <label className="block text-xs text-gray-600">
+          <label className="block text-xs text-gray-600 dark:text-muted-foreground">
             Note for the CCA (optional)
             <textarea
               className={`${fieldClass} mt-1 block w-full`}
@@ -470,12 +492,12 @@ function RequestItem({ row }: { row: Row }) {
         </div>
       )}
       {nudged && (
-        <p role="status" className="text-xs text-gray-700">
+        <p role="status" className="text-xs text-gray-700 dark:text-foreground">
           {nudged}
         </p>
       )}
       {error && (
-        <p role="alert" className="text-xs text-red-600">
+        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
           {error}
         </p>
       )}

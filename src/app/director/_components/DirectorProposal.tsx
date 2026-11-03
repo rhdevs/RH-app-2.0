@@ -27,7 +27,7 @@ import { historyLine } from "~/lib/proposals/historyLine";
 import ProposalThread from "~/app/_components/ProposalThread";
 
 const FIELD =
-  "w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-gray-50";
+  "w-full rounded-lg border border-gray-300 dark:border-border p-2.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-gray-50 dark:disabled:bg-muted";
 
 /** A plain line when the approval did not make the head's event draft. */
 const draftNoteFor = (outcome: string | undefined): string | null =>
@@ -77,18 +77,22 @@ export default function DirectorProposal({
   const [draftNote, setDraftNote] = useState<string | null>(null);
 
   if (enabled.isLoading || (on && detail.isLoading)) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (enabled.isError) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         Could not check whether proposals are switched on. Try again shortly.
       </p>
     );
   }
   if (!on) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Proposals are not switched on yet.
       </p>
     );
@@ -96,7 +100,7 @@ export default function DirectorProposal({
   const loaded = detail.data;
   if (!loaded) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         {describeReviewFailure(detail.error?.message).text}
       </p>
     );
@@ -153,14 +157,14 @@ export default function DirectorProposal({
       <div>
         <Link
           href="/director"
-          className="text-sm text-emerald-700 underline underline-offset-2"
+          className="text-sm text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
         >
           Director&apos;s home
         </Link>
-        <h1 className="mt-1 text-xl font-semibold text-gray-900">
+        <h1 className="mt-1 text-xl font-semibold text-gray-900 dark:text-foreground">
           {loaded.title}
         </h1>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
           {loaded.ccaName ?? "A CCA you direct"}
           {" · "}
           {isProposalCategory(loaded.category)
@@ -178,7 +182,7 @@ export default function DirectorProposal({
           approval?.selfApproved && (
             <p
               role="note"
-              className="mt-2 inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-900"
+              className="mt-2 inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
             >
               {SELF_APPROVED_TEXT}
               {approval.approverName
@@ -188,20 +192,22 @@ export default function DirectorProposal({
           )}
       </div>
 
-      <section className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
-        <p className="whitespace-pre-wrap text-sm text-gray-800">
+      <section className="space-y-3 rounded-lg border border-gray-200 bg-white p-4 dark:border-border dark:bg-card">
+        <p className="whitespace-pre-wrap text-sm text-gray-800 dark:text-foreground">
           {loaded.description || "No description."}
         </p>
         {loaded.blastMessage && (
           <div>
-            <p className="text-xs font-medium text-gray-500">Blast message</p>
-            <p className="whitespace-pre-wrap text-sm text-gray-800">
+            <p className="text-xs font-medium text-gray-500 dark:text-muted-foreground">
+              Blast message
+            </p>
+            <p className="whitespace-pre-wrap text-sm text-gray-800 dark:text-foreground">
               {loaded.blastMessage}
             </p>
           </div>
         )}
         {loaded.plannedStart !== null && (
-          <p className="text-sm text-gray-700">
+          <p className="text-sm text-gray-700 dark:text-foreground">
             <span className="font-medium">Planned: </span>
             {formatDateTime(loaded.plannedStart)}
             {loaded.plannedEnd !== null
@@ -211,8 +217,10 @@ export default function DirectorProposal({
         )}
         {shownPoster && (
           <div>
-            <p className="mb-1 text-sm font-medium text-gray-700">Poster</p>
-            <div className="relative h-64 w-full max-w-md overflow-hidden rounded-md border border-gray-200 bg-gray-50">
+            <p className="mb-1 text-sm font-medium text-gray-700 dark:text-foreground">
+              Poster
+            </p>
+            <div className="relative h-64 w-full max-w-md overflow-hidden rounded-md border border-gray-200 bg-gray-50 dark:border-border dark:bg-muted">
               <Image
                 src={shownPoster}
                 alt="Poster"
@@ -226,12 +234,14 @@ export default function DirectorProposal({
         )}
         {shownLink && (
           <p className="text-sm">
-            <span className="font-medium text-gray-700">Document link: </span>
+            <span className="font-medium text-gray-700 dark:text-foreground">
+              Document link:{" "}
+            </span>
             <a
               href={shownLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="break-all text-emerald-700 underline underline-offset-2"
+              className="break-all text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
             >
               {shownLink}
             </a>
@@ -240,8 +250,10 @@ export default function DirectorProposal({
       </section>
 
       {actions.length > 0 && (
-        <section className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-gray-900">Your decision</h2>
+        <section className="space-y-3 rounded-lg border border-gray-200 bg-white p-4 dark:border-border dark:bg-card">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-foreground">
+            Your decision
+          </h2>
           <div className="flex flex-wrap gap-3">
             {actions.includes("approve") && (
               <Button
@@ -291,13 +303,13 @@ export default function DirectorProposal({
               }}
             >
               {open === "approve" && (
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-gray-600 dark:text-muted-foreground">
                   Approving means you have approved it. RHApp does not send the
                   RF email or record it.
                 </p>
               )}
               {open === "finish" && (
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-gray-600 dark:text-muted-foreground">
                   Mark this approved proposal as finished. This cannot be
                   undone.
                 </p>
@@ -306,7 +318,7 @@ export default function DirectorProposal({
                 <div>
                   <label
                     htmlFor="review-text"
-                    className="mb-1 block text-sm font-medium text-gray-700"
+                    className="mb-1 block text-sm font-medium text-gray-700 dark:text-foreground"
                   >
                     {open === "return"
                       ? "Reason (the head will see it)"
@@ -342,7 +354,7 @@ export default function DirectorProposal({
             </form>
           )}
           {failure && (
-            <p role="alert" className="text-sm text-red-600">
+            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
               {failure}
             </p>
           )}
@@ -350,7 +362,7 @@ export default function DirectorProposal({
       )}
 
       {(loaded.event || loaded.eventMissing || loaded.eventBeingMade) && (
-        <p className="text-sm text-gray-700">
+        <p className="text-sm text-gray-700 dark:text-foreground">
           <span className="font-medium">Event: </span>
           {loaded.event
             ? `${loaded.event.title ?? "Untitled event"} (${loaded.event.status})`
@@ -360,7 +372,7 @@ export default function DirectorProposal({
         </p>
       )}
       {draftNote && (
-        <p role="status" className="text-sm text-amber-800">
+        <p role="status" className="text-sm text-amber-800 dark:text-amber-300">
           {draftNote}
         </p>
       )}
@@ -369,8 +381,10 @@ export default function DirectorProposal({
 
       {loaded.history.length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-semibold text-gray-900">History</h2>
-          <ul className="space-y-1 text-sm text-gray-600">
+          <h2 className="mb-2 text-sm font-semibold text-gray-900 dark:text-foreground">
+            History
+          </h2>
+          <ul className="space-y-1 text-sm text-gray-600 dark:text-muted-foreground">
             {loaded.history.map((h) => (
               <li key={h.id}>
                 {historyLine(h, (at) => formatDateTime(toEpoch(at)))}
