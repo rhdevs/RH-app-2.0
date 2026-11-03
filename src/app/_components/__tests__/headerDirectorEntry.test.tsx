@@ -31,6 +31,7 @@ vi.mock("~/trpc/react", () => ({
       directorEntry: { useQuery: query("directorEntry") },
     },
     disposable: { entry: { useQuery: query("disposableEntry") } },
+    equipment: { entry: { useQuery: query("equipmentEntry") } },
     reminder: { entry: { useQuery: query("reminderEntry") } },
   },
 }));

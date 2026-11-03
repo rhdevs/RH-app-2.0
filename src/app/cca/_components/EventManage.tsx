@@ -45,6 +45,7 @@ import EventQuestionBuilder from "./EventQuestionBuilder";
 import EventDoorSection from "./EventDoorSection";
 import EventAttendanceStats from "./EventAttendanceStats";
 import DisposableRequestLink from "~/app/disposables/_components/DisposableRequestLink";
+import EquipmentLoanLink from "~/app/equipment/_components/EquipmentLoanLink";
 
 const UNSAVED_QUESTIONS = "Save or discard your signup question changes first.";
 
@@ -446,6 +447,7 @@ export default function EventManage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <DisposableRequestLink eventID={event.eventID} />
+          <EquipmentLoanLink eventID={event.eventID} />
           {status === "published" && (
             <Button asChild variant="outline" size="sm">
               <Link href={`/events/${event.eventID}`} target="_blank">
