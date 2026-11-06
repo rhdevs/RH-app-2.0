@@ -10,7 +10,7 @@ import {
   vi,
 } from "vitest";
 
-import { EQUIPMENT_LIMITS } from "~/server/api/services/equipment/limits";
+import type * as Limits from "~/server/api/services/equipment/limits";
 import type * as Digest from "~/server/api/services/dueCheck/collectionDigest";
 import type * as Runner from "~/server/api/services/dueCheck/runner";
 import type * as DecideSvc from "~/server/api/services/equipment/decide";
@@ -79,6 +79,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let db: PrismaClient;
     let decide: typeof DecideSvc;
     let readSvc: typeof ReadSvc;
+    let EQUIPMENT_LIMITS: typeof Limits.EQUIPMENT_LIMITS;
     let runDueCheck: typeof Runner.runDueCheck;
     let collectionDigestKind: typeof Digest.collectionDigestKind;
 
@@ -138,6 +139,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       db = k.db;
       decide = await import("~/server/api/services/equipment/decide");
       readSvc = await import("~/server/api/services/equipment/read");
+      ({ EQUIPMENT_LIMITS } = await import(
+        "~/server/api/services/equipment/limits"
+      ));
       ({ runDueCheck } = await import("~/server/api/services/dueCheck/runner"));
       ({ collectionDigestKind } = await import(
         "~/server/api/services/dueCheck/collectionDigest"
