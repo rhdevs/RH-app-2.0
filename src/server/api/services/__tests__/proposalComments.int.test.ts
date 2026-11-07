@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
+import type * as ProposalsFlagModule from "../proposals/flag";
 import {
   afterAll,
   afterEach,
@@ -69,6 +70,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
   () => {
     let db: PrismaClient;
     let createCaller: typeof CreateCaller;
+    let proposalsFlag: typeof ProposalsFlagModule;
     const original: Record<string, string | null> = {};
     let ipCounter = 0;
 
@@ -104,6 +106,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           update: { value },
         });
       }
+      // proposals.enabled is cached for a few seconds.
+      proposalsFlag.resetProposalsFlagCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -275,8 +279,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       );
 
     /** A database where reading ONE flag key fails. */
-    const withFailingFlag = (key: string): PrismaClient =>
-      proxied(db, (prop) =>
+    const withFailingFlag = (key: string): PrismaClient => {
+      proposalsFlag.resetProposalsFlagCache();
+      return proxied(db, (prop) =>
         prop === "systemFlag"
           ? {
               findUnique: (args: { where: { key: string } }) =>
@@ -286,6 +291,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }
           : undefined,
       );
+    };
 
     const READ_METHODS = new Set([
       "findUnique",
@@ -390,6 +396,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     beforeAll(async () => {
       ({ db } = await import("~/server/db"));
       ({ createCaller } = await import("~/server/api/root"));
+      proposalsFlag = await import("../proposals/flag");
       for (const key of FLAGS) {
         original[key] =
           (await db.systemFlag.findUnique({ where: { key } }))?.value ?? null;
