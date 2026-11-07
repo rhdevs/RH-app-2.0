@@ -19,8 +19,12 @@ import {
  *
  *  - GET only. A dynamic route, never cached by Next, and the response is
  *    `private, no-store` so no shared cache keeps a person's calendar.
- *  - The token is never logged here or in the service: no request URL, no
- *    header and no parameter is written anywhere. A failure logs its kind.
+ *  - The app never logs the token, here or in the service: no request URL, no
+ *    header and no parameter is written by this code. A failure logs its kind.
+ *    The token is in the URL path, though, so the host's own request logs
+ *    (for example Vercel's) do keep it in plaintext; the app cannot change
+ *    that. Treat those logs as holding the credential, and rotate the token if
+ *    they are shared.
  *  - Refusals carry no detail: 401 for any token that opens nothing, 429 when
  *    a budget is spent, 503 when the feed is off, a read failed or the rate
  *    limiter itself failed (it refuses rather than opening).
