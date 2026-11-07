@@ -251,6 +251,7 @@ export async function markCommentsRead(
   input: { proposalID: string; upTo?: Date | undefined },
 ): Promise<{ readAt: Date }> {
   const row = await openThread(db, userID, input.proposalID);
+  await assertWithinLimit("commentRead", userID);
   const now = new Date();
   const at =
     input.upTo !== undefined && input.upTo.getTime() < now.getTime()

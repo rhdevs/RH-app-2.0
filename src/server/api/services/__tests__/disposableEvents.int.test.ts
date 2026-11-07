@@ -61,6 +61,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let runDueCheck: typeof RunDueCheck;
     let link: typeof EventLinkModule;
     let write: typeof WriteModule;
+    let resetDisposablesCache: () => void;
     let digestKind: DueKind;
     let noDirectorKind: DueKind;
     let today: string;
@@ -95,6 +96,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           update: { value },
         });
       }
+      resetDisposablesCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -206,9 +208,13 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     const stored = (id: string) =>
       db.disposableRequest.findUniqueOrThrow({ where: { id } });
+    /** Every disposable notice for a user, except the director's "filed" notice (#134), which the tests below that file requests would otherwise all have to account for. */
     const noticesFor = (userID: string) =>
       db.notification.findMany({
-        where: { userID, kind: { startsWith: "disposable." } },
+        where: {
+          userID,
+          kind: { startsWith: "disposable.", not: "disposable.filed" },
+        },
       });
 
     const makeProposal = (ccaID: number, over: Record<string, unknown> = {}) =>
@@ -250,6 +256,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ({ runDueCheck } = await import("~/server/api/services/dueCheck/runner"));
       link = await import("../proposals/eventLink");
       write = await import("../disposables/write");
+      ({ resetDisposablesFlagCache: resetDisposablesCache } = await import(
+        "../disposables/flag"
+      ));
       ({ collectionDigestKind: digestKind } = await import(
         "~/server/api/services/dueCheck/collectionDigest"
       ));

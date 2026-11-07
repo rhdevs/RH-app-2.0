@@ -72,6 +72,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let runDueCheck: typeof RunDueCheck;
     let kindUnderTest: DueKind;
     let resetNotificationsCache: () => void;
+    let resetDisposablesCache: () => void;
     const original: Record<string, string | null> = {};
     let ipCounter = 0;
 
@@ -108,6 +109,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       }
       resetNotificationsCache();
+      // disposables.enabled is cached for a few seconds as well.
+      resetDisposablesCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -345,9 +348,17 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     const stored = (id: string) =>
       db.disposableRequest.findUniqueOrThrow({ where: { id } });
 
+    /**
+     * Notices of one kind, or (default) every disposable notice except the
+     * "filed" one the Social director gets when a request is filed, which has
+     * its own tests; the others assert who is NOT told about a decision.
+     */
     const noticesFor = (userID: string, kind?: string) =>
       db.notification.findMany({
-        where: { userID, kind: kind ?? { startsWith: "disposable." } },
+        where: {
+          userID,
+          kind: kind ?? { startsWith: "disposable.", not: "disposable.filed" },
+        },
       });
 
     const makeProposal = (ccaID: number, title = "TEST proposal") =>
@@ -370,6 +381,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ));
       ({ resetNotificationsFlagCache: resetNotificationsCache } = await import(
         "~/server/api/services/notifications"
+      ));
+      ({ resetDisposablesFlagCache: resetDisposablesCache } = await import(
+        "~/server/api/services/disposables/flag"
       ));
       for (const key of FLAGS) {
         original[key] =
@@ -536,9 +550,62 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect((await stored(made.id)).status).toBe("pending");
       });
 
-      it("a created request writes no notice (the digest is PR 14)", async () => {
-        await file();
+      it("a created request tells the Social director, and only the Social director (#134)", async () => {
+        const made = await file({ title: "Hall dinner" });
+        const told = await noticesFor(U.social, "disposable.filed");
+        expect(told).toHaveLength(1);
+        expect(told[0]).toMatchObject({
+          title: "A disposable request was filed",
+          body: "Hall dinner",
+          href: `/disposables/${made.id}`,
+        });
         expect(await noticesFor(U.social)).toEqual([]);
+        for (const other of [U.headA, U.headA2, U.headB, U.jcrc, U.vetter]) {
+          expect(await noticesFor(other, "disposable.filed")).toEqual([]);
+        }
+      });
+
+      it("writes no filed notice while notifications are off, and still files", async () => {
+        await setFlag("notifications.enabled", "off");
+        const made = await file();
+        expect((await stored(made.id)).status).toBe("pending");
+        expect(await noticesFor(U.social, "disposable.filed")).toEqual([]);
+      });
+
+      it("with no Social director nobody is told, and the request is still filed", async () => {
+        await setFlag("directors.enabled", null);
+        const made = await file();
+        expect((await stored(made.id)).status).toBe("pending");
+        expect(
+          await db.notification.count({
+            where: { kind: "disposable.filed" },
+          }),
+        ).toBe(0);
+      });
+
+      it("a failed filed notice is logged by error name and never fails the request", async () => {
+        const broken = proxied(db, (prop) =>
+          prop === "notification"
+            ? { createMany: () => Promise.reject(new Error("boom-secret")) }
+            : undefined,
+        );
+        const spy = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        try {
+          const made = await as(U.headA, EVERYTHING, broken).create(
+            input() as never,
+          );
+          expect((await stored(made.id)).status).toBe("pending");
+          const log = spy.mock.calls.map((c) => String(c[0])).join(" ");
+          expect(log).toContain("disposable_filed_notice_failed");
+          expect(log).not.toContain("boom-secret");
+        } finally {
+          spy.mockRestore();
+        }
+        expect(
+          await db.notification.count({ where: { kind: "disposable.filed" } }),
+        ).toBe(0);
       });
 
       it("stores the text as given, without markup interpretation", async () => {
