@@ -22,7 +22,12 @@ const clean = (s: string) =>
 const text = (max: number) => z.string().max(max).transform(clean);
 
 /** Epoch seconds, a whole number after 2000 and before 2200. */
-const epochSeconds = z.number().int().min(946_684_800).max(7_258_118_400);
+/**
+ * The stored columns are 32-bit integers, so the upper bound is the largest
+ * one (January 2038), not a far-future date a database write would overflow on.
+ */
+const MAX_EPOCH_SECONDS = 2_147_483_647;
+const epochSeconds = z.number().int().min(946_684_800).max(MAX_EPOCH_SECONDS);
 
 const ccaID = z.number().int().positive();
 const proposalId = z.string().regex(/^[a-f\d]{24}$/i);

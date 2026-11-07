@@ -38,8 +38,10 @@ const STAFF_ROLES = [ADMIN_ROLE, SCRC_ROLE, HALL_OFFICE_ROLE];
  * Who is told: the CCA's directors (`proposal.submitted`). If there are none
  * (every flagged position is vacant, or `directors.enabled` is off) the
  * proposal still goes to in_review and admins, RFs and Hall Office are told
- * instead (`proposal.vacant`, A49), so it does not sit unseen. `notify` writes
- * nothing while `notifications.enabled` is off.
+ * instead (`proposal.vacant`, A49), so it does not sit unseen. A director who
+ * also heads the CCA does not count: they would be vetting their own CCA's
+ * proposal, so a CCA whose only directors head it is vacant too. `notify`
+ * writes nothing while `notifications.enabled` is off.
  */
 export async function submitProposal(
   db: PrismaClient,
@@ -99,13 +101,25 @@ export async function submitProposal(
   return { id: moved.id, version: moved.version, status: "in_review" };
 }
 
+const isUserID = (id: string | null | undefined): id is string =>
+  typeof id === "string" && id.trim() !== "";
+
 async function noticeOfSubmission(
   tx: Prisma.TransactionClient,
   proposalID: string,
   ccaID: number,
   title: string,
 ): Promise<void> {
-  const directors = await currentDirectorIDs(tx, ccaID);
+  const candidates = (await currentDirectorIDs(tx, ccaID)).filter(isUserID);
+  const heads =
+    candidates.length === 0
+      ? []
+      : await tx.ccaHead.findMany({
+          where: { ccaID, userID: { in: candidates } },
+          select: { userID: true },
+        });
+  const headIDs = new Set(heads.map((h) => h.userID));
+  const directors = candidates.filter((id) => !headIDs.has(id));
   if (directors.length > 0) {
     await notify(tx, {
       recipients: directors,
@@ -125,7 +139,9 @@ async function noticeOfSubmission(
     select: { userID: true },
   });
   await notify(tx, {
-    recipients: staff.map((s) => s.userID),
+    // A role row with a blank id would make `notify` throw and roll back the
+    // submit, so it is left out.
+    recipients: staff.map((s) => s.userID).filter(isUserID),
     kind: "proposal.vacant",
     title: `A proposal for CCA ${ccaID} has no director to review it`,
     body: title,

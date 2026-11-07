@@ -186,6 +186,28 @@ describe("the save schemas", () => {
     expect(parsed.description).toBe("abc\nd");
   });
 
+  it("caps the planned dates at the largest 32-bit integer the columns hold", () => {
+    const LIMIT = 2_147_483_647;
+    for (const key of ["plannedStart", "plannedEnd"] as const) {
+      expect(
+        proposalCreateInput.safeParse({ ...base, [key]: LIMIT }).success,
+        key,
+      ).toBe(true);
+      expect(
+        proposalCreateInput.safeParse({ ...base, [key]: LIMIT + 1 }).success,
+        key,
+      ).toBe(false);
+      expect(
+        proposalUpdateInput.safeParse({
+          id: "0123456789abcdef01234567",
+          version: 0,
+          [key]: LIMIT + 1,
+        }).success,
+        key,
+      ).toBe(false);
+    }
+  });
+
   it("turns a blank blast message into null", () => {
     expect(
       proposalCreateInput.parse({ ...base, blastMessage: "   " }).blastMessage,
