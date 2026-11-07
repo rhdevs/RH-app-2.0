@@ -24,6 +24,10 @@ const KNOWN: ReadonlyArray<readonly [string, string]> = [
     "DISPOSABLE_PROPOSAL_HAS_EVENT",
     "That proposal already has an event. Choose the event instead.",
   ],
+  [
+    "DISPOSABLE_PROPOSAL_NOT_OPEN",
+    "That proposal is still a draft or was canceled. Submit it first.",
+  ],
   ["DISPOSABLE_EVENT_CANCELED", "That event is canceled."],
   ["DISPOSABLE_EVENT_DECLINED", "That event was declined."],
   ["DISPOSABLE_EVENT_ENDED", "That event has already ended."],

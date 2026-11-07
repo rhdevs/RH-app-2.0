@@ -74,7 +74,8 @@ async function assertProposalFree(
  * a hall-wide event (null CCA), a live JCRC member or an admin. The order is:
  * resolve the tag, authorize, spend the budget, then refuse a tag that is not
  * allowed (a canceled, declined, ended or untitled event; a proposal that
- * already has an event; a proposal not matching the event), so a stranger
+ * already has an event, or is a draft or canceled; a proposal not matching the
+ * event), so a stranger
  * learns nothing about an event beyond "no such one".
  *
  * NO `status` is written here: the schema default ("pending") applies, so
@@ -86,8 +87,9 @@ async function assertProposalFree(
  * After a proposal-only request commits, the proposal is read again: the Event
  * may have been claimed between the check and the commit, when the move of the
  * proposal's request would have found nothing. If it now has an Event, the
- * request is tagged with it rather than refused. The Social director is told
- * afterwards, best effort.
+ * request is tagged with it rather than refused; that step is best effort too,
+ * so a failure there is logged and the saved request is still returned. The
+ * Social director is told afterwards, best effort.
  */
 export async function createRequest(
   db: PrismaClient,
@@ -127,7 +129,20 @@ export async function createRequest(
     select: { id: true, version: true },
   });
   if (target.eventID === null) {
-    await tagIfProposalGotAnEvent(db, made.id, target);
+    // Best effort, like the notice: the request is saved, so a failed re-read
+    // is logged by error name and the saved request is still returned (an
+    // error answer would invite a retry that hits DISPOSABLE_PROPOSAL_TAKEN).
+    // An untagged request stays on its proposal and moves with the Event.
+    try {
+      await tagIfProposalGotAnEvent(db, made.id, target);
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          evt: "disposable_tag_failed",
+          error: err instanceof Error ? err.name : typeof err,
+        }),
+      );
+    }
   }
   // After the save, best effort: it never throws and never fails the filing.
   await noticeFiled(db, { id: made.id, title: input.title }, userID);

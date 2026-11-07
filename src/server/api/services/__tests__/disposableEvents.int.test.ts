@@ -4,7 +4,15 @@ import type * as EventLinkModule from "../proposals/eventLink";
 import type * as WriteModule from "../disposables/write";
 import type { DueKind } from "~/server/api/services/dueCheck/types";
 import type { runDueCheck as RunDueCheck } from "~/server/api/services/dueCheck/runner";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { isLocalDevDatabase } from "../transcript/__tests__/localDbGate";
 
 /**
@@ -552,6 +560,92 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const proposal = await makeProposal(CCA_A, { eventID: 99918555 });
         const made = await as(U.headA).create(forProposal(proposal.id));
         expect((await stored(made.id)).eventID).toBeNull();
+      });
+
+      it("a draft, canceled or event-less proposal: draft and canceled are refused, the rest can be tagged", async () => {
+        const cases: Array<[string, string]> = [
+          ["draft", "BAD_REQUEST:DISPOSABLE_PROPOSAL_NOT_OPEN"],
+          ["canceled", "BAD_REQUEST:DISPOSABLE_PROPOSAL_NOT_OPEN"],
+          ["in_review", "ok"],
+          ["needs_action", "ok"],
+          ["cleared", "ok"],
+          ["finished", "ok"],
+        ];
+        for (const [status, expected] of cases) {
+          const proposal = await makeProposal(CCA_A, { status });
+          expect(
+            await errorOf(as(U.headA).create(forProposal(proposal.id))),
+            status,
+          ).toBe(expected);
+        }
+        expect(await db.disposableRequest.count({})).toBe(4);
+      });
+
+      it("a stranger filing for a draft proposal is told they cannot file, not what state it is in", async () => {
+        const proposal = await makeProposal(CCA_A, { status: "draft" });
+        expect(
+          await errorOf(as(U.headB).create(forProposal(proposal.id))),
+        ).toBe(NOT_HEAD);
+      });
+
+      it("a failed tag step after the save is logged by name and the saved request is returned", async () => {
+        const proposal = await makeProposal(CCA_A);
+        let reads = 0;
+        const failing = new Proxy(db, {
+          get(target, prop) {
+            if (prop === "proposal") {
+              return new Proxy(target.proposal, {
+                get(t, p) {
+                  if (p === "findUnique") {
+                    return (args: never) => {
+                      reads += 1;
+                      // The 1st read resolves the tag; the 2nd is the re-read after the save.
+                      if (reads === 2) {
+                        const err = new Error(
+                          "secret detail the log must not carry",
+                        );
+                        err.name = "TagReadFailed";
+                        return Promise.reject(err);
+                      }
+                      return (t.findUnique as (a: never) => unknown)(args);
+                    };
+                  }
+                  const v = Reflect.get(t, p) as unknown;
+                  return typeof v === "function"
+                    ? (v as (...x: unknown[]) => unknown).bind(t)
+                    : v;
+                },
+              });
+            }
+            const v = Reflect.get(target, prop, target) as unknown;
+            return typeof v === "function"
+              ? (v as (...x: unknown[]) => unknown).bind(target)
+              : v;
+          },
+        });
+        const logged: string[] = [];
+        const spy = vi.spyOn(console, "error").mockImplementation((m) => {
+          logged.push(String(m));
+        });
+        try {
+          const made = await as(U.headA, failing).create(
+            forProposal(proposal.id),
+          );
+          expect(reads).toBeGreaterThanOrEqual(2);
+          expect(await stored(made.id)).toMatchObject({
+            proposalID: proposal.id,
+            eventID: null,
+          });
+          expect(logged.join(" ")).toContain("disposable_tag_failed");
+          expect(logged.join(" ")).toContain("TagReadFailed");
+          expect(logged.join(" ")).not.toContain("secret detail");
+          // A retry is refused only because the request is there, as it should be.
+          expect(
+            await errorOf(as(U.headA).create(forProposal(proposal.id))),
+          ).toBe(TAKEN);
+        } finally {
+          spy.mockRestore();
+        }
       });
 
       it("both given: only when the proposal's event is that event", async () => {
