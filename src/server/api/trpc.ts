@@ -21,6 +21,7 @@ import {
 } from "~/server/api/services/roles";
 import { isMatricRequired } from "~/server/api/services/access";
 import { isMinimalProfileRole } from "~/lib/profileCompleteness";
+import { isWriteConflict } from "~/lib/transcript/writeConflict";
 
 /**
  * 1. CONTEXT
@@ -360,6 +361,22 @@ export const mapUniqueViolation = (indexName: string, message: string) =>
       ) {
         throw new TRPCError({ code: "CONFLICT", message });
       }
+    }
+    return result;
+  });
+
+/**
+ * Turns a MongoDB write conflict (two overlapping transactions on the same
+ * row: the loser is aborted, Prisma P2034) into a CONFLICT with a message the
+ * screen knows. Nothing was written by the aborted transaction. Like
+ * mapUniqueViolation it reads the settled result, so the services keep their
+ * no-catch rule, and it goes AFTER sanitizeErrors in the chain.
+ */
+export const mapWriteConflict = (message: string) =>
+  t.middleware(async ({ next }) => {
+    const result = await next();
+    if (!result.ok && isWriteConflict(result.error.cause)) {
+      throw new TRPCError({ code: "CONFLICT", message });
     }
     return result;
   });

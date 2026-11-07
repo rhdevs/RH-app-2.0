@@ -1266,6 +1266,22 @@ export async function deleteUserAccountCascade(
           data: { uploadedBy: null },
         })
       ).count;
+      // MILESTONE FILINGS belong to the CCA too: the head who filed and the
+      // director who rated lose their name on the record, and nothing else
+      // changes (the score, the text and the photos stay; no access is left,
+      // because access is read from CcaHead and the director positions).
+      deleted.milestoneHeadCleared = (
+        await tx.milestoneSubmission.updateMany({
+          where: { headBy: cid },
+          data: { headBy: null },
+        })
+      ).count;
+      deleted.milestoneAssessorCleared = (
+        await tx.milestoneAssessment.updateMany({
+          where: { assessedBy: cid },
+          data: { assessedBy: null },
+        })
+      ).count;
     }
 
     /* ---- (d) the User row, LAST and BY ObjectId ---------------------------

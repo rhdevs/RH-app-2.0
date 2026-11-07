@@ -535,6 +535,8 @@ describe("schema: guarded collections are untouched", () => {
       "ReminderBroadcast",
       "ReminderTarget",
       "MilestoneEvidence",
+      "MilestoneSubmission",
+      "MilestoneAssessment",
     ]).toEqual(expect.arrayContaining(added));
   });
 });

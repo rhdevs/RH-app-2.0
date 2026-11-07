@@ -130,9 +130,21 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           },
         },
       });
+      // Every proposal of these CCAs, whoever wrote it: another file may have
+      // left one behind, and proposalChoices lists them all.
       const proposals = await db.proposal.findMany({
-        where: { ccaID: { in: CCAS }, title: { startsWith: "TEST " } },
+        where: { ccaID: { in: CCAS } },
         select: { id: true },
+      });
+      const proposalIDs = proposals.map((p) => p.id);
+      await db.proposalStatusHistory.deleteMany({
+        where: { proposalID: { in: proposalIDs } },
+      });
+      await db.proposalComment.deleteMany({
+        where: { proposalID: { in: proposalIDs } },
+      });
+      await db.proposalCommentRead.deleteMany({
+        where: { proposalID: { in: proposalIDs } },
       });
       await db.disposableRequest.deleteMany({
         where: {

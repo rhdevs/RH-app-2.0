@@ -193,6 +193,8 @@ export function describeProposalError(message: string | undefined): {
         return "Events are not switched on, so an event draft cannot be made.";
       case "EVENT_BEING_MADE":
         return "The event draft is still being made. Try again shortly.";
+      case "EVENT_MILESTONE_FILED":
+        return "This proposal already has a milestone filed, so an event cannot be made from it.";
       case "PROPOSAL_NOT_APPROVED":
         return "An event draft can be made once the proposal is approved.";
       case "END_NOT_AFTER_START":

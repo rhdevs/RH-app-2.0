@@ -9,12 +9,16 @@ import {
   it,
   vi,
 } from "vitest";
+import type * as VercelBlob from "@vercel/blob";
 import { isLocalDevDatabase } from "../transcript/__tests__/localDbGate";
 import { resetProposalsFlagCache } from "../proposals/flag";
 
 // Every Blob call is replaced: no real store, no real token.
 const blob = vi.hoisted(() => ({ del: vi.fn() }));
-vi.mock("@vercel/blob", () => blob);
+vi.mock("@vercel/blob", async (importOriginal) => ({
+  ...(await importOriginal<typeof VercelBlob>()),
+  ...blob,
+}));
 
 import { CCA_BLOB_HOST } from "~/lib/schemas/cca";
 import { eventUploadPath } from "~/lib/schemas/event";

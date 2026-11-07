@@ -43,6 +43,8 @@ import { assertWithinLimit } from "./limits";
 
 export const EVENT_NOT_APPROVED = "PROPOSAL_NOT_APPROVED";
 export const EVENT_BEING_MADE = "EVENT_BEING_MADE";
+/** A finished proposal with a milestone filed keeps it: no Event is made (B149). */
+export const EVENT_MILESTONE_FILED = "EVENT_MILESTONE_FILED";
 
 /**
  * How long a claimed `eventID` counts as "being made". It outlasts the
@@ -175,7 +177,8 @@ type Outcome =
   | { outcome: "created"; eventID: number }
   | { outcome: "already_linked"; eventID: number }
   | { outcome: "in_progress" }
-  | { outcome: "lost_race" };
+  | { outcome: "lost_race" }
+  | { outcome: "milestone_filed" };
 
 /** A missing key and a stored null do not match the same query on MongoDB. */
 const eventIDIs = (expected: number | null) =>
@@ -208,6 +211,14 @@ function eventRowFrom(source: Source, eventID: number, ownerID: string) {
   };
 }
 
+async function hasMilestoneFiling(db: LinkDb, id: string): Promise<boolean> {
+  const row = await db.milestoneSubmission.findUnique({
+    where: { milestoneKey: `proposal:${id.toLowerCase()}` },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 async function linkAndCreate(
   db: LinkDb,
   source: Source,
@@ -215,6 +226,11 @@ async function linkAndCreate(
   statuses: string[],
 ): Promise<Outcome> {
   const expected = source.eventID;
+  // A filed milestone belongs to the proposal while it has no Event: an Event
+  // would open a second milestone and hide the filing (B149).
+  if (await hasMilestoneFiling(db, source.id)) {
+    return { outcome: "milestone_filed" };
+  }
   if (expected !== null) {
     const there = await readLinkedEvent(db, expected);
     if (there) return { outcome: "already_linked", eventID: expected };
@@ -234,6 +250,15 @@ async function linkAndCreate(
     data: { eventID, eventClaimedAt: new Date() },
   });
   if (claimed.count !== 1) return { outcome: "lost_race" };
+  // Write-then-check: the filing side re-reads the claim after it commits, so
+  // whichever of the two writes lands second sees the other and backs out.
+  if (await hasMilestoneFiling(db, source.id)) {
+    await db.proposal.updateMany({
+      where: { id: source.id, eventID },
+      data: { eventID: expected, eventClaimedAt: source.eventClaimedAt },
+    });
+    return { outcome: "milestone_filed" };
+  }
   await createEventRow(db, eventRowFrom(source, eventID, ownerID));
   return { outcome: "created", eventID };
 }
@@ -344,6 +369,7 @@ export async function draftEventAfterApproval(
       await noticeDraftMade(db, source, result.eventID);
       return "created";
     }
+    if (result.outcome === "milestone_filed") return "skipped";
     return result.outcome === "in_progress" ? "in_progress" : "already_linked";
   } catch (err) {
     logName("proposal_event_draft_failed", err);
@@ -383,6 +409,12 @@ export async function createEventFromProposal(
   const result = await linkAndCreate(db, source, userID, BUTTON_STATUSES);
   if (result.outcome === "in_progress") {
     throw new TRPCError({ code: "CONFLICT", message: EVENT_BEING_MADE });
+  }
+  if (result.outcome === "milestone_filed") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: EVENT_MILESTONE_FILED,
+    });
   }
   if (result.outcome === "lost_race") {
     const now = await loadSource(db, id);

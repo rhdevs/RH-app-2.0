@@ -271,9 +271,12 @@ export async function recordEvidence(
 
 /**
  * Remove an unattached photo: a head of its CCA, now. A missing id and another
- * CCA's id answer the same NOT_FOUND. The file goes first and the row after,
- * and the row stays when the store could not delete (the caller retries). A
- * photo already attached to a submission is refused: it is part of a record.
+ * CCA's id answer the same NOT_FOUND. The row is deleted first, conditional on
+ * `submissionID: null`, so it cannot race an attach (an attach that won leaves
+ * zero rows deleted and the call is refused); the file is removed after,
+ * best effort, and the orphan sweep (B128) collects one the store missed. This
+ * reverses the earlier file-first order (B144) for this path. A photo already
+ * attached to a submission is refused: it is part of a record.
  */
 export async function removeEvidence(
   db: EvidenceDb,
@@ -295,12 +298,15 @@ export async function removeEvidence(
   }
   await assertWithinLimit("remove", userID);
 
-  if (!(await storage.remove(row.pathname))) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: EVIDENCE_STORAGE_UNAVAILABLE,
-    });
+  const gone = await db.milestoneEvidence.deleteMany({
+    where: { id, submissionID: null },
+  });
+  if (gone.count !== 1) {
+    // Attached (or already removed) between the read and the delete.
+    throw new TRPCError({ code: "CONFLICT", message: EVIDENCE_ATTACHED });
   }
-  await db.milestoneEvidence.deleteMany({ where: { id, submissionID: null } });
+  if (!(await storage.remove(row.pathname))) {
+    console.error(JSON.stringify({ evt: "milestone_blob_remove_failed" }));
+  }
   return { removed: true };
 }

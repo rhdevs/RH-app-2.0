@@ -16,6 +16,14 @@ export const EVIDENCE_LIMITS = {
   record: 40,
   remove: 60,
   view: 3000,
+  // PR 16: the filing calls. A head saves a rating a few times per milestone;
+  // a director rates once. `browse` covers the read calls (a milestone, a year,
+  // the home entries), which a screen fires on load.
+  file: 60,
+  attach: 60,
+  detach: 60,
+  rate: 30,
+  browse: 600,
 } as const;
 
 export type EvidenceLimitedAction = keyof typeof EVIDENCE_LIMITS;

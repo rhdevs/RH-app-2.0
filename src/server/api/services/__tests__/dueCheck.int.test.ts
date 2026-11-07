@@ -60,6 +60,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let createCaller: typeof CreateCaller;
     let runDueCheck: typeof RunDueCheck;
     let resetCache: () => void;
+    let ccaNoDirectorKind: DueKind;
     const original: Record<string, string | null> = {};
     let ipCounter = 0;
     const ops: string[] = [];
@@ -208,6 +209,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ({ db } = await import("~/server/db"));
       ({ createCaller } = await import("~/server/api/root"));
       ({ runDueCheck } = await import("~/server/api/services/dueCheck/runner"));
+      ({ ccaNoDirectorKind } = await import(
+        "~/server/api/services/dueCheck/ccaNoDirector"
+      ));
       ({ resetNotificationsFlagCache: resetCache } = await import(
         "~/server/api/services/notifications"
       ));
@@ -249,7 +253,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     describe("the CCA with no director (A49)", () => {
       it("tells an admin, an RF and Hall Office, once per CCA and person", async () => {
         for (const id of [U.admin, U.scrc, U.hall]) {
-          const res = await runDueCheck(db, id, { now: NOW });
+          const res = await runDueCheck(db, id, {
+            kinds: [ccaNoDirectorKind],
+            now: NOW,
+          });
           expect(res.failedKinds).toEqual([]);
         }
 
@@ -270,7 +277,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
       it("gives a plain member, a JCRC member who is not staff, and a stranger nothing", async () => {
         for (const id of [U.member, U.jcrc, U.dir, NO_ROLE_ROW]) {
-          await runDueCheck(db, id, { now: NOW });
+          await runDueCheck(db, id, { kinds: [ccaNoDirectorKind], now: NOW });
         }
         expect(
           await db.notification.count({
@@ -280,18 +287,24 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("writes once per Singapore day: a repeat is silent, the next day writes again", async () => {
-        await runDueCheck(db, U.admin, { now: NOW });
         await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
+          now: NOW,
+        });
+        await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
           now: new Date(NOW.getTime() + 60_000),
         });
         expect(await keysOf(U.admin)).toHaveLength(1);
 
         // 15:59 UTC is still the same Singapore day; 16:00 UTC is the next.
         await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
           now: new Date("2026-11-02T15:59:59Z"),
         });
         expect(await keysOf(U.admin)).toHaveLength(1);
         await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
           now: new Date("2026-11-02T16:00:00Z"),
         });
         expect(await keysOf(U.admin)).toEqual([
@@ -301,7 +314,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
 
       it("counts one fewer once a director is set", async () => {
-        await runDueCheck(db, U.admin, { now: NOW });
+        await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
+          now: NOW,
+        });
         const before = await vacantCount(U.admin);
         expect(before).toBeGreaterThanOrEqual(1);
 
@@ -320,12 +336,18 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           },
         });
         await db.notification.deleteMany({ where: { userID: U.admin } });
-        await runDueCheck(db, U.admin, { now: NOW });
+        await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
+          now: NOW,
+        });
         expect(await vacantCount(U.admin)).toBe(before - 1);
       });
 
       it("treats an ended holder, or one who lost jcrc, as no director", async () => {
-        await runDueCheck(db, U.admin, { now: NOW });
+        await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
+          now: NOW,
+        });
         const before = await vacantCount(U.admin);
 
         await db.jcrcPositionHolder.updateMany({
@@ -333,7 +355,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           data: { endsAt: new Date(NOW.getTime() - DAY_MS) },
         });
         await db.notification.deleteMany({ where: { userID: U.admin } });
-        await runDueCheck(db, U.admin, { now: NOW });
+        await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
+          now: NOW,
+        });
         expect(await vacantCount(U.admin)).toBe(before + 1);
 
         await db.notification.deleteMany({ where: { userID: U.admin } });
@@ -342,7 +367,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           data: { endsAt: null },
         });
         await setRoles(U.dir, ["resident"]);
-        await runDueCheck(db, U.admin, { now: NOW });
+        await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
+          now: NOW,
+        });
         expect(await vacantCount(U.admin)).toBe(before + 1);
       });
 
@@ -356,7 +384,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           })),
         });
         try {
-          await runDueCheck(db, U.admin, { now: NOW });
+          await runDueCheck(db, U.admin, {
+            kinds: [ccaNoDirectorKind],
+            now: NOW,
+          });
           expect(await keysOf(U.admin)).toEqual([keyFor(U.admin)]);
           expect(await countOf(U.admin)).toBe(1);
           expect(await vacantCount(U.admin)).toBeGreaterThanOrEqual(6);
@@ -368,7 +399,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       it("says nothing while directors.enabled is off, absent or odd", async () => {
         for (const value of ["off", null, "yes"]) {
           await setFlag("directors.enabled", value);
-          await runDueCheck(db, U.admin, { now: NOW });
+          await runDueCheck(db, U.admin, {
+            kinds: [ccaNoDirectorKind],
+            now: NOW,
+          });
           expect(await keysOf(U.admin)).toEqual([]);
         }
       });
@@ -391,7 +425,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
               : undefined,
           );
 
-          const res = await runDueCheck(flaky, U.admin, { now: NOW });
+          const res = await runDueCheck(flaky, U.admin, {
+            kinds: [ccaNoDirectorKind],
+            now: NOW,
+          });
 
           expect(res).toEqual({ written: 0, failedKinds: ["cca_no_director"] });
           expect(await keysOf(U.admin)).toEqual([]);
@@ -409,14 +446,20 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         "writes nothing while proposals.enabled is %s",
         async (_name, value) => {
           await setFlag("proposals.enabled", value);
-          await runDueCheck(db, U.admin, { now: NOW });
+          await runDueCheck(db, U.admin, {
+            kinds: [ccaNoDirectorKind],
+            now: NOW,
+          });
           expect(await keysOf(U.admin)).toEqual([]);
         },
       );
 
       it("writes nothing while notifications.enabled is off", async () => {
         await setFlag("notifications.enabled", "off");
-        const res = await runDueCheck(db, U.admin, { now: NOW });
+        const res = await runDueCheck(db, U.admin, {
+          kinds: [ccaNoDirectorKind],
+          now: NOW,
+        });
         expect(res.written).toBe(0);
         expect(await countOf(U.admin)).toBe(0);
       });
@@ -435,6 +478,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             .mockImplementation(() => undefined);
 
           const res = await runDueCheck(withFailingReads(table), U.admin, {
+            kinds: [ccaNoDirectorKind],
             now: NOW,
           });
 
