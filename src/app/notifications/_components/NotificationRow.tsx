@@ -35,7 +35,7 @@ export function NotificationRow({
     <>
       <span className="flex items-start justify-between gap-3">
         <span
-          className={`text-sm text-gray-900 ${unread ? "font-semibold" : "font-medium"}`}
+          className={`text-sm text-gray-900 dark:text-foreground ${unread ? "font-semibold" : "font-medium"}`}
         >
           {item.title}
         </span>
@@ -46,16 +46,16 @@ export function NotificationRow({
         )}
       </span>
       {item.body && (
-        <span className="mt-1 block whitespace-pre-line text-sm text-gray-600">
+        <span className="mt-1 block whitespace-pre-line text-sm text-gray-600 dark:text-muted-foreground">
           {item.body}
         </span>
       )}
-      <span className="mt-1 block text-xs text-gray-400">
+      <span className="mt-1 block text-xs text-gray-400 dark:text-muted-foreground">
         {WHEN.format(item.createdAt)}
       </span>
     </>
   );
-  const className = `block rounded-lg border px-4 py-3 ${unread ? "border-emerald-200 bg-white" : "border-gray-200 bg-gray-50"}`;
+  const className = `block rounded-lg border px-4 py-3 ${unread ? "border-emerald-200 dark:border-emerald-800 bg-white dark:bg-card" : "border-gray-200 dark:border-border bg-gray-50 dark:bg-muted"}`;
 
   return isInAppHref(item.href) ? (
     <Link

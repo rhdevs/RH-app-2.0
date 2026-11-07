@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import SurfaceTheme from "~/app/_components/theme/SurfaceTheme";
 
 import EvidencePanel from "../../_components/EvidencePanel";
 import { parseCcaID } from "../../_lib/ccaParam";
@@ -16,5 +17,9 @@ export default function CcaEvidencePage({
   const ccaID = parseCcaID(params.ccaID);
   if (ccaID === null) notFound();
 
-  return <EvidencePanel ccaID={ccaID} />;
+  return (
+    <SurfaceTheme className="dark:rounded-lg dark:p-4">
+      <EvidencePanel ccaID={ccaID} />
+    </SurfaceTheme>
+  );
 }

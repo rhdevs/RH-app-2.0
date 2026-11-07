@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import SurfaceTheme from "~/app/_components/theme/SurfaceTheme";
 
 import ProposalEditor from "../../../_components/ProposalEditor";
 import { parseCcaID } from "../../../_lib/ccaParam";
@@ -14,5 +15,9 @@ export default function ProposalPage({
   const ccaID = parseCcaID(params.ccaID);
   if (ccaID === null || !PROPOSAL_ID.test(params.proposalID)) notFound();
 
-  return <ProposalEditor ccaID={ccaID} proposalID={params.proposalID} />;
+  return (
+    <SurfaceTheme className="dark:rounded-lg dark:p-4">
+      <ProposalEditor ccaID={ccaID} proposalID={params.proposalID} />
+    </SurfaceTheme>
+  );
 }

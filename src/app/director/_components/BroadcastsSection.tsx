@@ -13,7 +13,7 @@ import {
 } from "~/lib/schemas/reminder";
 
 const fieldClass =
-  "rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600";
+  "rounded-md border border-gray-300 dark:border-border bg-white dark:bg-card px-2 py-1.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600";
 
 /**
  * Deadline broadcasts on the director's home: a send form and the list of
@@ -39,7 +39,7 @@ export default function BroadcastsSection() {
   if (enabled.isLoading || !enabled.data) return null;
   if (!on) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Deadline reminders are not switched on yet.
       </p>
     );
@@ -50,38 +50,38 @@ export default function BroadcastsSection() {
     <section aria-labelledby="director-broadcasts" className="space-y-4">
       <h2
         id="director-broadcasts"
-        className="text-sm font-semibold text-gray-900"
+        className="text-sm font-semibold text-gray-900 dark:text-foreground"
       >
         Deadline reminders
       </h2>
       <SendForm choices={choices.data} />
       {box.isError ? (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           Could not load your reminders. Try again shortly.
         </p>
       ) : box.data ? (
         box.data.items.length === 0 ? (
-          <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500">
+          <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500 dark:border-border dark:bg-card dark:text-muted-foreground">
             You have not sent any reminders.
           </p>
         ) : (
-          <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+          <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white dark:divide-border dark:border-border dark:bg-card">
             {box.data.items.map((b) => (
               <li key={b.id}>
                 <Link
                   href={broadcastHref(b.id)}
-                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 hover:bg-gray-50 focus-visible:bg-gray-50"
+                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 hover:bg-gray-50 focus-visible:bg-gray-50 dark:hover:bg-muted"
                 >
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-gray-900">
+                    <span className="block truncate text-sm font-medium text-gray-900 dark:text-foreground">
                       {b.title}
                     </span>
-                    <span className="block text-xs text-gray-500">
+                    <span className="block text-xs text-gray-500 dark:text-muted-foreground">
                       Due {b.deadline}
                       {b.status === "cancelled" ? " · Cancelled" : ""}
                     </span>
                   </span>
-                  <span className="text-xs text-gray-700">
+                  <span className="text-xs text-gray-700 dark:text-foreground">
                     {b.done} of {b.total} CCAs done
                   </span>
                 </Link>
@@ -125,7 +125,7 @@ function SendForm({ choices }: { choices: { ccaID: number; name: string }[] }) {
 
   return (
     <form
-      className="space-y-3 rounded-lg border border-gray-200 bg-white p-4"
+      className="space-y-3 rounded-lg border border-gray-200 bg-white p-4 dark:border-border dark:bg-card"
       onSubmit={(e) => {
         e.preventDefault();
         setSent(null);
@@ -133,7 +133,7 @@ function SendForm({ choices }: { choices: { ccaID: number; name: string }[] }) {
       }}
     >
       <fieldset>
-        <legend className="mb-1 text-xs text-gray-600">
+        <legend className="mb-1 text-xs text-gray-600 dark:text-muted-foreground">
           Send to the heads of
         </legend>
         <div className="flex flex-wrap gap-x-4 gap-y-1">
@@ -149,7 +149,7 @@ function SendForm({ choices }: { choices: { ccaID: number; name: string }[] }) {
           ))}
         </div>
       </fieldset>
-      <label className="block text-xs text-gray-600">
+      <label className="block text-xs text-gray-600 dark:text-muted-foreground">
         Title
         <input
           className={`${fieldClass} mt-1 block w-full`}
@@ -158,7 +158,7 @@ function SendForm({ choices }: { choices: { ccaID: number; name: string }[] }) {
           onChange={(e) => setTitle(e.target.value)}
         />
       </label>
-      <label className="block text-xs text-gray-600">
+      <label className="block text-xs text-gray-600 dark:text-muted-foreground">
         Message (optional)
         <textarea
           className={`${fieldClass} mt-1 block w-full`}
@@ -168,7 +168,7 @@ function SendForm({ choices }: { choices: { ccaID: number; name: string }[] }) {
           onChange={(e) => setMessage(e.target.value)}
         />
       </label>
-      <label className="block text-xs text-gray-600">
+      <label className="block text-xs text-gray-600 dark:text-muted-foreground">
         Deadline
         <input
           type="date"
@@ -181,18 +181,18 @@ function SendForm({ choices }: { choices: { ccaID: number; name: string }[] }) {
         <Button type="submit" size="sm" disabled={!ready || send.isPending}>
           {send.isPending ? "Sending…" : "Send reminder"}
         </Button>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-500 dark:text-muted-foreground">
           Heads get a notice now, and again 3 days and 1 day before the deadline
           until they mark it done.
         </p>
       </div>
       {sent && (
-        <p role="status" className="text-xs text-gray-700">
+        <p role="status" className="text-xs text-gray-700 dark:text-foreground">
           {sent}
         </p>
       )}
       {error && (
-        <p role="alert" className="text-xs text-red-600">
+        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
           {error}
         </p>
       )}

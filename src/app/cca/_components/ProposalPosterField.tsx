@@ -66,20 +66,22 @@ export default function ProposalPosterField({
   return (
     <div className="space-y-2">
       <div>
-        <p className="text-sm font-medium text-gray-700">Poster</p>
-        <p className="text-xs text-gray-500">
+        <p className="text-sm font-medium text-gray-700 dark:text-foreground">
+          Poster
+        </p>
+        <p className="text-xs text-gray-500 dark:text-muted-foreground">
           An image (PNG, JPEG or WebP). It is saved with the draft.
         </p>
       </div>
 
       {proposalID === undefined ? (
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
           Save the draft first, then add a poster.
         </p>
       ) : (
         <>
           {value && proposalID && isOwnProposalPosterUrl(value, proposalID) && (
-            <div className="relative h-40 w-64 overflow-hidden rounded-md border border-gray-200 bg-gray-50">
+            <div className="relative h-40 w-64 overflow-hidden rounded-md border border-gray-200 bg-gray-50 dark:border-border dark:bg-muted">
               <Image
                 src={value}
                 alt="Poster preview"
@@ -120,7 +122,7 @@ export default function ProposalPosterField({
             ref={inputRef}
             type="file"
             accept="image/png,image/jpeg,image/webp"
-            className="hidden"
+            className="hidden dark:text-foreground dark:placeholder:text-muted-foreground"
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) void handleFile(file, proposalID);
@@ -135,7 +137,7 @@ export default function ProposalPosterField({
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={percent}
-          className="h-1.5 w-64 overflow-hidden rounded bg-gray-200"
+          className="h-1.5 w-64 overflow-hidden rounded bg-gray-200 dark:bg-muted"
         >
           <div
             className="h-full bg-emerald-600"
@@ -145,7 +147,7 @@ export default function ProposalPosterField({
       )}
 
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
       )}

@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import SurfaceTheme from "~/app/_components/theme/SurfaceTheme";
 
 import DisposablesScreen from "~/app/disposables/_components/DisposablesScreen";
 import { parseCcaID } from "../../_lib/ccaParam";
@@ -15,5 +16,9 @@ export default function CcaDisposablesPage({
   const ccaID = parseCcaID(params.ccaID);
   if (ccaID === null) notFound();
 
-  return <DisposablesScreen ccaID={ccaID} />;
+  return (
+    <SurfaceTheme className="dark:rounded-lg dark:p-4">
+      <DisposablesScreen ccaID={ccaID} />
+    </SurfaceTheme>
+  );
 }

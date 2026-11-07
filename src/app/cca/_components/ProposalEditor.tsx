@@ -46,7 +46,7 @@ import {
 } from "../_lib/proposalForm";
 
 const FIELD =
-  "w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-gray-50 disabled:text-gray-500";
+  "w-full rounded-lg border border-gray-300 dark:border-border p-2.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-gray-50 dark:disabled:bg-muted disabled:text-gray-500 dark:disabled:text-muted-foreground";
 
 type Failure = { text: string; items: string[] };
 type Stored = { id: string; version: number };
@@ -106,21 +106,29 @@ export default function ProposalEditor({
   const busy = create.isPending || update.isPending || submit.isPending;
 
   if (enabled.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (!on) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Proposals are not switched on yet.
       </p>
     );
   }
   if (proposalID !== undefined && detail.isLoading) {
-    return <p className="text-sm text-gray-500">Loading proposal…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading proposal…
+      </p>
+    );
   }
   if (proposalID !== undefined && !loaded) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         {describeProposalError(detail.error?.message).text}
       </p>
     );
@@ -202,15 +210,15 @@ export default function ProposalEditor({
       <div>
         <Link
           href={`/cca/${ccaID}/proposals`}
-          className="text-sm text-emerald-700 underline underline-offset-2"
+          className="text-sm text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
         >
           All proposals
         </Link>
-        <h2 className="mt-1 text-lg font-semibold text-gray-900">
+        <h2 className="mt-1 text-lg font-semibold text-gray-900 dark:text-foreground">
           {loaded ? loaded.title : "New proposal"}
         </h2>
         {loaded && (
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-500 dark:text-muted-foreground">
             {isProposalStatus(loaded.status)
               ? PROPOSAL_STATUS_LABELS[loaded.status]
               : "Unknown status"}
@@ -222,7 +230,7 @@ export default function ProposalEditor({
       </div>
 
       {loaded && !editable && (
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600">
+        <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600 dark:border-border dark:bg-card dark:text-muted-foreground">
           This proposal can no longer be edited.
         </p>
       )}
@@ -237,7 +245,7 @@ export default function ProposalEditor({
         <div>
           <label
             htmlFor="proposal-category"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-foreground"
           >
             Type
           </label>
@@ -265,7 +273,7 @@ export default function ProposalEditor({
         <div>
           <label
             htmlFor="proposal-title"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-foreground"
           >
             Title
           </label>
@@ -283,7 +291,7 @@ export default function ProposalEditor({
         <div>
           <label
             htmlFor="proposal-description"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-foreground"
           >
             Description
           </label>
@@ -302,7 +310,7 @@ export default function ProposalEditor({
           <div>
             <label
               htmlFor="proposal-start"
-              className="mb-1 block text-sm font-medium text-gray-700"
+              className="mb-1 block text-sm font-medium text-gray-700 dark:text-foreground"
             >
               Planned start
             </label>
@@ -318,9 +326,12 @@ export default function ProposalEditor({
           <div>
             <label
               htmlFor="proposal-end"
-              className="mb-1 block text-sm font-medium text-gray-700"
+              className="mb-1 block text-sm font-medium text-gray-700 dark:text-foreground"
             >
-              Planned end <span className="text-gray-400">(optional)</span>
+              Planned end{" "}
+              <span className="text-gray-400 dark:text-muted-foreground">
+                (optional)
+              </span>
             </label>
             <input
               id="proposal-end"
@@ -336,7 +347,7 @@ export default function ProposalEditor({
         <div>
           <label
             htmlFor="proposal-blast"
-            className="mb-1 block text-sm font-medium text-gray-700"
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-foreground"
           >
             Blast message
           </label>
@@ -358,14 +369,14 @@ export default function ProposalEditor({
             checked={form.willBeEvent}
             disabled={!editable || busy}
             onChange={(e) => set({ willBeEvent: e.target.checked })}
-            className="mt-1 h-4 w-4 rounded border-gray-300 text-emerald-600"
+            className="mt-1 h-4 w-4 rounded border-gray-300 text-emerald-600 dark:border-border dark:text-emerald-400"
           />
           <label
             htmlFor="proposal-will-be-event"
-            className="text-sm text-gray-700"
+            className="text-sm text-gray-700 dark:text-foreground"
           >
             <span className="font-medium">This will be an event</span>
-            <span className="block text-gray-500">
+            <span className="block text-gray-500 dark:text-muted-foreground">
               When it is approved, an unpublished event draft is made for you.
               You publish it yourself. Leave this off to make one later.
             </span>
@@ -383,10 +394,12 @@ export default function ProposalEditor({
             <div>
               <label
                 htmlFor="proposal-doclink"
-                className="mb-1 block text-sm font-medium text-gray-700"
+                className="mb-1 block text-sm font-medium text-gray-700 dark:text-foreground"
               >
                 Document link{" "}
-                <span className="text-gray-400">(https only)</span>
+                <span className="text-gray-400 dark:text-muted-foreground">
+                  (https only)
+                </span>
               </label>
               <input
                 id="proposal-doclink"
@@ -407,7 +420,7 @@ export default function ProposalEditor({
                 <p
                   id="proposal-doclink-error"
                   role="alert"
-                  className="mt-1 text-sm text-red-600"
+                  className="mt-1 text-sm text-red-600 dark:text-red-400"
                 >
                   The link must start with https:// and have no username or
                   password.
@@ -420,10 +433,10 @@ export default function ProposalEditor({
             <div className="space-y-3">
               {shownPoster && (
                 <div>
-                  <p className="mb-1 text-sm font-medium text-gray-700">
+                  <p className="mb-1 text-sm font-medium text-gray-700 dark:text-foreground">
                     Poster
                   </p>
-                  <div className="relative h-64 w-full max-w-md overflow-hidden rounded-md border border-gray-200 bg-gray-50">
+                  <div className="relative h-64 w-full max-w-md overflow-hidden rounded-md border border-gray-200 bg-gray-50 dark:border-border dark:bg-muted">
                     <Image
                       src={shownPoster}
                       alt="Poster"
@@ -437,14 +450,14 @@ export default function ProposalEditor({
               )}
               {shownLink && (
                 <p className="text-sm">
-                  <span className="font-medium text-gray-700">
+                  <span className="font-medium text-gray-700 dark:text-foreground">
                     Document link:{" "}
                   </span>
                   <a
                     href={shownLink}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="break-all text-emerald-700 underline underline-offset-2"
+                    className="break-all text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
                   >
                     {shownLink}
                   </a>
@@ -455,7 +468,7 @@ export default function ProposalEditor({
         )}
 
         {editable && missing.length > 0 && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
             <p className="font-medium">Needed before you can submit</p>
             <ul className="mt-1 list-disc pl-5">
               {missing.map((m) => (
@@ -466,7 +479,7 @@ export default function ProposalEditor({
         )}
 
         {failure && (
-          <div role="alert" className="text-sm text-red-600">
+          <div role="alert" className="text-sm text-red-600 dark:text-red-400">
             <p>{failure.text}</p>
             {failure.items.length > 0 && (
               <ul className="mt-1 list-disc pl-5">
@@ -478,7 +491,10 @@ export default function ProposalEditor({
           </div>
         )}
         {saved && !failure && (
-          <p role="status" className="text-sm text-emerald-700">
+          <p
+            role="status"
+            className="text-sm text-emerald-700 dark:text-emerald-300"
+          >
             Saved.
           </p>
         )}
@@ -513,8 +529,10 @@ export default function ProposalEditor({
 
       {loaded && loaded.history.length > 0 && (
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-gray-900">History</h3>
-          <ul className="space-y-1 text-sm text-gray-600">
+          <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-foreground">
+            History
+          </h3>
+          <ul className="space-y-1 text-sm text-gray-600 dark:text-muted-foreground">
             {loaded.history.map((h) => (
               <li key={h.id}>
                 {historyLine(h, (at) => formatDateTime(toEpoch(at)))}

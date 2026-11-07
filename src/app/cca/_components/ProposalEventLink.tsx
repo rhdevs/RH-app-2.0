@@ -58,41 +58,46 @@ export default function ProposalEventLink({
   return (
     <section
       aria-labelledby="proposal-event-heading"
-      className="space-y-2 rounded-lg border border-gray-200 bg-white p-4"
+      className="space-y-2 rounded-lg border border-gray-200 bg-white p-4 dark:border-border dark:bg-card"
     >
       <h3
         id="proposal-event-heading"
-        className="text-sm font-semibold text-gray-900"
+        className="text-sm font-semibold text-gray-900 dark:text-foreground"
       >
         Event
       </h3>
       {event && (
-        <p className="text-sm text-gray-700">
+        <p className="text-sm text-gray-700 dark:text-foreground">
           {proposal.viewer === "head" && proposal.eventsEnabled ? (
             <Link
               href={headEventHref(ccaID, event.eventID)}
-              className="text-emerald-700 underline underline-offset-2"
+              className="text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
             >
               {event.title ?? "Untitled event"}
             </Link>
           ) : (
             <span>{event.title ?? "Untitled event"}</span>
           )}{" "}
-          <span className="text-gray-500">({event.status})</span>
+          <span className="text-gray-500 dark:text-muted-foreground">
+            ({event.status})
+          </span>
         </p>
       )}
       {!event && proposal.eventMissing && (
-        <p role="status" className="text-sm text-amber-800">
+        <p role="status" className="text-sm text-amber-800 dark:text-amber-300">
           The event draft is missing. It was deleted or could not be made.
         </p>
       )}
       {!event && proposal.eventBeingMade && (
-        <p role="status" className="text-sm text-gray-600">
+        <p
+          role="status"
+          className="text-sm text-gray-600 dark:text-muted-foreground"
+        >
           The event draft is still being made. Check again shortly.
         </p>
       )}
       {!event && !proposal.eventMissing && !proposal.eventBeingMade && (
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 dark:text-muted-foreground">
           No event has been made from this proposal.
         </p>
       )}
@@ -107,7 +112,7 @@ export default function ProposalEventLink({
         </Button>
       )}
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
       )}

@@ -81,11 +81,15 @@ export default function EvidencePanel({ ccaID }: { ccaID: number }) {
   }
 
   if (enabled.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (!on) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Milestone evidence is not switched on yet.
       </p>
     );
@@ -99,7 +103,7 @@ export default function EvidencePanel({ ccaID }: { ccaID: number }) {
         <h2 id="evidence-heading" className="text-lg font-semibold">
           Evidence photos
         </h2>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
           Photos for a milestone. Only the heads of this CCA and its directors
           can see them. A photo that is not used within a week is removed.
         </p>
@@ -117,14 +121,14 @@ export default function EvidencePanel({ ccaID }: { ccaID: number }) {
             ? `Uploading${percent !== null ? ` ${percent}%` : "…"}`
             : "Add a photo"}
         </Button>
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-gray-500 dark:text-muted-foreground">
           {photos.length} of {EVIDENCE_MAX_UNATTACHED} unused
         </span>
         <input
           ref={inputRef}
           type="file"
           accept="image/png,image/jpeg,image/webp"
-          className="hidden"
+          className="hidden dark:text-foreground dark:placeholder:text-muted-foreground"
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) void handleFile(file);
@@ -138,7 +142,7 @@ export default function EvidencePanel({ ccaID }: { ccaID: number }) {
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={percent}
-          className="h-1.5 w-64 overflow-hidden rounded bg-gray-200"
+          className="h-1.5 w-64 overflow-hidden rounded bg-gray-200 dark:bg-muted"
         >
           <div
             className="h-full bg-emerald-600"
@@ -148,27 +152,31 @@ export default function EvidencePanel({ ccaID }: { ccaID: number }) {
       )}
 
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
       )}
 
       {list.isLoading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
+          Loading…
+        </p>
       ) : list.isError ? (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           The photos could not be loaded.
         </p>
       ) : photos.length === 0 ? (
-        <p className="text-sm text-gray-500">No photos yet.</p>
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
+          No photos yet.
+        </p>
       ) : (
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {photos.map((p) => (
             <li
               key={p.id}
-              className="space-y-1 rounded-md border border-gray-200 bg-white p-2"
+              className="space-y-1 rounded-md border border-gray-200 bg-white p-2 dark:border-border dark:bg-card"
             >
-              <div className="relative h-32 w-full overflow-hidden rounded bg-gray-50">
+              <div className="relative h-32 w-full overflow-hidden rounded bg-gray-50 dark:bg-muted">
                 <Image
                   src={`/api/milestone-evidence/${p.id}`}
                   alt="Evidence photo"
@@ -179,7 +187,7 @@ export default function EvidencePanel({ ccaID }: { ccaID: number }) {
                 />
               </div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-gray-500 dark:text-muted-foreground">
                   {new Date(p.createdAt).toLocaleDateString()}
                 </span>
                 <Button
