@@ -9,6 +9,7 @@ import type { Capabilities } from "~/server/api/services/roles";
  * fails. A static render covers what is visible at rest.
  */
 const enabledQuery = vi.fn();
+const feedbackQuery = vi.fn();
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/admin" }));
 vi.mock("~/app/_components/header", () => ({ default: () => null }));
@@ -17,6 +18,9 @@ vi.mock("~/trpc/react", () => ({
   api: {
     transcript: {
       enabled: { useQuery: (...a: unknown[]) => enabledQuery(...a) },
+    },
+    feedback: {
+      enabled: { useQuery: (...a: unknown[]) => feedbackQuery(...a) },
     },
     cca: {
       listMine: {
@@ -54,7 +58,11 @@ const answers = [
 ] as const;
 
 describe("transcript entries in the admin and CCA shells", () => {
-  beforeEach(() => enabledQuery.mockReset());
+  beforeEach(() => {
+    enabledQuery.mockReset();
+    feedbackQuery.mockReset();
+    feedbackQuery.mockReturnValue({ data: { enabled: false } });
+  });
 
   it.each(answers)("hide both entries while the switch is %s", (_n, answer) => {
     enabledQuery.mockReturnValue(answer);
@@ -70,5 +78,53 @@ describe("transcript entries in the admin and CCA shells", () => {
 
     expect(admin()).toContain("Transcripts");
     expect(cca()).toContain("/cca/7/transcript");
+  });
+});
+
+describe("the admin Feedback tab", () => {
+  const adminWithFeedback = () =>
+    renderToStaticMarkup(
+      <AdminShell
+        capabilities={
+          {
+            reachDashboard: true,
+            readAuditLog: true,
+          } as unknown as Capabilities
+        }
+      >
+        content
+      </AdminShell>,
+    );
+
+  beforeEach(() => {
+    enabledQuery.mockReset();
+    enabledQuery.mockReturnValue({ data: { enabled: false } });
+    feedbackQuery.mockReset();
+  });
+
+  it.each(answers)("is hidden while the switch is %s", (_n, answer) => {
+    feedbackQuery.mockReturnValue(answer);
+
+    expect(adminWithFeedback()).not.toContain("/admin/feedback");
+    expect(adminWithFeedback()).toContain("Overview");
+  });
+
+  it("shows once the switch is on", () => {
+    feedbackQuery.mockReturnValue({ data: { enabled: true } });
+
+    expect(adminWithFeedback()).toContain("/admin/feedback");
+  });
+
+  it("asks for the flag only when the user could see the tab", () => {
+    feedbackQuery.mockReturnValue({ data: { enabled: true } });
+
+    admin();
+    expect(feedbackQuery.mock.calls.at(-1)![1]).toMatchObject({
+      enabled: false,
+    });
+    adminWithFeedback();
+    expect(feedbackQuery.mock.calls.at(-1)![1]).toMatchObject({
+      enabled: true,
+    });
   });
 });

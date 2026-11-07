@@ -16,6 +16,7 @@ import {
   FileText,
   Network,
   Award,
+  MessageSquare,
 } from "lucide-react";
 
 import Header from "~/app/_components/header";
@@ -117,6 +118,15 @@ const ADMIN_TABS = [
     icon: ScrollText,
     requires: "readAuditLog",
   },
+  // Feedback from the in-app form — admin only (readAuditLog is admin-only).
+  // Hidden until feedback.enabled is on; the procedures check it too, and the
+  // segment layout re-checks the role.
+  {
+    href: "/admin/feedback",
+    label: "Feedback",
+    icon: MessageSquare,
+    requires: "readAuditLog",
+  },
 ] as const satisfies readonly {
   href: string;
   label: string;
@@ -141,10 +151,19 @@ export default function AdminShell({
       retry: false,
       staleTime: 60_000,
     }).data?.enabled === true;
+  // Same rule: hidden while off, loading or failed. Only asked for by someone
+  // who would see the tab.
+  const feedbackEnabled =
+    api.feedback.enabled.useQuery(undefined, {
+      enabled: capabilities.readAuditLog === true,
+      retry: false,
+      staleTime: 60_000,
+    }).data?.enabled === true;
   const tabs = ADMIN_TABS.filter(
     (t) =>
       capabilities[t.requires] === true &&
-      (t.href !== "/admin/transcripts" || transcriptEnabled),
+      (t.href !== "/admin/transcripts" || transcriptEnabled) &&
+      (t.href !== "/admin/feedback" || feedbackEnabled),
   );
 
   return (

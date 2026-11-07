@@ -1,7 +1,9 @@
 /**
- * Creates the INDEXES the in-app inbox needs on `Notification`: the two the
- * schema declares in prisma/schema.prisma, plus the expiry (TTL) index that
- * Prisma cannot express and that is therefore NOT in the schema.
+ * Creates the INDEXES phase 1 needs: on `Notification`, the two the schema
+ * declares in prisma/schema.prisma, plus the expiry (TTL) index that Prisma
+ * cannot express and that is therefore NOT in the schema; and on `Feedback`
+ * (F27) the two the schema declares. One script per phase, so the feedback
+ * indexes live here rather than in a script of their own.
  *
  * DO NOT RUN `prisma db push` AGAINST THE CLUSTER INSTEAD OF THIS SCRIPT: a
  * push silently drops `User.email_unique_ci`, and it would also drop the TTL
@@ -15,7 +17,8 @@
  *   node scripts/remediation/index-census.mjs > census-after.txt
  *   diff census-before.txt census-after.txt
  *
- * ONLY THEN set `notifications.enabled` to "on". Until `notification_expiry`
+ * ONLY THEN set `notifications.enabled` and `feedback.enabled` to "on". Until
+ * `notification_expiry`
  * exists nothing ever deletes a row, and the inbox would grow without bound.
  *
  * `notification_expiry` deletes a row once its own `expiresAt` has passed
@@ -28,7 +31,7 @@
  * `expireAfterSeconds` entry key): dry run by default, never drops or modifies
  * an index, refuses on any conflict (including an index of that name with a
  * different TTL) or existing duplicate, then verifies by reading the indexes
- * back. Touches ONLY the collection in TARGETS. A Vitest test (src/server/api/
+ * back. Touches ONLY the collections in TARGETS. A Vitest test (src/server/api/
  * services/__tests__/notificationIndexes.test.ts) fails if TARGETS and the
  * schema differ.
  */
@@ -56,6 +59,18 @@ export const TARGETS = {
       expireAfterSeconds: 0,
     },
   ],
+  Feedback: [
+    {
+      name: "feedback_created",
+      key: { createdAt: 1 },
+      unique: false,
+    },
+    {
+      name: "feedback_user_created",
+      key: { userID: 1, createdAt: 1 },
+      unique: false,
+    },
+  ],
 };
 
 async function main() {
@@ -63,7 +78,7 @@ async function main() {
   try {
     await apply(db, isCommit(), TARGETS, {
       script: "create-notification-indexes.mjs",
-      label: "notification",
+      label: "notification and feedback",
     });
   } finally {
     await db.$disconnect();
