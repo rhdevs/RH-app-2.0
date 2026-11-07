@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import type { PrismaClient } from "@prisma/client";
 
+import { evaluateBookingWithMode } from "~/server/api/services/access";
 import { nextBookingId, withFacilityLock } from "~/server/api/services/booking";
 
 /**
@@ -144,6 +145,33 @@ async function findClash(
     : null;
 }
 
+/**
+ * The booking is written in the event author's name, so the author must be
+ * able to book the room themselves: the same role requirement, closure and
+ * kill-switch mode as createBooking (evaluateBookingWithMode). Without this a
+ * head could publish an event into a room they cannot book, or one that is
+ * not bookable through the app at all.
+ */
+async function assertAuthorMayBook(
+  db: PrismaClient,
+  event: EventBookingOwner,
+  facilityID: number,
+): Promise<void> {
+  const decision = await evaluateBookingWithMode(
+    db,
+    event.createdBy,
+    facilityID,
+  );
+  if (decision.ok) return;
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message:
+      decision.reason === "FACILITY_CLOSED"
+        ? "FACILITY_CLOSED"
+        : "FACILITY_RESTRICTED",
+  });
+}
+
 /** Marks a booking as an event's own; personal booking lists leave these out. */
 export const EVENT_AUTO_BOOKING_PREFIX = "Auto-booked for event #";
 
@@ -166,6 +194,7 @@ export async function bookEventFacility(
   event: EventBookingOwner,
   slot: SlotRequest,
 ): Promise<number> {
+  await assertAuthorMayBook(db, event, slot.facilityID);
   return withFacilityLock(db, slot.facilityID, async () => {
     const clash = await findClash(db, slot);
     if (clash) throwClash(clash);
@@ -244,6 +273,8 @@ export async function moveEventBooking(
   const noop = async (): Promise<void> => undefined;
 
   if (current && current.facilityID === slot.facilityID) {
+    // Same room: still re-checked, since it may have closed since publish.
+    await assertAuthorMayBook(db, event, slot.facilityID);
     await withFacilityLock(db, slot.facilityID, async () => {
       const clash = await findClash(db, {
         ...slot,
