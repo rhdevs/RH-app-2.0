@@ -21,6 +21,7 @@ import {
   noticeDecision,
   noticeDeleted,
   noticeEditedBySocialDirector,
+  noticeFiled,
 } from "./notices";
 import {
   changeRequest,
@@ -85,7 +86,8 @@ async function assertProposalFree(
  * After a proposal-only request commits, the proposal is read again: the Event
  * may have been claimed between the check and the commit, when the move of the
  * proposal's request would have found nothing. If it now has an Event, the
- * request is tagged with it rather than refused.
+ * request is tagged with it rather than refused. The Social director is told
+ * afterwards, best effort.
  */
 export async function createRequest(
   db: PrismaClient,
@@ -127,6 +129,8 @@ export async function createRequest(
   if (target.eventID === null) {
     await tagIfProposalGotAnEvent(db, made.id, target);
   }
+  // After the save, best effort: it never throws and never fails the filing.
+  await noticeFiled(db, { id: made.id, title: input.title }, userID);
   return made;
 }
 
