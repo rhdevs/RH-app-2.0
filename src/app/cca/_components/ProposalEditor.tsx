@@ -28,6 +28,7 @@ import {
   normalizeDocLink,
   PROPOSAL_DOC_LINK_MAX,
 } from "~/lib/schemas/proposalFiles";
+import ProposalEventLink from "./ProposalEventLink";
 import ProposalPosterField from "./ProposalPosterField";
 import {
   describeProposalError,
@@ -38,6 +39,7 @@ import {
   sameForm,
   saveFieldsFromForm,
   updateFieldsFromForm,
+  withCategory,
   type ProposalFormState,
 } from "../_lib/proposalForm";
 
@@ -243,7 +245,10 @@ export default function ProposalEditor({
             disabled={!editable || busy}
             onChange={(e) => {
               const v = e.target.value;
-              if (isProposalCategory(v)) set({ category: v });
+              if (isProposalCategory(v)) {
+                setSaved(false);
+                setForm((f) => withCategory(f, v));
+              }
             }}
             className={FIELD}
           >
@@ -342,6 +347,27 @@ export default function ProposalEditor({
             onChange={(e) => set({ blastMessage: e.target.value })}
             className={FIELD}
           />
+        </div>
+
+        <div className="flex items-start gap-2">
+          <input
+            id="proposal-will-be-event"
+            type="checkbox"
+            checked={form.willBeEvent}
+            disabled={!editable || busy}
+            onChange={(e) => set({ willBeEvent: e.target.checked })}
+            className="mt-1 h-4 w-4 rounded border-gray-300 text-emerald-600"
+          />
+          <label
+            htmlFor="proposal-will-be-event"
+            className="text-sm text-gray-700"
+          >
+            <span className="font-medium">This will be an event</span>
+            <span className="block text-gray-500">
+              When it is approved, an unpublished event draft is made for you.
+              You publish it yourself. Leave this off to make one later.
+            </span>
+          </label>
         </div>
 
         {editable ? (
@@ -474,6 +500,8 @@ export default function ProposalEditor({
           </div>
         )}
       </form>
+
+      {loaded && <ProposalEventLink ccaID={ccaID} proposal={loaded} />}
 
       {loaded && loaded.history.length > 0 && (
         <section>

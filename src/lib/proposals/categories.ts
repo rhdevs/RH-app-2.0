@@ -77,6 +77,16 @@ export function isProposalCategory(value: unknown): value is ProposalCategory {
   );
 }
 
+/**
+ * The starting value of "This will be an event" (Q24: optional). Only the
+ * Event type starts on; the head can switch it either way while the proposal
+ * is a draft or returned, and an approved proposal can still make its draft
+ * by hand.
+ */
+export function defaultWillBeEvent(category: ProposalCategory): boolean {
+  return category === "event";
+}
+
 export type SubmitContent = {
   category: ProposalCategory;
   title: string;

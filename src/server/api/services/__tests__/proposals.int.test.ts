@@ -618,7 +618,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       };
       const rows = () => db.proposal.count({ where: { ccaID: CCA_A } });
 
-      it("the ceilings are create 10, update 120, submit 20, upload 30, approve, return and finish 60 an hour", async () => {
+      it("the ceilings are create 10, update 120, submit 20, upload 30, approve, return and finish 60, createEvent 30 an hour", async () => {
         const limits = await import("../proposals/limits");
         expect(limits.PROPOSAL_LIMITS).toEqual({
           create: 10,
@@ -628,6 +628,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           approve: 60,
           return: 60,
           finish: 60,
+          createEvent: 30,
         });
         expect(limits.PROPOSAL_WINDOW_MS).toBe(3_600_000);
       });

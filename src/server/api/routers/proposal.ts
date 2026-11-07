@@ -28,6 +28,7 @@ import {
   getDirectorHome,
   getDirectorQueue,
 } from "~/server/api/services/proposals/directorView";
+import { createEventFromProposal } from "~/server/api/services/proposals/eventLink";
 import {
   getProposal,
   listProposals,
@@ -125,6 +126,17 @@ export const proposalRouter = createTRPCRouter({
     .input(proposalFinishInput)
     .mutation(({ ctx, input }) =>
       finishProposal(ctx.db, ctx.session.user.userID, input),
+    ),
+
+  /**
+   * The Create event button: makes the linked Event draft of an approved
+   * proposal, or the missing one. Heads of the proposal's CCA only, with
+   * `events.enabled` on (services/proposals/eventLink.ts).
+   */
+  createEvent: gated
+    .input(proposalIdInput)
+    .mutation(({ ctx, input }) =>
+      createEventFromProposal(ctx.db, ctx.session.user.userID, input.id),
     ),
 
   directorHome: gated.query(({ ctx }) =>

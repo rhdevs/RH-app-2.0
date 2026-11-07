@@ -64,6 +64,8 @@ export const proposalCreateInput = z
     plannedEnd: fields.plannedEnd.default(null),
     // A poster needs the proposal's id, so it can only be added by an update.
     docLink: docLinkField.default(null),
+    /** "This will be an event"; absent means the category's default. */
+    willBeEvent: z.boolean().optional(),
   })
   .refine(endAfterStart, END_MESSAGE);
 
@@ -85,6 +87,7 @@ export const proposalUpdateInput = z
     posterUrl: z.string().max(2048).nullable().optional(),
     /** An https document link, or null / blank to clear it. */
     docLink: docLinkField.optional(),
+    willBeEvent: z.boolean().optional(),
   })
   .refine(endAfterStart, END_MESSAGE)
   .superRefine((v, ctx) => {

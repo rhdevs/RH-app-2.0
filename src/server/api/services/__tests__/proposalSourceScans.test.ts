@@ -262,6 +262,172 @@ describe("A32: events never read or write a proposal", () => {
   });
 });
 
+describe("A32 (PR 9): the link runs one way, from the proposal to the Event", () => {
+  // Every event router and event service file, found rather than listed, so a
+  // new one is covered the day it is added. The helper that writes the row
+  // (eventDraft.ts) is one of them.
+  const EVENT_CODE = SRC_FILES.filter(
+    (f) =>
+      /^src\/server\/api\/routers\/event[A-Za-z]*\.ts$/.test(f) ||
+      /^src\/server\/api\/services\/event[A-Za-z]*\.ts$/.test(f),
+  );
+
+  it("finds the event files, the row helper among them", () => {
+    expect(EVENT_CODE).toContain("src/server/api/routers/event.ts");
+    expect(EVENT_CODE).toContain("src/server/api/services/eventDraft.ts");
+    expect(EVENT_CODE.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("none imports, names or authorizes on anything proposal", () => {
+    for (const f of EVENT_CODE) {
+      const code = stripComments(read(f));
+      expect(code, f).not.toMatch(/proposal/i);
+      expect(code, f).not.toMatch(/eventLink|willBeEvent/);
+    }
+  });
+
+  it("the Event router makes its row through the shared helper, once", () => {
+    const code = stripComments(read("src/server/api/routers/event.ts"));
+    expect(code.match(/\bcreateEventRow\(/g)).toHaveLength(1);
+    expect(code).toMatch(/from "~\/server\/api\/services\/eventDraft"/);
+  });
+
+  it("only the Event router and the proposal link import the row helper", () => {
+    const importers = SRC_FILES.filter((f) =>
+      stripComments(read(f)).includes('services/eventDraft"'),
+    );
+    expect(importers.sort()).toEqual([
+      "src/server/api/routers/event.ts",
+      "src/server/api/services/proposals/eventLink.ts",
+    ]);
+  });
+
+  it("no proposal file or screen changes, deletes or publishes an Event", () => {
+    const files = SRC_FILES.filter(
+      (f) =>
+        f.startsWith("src/server/api/services/proposals/") ||
+        f === "src/server/api/routers/proposal.ts" ||
+        f.includes("/cca/_components/Proposal") ||
+        f.startsWith("src/app/director/"),
+    );
+    expect(files.length).toBeGreaterThanOrEqual(12);
+    for (const f of files) {
+      const code = stripComments(read(f));
+      expect(code, f).not.toMatch(
+        /\.event\s*\.\s*(update|updateMany|delete|deleteMany|upsert|create|createMany)\b/,
+      );
+      expect(code, f).not.toMatch(/eventPublish|publishEvent|"published"/);
+      expect(code, f).not.toMatch(/deleteDraft|\.event\.(cancel|publish)/);
+    }
+  });
+});
+
+describe("the Event link is made once, after the approval, and never fails it", () => {
+  const LINK = "src/server/api/services/proposals/eventLink.ts";
+  const code = () => stripComments(read(LINK));
+
+  it("follows 4.7's order: read, allocate, compare-and-set, then create", () => {
+    const c = code();
+    const start = c.indexOf("async function linkAndCreate");
+    const body = c.slice(start, c.indexOf("\n}\n", start));
+    const at = (needle: string) => body.indexOf(needle);
+    expect(at("readLinkedEvent(")).toBeGreaterThan(-1);
+    expect(at("nextEventId(db)")).toBeGreaterThan(at("readLinkedEvent("));
+    expect(at("db.proposal.updateMany(")).toBeGreaterThan(
+      at("nextEventId(db)"),
+    );
+    expect(at("createEventRow(")).toBeGreaterThan(at("claimed.count !== 1"));
+    // The expected value is the one read, and a missing key counts as null.
+    expect(c).toMatch(/isSet: false/);
+    expect(body).toMatch(/\.\.\.eventIDIs\(expected\)/);
+    // Only an approved proposal can be linked: the caller names which statuses.
+    expect(body).toMatch(/status: \{ in: statuses \}/);
+    expect(c).toMatch(/draftEventAfterApproval[\s\S]*?\[\s*"cleared",?\s*\]/);
+    // The link write is not a content edit and not a status move.
+    const data = body.slice(body.indexOf("data:"));
+    expect(data.slice(0, data.indexOf("}") + 1)).toBe(
+      "data: { eventID, eventClaimedAt: new Date() }",
+    );
+  });
+
+  it("the automatic step wraps its whole body in one try and reads the flag first", () => {
+    const c = code();
+    const start = c.indexOf("export async function draftEventAfterApproval");
+    const body = c.slice(start, c.indexOf("\n}\n", start));
+    expect(body.match(/\btry\b/g)).toHaveLength(1);
+    expect(body.match(/\bcatch\b/g)).toHaveLength(1);
+    expect(body.indexOf("try {")).toBeLessThan(body.indexOf("loadSource("));
+    expect(body.indexOf("areEventsEnabled(db)")).toBeLessThan(
+      body.indexOf("linkAndCreate("),
+    );
+    expect(body).not.toMatch(/\bthrow\b/);
+    // The only other catches are the two best-effort notices.
+    expect(c.match(/\bcatch\b/g)).toHaveLength(3);
+  });
+
+  it("the button checks the flag, then the head, then spends budget, then links", () => {
+    const c = code();
+    const start = c.indexOf("export async function createEventFromProposal");
+    const body = c.slice(start);
+    const order = [
+      "await assertEventsEnabled(db)",
+      "await assertCcaHead(",
+      'await assertWithinLimit("createEvent", userID)',
+      "linkAndCreate(",
+    ].map((n) => body.indexOf(n));
+    expect(order.every((i) => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(body).toMatch(/hideExistence: true/);
+    expect(c).not.toMatch(/getUserRoles|assertHeadsCca|isDirectorOf/);
+  });
+
+  it("approve makes the draft only after the approval has committed", () => {
+    const c = stripComments(
+      read("src/server/api/services/proposals/review.ts"),
+    );
+    const start = c.indexOf("export async function approveProposal");
+    const body = c.slice(start, c.indexOf("\n}\n", start));
+    expect(body.indexOf('reviewMove(db, userID, "approve"')).toBeGreaterThan(
+      -1,
+    );
+    expect(body.indexOf("draftEventAfterApproval(")).toBeGreaterThan(
+      body.indexOf("reviewMove("),
+    );
+    // Return and finish never make an Event.
+    expect(c.match(/draftEventAfterApproval\(/g)).toHaveLength(1);
+  });
+
+  it("the router's Create event is a gated procedure that passes only the id", () => {
+    const c = stripComments(read("src/server/api/routers/proposal.ts"));
+    expect(c).toMatch(
+      /createEvent: gated\s*\.input\(proposalIdInput\)\s*\.mutation\(\(\{ ctx, input \}\) =>\s*createEventFromProposal\(ctx\.db, ctx\.session\.user\.userID, input\.id\)/,
+    );
+  });
+
+  it("copies only the named fields into the Event row", () => {
+    const c = code();
+    const start = c.indexOf("function eventRowFrom");
+    const body = c.slice(start, c.indexOf("\n}\n", start));
+    for (const absent of [
+      "posterUrl",
+      "docLink",
+      "category",
+      "budget",
+      "bannerUrl",
+      "status",
+    ]) {
+      expect(body, absent).not.toMatch(new RegExp(`\b${absent}\b`));
+    }
+    for (const nulled of [
+      "location: null",
+      "facilityID: null",
+      "capacity: null",
+    ]) {
+      expect(body).toContain(nulled);
+    }
+  });
+});
+
 describe("proposal access never uses a forgiving read", () => {
   const FILES = [
     "src/server/api/routers/proposal.ts",
@@ -301,6 +467,7 @@ describe("proposal access never uses a forgiving read", () => {
     for (const f of FILES) {
       if (f.endsWith("/access.ts") || f.endsWith("/flag.ts")) continue;
       if (f.endsWith("/transition.ts")) continue; // maps a conflict, see below
+      if (f.endsWith("/eventLink.ts")) continue; // best-effort draft, see below
       expect(stripComments(read(f)), f).not.toMatch(/\bcatch\b/);
     }
   });
@@ -311,7 +478,7 @@ describe("proposal access never uses a forgiving read", () => {
     expect(code).toMatch(
       /const gated = identifiedProcedure\s*\.use\(sanitizeErrors\)\s*\.use\(/,
     );
-    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(10);
+    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(11);
     expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
     // The navigation entry's query is the one deliberate exception: it must
     // answer `show: false` for everyone else, so the switch check lives in the
@@ -387,7 +554,7 @@ describe("approve, return and finish cannot skip the guard", () => {
 
   it("all three go through the one shared move", () => {
     const c = code();
-    expect(c.match(/return reviewMove\(/g)).toHaveLength(3);
+    expect(c.match(/\breviewMove\(db, userID, "/g)).toHaveLength(3);
     for (const action of ["approve", "return", "finish"]) {
       expect(c).toMatch(new RegExp(`reviewMove\\(db, userID, "${action}"`));
     }

@@ -13,6 +13,7 @@ import {
   type ProposalViewer,
 } from "./access";
 import { PROPOSAL_NOT_FOUND } from "./drafts";
+import { readEventLinkView, type EventLinkView } from "./eventLink";
 import { displayNames } from "./names";
 
 /**
@@ -27,7 +28,9 @@ import { displayNames } from "./names";
  *  - The review actions offered are the ones the strict director guard allows
  *    this person NOW, for the proposal's status. They are a convenience for the
  *    screen; approve, return and finish check the guard again themselves.
- * `eventID` is not returned: nothing in this PR uses it.
+ * The linked Event is returned as id, status and title only, and only if it
+ * still exists; a missing one is flagged (`eventMissing`). The raw `eventID`
+ * of the proposal is not returned.
  */
 
 const LIST_MAX = 200;
@@ -41,7 +44,9 @@ export type ProposalListItem = {
   submittedAt: Date | null;
 };
 
-export type ProposalDetail = ProposalListItem & {
+export type ProposalDetail = ProposalDetailContent & EventLinkView;
+
+type ProposalDetailContent = ProposalListItem & {
   ccaID: number;
   ccaName: string | null;
   description: string;
@@ -94,7 +99,7 @@ export async function getProposal(
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: 200,
   });
-  const [names, cca] = await Promise.all([
+  const [names, cca, eventLink] = await Promise.all([
     displayNames(
       db,
       history.flatMap((h) => (h.approverID ? [h.approverID] : [])),
@@ -103,6 +108,16 @@ export async function getProposal(
       where: { ccaID: row.ccaID },
       select: { ccaName: true },
     }),
+    readEventLinkView(
+      db,
+      {
+        willBeEvent: row.willBeEvent ?? null,
+        status: row.status,
+        eventID: row.eventID ?? null,
+        eventClaimedAt: row.eventClaimedAt ?? null,
+      },
+      viewer === "head",
+    ),
   ]);
   return {
     id: row.id,
@@ -116,6 +131,7 @@ export async function getProposal(
     plannedEnd: row.plannedEnd,
     posterUrl: row.posterUrl ?? null,
     docLink: row.docLink ?? null,
+    ...eventLink,
     status: row.status,
     version: row.version,
     submittedAt: row.submittedAt,

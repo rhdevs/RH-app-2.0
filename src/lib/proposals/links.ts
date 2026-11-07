@@ -12,3 +12,7 @@ export const directorProposalHref = (proposalID: string) =>
 
 export const headProposalHref = (ccaID: number, proposalID: string) =>
   `/cca/${ccaID}/proposals/${proposalID}`;
+
+/** A head opens the linked Event draft on the CCA's own events screen. */
+export const headEventHref = (ccaID: number, eventID: number) =>
+  `/cca/${ccaID}/events/${eventID}`;
