@@ -10,7 +10,7 @@ import { formatDateTime } from "~/app/events/_lib/format";
 import { describeProposalError } from "~/app/cca/_lib/proposalForm";
 
 const FIELD =
-  "w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-gray-50";
+  "w-full rounded-lg border border-gray-300 dark:border-border p-2.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-gray-50 dark:disabled:bg-muted";
 
 const toEpoch = (d: Date | string) => Math.floor(new Date(d).getTime() / 1000);
 
@@ -79,11 +79,15 @@ export default function ProposalThread({
   }, [first.data, unread, newest, proposalID]);
 
   if (first.isLoading) {
-    return <p className="text-sm text-gray-500">Loading comments…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading comments…
+      </p>
+    );
   }
   if (first.isError || !first.data) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         {describeProposalError(first.error?.message).text}
       </p>
     );
@@ -124,17 +128,17 @@ export default function ProposalThread({
   return (
     <section
       aria-labelledby="proposal-thread-heading"
-      className="space-y-3 rounded-lg border border-gray-200 bg-white p-4"
+      className="space-y-3 rounded-lg border border-gray-200 bg-white p-4 dark:border-border dark:bg-card"
     >
       <div className="flex items-center justify-between gap-2">
         <h3
           id="proposal-thread-heading"
-          className="text-sm font-semibold text-gray-900"
+          className="text-sm font-semibold text-gray-900 dark:text-foreground"
         >
           Comments
         </h3>
         {badge && (
-          <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+          <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
             {badge}
           </span>
         )}
@@ -151,29 +155,33 @@ export default function ProposalThread({
         </Button>
       )}
       {shown.length === 0 ? (
-        <p className="text-sm text-gray-500">No comments yet.</p>
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
+          No comments yet.
+        </p>
       ) : (
         <ul className="space-y-3">
           {shown.map((c) => (
             <li key={c.id} className="text-sm">
-              <p className="text-xs text-gray-500">
-                <span className="font-medium text-gray-700">
+              <p className="text-xs text-gray-500 dark:text-muted-foreground">
+                <span className="font-medium text-gray-700 dark:text-foreground">
                   {c.mine ? "You" : (c.authorName ?? FORMER_MEMBER)}
                 </span>
                 {" · "}
                 {formatDateTime(toEpoch(c.createdAt))}
                 {c.headsOnly && (
-                  <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700">
+                  <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-muted dark:text-foreground">
                     Heads only
                   </span>
                 )}
                 {c.isNew && (
-                  <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800">
+                  <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
                     New
                   </span>
                 )}
               </p>
-              <p className="whitespace-pre-wrap text-gray-800">{c.body}</p>
+              <p className="whitespace-pre-wrap text-gray-800 dark:text-foreground">
+                {c.body}
+              </p>
             </li>
           ))}
         </ul>
@@ -188,7 +196,7 @@ export default function ProposalThread({
       >
         <label
           htmlFor="proposal-comment"
-          className="block text-sm font-medium text-gray-700"
+          className="block text-sm font-medium text-gray-700 dark:text-foreground"
         >
           Add a comment
         </label>
@@ -205,12 +213,12 @@ export default function ProposalThread({
           <Button type="submit" disabled={add.isPending || body.trim() === ""}>
             {add.isPending ? "Posting…" : "Post comment"}
           </Button>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-gray-500 dark:text-muted-foreground">
             {body.length}/{PROPOSAL_COMMENT_MAX}
           </span>
         </div>
         {failure && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
             {failure}
           </p>
         )}

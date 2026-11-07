@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import SurfaceTheme from "~/app/_components/theme/SurfaceTheme";
 
 import ProposalsPanel from "../../_components/ProposalsPanel";
 import { parseCcaID } from "../../_lib/ccaParam";
@@ -16,5 +17,9 @@ export default function CcaProposalsPage({
   const ccaID = parseCcaID(params.ccaID);
   if (ccaID === null) notFound();
 
-  return <ProposalsPanel ccaID={ccaID} />;
+  return (
+    <SurfaceTheme className="dark:rounded-lg dark:p-4">
+      <ProposalsPanel ccaID={ccaID} />
+    </SurfaceTheme>
+  );
 }

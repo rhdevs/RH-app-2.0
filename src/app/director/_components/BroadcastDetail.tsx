@@ -35,12 +35,16 @@ export default function BroadcastDetail({ id }: { id: string }) {
   );
 
   if (detail.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (detail.isError || !detail.data) {
     return (
       <div className="space-y-3">
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {reminderErrorMessage(detail.error?.message ?? "")}
         </p>
         {back}
@@ -53,13 +57,15 @@ export default function BroadcastDetail({ id }: { id: string }) {
     <div className="space-y-6">
       {back}
       <div>
-        <h1 className="text-2xl font-semibold text-gray-900">{b.title}</h1>
-        <p className="text-sm text-gray-600">
+        <h1 className="text-2xl font-semibold text-gray-900 dark:text-foreground">
+          {b.title}
+        </h1>
+        <p className="text-sm text-gray-600 dark:text-muted-foreground">
           Due {b.deadline}
           {b.status === "cancelled" ? " · Cancelled" : ""}
         </p>
         {b.message && (
-          <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800">
+          <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800 dark:text-foreground">
             {b.message}
           </p>
         )}
@@ -68,19 +74,19 @@ export default function BroadcastDetail({ id }: { id: string }) {
       <section aria-labelledby="broadcast-progress">
         <h2
           id="broadcast-progress"
-          className="mb-2 text-sm font-semibold text-gray-900"
+          className="mb-2 text-sm font-semibold text-gray-900 dark:text-foreground"
         >
           Progress by CCA
         </h2>
-        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white dark:divide-border dark:border-border dark:bg-card">
           {b.progress.map((p) => (
             <li
               key={p.ccaID}
               className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
             >
-              <span className="text-sm text-gray-900">
+              <span className="text-sm text-gray-900 dark:text-foreground">
                 {p.ccaName ?? `CCA ${p.ccaID}`}
-                <span className="block text-xs text-gray-500">
+                <span className="block text-xs text-gray-500 dark:text-muted-foreground">
                   {p.heads === 0
                     ? "No heads on record"
                     : `${p.heads} ${p.heads === 1 ? "head" : "heads"}`}
@@ -89,8 +95,8 @@ export default function BroadcastDetail({ id }: { id: string }) {
               <span
                 className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                   p.doneAt
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-gray-100 text-gray-700"
+                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
+                    : "bg-gray-100 text-gray-700 dark:bg-muted dark:text-foreground"
                 }`}
               >
                 {p.doneAt
@@ -105,7 +111,7 @@ export default function BroadcastDetail({ id }: { id: string }) {
       {b.canCancel &&
         (confirming ? (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-gray-700">
+            <span className="text-xs text-gray-700 dark:text-foreground">
               Cancel this reminder? Heads will stop getting nudges.
             </span>
             <Button
@@ -134,7 +140,7 @@ export default function BroadcastDetail({ id }: { id: string }) {
           </Button>
         ))}
       {error && (
-        <p role="alert" className="text-xs text-red-600">
+        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
           {error}
         </p>
       )}

@@ -44,21 +44,29 @@ export default function RemindersScreen() {
   });
 
   if (enabled.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (!on) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Deadline reminders are not switched on yet.
       </p>
     );
   }
   if (mine.isLoading) {
-    return <p className="text-sm text-gray-500">Loading reminders…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading reminders…
+      </p>
+    );
   }
   if (mine.isError || !mine.data) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         Could not load your reminders. Try again shortly.
       </p>
     );
@@ -67,25 +75,29 @@ export default function RemindersScreen() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold text-gray-900">Reminders</h1>
+      <h1 className="text-2xl font-semibold text-gray-900 dark:text-foreground">
+        Reminders
+      </h1>
       {!isHead ? (
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 dark:text-muted-foreground">
           Reminders go to the heads of a CCA. You are not a head of one right
           now.
         </p>
       ) : items.length === 0 ? (
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500">
+        <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500 dark:border-border dark:bg-card dark:text-muted-foreground">
           Nothing is due.
         </p>
       ) : (
-        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white dark:divide-border dark:border-border dark:bg-card">
           {items.map((i) => (
             <Row key={`${i.broadcastID}:${i.ccaID}`} item={i} />
           ))}
         </ul>
       )}
       {skipped > 0 && (
-        <p className="text-xs text-gray-500">{skipped} could not be shown.</p>
+        <p className="text-xs text-gray-500 dark:text-muted-foreground">
+          {skipped} could not be shown.
+        </p>
       )}
     </div>
   );
@@ -108,12 +120,14 @@ function Row({ item }: { item: Item }) {
     <li className="space-y-2 px-4 py-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-900">{item.title}</p>
-          <p className="text-xs text-gray-500">
+          <p className="text-sm font-medium text-gray-900 dark:text-foreground">
+            {item.title}
+          </p>
+          <p className="text-xs text-gray-500 dark:text-muted-foreground">
             {item.ccaName ?? `CCA ${item.ccaID}`} · Deadline {item.deadline}
           </p>
           {item.message && (
-            <p className="mt-1 whitespace-pre-wrap text-xs text-gray-700">
+            <p className="mt-1 whitespace-pre-wrap text-xs text-gray-700 dark:text-foreground">
               {item.message}
             </p>
           )}
@@ -121,10 +135,10 @@ function Row({ item }: { item: Item }) {
         <span
           className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
             item.done
-              ? "bg-emerald-100 text-emerald-800"
+              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
               : urgent
-                ? "bg-red-100 text-red-800"
-                : "bg-gray-100 text-gray-700"
+                ? "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300"
+                : "bg-gray-100 text-gray-700 dark:bg-muted dark:text-foreground"
           }`}
         >
           {item.done ? "Done" : dueText(item.daysLeft)}
@@ -145,7 +159,7 @@ function Row({ item }: { item: Item }) {
         </Button>
       )}
       {error && (
-        <p role="alert" className="text-xs text-red-600">
+        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
           {error}
         </p>
       )}

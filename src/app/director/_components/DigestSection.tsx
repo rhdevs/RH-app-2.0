@@ -22,29 +22,29 @@ export default function DigestSection() {
     <section aria-labelledby="director-digest">
       <h2
         id="director-digest"
-        className="mb-2 text-sm font-semibold text-gray-900"
+        className="mb-2 text-sm font-semibold text-gray-900 dark:text-foreground"
       >
         Disposables collections today ({day})
       </h2>
       {items.length === 0 ? (
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500">
+        <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500 dark:border-border dark:bg-card dark:text-muted-foreground">
           No collections are booked for today.
         </p>
       ) : (
-        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white dark:divide-border dark:border-border dark:bg-card">
           {items.map((i) => (
             <li key={i.id} className="px-4 py-3">
-              <p className="text-sm font-medium text-gray-900">
+              <p className="text-sm font-medium text-gray-900 dark:text-foreground">
                 {i.collectionTime} · {i.title}
               </p>
               {i.eventTitle && (
-                <p className="text-xs text-gray-700">
+                <p className="text-xs text-gray-700 dark:text-foreground">
                   For {i.eventTitle}
                   {i.eventState === "canceled" && " (canceled)"}
                   {i.eventState === "declined" && " (declined)"}
                 </p>
               )}
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-500 dark:text-muted-foreground">
                 {i.hallWide ? "Hall-wide" : (i.ccaName ?? "A CCA")} · plates{" "}
                 {i.plates}, cups {i.cups}, bowls {i.bowls}, forks {i.forks},
                 spoons {i.spoons}
@@ -54,7 +54,7 @@ export default function DigestSection() {
         </ul>
       )}
       {(skipped > 0 || more) && (
-        <p className="mt-2 text-xs text-gray-500">
+        <p className="mt-2 text-xs text-gray-500 dark:text-muted-foreground">
           {skipped > 0 && `${skipped} could not be shown. `}
           {more && "There are more than this list can show. "}
           <Link href={DISPOSABLES_HREF} className="underline">

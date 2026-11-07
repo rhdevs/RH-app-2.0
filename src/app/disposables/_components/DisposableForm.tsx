@@ -27,7 +27,7 @@ import {
 import { sgtDayKey } from "~/lib/time/sgt";
 
 const fieldClass =
-  "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600";
+  "w-full rounded-md border border-gray-300 dark:border-border bg-white dark:bg-card px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600";
 
 /**
  * The request form. With `requestID` it edits that request (the Social
@@ -116,34 +116,49 @@ export default function DisposableForm({
   });
 
   if (enabled.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (!on) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Disposables requests are not switched on yet.
       </p>
     );
   }
   if (editing && loaded.isLoading) {
-    return <p className="text-sm text-gray-500">Loading request…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading request…
+      </p>
+    );
   }
   if (editing && loaded.data && !loaded.data.can.edit) {
     return (
-      <p role="alert" className="text-sm text-gray-600">
+      <p
+        role="alert"
+        className="text-sm text-gray-600 dark:text-muted-foreground"
+      >
         Only the Social director can edit a request.
       </p>
     );
   }
   if (editing && (loaded.isError || !loaded.data)) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         That request could not be found.
       </p>
     );
   }
   if (!editing && (events.isLoading || proposals.isLoading)) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   const eventList = (events.data ?? []).filter(
     (e) => initialCcaID === undefined || e.ccaID === initialCcaID,
@@ -161,14 +176,17 @@ export default function DisposableForm({
     freeProposals.length === 0
   ) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         Could not load what you can ask for. Try again shortly.
       </p>
     );
   }
   if (!editing && eventList.length === 0 && freeProposals.length === 0) {
     return (
-      <p role="alert" className="text-sm text-gray-600">
+      <p
+        role="alert"
+        className="text-sm text-gray-600 dark:text-muted-foreground"
+      >
         There is nothing to ask for disposables for. A CCA head can ask for an
         event of their CCA that has not ended or been canceled, or for one of
         its proposals. The JCRC and admins can ask for hall-wide events.
@@ -199,12 +217,12 @@ export default function DisposableForm({
 
   return (
     <form onSubmit={onSubmit} className="space-y-4" noValidate>
-      <h2 className="text-lg font-semibold text-gray-900">
+      <h2 className="text-lg font-semibold text-gray-900 dark:text-foreground">
         {editing ? "Edit disposables request" : "New disposables request"}
       </h2>
 
       {editing ? (
-        <p className="text-sm text-gray-700">
+        <p className="text-sm text-gray-700 dark:text-foreground">
           {tag
             ? `For the event ${tag.title ?? "(untitled)"}${
                 tag.state === "gone" ? " (no longer exists)" : ""
@@ -212,14 +230,14 @@ export default function DisposableForm({
             : loaded.data?.proposalID
               ? "For a proposal. It has no event yet."
               : ""}{" "}
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-gray-500 dark:text-muted-foreground">
             What a request is for cannot be changed. Delete it and file it again
             to change that.
           </span>
         </p>
       ) : (
         <>
-          <label className="block text-sm font-medium text-gray-700">
+          <label className="block text-sm font-medium text-gray-700 dark:text-foreground">
             Event
             <select
               className={`${fieldClass} mt-1`}
@@ -242,13 +260,16 @@ export default function DisposableForm({
             </select>
           </label>
           {notice && (
-            <p role="status" className="text-xs text-amber-700">
+            <p
+              role="status"
+              className="text-xs text-amber-700 dark:text-amber-300"
+            >
               {notice}
             </p>
           )}
 
           {proposalList.length > 0 && (
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-medium text-gray-700 dark:text-foreground">
               Or a proposal that has no event yet
               <select
                 className={`${fieldClass} mt-1`}
@@ -278,7 +299,7 @@ export default function DisposableForm({
         </>
       )}
 
-      <label className="block text-sm font-medium text-gray-700">
+      <label className="block text-sm font-medium text-gray-700 dark:text-foreground">
         What is it for?
         <input
           className={`${fieldClass} mt-1`}
@@ -289,12 +310,15 @@ export default function DisposableForm({
       </label>
 
       <fieldset>
-        <legend className="mb-1 text-sm font-medium text-gray-700">
+        <legend className="mb-1 text-sm font-medium text-gray-700 dark:text-foreground">
           How many of each
         </legend>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           {DISPOSABLE_ITEMS.map((item) => (
-            <label key={item} className="text-xs text-gray-600">
+            <label
+              key={item}
+              className="text-xs text-gray-600 dark:text-muted-foreground"
+            >
               {ITEM_LABELS[item]}
               <input
                 type="number"
@@ -318,7 +342,7 @@ export default function DisposableForm({
       </fieldset>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="block text-sm font-medium text-gray-700 dark:text-foreground">
           Collection date
           <input
             type="date"
@@ -330,7 +354,7 @@ export default function DisposableForm({
             }
           />
         </label>
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="block text-sm font-medium text-gray-700 dark:text-foreground">
           Collection time
           <input
             type="time"
@@ -341,7 +365,7 @@ export default function DisposableForm({
         </label>
       </div>
 
-      <label className="block text-sm font-medium text-gray-700">
+      <label className="block text-sm font-medium text-gray-700 dark:text-foreground">
         Notes (optional)
         <textarea
           className={`${fieldClass} mt-1`}
@@ -353,13 +377,16 @@ export default function DisposableForm({
       </label>
 
       {backToPending && (
-        <p role="note" className="text-sm text-amber-700">
+        <p role="note" className="text-sm text-amber-700 dark:text-amber-300">
           This request is approved. Saving a change sends it back to pending and
           tells the CCA&apos;s heads.
         </p>
       )}
       {errors.length > 0 && (
-        <ul role="alert" className="space-y-1 text-sm text-red-600">
+        <ul
+          role="alert"
+          className="space-y-1 text-sm text-red-600 dark:text-red-400"
+        >
           {errors.map((m) => (
             <li key={m}>{m}</li>
           ))}

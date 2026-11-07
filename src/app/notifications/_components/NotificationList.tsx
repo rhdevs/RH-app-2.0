@@ -34,11 +34,15 @@ export default function NotificationList() {
   });
 
   if (enabledQuery.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (!enabled) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Notifications are not switched on yet.
       </p>
     );
@@ -53,19 +57,23 @@ export default function NotificationList() {
           type="button"
           onClick={() => markAllRead.mutate()}
           disabled={markAllRead.isPending || items.every((i) => i.readAt)}
-          className="text-sm font-medium text-emerald-700 hover:text-emerald-800 disabled:text-gray-400"
+          className="text-sm font-medium text-emerald-700 hover:text-emerald-800 disabled:text-gray-400 dark:text-emerald-300 dark:hover:text-emerald-300 dark:disabled:text-muted-foreground"
         >
           Mark all as read
         </button>
       </div>
       {list.isError ? (
-        <p className="text-sm text-red-600">
+        <p className="text-sm text-red-600 dark:text-red-400">
           Could not load your notifications. Try again shortly.
         </p>
       ) : list.isLoading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
+          Loading…
+        </p>
       ) : items.length === 0 ? (
-        <p className="text-sm text-gray-500">Nothing here yet.</p>
+        <p className="text-sm text-gray-500 dark:text-muted-foreground">
+          Nothing here yet.
+        </p>
       ) : (
         <ul className="space-y-2">
           {items.map((item) => (
@@ -86,7 +94,7 @@ export default function NotificationList() {
             type="button"
             onClick={() => void list.fetchNextPage()}
             disabled={list.isFetchingNextPage}
-            className="text-sm font-medium text-emerald-700 hover:text-emerald-800 disabled:text-gray-400"
+            className="text-sm font-medium text-emerald-700 hover:text-emerald-800 disabled:text-gray-400 dark:text-emerald-300 dark:hover:text-emerald-300 dark:disabled:text-muted-foreground"
           >
             {list.isFetchingNextPage ? "Loading…" : "Show older"}
           </button>

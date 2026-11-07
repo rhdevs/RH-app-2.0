@@ -39,7 +39,7 @@ const toEpoch = (d: Date | string) => Math.floor(new Date(d).getTime() / 1000);
 export default function DirectorHome() {
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-semibold text-gray-900">
+      <h1 className="text-2xl font-semibold text-gray-900 dark:text-foreground">
         Director&apos;s home
       </h1>
       <DigestSection />
@@ -79,24 +79,32 @@ function ProposalsSection() {
   );
 
   if (enabled.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (enabled.isError) {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         Could not check whether proposals are switched on. Try again shortly.
       </p>
     );
   }
   if (!on) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
         Proposals are not switched on yet.
       </p>
     );
   }
   if (home.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (home.isError || !home.data) {
     const failure = describeReviewFailure(home.error?.message);
@@ -104,7 +112,9 @@ function ProposalsSection() {
       <p
         role={failure.notDirector ? "status" : "alert"}
         className={
-          failure.notDirector ? "text-sm text-gray-600" : "text-sm text-red-600"
+          failure.notDirector
+            ? "text-sm text-gray-600 dark:text-muted-foreground"
+            : "text-sm text-red-600 dark:text-red-400"
         }
       >
         {failure.text}
@@ -120,7 +130,7 @@ function ProposalsSection() {
       <section aria-labelledby="director-counts">
         <h2
           id="director-counts"
-          className="mb-2 text-sm font-semibold text-gray-900"
+          className="mb-2 text-sm font-semibold text-gray-900 dark:text-foreground"
         >
           Proposals by status
         </h2>
@@ -130,14 +140,14 @@ function ProposalsSection() {
               key={s}
               className={`rounded-lg border px-3 py-2 ${
                 s === "in_review"
-                  ? "border-emerald-300 bg-emerald-50"
-                  : "border-gray-200 bg-white"
+                  ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40"
+                  : "border-gray-200 bg-white dark:border-border dark:bg-card"
               }`}
             >
-              <dt className="text-xs text-gray-500">
+              <dt className="text-xs text-gray-500 dark:text-muted-foreground">
                 {PROPOSAL_STATUS_LABELS[s]}
               </dt>
-              <dd className="text-2xl font-semibold text-gray-900">
+              <dd className="text-2xl font-semibold text-gray-900 dark:text-foreground">
                 {counts[s]}
               </dd>
             </div>
@@ -148,33 +158,35 @@ function ProposalsSection() {
       <section aria-labelledby="director-queue">
         <h2
           id="director-queue"
-          className="mb-2 text-sm font-semibold text-gray-900"
+          className="mb-2 text-sm font-semibold text-gray-900 dark:text-foreground"
         >
           Waiting for your review
         </h2>
         {queue.isError ? (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
             Could not load the review queue. Try again shortly.
           </p>
         ) : queue.isLoading ? (
-          <p className="text-sm text-gray-500">Loading the queue…</p>
+          <p className="text-sm text-gray-500 dark:text-muted-foreground">
+            Loading the queue…
+          </p>
         ) : items.length === 0 ? (
-          <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500">
+          <p className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-500 dark:border-border dark:bg-card dark:text-muted-foreground">
             Nothing is waiting for review.
           </p>
         ) : (
-          <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+          <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white dark:divide-border dark:border-border dark:bg-card">
             {items.map((p) => (
               <li key={p.id}>
                 <Link
                   href={directorProposalHref(p.id)}
-                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 hover:bg-gray-50 focus-visible:bg-gray-50"
+                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 hover:bg-gray-50 focus-visible:bg-gray-50 dark:hover:bg-muted"
                 >
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-gray-900">
+                    <span className="block truncate text-sm font-medium text-gray-900 dark:text-foreground">
                       {p.title}
                     </span>
-                    <span className="block text-xs text-gray-500">
+                    <span className="block text-xs text-gray-500 dark:text-muted-foreground">
                       {p.ccaName ?? "A CCA you direct"}
                       {" · "}
                       {isProposalCategory(p.category)
@@ -184,12 +196,12 @@ function ProposalsSection() {
                   </span>
                   <span className="flex items-center gap-2">
                     {unreadLabel(p.unread) && (
-                      <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
                         {unreadLabel(p.unread)}
                       </span>
                     )}
                     {p.submittedAt && (
-                      <span className="text-xs text-gray-500">
+                      <span className="text-xs text-gray-500 dark:text-muted-foreground">
                         Submitted {formatDateTime(toEpoch(p.submittedAt))}
                       </span>
                     )}
@@ -216,17 +228,17 @@ function ProposalsSection() {
       <section aria-labelledby="director-ccas">
         <h2
           id="director-ccas"
-          className="mb-2 text-sm font-semibold text-gray-900"
+          className="mb-2 text-sm font-semibold text-gray-900 dark:text-foreground"
         >
           CCAs you vet
         </h2>
-        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+        <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white dark:divide-border dark:border-border dark:bg-card">
           {ccas.map((c) => (
             <li key={c.ccaID} className="px-4 py-3">
-              <p className="text-sm font-medium text-gray-900">
+              <p className="text-sm font-medium text-gray-900 dark:text-foreground">
                 {c.name ?? "A CCA you direct"}
               </p>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-500 dark:text-muted-foreground">
                 {c.heads.length === 0
                   ? "No heads on record"
                   : `Heads: ${c.heads.join(", ")}`}

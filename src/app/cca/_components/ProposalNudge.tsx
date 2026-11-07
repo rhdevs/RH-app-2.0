@@ -42,11 +42,11 @@ export default function ProposalNudge({ proposalID }: { proposalID: string }) {
   });
 
   return (
-    <section className="space-y-2 rounded-lg border border-gray-200 bg-white p-4">
-      <h3 className="text-sm font-semibold text-gray-900">
+    <section className="space-y-2 rounded-lg border border-gray-200 bg-white p-4 dark:border-border dark:bg-card">
+      <h3 className="text-sm font-semibold text-gray-900 dark:text-foreground">
         Nudge the director
       </h3>
-      <p className="text-sm text-gray-600">
+      <p className="text-sm text-gray-600 dark:text-muted-foreground">
         Sends the CCA&apos;s directors a notice to look at this proposal. Once a
         day per director.
       </p>
@@ -61,7 +61,11 @@ export default function ProposalNudge({ proposalID }: { proposalID: string }) {
       {message && (
         <p
           role={failed ? "alert" : "status"}
-          className={failed ? "text-sm text-red-600" : "text-sm text-gray-700"}
+          className={
+            failed
+              ? "text-sm text-red-600 dark:text-red-400"
+              : "text-sm text-gray-700 dark:text-foreground"
+          }
         >
           {message}
         </p>

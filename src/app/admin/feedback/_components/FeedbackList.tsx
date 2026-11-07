@@ -20,27 +20,41 @@ export default function FeedbackList() {
   );
 
   if (enabledQuery.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
   if (!enabled) {
     return (
-      <p className="text-sm text-gray-500">Feedback is not switched on yet.</p>
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Feedback is not switched on yet.
+      </p>
     );
   }
   if (list.isError) {
     return (
-      <p className="text-sm text-red-600">
+      <p className="text-sm text-red-600 dark:text-red-400">
         Could not load feedback. Try again shortly.
       </p>
     );
   }
   if (list.isLoading) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
 
   const items = list.data?.pages.flatMap((p) => p.items) ?? [];
   if (items.length === 0) {
-    return <p className="text-sm text-gray-500">Nothing here yet.</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-muted-foreground">
+        Nothing here yet.
+      </p>
+    );
   }
 
   return (
@@ -49,10 +63,10 @@ export default function FeedbackList() {
         {items.map((item) => (
           <li
             key={item.id}
-            className="rounded-lg border border-gray-200 bg-white p-4"
+            className="rounded-lg border border-gray-200 bg-white p-4 dark:border-border dark:bg-card"
           >
-            <div className="mb-2 flex flex-wrap items-center gap-x-3 text-xs text-gray-500">
-              <span className="rounded bg-gray-100 px-2 py-0.5 font-medium text-gray-700">
+            <div className="mb-2 flex flex-wrap items-center gap-x-3 text-xs text-gray-500 dark:text-muted-foreground">
+              <span className="rounded bg-gray-100 px-2 py-0.5 font-medium text-gray-700 dark:bg-muted dark:text-foreground">
                 {item.category}
               </span>
               <span>{item.userID}</span>
@@ -60,7 +74,7 @@ export default function FeedbackList() {
                 {item.createdAt.toLocaleString()}
               </time>
             </div>
-            <p className="whitespace-pre-wrap break-words text-sm text-gray-900">
+            <p className="whitespace-pre-wrap break-words text-sm text-gray-900 dark:text-foreground">
               {item.message}
             </p>
           </li>
@@ -72,7 +86,7 @@ export default function FeedbackList() {
             type="button"
             onClick={() => void list.fetchNextPage()}
             disabled={list.isFetchingNextPage}
-            className="text-sm font-medium text-emerald-700 hover:text-emerald-800 disabled:text-gray-400"
+            className="text-sm font-medium text-emerald-700 hover:text-emerald-800 disabled:text-gray-400 dark:text-emerald-300 dark:hover:text-emerald-300 dark:disabled:text-muted-foreground"
           >
             {list.isFetchingNextPage ? "Loading…" : "Show older"}
           </button>
