@@ -3,33 +3,49 @@ import type { EventStatus } from "~/lib/schemas/event";
 /**
  * Client-safe display helpers for the Events feature — pure functions, no server
  * imports, so both the resident pages and the head/admin components can share
- * them. Times are UNIX epoch SECONDS (the stored convention); the hall is in
- * SGT, so the browser's local time is used directly rather than a fixed zone.
+ * them. Times are UNIX epoch SECONDS (the stored convention).
+ *
+ * ALWAYS SINGAPORE TIME. The hall is in SGT, but a phone abroad or a laptop set
+ * to another zone used to show, and worse, SAVE, its own wall time. Every
+ * helper here pins Asia/Singapore. SGT is a fixed UTC+8 with no daylight
+ * saving, so the input conversions use the offset directly.
  */
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
 /* -------------------------------------------------------------------------- */
 
+export const HALL_TIME_ZONE = "Asia/Singapore";
+const SGT_OFFSET_SEC = 8 * 60 * 60;
+
 function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** epoch seconds → the value an <input type="datetime-local"> expects (local). */
-export function epochToLocalInput(sec: number | null | undefined): string {
-  if (sec == null) return "";
-  const d = new Date(sec * 1000);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours(),
-  )}:${pad(d.getMinutes())}`;
+/** The SGT wall clock for an epoch, read through the UTC getters. */
+function sgtWall(sec: number): Date {
+  return new Date((sec + SGT_OFFSET_SEC) * 1000);
 }
 
-/** <input type="datetime-local"> value (local wall time) → epoch seconds. */
+/** epoch seconds → the value an <input type="datetime-local"> expects (SGT). */
+export function epochToLocalInput(sec: number | null | undefined): string {
+  if (sec == null) return "";
+  const d = sgtWall(sec);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(
+    d.getUTCDate(),
+  )}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+const LOCAL_INPUT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/;
+
+/** <input type="datetime-local"> value (SGT wall time) → epoch seconds. */
 export function localInputToEpoch(value: string): number | null {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
+  const m = LOCAL_INPUT.exec(value);
+  if (!m) return null;
+  const [, y, mo, d, h, mi] = m.map(Number) as number[];
+  const ms = Date.UTC(y!, mo! - 1, d!, h!, mi!);
   if (Number.isNaN(ms)) return null;
-  return Math.floor(ms / 1000);
+  return Math.floor(ms / 1000) - SGT_OFFSET_SEC;
 }
 
 const DATE_FMT: Intl.DateTimeFormatOptions = {
@@ -39,6 +55,7 @@ const DATE_FMT: Intl.DateTimeFormatOptions = {
   hour: "numeric",
   minute: "2-digit",
   hour12: true,
+  timeZone: HALL_TIME_ZONE,
 };
 
 export function formatDateTime(sec: number | null | undefined): string {
@@ -54,23 +71,24 @@ export function formatDateRange(
   if (start == null) return "Date TBC";
   const startStr = formatDateTime(start);
   if (end == null) return startStr;
-  const sameDay =
-    new Date(start * 1000).toDateString() ===
-    new Date(end * 1000).toDateString();
+  const sameDay = dayKey(start) === dayKey(end);
   const endStr = sameDay
     ? new Date(end * 1000).toLocaleTimeString("en-SG", {
         hour: "numeric",
         minute: "2-digit",
         hour12: true,
+        timeZone: HALL_TIME_ZONE,
       })
     : formatDateTime(end);
   return `${startStr} – ${endStr}`;
 }
 
-/** Local YYYY-MM-DD key, for grouping the timeline by day. */
+/** SGT YYYY-MM-DD key, for grouping the timeline by day. */
 export function dayKey(sec: number): string {
-  const d = new Date(sec * 1000);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const d = sgtWall(sec);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(
+    d.getUTCDate(),
+  )}`;
 }
 
 /** A heading like "Thu, 6 Aug" for a timeline day group. */
@@ -79,7 +97,21 @@ export function formatDayHeading(sec: number): string {
     weekday: "short",
     day: "numeric",
     month: "short",
+    timeZone: HALL_TIME_ZONE,
   });
+}
+
+/**
+ * Is the event still on? An event stays under Upcoming until it ENDS, so one
+ * that has started is still findable (and its door still reachable). With no
+ * end time, the start is the cut-off; with no date at all, it is still to come.
+ */
+export function isStillOn(
+  e: { startTime: number | null; endTime: number | null },
+  now: number,
+): boolean {
+  if (e.startTime == null) return true;
+  return (e.endTime ?? e.startTime) >= now;
 }
 
 export function nowSec(): number {

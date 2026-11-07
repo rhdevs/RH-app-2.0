@@ -19,6 +19,7 @@ import {
   buildBundleCsv,
   bundleCsvFilename,
   bundleGaps,
+  type BundleAux,
   type BundleCca,
 } from "~/lib/points/bundleCsv";
 import type { Range } from "~/lib/points/constants";
@@ -38,6 +39,7 @@ type BundleData = {
   waivers: SettingsWaiver[];
   ccas: BundleCca[];
   flat: FlatExportCca[];
+  aux: { year: string; rows: BundleAux[]; noMatric: string[] };
 };
 
 type Stage =
@@ -125,6 +127,7 @@ export default function BundleExport() {
           waivers: data.waivers,
           ccas: data.ccas,
           flat: flatCsvCcas(data.flat),
+          aux: data.aux,
           exportedAt: now,
         }),
       );
@@ -215,8 +218,9 @@ export default function BundleExport() {
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-gray-600">
                 <p className="font-medium text-gray-900">
-                  This file lists matric numbers (members of flat-points CCAs).
-                  Send it only to the JCRC member running the points sandbox.
+                  This file lists matric numbers (members of flat-points CCAs
+                  and residents with AUX). Send it only to the JCRC member
+                  running the points sandbox.
                 </p>
                 {downloadError && (
                   <p className="text-red-700" role="alert">
@@ -232,8 +236,20 @@ export default function BundleExport() {
                       {stage.flatCcaCount} flat-points{" "}
                       {stage.flatCcaCount === 1 ? "CCA" : "CCAs"} ·{" "}
                       {stage.totalRows}{" "}
-                      {stage.totalRows === 1 ? "member row" : "member rows"}
+                      {stage.totalRows === 1 ? "member row" : "member rows"} ·{" "}
+                      {stage.data.aux.rows.length}{" "}
+                      {stage.data.aux.rows.length === 1
+                        ? "resident"
+                        : "residents"}{" "}
+                      with AUX ({stage.data.aux.year})
                     </p>
+                    {stage.data.aux.noMatric.length > 0 && (
+                      <p className="text-amber-800">
+                        Left out of the AUX section because no matric is on
+                        file: {stage.data.aux.noMatric.join(", ")}. Add their
+                        AUX in the sandbox by hand.
+                      </p>
+                    )}
                     {stage.warnings.length > 0 && (
                       <ul className="list-disc pl-5 text-amber-800">
                         {stage.warnings.map((w) => (

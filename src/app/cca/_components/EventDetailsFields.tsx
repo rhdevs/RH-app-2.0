@@ -6,6 +6,7 @@ import {
   EVENT_DESCRIPTION_MAX,
   EVENT_LOCATION_MAX,
 } from "~/lib/schemas/event";
+import { epochToLocalInput } from "~/app/events/_lib/format";
 
 /**
  * The event's own details — name, description, times, location, capacity. A
@@ -45,6 +46,33 @@ export type ProposalValue = {
  * NULLS, which is exactly the pairing that has already cost this feature two
  * bugs. */
 
+/** Seed the form from a stored event, field by field. */
+export function proposalFromEvent(event: {
+  title: string | null;
+  description: string | null;
+  startTime: number | null;
+  endTime: number | null;
+  facilityID: number | null;
+  location: string | null;
+  capacity: number | null;
+}): ProposalValue {
+  return {
+    title: event.title ?? "",
+    description: event.description ?? "",
+    startLocal: epochToLocalInput(event.startTime),
+    endLocal: epochToLocalInput(event.endTime),
+    // Facility → its id; free-text location → "other"; nothing → unset.
+    facilitySelection:
+      event.facilityID != null
+        ? String(event.facilityID)
+        : event.location
+          ? "other"
+          : "",
+    location: event.facilityID != null ? "" : (event.location ?? ""),
+    capacity: event.capacity != null ? String(event.capacity) : "",
+  };
+}
+
 /** Is the current selection a real facility (not unset / not "Other")? */
 export function isFacilitySelected(v: ProposalValue): boolean {
   return v.facilitySelection !== "" && v.facilitySelection !== "other";
@@ -73,27 +101,16 @@ export default function EventDetailsFields({
   value,
   onChange,
   disabled = false,
-  isHall = false,
+  lockIdentity = false,
 }: {
   value: ProposalValue;
   onChange: (patch: Partial<ProposalValue>) => void;
   disabled?: boolean;
   /**
-   * A HALL-WIDE event (`ccaID == null`), authored by the JCRC itself.
-   *
-   * THIS BLOCK IS SHARED BY BOTH SURFACES, so every sentence in it that names
-   * the JCRC as a REVIEWER is false on the hall one: a hall event is registered
-   * and published by its own author and never enters the review queue. The
-   * surfaces that render this block already branch their own copy on the same
-   * fact (EventManage's contract sentence and its "Register and publish"
-   * footer, EventsListPanel's empty state; the third was EventCreateForm's
-   * footer, deleted with that file) — the three strings below were the half of
-   * the same screen that did not, so a JCRC
-   * member filling in their own event was told twice that the JCRC would review
-   * it. Defaults false: a CCA head is the common case and the CCA surfaces pass
-   * nothing.
+   * A LIVE event: the name and internal description stay as published (the
+   * server refuses a change with FIELD_LOCKED), so they render read-only.
    */
-  isHall?: boolean;
+  lockIdentity?: boolean;
 }) {
   const field =
     "mt-1 w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-gray-50";
@@ -114,7 +131,7 @@ export default function EventDetailsFields({
           type="text"
           value={value.title}
           maxLength={EVENT_TITLE_MAX}
-          disabled={disabled}
+          disabled={disabled || lockIdentity}
           onChange={(e) => onChange({ title: e.target.value })}
           className={field}
           placeholder="e.g. Hall Night 2026"
@@ -126,23 +143,20 @@ export default function EventDetailsFields({
           Detailed description
         </label>
         <p className="text-xs text-gray-500">
-          What the event is, who it&rsquo;s for, and what happens.{" "}
-          {isHall
-            ? "This is the internal record — residents read the public description instead."
-            : "JCRC reads this when they review it."}
+          What the event is, who it&rsquo;s for, and what happens. This is the
+          internal record JCRC sees — residents read the public description
+          instead.
+          {lockIdentity &&
+            " The name and this description are fixed now it’s live."}
         </p>
         <textarea
           value={value.description}
           maxLength={EVENT_DESCRIPTION_MAX}
           rows={6}
-          disabled={disabled}
+          disabled={disabled || lockIdentity}
           onChange={(e) => onChange({ description: e.target.value })}
           className={field}
-          placeholder={
-            isHall
-              ? "What this event is, for the record…"
-              : "Tell JCRC about your event…"
-          }
+          placeholder="What this event is, for the record…"
         />
         <p className="text-right text-xs text-gray-500">
           {value.description.length}/{EVENT_DESCRIPTION_MAX}
@@ -208,9 +222,8 @@ export default function EventDetailsFields({
           )}
           {facilityChosen && (
             <p className="text-xs text-emerald-700">
-              {isHall
-                ? "This facility is booked automatically when the event is published — so set an end time."
-                : "If JCRC approves, this facility is booked automatically for the times above — so set an end time."}
+              This facility is booked automatically for the times above when the
+              event goes live — so set an end time.
             </p>
           )}
         </div>

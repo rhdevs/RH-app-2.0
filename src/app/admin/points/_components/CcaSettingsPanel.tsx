@@ -20,6 +20,10 @@ import {
 } from "~/lib/points/constants";
 import { CAP_ERROR, decideCapCommit } from "./capInput";
 import { pointsErrorCopy } from "./errorCopy";
+import {
+  PositionViewToggle,
+  usePositionScope,
+} from "~/app/admin/_components/PositionView";
 
 /** One entry of `getConfig.ccas`. */
 export type CcaSettingsRow = {
@@ -295,6 +299,7 @@ export default function CcaSettingsPanel({
 }) {
   const [filter, setFilter] = useState("");
   const [sportsOnly, setSportsOnly] = useState(false);
+  const scope = usePositionScope("points");
 
   const counted = ccas.filter((c) => !c.isFlat);
   const sports = counted.filter((c) => c.isSport);
@@ -304,13 +309,14 @@ export default function CcaSettingsPanel({
   ).length;
 
   const needle = filter.trim().toLowerCase();
-  const shown = ccas.filter(
+  const matching = ccas.filter(
     (c) =>
       (!sportsOnly || c.isSport) &&
       (needle === "" ||
         c.ccaName.toLowerCase().includes(needle) ||
         String(c.ccaID).includes(needle)),
   );
+  const shown = matching.filter((c) => scope.shows(c.ccaID));
 
   return (
     <section className="rounded-xl bg-white p-6 shadow-lg">
@@ -330,6 +336,10 @@ export default function CcaSettingsPanel({
       </p>
 
       <div className="mb-3 flex flex-wrap items-center gap-4">
+        <PositionViewToggle
+          state={scope}
+          hiddenCount={matching.length - shown.length}
+        />
         <Input
           aria-label="Filter CCAs by name or id"
           placeholder="Filter by name or id"

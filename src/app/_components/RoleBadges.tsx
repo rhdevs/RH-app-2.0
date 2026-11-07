@@ -23,9 +23,14 @@ const ROLE_META: Record<
     title: "Can manage roles and book the SCRC Room.",
   },
   scrc: {
-    label: "Hall Office",
+    label: "SCRC (RFs)",
     className: "bg-amber-100 text-amber-800 border-amber-300",
-    title: "Hall Office / SCRC. Can appoint JCRC and book the SCRC Room.",
+    title: "Resident Fellows. Can appoint JCRC and book the SCRC Room.",
+  },
+  hall_office: {
+    label: "Hall Office",
+    className: "bg-orange-100 text-orange-800 border-orange-300",
+    title: "Hall Office staff. Can appoint JCRC and book the SCRC Room.",
   },
   cca_head: {
     label: "CCA Head",
@@ -41,7 +46,7 @@ const ROLE_META: Record<
 
 /** Baseline first, then escalating. A stable order so the row does not reshuffle
  *  between renders when the underlying array order changes. */
-const ORDER = ["resident", "cca_head", "jcrc", "scrc", "admin"];
+const ORDER = ["resident", "cca_head", "jcrc", "scrc", "hall_office", "admin"];
 
 export function RoleBadges({ roles }: { roles: string[] }) {
   // "user" was the v1 implicit default and is never stored by the new writers.

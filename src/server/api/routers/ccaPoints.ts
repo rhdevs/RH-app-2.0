@@ -69,7 +69,10 @@ import {
   type Range,
 } from "~/lib/points/constants";
 import { fillRange } from "~/lib/points/meanSd";
-import type { BundleCca } from "~/lib/points/bundleCsv";
+import type { BundleAux, BundleCca } from "~/lib/points/bundleCsv";
+import { isValidMatric } from "~/lib/points/entries";
+import { auxTotals } from "~/server/api/services/auxPoints/totals";
+import { readAuxYear } from "~/server/api/services/auxPoints/year";
 
 /**
  * JCRC's points-entry configuration, and the one read a CCA head needs.
@@ -822,22 +825,35 @@ export const ccaPointsRouter = createTRPCRouter({
             },
           ],
     );
+    // AUX for the current points year. A resident with no valid matric on
+    // file cannot be matched by the sandbox: they are named back, not sent.
+    const auxYear = await readAuxYear(ctx.db, new Date());
+    const auxRows = await auxTotals(ctx.db, auxYear);
+    const aux: BundleAux[] = auxRows.flatMap((r) =>
+      r.matric && isValidMatric(r.matric)
+        ? [{ matric: r.matric, name: r.name ?? "", aux: r.total }]
+        : [],
+    );
+    const auxNoMatric = auxRows
+      .filter((r) => !r.matric || !isValidMatric(r.matric))
+      .map((r) => r.name ?? r.userID);
     // Audit before returning; best-effort like event.exportAttendees. Counts only.
     await audit(ctx.db, {
       actorUserID,
       actorRoles: roles,
       action: "ccaPoints.bundle.export",
-      reason: bundleExportReason(
+      reason: `${bundleExportReason(
         ccas.length,
         flat.length,
         flat.reduce((n, c) => n + c.members.length, 0),
-      ),
+      )}; ${aux.length} AUX rows`,
     });
     return {
       effectiveDefault: resolveRange(defaultRow, null).range,
       waivers,
       ccas,
       flat,
+      aux: { year: auxYear, rows: aux, noMatric: auxNoMatric },
     };
   }),
 });

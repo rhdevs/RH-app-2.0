@@ -11,6 +11,7 @@ import {
   isSportsCategory,
   isValidIhgCap,
 } from "~/lib/points/constants";
+import { pointsYearStartedAt } from "~/lib/auxPoints";
 import { AUDIT_ACTIONS } from "~/server/api/services/roles";
 import {
   brokenWaiversMessage,
@@ -919,6 +920,8 @@ describe("startNewPointsYear (R48, R53)", () => {
     expect(rows.find((r) => r.scope === "default")).toMatchObject({
       entryOpen: false,
       yearStartedAt: NOW,
+      // The AUX year: counts after this press belong to the new year.
+      pointsYear: pointsYearStartedAt(NOW),
     });
     expect(calls.filter((c) => c === "upsert")).toHaveLength(1);
     expect(rows.find((r) => r.scope === "cca:1")).not.toHaveProperty(

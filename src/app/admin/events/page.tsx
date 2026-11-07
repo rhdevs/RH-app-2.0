@@ -1,12 +1,14 @@
 import Link from "next/link";
 
+import AllEventsPanel from "../_components/events/AllEventsPanel";
 import EventReviewQueue from "../_components/events/EventReviewQueue";
 import HallEventsPanel from "../_components/events/HallEventsPanel";
 
 /**
- * Two surfaces, one page: the JCRC's own hall-wide events (which never queue —
- * "Register and publish" submits and approves back to back), and the review
- * queue for everyone else's.
+ * Three surfaces, one page: the JCRC's own hall-wide events, every CCA's
+ * events (heads publish directly, so this is the JCRC's view of them), and
+ * the review queue, shown only while review is switched on or still holds
+ * something.
  *
  * The page owns the `h1`, and both panels below it are `h2`. That split matters:
  * the queue used to carry the `h1` because it WAS the whole page, and leaving it
@@ -32,6 +34,7 @@ export default function AdminEventsPage() {
       </div>
       <HallEventsPanel />
       <EventReviewQueue />
+      <AllEventsPanel />
     </div>
   );
 }

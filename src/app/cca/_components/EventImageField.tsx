@@ -44,7 +44,7 @@ export default function EventImageField({
       if (resized.size > EVENT_IMAGE_MAX_BYTES) throw new Error("TOO_LARGE");
       const blob = await upload(eventUploadPath(eventID, "banner"), resized, {
         access: "public",
-        contentType: "image/webp",
+        contentType: resized.type || "image/jpeg",
         handleUploadUrl: "/api/event/upload",
       });
       onChange(blob.url);

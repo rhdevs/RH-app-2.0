@@ -91,8 +91,9 @@ export default function NewYearPanel({
             <AlertDialogDescription>
               This blanks the IHG result of every sports CCA ({ihgResultCount}{" "}
               set today) and closes points entry. Types, caps, waivers, flat
-              values and the default range are not touched. Saved to the audit
-              log with your name.
+              values and the default range are not touched. AUX starts again
+              from zero for the new academic year (from May to July, that is the
+              coming one). Saved to the audit log with your name.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {start.error && (

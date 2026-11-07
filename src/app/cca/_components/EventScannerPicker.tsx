@@ -14,12 +14,10 @@ import { MAX_SCANNERS_PER_EVENT } from "~/lib/schemas/eventAttendance";
  * directory cannot produce an id that does not exist, and it cannot lock out the
  * people whose ids do not look the way someone assumed they would.
  *
- * NOT RENDERED FOR HALL EVENTS AT ALL, and the server refuses them too. A hall
- * event has no membership set to validate a nominee against, and everyone who
- * could legitimately scan one already holds `manageHallEvents`, which the
- * scanner check admits outright — so the control would change nothing. The
- * original plan specified a picker backed by an SCRC-gated procedure that the
- * JCRC members it was for could not have called.
+ * A HALL EVENT PICKS FROM THE WHOLE HALL. Its volunteers (at AUX events in
+ * particular) are ordinary residents, so the list searches every user through
+ * `admin.listUsers`, which the JCRC and admins who run hall events can call.
+ * The server only checks that each has signed in once.
  *
  * THE STORED LIST IS A CONVENIENCE, NOT A PERMISSION. Every nominee is
  * re-validated against live CCA membership at scan time, because nothing sweeps
@@ -32,7 +30,7 @@ export default function EventScannerPicker({
   onSaved,
 }: {
   eventID: number;
-  /** null means a hall event — this component renders nothing. */
+  /** null means a hall event: pick from every user rather than the CCA. */
   ccaID: number | null;
   scannerUserIDs: string[];
   onSaved: () => void;
@@ -41,9 +39,15 @@ export default function EventScannerPicker({
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
+  const isHall = ccaID === null;
   const directory = api.cca.memberDirectory.useQuery(
     { ccaID: ccaID ?? 0 },
-    { enabled: ccaID !== null, retry: false },
+    { enabled: !isHall, retry: false },
+  );
+  const search = query.trim();
+  const hallSearch = api.admin.listUsers.useQuery(
+    { search, limit: 25 },
+    { enabled: isHall && search.length >= 2, retry: false },
   );
 
   const save = api.event.saveScanners.useMutation({
@@ -62,9 +66,9 @@ export default function EventScannerPicker({
         );
         return;
       }
-      if (m === "HALL_EVENT_HAS_NO_SCANNERS") {
+      if (m.startsWith("NOT_SIGNED_IN:")) {
         setError(
-          "Hall events don't need a door list — anyone who can run hall events can already scan.",
+          `Hasn't signed in to the app yet: ${m.slice("NOT_SIGNED_IN:".length).split(",").join(", ")}. Remove them and save again.`,
         );
         return;
       }
@@ -77,6 +81,21 @@ export default function EventScannerPicker({
   });
 
   const rows = useMemo(() => {
+    if (isHall) {
+      // Only accounts that can sign in have a canonical id to nominate.
+      return (hallSearch.data?.items ?? []).flatMap((u) =>
+        u.canonicalUserID
+          ? [
+              {
+                rowKey: u.id,
+                userID: u.canonicalUserID,
+                name: u.displayName,
+                role: u.block ?? "",
+              },
+            ]
+          : [],
+      );
+    }
     // NORMALISED TO A NON-NULL userID, which is also the filter.
     //
     // `entries` is a union: a resolved member, or a membership key no account
@@ -97,9 +116,10 @@ export default function EventScannerPicker({
         (d.name ?? "").toLowerCase().includes(q) ||
         d.userID.toLowerCase().includes(q),
     );
-  }, [directory.data, query]);
+  }, [isHall, hallSearch.data, directory.data, query]);
 
-  if (ccaID === null) return null;
+  const source = isHall ? hallSearch : directory;
+  const ready = isHall || directory.data != null;
 
   const atCap = selected.length >= MAX_SCANNERS_PER_EVENT;
   const dirty =
@@ -129,23 +149,41 @@ export default function EventScannerPicker({
         </p>
       </div>
 
-      {directory.isPending && (
+      {!isHall && directory.isPending && (
         <p className="text-sm text-gray-500">Loading your members…</p>
       )}
-      {directory.error && (
+      {source.error && (
         <p className="text-sm text-red-700">
-          Couldn&rsquo;t load your member list.
+          {isHall
+            ? "Couldn’t search residents."
+            : "Couldn’t load your member list."}
         </p>
       )}
 
-      {directory.data && (
+      {ready && (
         <>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search your members"
+            placeholder={isHall ? "Search residents by name or email" : "Search your members"}
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
           />
+
+          {isHall && selected.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {selected.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => toggle(id)}
+                  className="rounded-full bg-gray-900 px-3 py-1 text-xs text-white"
+                  aria-label={`Remove ${id} from the door`}
+                >
+                  {id} ×
+                </button>
+              ))}
+            </div>
+          )}
 
           <ul className="max-h-64 divide-y divide-gray-100 overflow-y-auto">
             {rows.map((d) => {
@@ -180,9 +218,15 @@ export default function EventScannerPicker({
 
           {rows.length === 0 && (
             <p className="text-sm text-gray-500">
-              {query.trim()
-                ? "Nobody in your CCA matches that."
-                : "Your CCA has no members listed yet."}
+              {isHall
+                ? search.length < 2
+                  ? "Type at least two letters to find someone."
+                  : hallSearch.isFetching
+                    ? "Searching…"
+                    : "Nobody matches that."
+                : query.trim()
+                  ? "Nobody in your CCA matches that."
+                  : "Your CCA has no members listed yet."}
             </p>
           )}
 
