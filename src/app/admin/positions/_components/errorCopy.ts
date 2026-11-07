@@ -22,7 +22,11 @@ const COPY: Record<string, string> = {
     "Your step-out date can only move earlier. To undo a handover, ask an RF or Hall Office to assign the position to you again.",
   SCRC_DISABLED: "The Staff page is switched off right now.",
   SELF_ASSIGN:
-    "You can't add yourself to a position. Ask another JCRC member to add you.",
+    "You can't add yourself to a position. Ask an RF or Hall Office to assign it to you.",
+  STAFF_ASSIGNED_ROW:
+    "An RF or Hall Office assigned this, so only they can change or remove it.",
+  HOLDER_STEPPING_OUT:
+    "This member is stepping out after a handover. Only an RF or Hall Office can give them a position again.",
   NO_STEP_OUT_PENDING: "You don't have a step-out date to change.",
   CONFLICT: "Someone changed this at the same time. Reload and try again.",
 };

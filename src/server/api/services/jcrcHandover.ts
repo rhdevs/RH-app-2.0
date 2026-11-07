@@ -167,46 +167,82 @@ async function assertStaffAssigned(
 }
 
 /**
- * Marks the caller's rows handed over BEFORE any grant, and only rows not yet
- * handed over, so of two concurrent handovers of the same row one is refused.
+ * Marks the caller's rows handed over, with their step-out date, BEFORE any
+ * grant, and only rows not yet handed over, so of two concurrent handovers of
+ * the same row one is refused.
+ *
+ * ONE ROW AT A TIME, so each call knows exactly which rows it claimed and
+ * releases only those. Two calls in the same millisecond share a timestamp,
+ * so releasing "rows claimed at `now`" could release the other call's claim.
  */
 async function claimRows(
   db: PrismaClient,
   actorUserID: string,
   positionIDs: readonly string[],
+  stepOutAt: Date,
   now: Date,
 ): Promise<void> {
-  const { count } = await db.jcrcPositionHolder.updateMany({
-    where: {
-      userID: actorUserID,
-      positionID: { in: [...positionIDs] },
-      // A row addHolder created has no handedOverAt at all, and on Mongo
-      // `null` alone does not match a missing field.
-      OR: [{ handedOverAt: null }, { handedOverAt: { isSet: false } }],
-    },
-    data: { handedOverAt: now },
-  });
-  if (count !== positionIDs.length) {
-    await releaseClaim(db, actorUserID, positionIDs, now);
-    refuse("ALREADY_HANDED_OVER");
+  const claimed: string[] = [];
+  for (const positionID of positionIDs) {
+    const { count } = await db.jcrcPositionHolder.updateMany({
+      where: {
+        userID: actorUserID,
+        positionID,
+        // A row addHolder created has no handedOverAt at all, and on Mongo
+        // `null` alone does not match a missing field.
+        OR: [{ handedOverAt: null }, { handedOverAt: { isSet: false } }],
+      },
+      data: { handedOverAt: now, endsAt: stepOutAt },
+    });
+    if (count === 0) {
+      await releaseClaim(db, actorUserID, claimed, now);
+      refuse("ALREADY_HANDED_OVER");
+    }
+    claimed.push(positionID);
   }
 }
 
-/** Undoes claimRows. Matches on this call's own timestamp only. */
+/**
+ * Undoes claimRows for rows this call claimed. The rows were open before the
+ * claim (activeHolderWhere plus the handedOverAt check), so they reopen.
+ */
 async function releaseClaim(
   db: PrismaClient,
   actorUserID: string,
-  positionIDs: readonly string[],
+  claimedIDs: readonly string[],
   now: Date,
 ): Promise<void> {
+  if (claimedIDs.length === 0) return;
   await db.jcrcPositionHolder.updateMany({
     where: {
       userID: actorUserID,
-      positionID: { in: [...positionIDs] },
+      positionID: { in: [...claimedIDs] },
       handedOverAt: now,
     },
-    data: { handedOverAt: null },
+    data: { handedOverAt: null, endsAt: null },
   });
+}
+
+/**
+ * Record the member's term end from their holder rows, or clear it if they
+ * still hold a position with no end.
+ */
+async function syncTerm(
+  db: PrismaClient,
+  userID: string,
+  now: Date,
+): Promise<Date | null> {
+  const termEndsAt = await termEndFor(db, userID);
+  if (termEndsAt) {
+    await db.jcrcTerm.upsert({
+      where: { userID },
+      create: { userID, endsAt: termEndsAt },
+      update: { endsAt: termEndsAt, setAt: now },
+    });
+  } else {
+    await db.jcrcTerm.deleteMany({ where: { userID } });
+  }
+  return termEndsAt;
 }
 
 async function giveSuccessorPositions(
@@ -278,11 +314,14 @@ export async function handOverPositions(
 
   const plans = await planSuccessors(db, actorUserID, input.successorIDs);
 
-  await claimRows(db, actorUserID, positionIDs, now);
-  // NOT ATOMIC: successors are granted one by one. A failure part-way leaves
-  // the earlier successors granted and releases the caller's claim, so a
-  // retry is safe (every write here is an idempotent upsert or a no-op).
+  await claimRows(db, actorUserID, positionIDs, stepOutAt, now);
+  // NOT ATOMIC: successors are granted one by one. A failure anywhere after
+  // the claim, including recording the term, leaves the earlier successors
+  // granted and releases the caller's claim, so a retry is safe (every write
+  // here is an idempotent upsert or a no-op). Without the release a failed
+  // term write would leave the claim in place and no term to end `jcrc`.
   const granted: string[] = [];
+  let termEndsAt: Date | null;
   try {
     for (const plan of plans) {
       await grantJcrc(db, actorUserID, actorRoles, plan, reason);
@@ -302,27 +341,12 @@ export async function handOverPositions(
         reason,
       });
     }
+    termEndsAt = await syncTerm(db, actorUserID, now);
   } catch (err) {
     await releaseClaim(db, actorUserID, positionIDs, now);
     throw err;
   }
 
-  await db.jcrcPositionHolder.updateMany({
-    where: {
-      userID: actorUserID,
-      positionID: { in: positionIDs },
-      handedOverAt: now,
-    },
-    data: { endsAt: stepOutAt },
-  });
-  const termEndsAt = await termEndFor(db, actorUserID);
-  if (termEndsAt) {
-    await db.jcrcTerm.upsert({
-      where: { userID: actorUserID },
-      create: { userID: actorUserID, endsAt: termEndsAt },
-      update: { endsAt: termEndsAt, setAt: now },
-    });
-  }
   if (stepOutAt.getTime() <= now.getTime()) await sweepEndedJcrcTerms(db, now);
   return { granted, termEndsAt };
 }
@@ -352,16 +376,7 @@ export async function setStepOut(
     where: pendingRows,
     data: { endsAt },
   });
-  const termEndsAt = await termEndFor(db, actorUserID);
-  if (termEndsAt) {
-    await db.jcrcTerm.upsert({
-      where: { userID: actorUserID },
-      create: { userID: actorUserID, endsAt: termEndsAt },
-      update: { endsAt: termEndsAt, setAt: now },
-    });
-  } else {
-    await db.jcrcTerm.deleteMany({ where: { userID: actorUserID } });
-  }
+  const termEndsAt = await syncTerm(db, actorUserID, now);
   if (endsAt.getTime() <= now.getTime()) {
     await sweepEndedJcrcTerms(db, now);
   }
