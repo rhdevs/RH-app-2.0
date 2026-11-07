@@ -7,10 +7,12 @@ import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import CcaChecklist from "./CcaChecklist";
+import DirectorFlags from "./DirectorFlags";
 import { positionsErrorCopy } from "./errorCopy";
 
 export type PositionRow = RouterOutputs["jcrcPositions"]["list"][number];
 type Member = RouterOutputs["jcrcPositions"]["jcrcMembers"][number];
+export type DirectorsStatus = RouterOutputs["jcrcPositions"]["directorsStatus"];
 
 const dateLabel = (d: Date) =>
   d.toLocaleDateString(undefined, {
@@ -23,13 +25,19 @@ const dateLabel = (d: Date) =>
  * One position: its name and order, whether it oversees every CCA, its CCA
  * list and its holders. Every control saves on its own and the card re-reads
  * the list afterwards; nothing renders optimistically.
+ *
+ * A flagged position is locked: only an admin sees working controls for its
+ * name, CCAs and holders (the server refuses anyone else regardless). The flag
+ * controls show only to an admin while `directors.enabled` is on.
  */
 export default function PositionCard({
   position,
   members,
+  directors,
 }: {
   position: PositionRow;
   members: readonly Member[];
+  directors: DirectorsStatus | undefined;
 }) {
   const utils = api.useUtils();
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +71,9 @@ export default function PositionCard({
     setCcas.isPending ||
     addHolder.isPending ||
     removeHolder.isPending;
+
+  const flagged = position.vetsProposals || position.handlesDisposables;
+  const locked = flagged && directors?.isAdmin !== true;
 
   const holderIDs = position.holders.map((h) => h.userID);
   const candidates = members.filter((m) => !holderIDs.includes(m.userID));
@@ -125,11 +136,34 @@ export default function PositionCard({
               {position.name}
             </h3>
             <p className="text-xs text-gray-400">Order {position.order}</p>
+            {flagged && (
+              <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                {position.vetsProposals && (
+                  <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-800">
+                    Vets proposals
+                  </span>
+                )}
+                {position.handlesDisposables && (
+                  <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-800">
+                    Social director
+                  </span>
+                )}
+                <span className="text-gray-500">
+                  Locked: only an admin, an RF or the Hall Office can change its
+                  name, CCAs or holders.
+                </span>
+              </p>
+            )}
           </div>
         )}
         <div className="flex items-center gap-1">
           {!editing && (
-            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={locked}
+              onClick={() => setEditing(true)}
+            >
               Rename
             </Button>
           )}
@@ -155,6 +189,7 @@ export default function PositionCard({
             <Button
               size="sm"
               variant="ghost"
+              disabled={locked}
               className="text-gray-400 hover:text-red-600"
               onClick={() => setConfirmDelete(true)}
             >
@@ -192,6 +227,7 @@ export default function PositionCard({
           <Button
             size="sm"
             variant="outline"
+            disabled={locked}
             onClick={() => setPickingCcas((v) => !v)}
           >
             {pickingCcas ? "Close" : "Choose CCAs"}
@@ -253,7 +289,7 @@ export default function PositionCard({
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={busy}
+                  disabled={busy || locked}
                   className="shrink-0 text-gray-400 hover:text-red-600"
                   onClick={() =>
                     removeHolder.mutate({ id: position.id, userID: h.userID })
@@ -269,6 +305,7 @@ export default function PositionCard({
           <select
             aria-label="JCRC member to add"
             value={newHolder}
+            disabled={locked}
             onChange={(e) => setNewHolder(e.target.value)}
             className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm"
           >
@@ -282,7 +319,7 @@ export default function PositionCard({
           <Button
             size="sm"
             variant="outline"
-            disabled={busy || newHolder === ""}
+            disabled={busy || locked || newHolder === ""}
             onClick={() =>
               addHolder.mutate(
                 { id: position.id, userID: newHolder },
@@ -294,6 +331,8 @@ export default function PositionCard({
           </Button>
         </div>
       </section>
+
+      {directors?.canSetFlags && <DirectorFlags position={position} />}
 
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
     </li>

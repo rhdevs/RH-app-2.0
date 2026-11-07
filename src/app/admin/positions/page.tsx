@@ -13,9 +13,12 @@ import { positionsErrorCopy } from "./_components/errorCopy";
 /**
  * JCRC positions: who looks after which CCAs, and the self-handover.
  *
- * VIEWS ONLY. A position sets the default "My positions" filter on JCRC lists
- * (CCAs, Points, Event insights); every JCRC member keeps every power over
- * every CCA. Any JCRC member or admin may edit any position.
+ * VIEWS, EXCEPT FOR A FLAGGED POSITION. A position sets the default "My
+ * positions" filter on JCRC lists (CCAs, Points, Event insights); every JCRC
+ * member keeps every power over every CCA. Any JCRC member or admin may edit a
+ * position with no director flag. A flagged position is locked to admins (and
+ * to RFs and Hall Office through the staff panel), and only an admin, while
+ * `directors.enabled` is on, sees the controls that set the flags.
  */
 export default function AdminPositionsPage() {
   const utils = api.useUtils();
@@ -24,6 +27,9 @@ export default function AdminPositionsPage() {
     retry: false,
   });
   const mine = api.jcrcPositions.mine.useQuery(undefined, { retry: false });
+  const directors = api.jcrcPositions.directorsStatus.useQuery(undefined, {
+    retry: false,
+  });
 
   const [name, setName] = useState("");
   const [overseesAll, setOverseesAll] = useState(false);
@@ -44,10 +50,11 @@ export default function AdminPositionsPage() {
       <header>
         <h1 className="text-2xl font-semibold text-gray-900">JCRC positions</h1>
         <p className="mt-1 max-w-2xl text-sm text-gray-500">
-          Who looks after which CCAs. A position only sets what &ldquo;My
-          positions&rdquo; shows on the CCAs, Points and Events pages; it never
-          limits what anyone on the JCRC can do. Someone with no position sees
-          every CCA.
+          Who looks after which CCAs. A position sets what &ldquo;My
+          positions&rdquo; shows on the CCAs, Points and Events pages, and it
+          never limits what anyone on the JCRC can do there. Someone with no
+          position sees every CCA. A position marked with director powers is the
+          exception: only an admin can change it.
         </p>
       </header>
 
@@ -112,6 +119,7 @@ export default function AdminPositionsPage() {
               key={p.id}
               position={p}
               members={members.data ?? []}
+              directors={directors.data}
             />
           ))}
         </ul>

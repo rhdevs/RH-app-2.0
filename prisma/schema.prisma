@@ -1439,22 +1439,31 @@ model Authenticator {
 
 /// JCRC POSITIONS (President, VP Internal, Sports Director (Internal), ...).
 ///
-/// VIEWS ONLY, NEVER PERMISSIONS. A position sets the default "My positions"
-/// filter on JCRC lists; every JCRC member keeps every power over every CCA.
-/// Nothing in the authorization path may read these collections — see
-/// services/jcrcPositions.ts.
+/// VIEWS ONLY, EXCEPT FOR A FLAGGED POSITION. A position sets the default "My
+/// positions" filter on JCRC lists; every JCRC member keeps every power over
+/// every CCA, and the existing event, points and CCA guards never read these
+/// collections. Only the two optional flags below turn a position into a
+/// permission, only services/directorGuard.ts reads them to grant anything,
+/// and only while `directors.enabled` is on. Editing a flagged position is
+/// locked to admin, RFs and Hall Office — see services/jcrcPositionLock.ts.
 ///
 /// Positions and their CCA lists persist across years; only holders change.
 /// Created and edited in the UI, never seeded.
 model JcrcPosition {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  name        String   @unique(map: "jcrcPosition_name")
+  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+  name               String   @unique(map: "jcrcPosition_name")
   /// e.g. President: the "My positions" view shows every CCA.
-  overseesAll Boolean  @default(false)
-  order       Int      @default(0)
-  createdAt   DateTime @default(now())
-  createdBy   String
-  updatedAt   DateTime @default(now())
+  overseesAll        Boolean  @default(false)
+  order              Int      @default(0)
+  createdAt          DateTime @default(now())
+  createdBy          String
+  updatedAt          DateTime @default(now())
+  /// Optional; a missing field means false. Its current holders are the
+  /// directors of the CCAs it lists. Only an admin sets it.
+  vetsProposals      Boolean?
+  /// Optional; a missing field means false. Its holder is the Social
+  /// director, and only when exactly one position carries this flag.
+  handlesDisposables Boolean?
 }
 
 /// A CCA listed under a position. Many-to-many: all Sports CCAs sit under both
@@ -1483,6 +1492,11 @@ model JcrcPositionHolder {
   /// Set when this holder hands the position over. A holder may hand a
   /// position over once; someone else must assign it again before another.
   handedOverAt DateTime?
+  /// Set on a row of a FLAGGED position that a handover created: the outgoing
+  /// holder. Such a row cannot be handed over again until an admin, RF or Hall
+  /// Office assigns the person again, which clears it. Optional; a missing
+  /// field means the row did not come from a handover. No index, no db push.
+  handoverFrom String?
 
   @@unique([positionID, userID], map: "jcrcPositionHolder_pair")
   @@index([userID], map: "jcrcPositionHolder_userID")

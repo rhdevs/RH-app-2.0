@@ -16,10 +16,28 @@ const COPY: Record<string, string> = {
     "You added yourself to this position, so you can't hand it over. Ask another JCRC member, an RF or Hall Office to assign it to you.",
   ALREADY_HANDED_OVER:
     "You've already handed this position over. Someone else has to assign it to you again first.",
+  ONE_SUCCESSOR_ONLY:
+    "A position that gives director powers goes to one successor. Pick one person.",
+  NEEDS_STAFF_CONFIRMATION:
+    "You were handed this director position, so you can't hand it on yet. An admin, an RF or the Hall Office has to confirm you as its holder first.",
+  HEADS_LISTED_CCA:
+    "That person heads a CCA this position oversees, so they can't hold it.",
+  STEP_OUT_LOCKED:
+    "A position that gives director powers can't have its step-out date cancelled or moved later. You can still move it earlier.",
   SELF_ASSIGN:
     "You can't add yourself to a position. Ask another JCRC member to add you.",
   NO_STEP_OUT_PENDING: "You don't have a step-out date to change.",
   CONFLICT: "Someone changed this at the same time. Reload and try again.",
+  POSITION_LOCKED:
+    "This position gives director powers, so only an admin, an RF or the Hall Office can change its name, CCAs or holders.",
+  SELF_ASSIGN_FLAGGED:
+    "Nobody can add themselves to a position that gives director powers, admins included. Ask someone else to add you.",
+  ADMIN_REQUIRED: "Only an admin can set or clear director powers.",
+  DIRECTORS_DISABLED: "Director powers are switched off.",
+  CONFIRMATION_STALE:
+    "The holders or CCAs changed while you were working. Reload and try again.",
+  SELF_ASSIGNED_HOLDER:
+    "A current holder added themselves to this position. Remove them and have someone else add them first.",
 };
 
 export function positionsErrorCopy(message: string | undefined): string {

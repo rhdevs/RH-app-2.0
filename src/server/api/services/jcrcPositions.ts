@@ -1,17 +1,23 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 /**
- * JCRC POSITIONS — VIEWS ONLY, NEVER PERMISSIONS.
+ * JCRC POSITIONS — VIEWS, EXCEPT FOR A FLAGGED POSITION.
  *
  * A position (President, VP Internal, Sports Director (Internal), ...) lists
- * the CCAs its holders look after. The ONLY thing it does is set the default
+ * the CCAs its holders look after. What it does for everyone is set the default
  * "My positions" filter on JCRC lists; an "All CCAs" switch sits beside it.
- * Every JCRC member keeps every power over every CCA, exactly as before.
+ * Every JCRC member keeps every power over every CCA, exactly as before, and
+ * the existing event, points and CCA guards never read positions.
  *
- * THE RULE: nothing in this file may be used to REFUSE an action. If a guard
- * ever calls myPositionCcas, positions have silently become permissions, and
- * a JCRC member covering for a colleague gets locked out of the very CCA they
- * were asked to help with. Filter lists with it; never authorize with it.
+ * A position an admin has flagged `vetsProposals` or `handlesDisposables` is
+ * ALSO a permission, but only for the director features, and only through
+ * services/directorGuard.ts, which does its own strict reads. Editing a
+ * flagged position is locked (services/jcrcPositionLock.ts).
+ *
+ * THE RULE FOR THIS FILE: nothing in it may be used to REFUSE or GRANT an
+ * action. myPositionCcas returns every CCA for a member with no position and
+ * for an oversees-all holder, so a guard built on it would hand every
+ * unplaced member every CCA. Filter lists with it; never authorize with it.
  */
 
 /** A list's view: the caller's positions, or every CCA. */
@@ -34,6 +40,38 @@ export function activeHolderWhere(
       { endsAt: { gt: now } },
     ],
   };
+}
+
+/**
+ * Ends this person's current holder rows on FLAGGED positions (director
+ * positions) as of now. Called by applyRoleChange, inside its transaction, when
+ * `jcrc` is taken away: the director guard already ignores a holder without a
+ * live `jcrc`, but the row would wake up the day `jcrc` is granted again.
+ * Rows on unflagged positions are views only and stay. It changes rows and
+ * decides nothing about who may act.
+ */
+export async function endFlaggedHolderRows(
+  db: Pick<PrismaClient, "jcrcPositionHolder" | "jcrcPosition">,
+  userID: string,
+  now: Date = new Date(),
+): Promise<void> {
+  const held = await db.jcrcPositionHolder.findMany({
+    where: { userID, ...activeHolderWhere(now) },
+    select: { positionID: true },
+  });
+  if (held.length === 0) return;
+  const flagged = await db.jcrcPosition.findMany({
+    where: {
+      id: { in: held.map((h) => h.positionID) },
+      OR: [{ vetsProposals: true }, { handlesDisposables: true }],
+    },
+    select: { id: true },
+  });
+  if (flagged.length === 0) return;
+  await db.jcrcPositionHolder.updateMany({
+    where: { userID, positionID: { in: flagged.map((p) => p.id) } },
+    data: { endsAt: now },
+  });
 }
 
 /**
