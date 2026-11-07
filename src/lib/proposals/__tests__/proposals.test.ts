@@ -79,6 +79,8 @@ describe("category rules", () => {
     blastMessage: "Come along",
     plannedStart: 1_800_000_000,
     plannedEnd: 1_800_003_600,
+    posterUrl: "https://example.test/poster.webp",
+    docLink: "https://docs.example.com/plan",
   };
 
   it("has a rule row for every category", () => {
@@ -148,11 +150,49 @@ describe("category rules", () => {
     ).toEqual(["A blast message"]);
   });
 
-  it("accepts a complete proposal of every category while posters and links are not stored", () => {
-    expect(NOT_YET_STORED).toEqual(["poster", "docLink"]);
+  it("enforces every requirement in the table: nothing is left unstored", () => {
+    expect(NOT_YET_STORED).toEqual([]);
+  });
+
+  it("asks for a poster and a document link exactly where the table says", () => {
+    for (const category of PROPOSAL_CATEGORIES) {
+      const missing = missingForSubmit({
+        ...complete,
+        category,
+        posterUrl: null,
+        docLink: null,
+      });
+      const wants = CATEGORY_REQUIREMENTS[category];
+      // The fixture has a blast message and a start, so only the files can be missing.
+      expect(missing.includes("A poster")).toBe(wants.includes("poster"));
+      expect(missing.includes("A document link")).toBe(
+        wants.includes("docLink"),
+      );
+    }
+  });
+
+  it("accepts a complete proposal of every category once the files are there", () => {
     for (const category of PROPOSAL_CATEGORIES) {
       expect(missingForSubmit({ ...complete, category })).toEqual([]);
     }
+  });
+
+  it("treats a blank poster, and a document link that is not https, as missing", () => {
+    const base = { ...complete, category: "merch" as const };
+    expect(
+      missingForSubmit({
+        ...base,
+        posterUrl: " ",
+        docLink: "https://a.example",
+      }),
+    ).toEqual(["A poster"]);
+    expect(
+      missingForSubmit({
+        ...base,
+        posterUrl: "https://example.test/p.webp",
+        docLink: "javascript:alert(1)",
+      }),
+    ).toEqual(["A document link"]);
   });
 
   it("refuses an end that is not after the start", () => {
@@ -175,6 +215,7 @@ describe("the save schemas", () => {
       blastMessage: null,
       plannedStart: null,
       plannedEnd: null,
+      docLink: null,
     });
   });
 

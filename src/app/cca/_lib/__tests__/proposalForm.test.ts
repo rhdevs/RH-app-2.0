@@ -7,6 +7,8 @@ import {
   missingFromForm,
   sameForm,
   saveFieldsFromForm,
+  updateFieldsFromForm,
+  docLinkIsInvalid,
 } from "~/app/cca/_lib/proposalForm";
 
 // 2027-03-01 10:00 in Singapore (UTC+8) is 02:00 UTC.
@@ -21,6 +23,8 @@ describe("the form to and from stored values", () => {
       blastMessage: "Come!",
       plannedStart: START,
       plannedEnd: START + 3600,
+      posterUrl: "https://example.test/p.webp",
+      docLink: "https://docs.example.com/plan",
     });
     expect(form.startLocal).toBe("2027-03-01T10:00");
     expect(form.endLocal).toBe("2027-03-01T11:00");
@@ -31,7 +35,11 @@ describe("the form to and from stored values", () => {
       blastMessage: "Come!",
       plannedStart: START,
       plannedEnd: START + 3600,
+      docLink: "https://docs.example.com/plan",
     });
+    expect(updateFieldsFromForm(form).posterUrl).toBe(
+      "https://example.test/p.webp",
+    );
   });
 
   it("turns blank times and a null blast message into empty fields and back to null", () => {
@@ -84,6 +92,8 @@ describe("the checklist uses the shared category table", () => {
       "A description",
       "A planned start date and time",
       "A blast message",
+      "A poster",
+      "A document link",
     ]);
 
     expect(
@@ -107,6 +117,35 @@ describe("the checklist uses the shared category table", () => {
         endLocal: "2027-03-01T09:00",
       }),
     ).toEqual(["An end that is after the start"]);
+  });
+});
+
+describe("the document link box", () => {
+  it("flags a link the server would refuse, and not a blank or a good one", () => {
+    const link = (docLink: string) => ({ ...EMPTY_PROPOSAL_FORM, docLink });
+    expect(docLinkIsInvalid(link(""))).toBe(false);
+    expect(docLinkIsInvalid(link("  "))).toBe(false);
+    expect(docLinkIsInvalid(link("https://docs.example.com/a"))).toBe(false);
+    expect(docLinkIsInvalid(link("javascript:alert(1)"))).toBe(true);
+    expect(docLinkIsInvalid(link("http://docs.example.com"))).toBe(true);
+    expect(docLinkIsInvalid(link("https://u:p@docs.example.com"))).toBe(true);
+  });
+
+  it("sends a blank link as null and counts the poster and link in the checklist", () => {
+    expect(saveFieldsFromForm(EMPTY_PROPOSAL_FORM).docLink).toBeNull();
+    const done = {
+      ...EMPTY_PROPOSAL_FORM,
+      category: "merch" as const,
+      title: "t",
+      description: "d",
+      posterUrl: "https://example.test/p.webp",
+      docLink: "https://docs.example.com/a",
+    };
+    expect(missingFromForm(done)).toEqual([]);
+    expect(
+      missingFromForm({ ...done, docLink: "javascript:alert(1)" }),
+    ).toEqual(["A document link"]);
+    expect(sameForm(done, { ...done, posterUrl: null })).toBe(false);
   });
 });
 

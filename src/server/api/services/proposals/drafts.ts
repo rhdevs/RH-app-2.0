@@ -6,6 +6,7 @@ import type {
   ProposalCreateInput,
   ProposalUpdateInput,
 } from "~/lib/schemas/proposal";
+import { deleteReplacedPoster } from "~/server/api/services/proposalPosterBlob";
 import { assertCcaHead, PROPOSAL_NOT_FOUND } from "./access";
 import { assertWithinLimit } from "./limits";
 import { PROPOSAL_CONFLICT } from "./transition";
@@ -39,6 +40,8 @@ export async function createProposal(
       plannedStart: input.plannedStart,
       plannedEnd: input.plannedEnd,
       eventID: null,
+      posterUrl: null,
+      docLink: input.docLink,
       submittedAt: null,
     },
     select: { id: true, version: true },
@@ -58,7 +61,12 @@ export async function updateProposal(
 ): Promise<{ id: string; version: number }> {
   const row = await db.proposal.findUnique({
     where: { id: input.id },
-    select: { ccaID: true, plannedStart: true, plannedEnd: true },
+    select: {
+      ccaID: true,
+      plannedStart: true,
+      plannedEnd: true,
+      posterUrl: true,
+    },
   });
   if (!row) {
     throw new TRPCError({ code: "NOT_FOUND", message: PROPOSAL_NOT_FOUND });
@@ -78,6 +86,8 @@ export async function updateProposal(
       plannedStart: input.plannedStart,
     }),
     ...(input.plannedEnd !== undefined && { plannedEnd: input.plannedEnd }),
+    ...(input.posterUrl !== undefined && { posterUrl: input.posterUrl }),
+    ...(input.docLink !== undefined && { docLink: input.docLink }),
   };
   if (Object.keys(data).length === 0) {
     throw new TRPCError({ code: "BAD_REQUEST", message: NOTHING_TO_UPDATE });
@@ -101,6 +111,16 @@ export async function updateProposal(
   });
   if (changed.count !== 1) {
     throw new TRPCError({ code: "CONFLICT", message: PROPOSAL_CONFLICT });
+  }
+  // The write succeeded; only now is the replaced poster's blob removed. The
+  // version check above means nothing changed the row since it was read, so
+  // `row.posterUrl` is the address that was just replaced.
+  if (
+    input.posterUrl !== undefined &&
+    row.posterUrl !== null &&
+    row.posterUrl !== input.posterUrl
+  ) {
+    await deleteReplacedPoster(input.id, row.posterUrl);
   }
   return { id: input.id, version: input.version + 1 };
 }

@@ -10,6 +10,8 @@
  * enforced (welfare needs no date).
  */
 
+import { normalizeDocLink } from "~/lib/schemas/proposalFiles";
+
 export const PROPOSAL_CATEGORIES = [
   "event",
   "initiative",
@@ -61,11 +63,12 @@ export const CATEGORY_REQUIREMENTS: Record<
 };
 
 /**
- * Requirements the Proposal row cannot hold yet. The poster and the document
- * link arrive with the files PR; until then the table names them (so the rule
- * is written once, now) but nothing checks them. That PR empties this list.
+ * Requirements the Proposal row cannot hold yet. Empty since the files PR
+ * stored the poster and the document link, so every requirement in the table
+ * above is checked at submit. To switch the poster and link rules off again,
+ * list "poster" and "docLink" here.
  */
-export const NOT_YET_STORED: readonly RequirementKey[] = ["poster", "docLink"];
+export const NOT_YET_STORED: readonly RequirementKey[] = [];
 
 export function isProposalCategory(value: unknown): value is ProposalCategory {
   return (
@@ -81,6 +84,8 @@ export type SubmitContent = {
   blastMessage: string | null;
   plannedStart: number | null;
   plannedEnd: number | null;
+  posterUrl: string | null;
+  docLink: string | null;
 };
 
 /**
@@ -98,6 +103,12 @@ export function missingForSubmit(content: SubmitContent): string[] {
       missing.push(REQUIREMENT_LABELS[key]);
     }
     if (key === "blastMessage" && (content.blastMessage ?? "").trim() === "") {
+      missing.push(REQUIREMENT_LABELS[key]);
+    }
+    if (key === "poster" && (content.posterUrl ?? "").trim() === "") {
+      missing.push(REQUIREMENT_LABELS[key]);
+    }
+    if (key === "docLink" && normalizeDocLink(content.docLink ?? "") === null) {
       missing.push(REQUIREMENT_LABELS[key]);
     }
   }

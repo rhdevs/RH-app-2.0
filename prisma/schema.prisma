@@ -1646,6 +1646,13 @@ model Proposal {
   /// Planned start and end, epoch seconds (the Event convention). Null = unset.
   plannedStart Int?
   plannedEnd   Int?
+  /// The poster's address in the public blob store, under this proposal's own
+  /// prefix (lib/schemas/proposalFiles.ts). Only the address is kept. Written
+  /// explicitly as null on create; a row from before PR 7 has no key and reads
+  /// as null.
+  posterUrl    String?
+  /// A validated https link to the supporting document. Never fetched.
+  docLink      String?
   /// "draft" | "in_review" | "needs_action" | "cleared" | "finished" |
   /// "canceled". WRITTEN ONLY by transitionProposal (services/proposals/
   /// transition.ts), apart from this default at creation; a source scan in
