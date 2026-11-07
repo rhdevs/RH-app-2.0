@@ -69,6 +69,9 @@ export async function makeKit() {
   const { resetNotificationsFlagCache } = await import(
     "~/server/api/services/notifications"
   );
+  const { resetDisposablesFlagCache } = await import(
+    "~/server/api/services/disposables/flag"
+  );
   const original: Record<string, string | null> = {};
   let ipCounter = 0;
 
@@ -105,6 +108,7 @@ export async function makeKit() {
       });
     }
     resetNotificationsFlagCache();
+    resetDisposablesFlagCache();
   };
 
   const clean = async () => {
