@@ -85,6 +85,10 @@ const EXACT: Record<string, string> = {
   LOCATION_REQUIRED: "Add where the event is.",
   END_TIME_REQUIRED: "A booked facility needs an end time.",
   NO_SUCH_FACILITY: "That facility no longer exists. Pick another.",
+  FACILITY_RESTRICTED:
+    "The event's creator can't book that facility, so the event can't use it. Pick another place.",
+  FACILITY_CLOSED:
+    "That facility can't be booked through RHApp. Pick another place, or contact the JCRC to find out who manages it.",
   NOT_A_HEAD_OF_THIS_CCA: "You're no longer a head of this CCA.",
   EVENTS_DISABLED: "Events aren't switched on yet.",
   // Two people pressing at once on a busy event. Retrying genuinely helps.

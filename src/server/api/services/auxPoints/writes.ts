@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 
 import {
   AUX_PASTE_MAX_LINES,
+  isClosedEventStatus,
   isValidAuxAmount,
   parseAmountLines,
   parseIdentifierLines,
@@ -65,8 +66,6 @@ export type AddResult = {
 
 /* ------------------------------------------------------------------ events */
 
-const CLOSED_STATUSES = new Set(["canceled", "declined"]);
-
 /**
  * Turns an event's AUX switch on (stamped with the current points year) or
  * off. Any JCRC member, any time, any CCA's event. A past year's AUX event is
@@ -90,7 +89,7 @@ export async function setEventAux(
       if (event.auxYear === current) return { auxYear: current };
       return moveToCurrentYear(db, actor, event, current);
     }
-    if (CLOSED_STATUSES.has(event.status ?? "")) {
+    if (isClosedEventStatus(event.status)) {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
         message: "AUX_EVENT_CLOSED",

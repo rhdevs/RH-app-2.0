@@ -5,6 +5,7 @@ import {
   AUX_AWARD_MIN,
   AUX_REASON_PRESETS,
   auxYearOf,
+  isClosedEventStatus,
   isValidAuxAmount,
   parseAmountLines,
   parseIdentifierLines,
@@ -49,6 +50,16 @@ describe("pointsYearStartedAt", () => {
     expect(pointsYearStartedAt(new Date("2027-07-31T23:00:00+08:00"))).toBe(
       "AY2027/28",
     );
+  });
+});
+
+describe("isClosedEventStatus", () => {
+  it("treats only cancelled and declined events as closed", () => {
+    expect(isClosedEventStatus("canceled")).toBe(true);
+    expect(isClosedEventStatus("declined")).toBe(true);
+    for (const open of ["published", "submitted", "draft", null]) {
+      expect(isClosedEventStatus(open)).toBe(false);
+    }
   });
 });
 
