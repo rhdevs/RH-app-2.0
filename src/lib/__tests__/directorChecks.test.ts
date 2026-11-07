@@ -34,6 +34,8 @@ const {
   liveJcrcSet,
   isGating,
   proposalsNeedDirectors,
+  disposablesNeedDirectors,
+  disposablesNeedIndex,
 } = (await import(/* @vite-ignore */ lib)) as {
   evaluateDirectorChecks: (input: Input) => {
     flaggedPositions: number;
@@ -41,8 +43,21 @@ const {
   };
   isGating: (
     check: Pick<Check, "always" | "blocks">,
-    state: { flagArg: boolean; directorsOn: boolean; proposalsOn: boolean },
+    state: {
+      flagArg: boolean;
+      directorsOn: boolean;
+      proposalsOn: boolean;
+      disposablesOn?: boolean;
+    },
   ) => boolean;
+  disposablesNeedDirectors: (state: {
+    disposablesOn: boolean;
+    directorsOn: boolean;
+  }) => { label: string; offenders: string[]; note: string } | null;
+  disposablesNeedIndex: (state: {
+    disposablesOn: boolean;
+    indexes: unknown[] | null;
+  }) => { label: string; offenders: string[]; note: string } | null;
   proposalsNeedDirectors: (state: {
     proposalsOn: boolean;
     directorsOn: boolean;
@@ -398,6 +413,18 @@ describe('isGating: which switch turns a "not set up" line RED', () => {
     expect(social().always).toBe(false);
   });
 
+  it("disposables.enabled on makes the Social director line gate, and only that one", () => {
+    const on = { ...off, disposablesOn: true };
+    expect(isGating(social(), on)).toBe(true);
+    expect(isGating(noDirector(), on)).toBe(false);
+  });
+
+  it("only an exact true counts as the disposables switch", () => {
+    expect(
+      isGating(social(), { ...off, disposablesOn: undefined as never }),
+    ).toBe(false);
+  });
+
   it("with every switch off, neither not-set-up line gates", () => {
     expect(isGating(noDirector(), off)).toBe(false);
     expect(isGating(social(), off)).toBe(false);
@@ -461,6 +488,97 @@ describe("proposalsNeedDirectors: proposals on, directors off", () => {
         proposalsOn: undefined as never,
         directorsOn: false,
       }),
+    ).toBeNull();
+  });
+});
+
+describe("disposablesNeedDirectors: disposables on, directors off", () => {
+  it("is a RED line that names the switch to turn on", () => {
+    const line = disposablesNeedDirectors({
+      disposablesOn: true,
+      directorsOn: false,
+    });
+    expect(line?.offenders).toEqual(["turn on directors.enabled"]);
+    expect(line?.label).toContain("disposables.enabled is on");
+  });
+
+  it("says nothing when directors are on, or disposables are off", () => {
+    for (const state of [
+      { disposablesOn: true, directorsOn: true },
+      { disposablesOn: false, directorsOn: false },
+      { disposablesOn: undefined as never, directorsOn: false },
+    ]) {
+      expect(disposablesNeedDirectors(state)).toBeNull();
+    }
+  });
+});
+
+describe("disposablesNeedIndex: disposables on, partial index missing", () => {
+  const good = {
+    name: "disposable_request_proposal_unique",
+    key: { proposalID: 1 },
+    unique: true,
+    partialFilterExpression: { proposalID: { $gt: "" } },
+  };
+
+  it("is green with the partial unique index in place", () => {
+    expect(
+      disposablesNeedIndex({ disposablesOn: true, indexes: [good] }),
+    ).toBeNull();
+  });
+
+  it("is RED when the index is absent, plain (not partial) or not unique", () => {
+    for (const indexes of [
+      [],
+      [{ ...good, partialFilterExpression: undefined }],
+      [{ ...good, unique: false }],
+      [{ ...good, key: { ccaID: 1 } }],
+    ]) {
+      const line = disposablesNeedIndex({ disposablesOn: true, indexes });
+      expect(line?.offenders).toEqual([
+        "DisposableRequest.disposable_request_proposal_unique",
+      ]);
+    }
+  });
+
+  it("is green when the raw command returns the key as extended JSON", () => {
+    for (const key of [
+      { proposalID: { $numberInt: "1" } },
+      { proposalID: { $numberLong: "1" } },
+      { proposalID: { $numberDouble: "1.0" } },
+    ]) {
+      expect(
+        disposablesNeedIndex({
+          disposablesOn: true,
+          indexes: [{ ...good, key }],
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it("is RED when the extended-JSON key names a different field or direction", () => {
+    for (const key of [
+      { proposalID: { $numberInt: "-1" } },
+      { ccaID: { $numberInt: "1" } },
+    ]) {
+      expect(
+        disposablesNeedIndex({
+          disposablesOn: true,
+          indexes: [{ ...good, key }],
+        }),
+      ).not.toBeNull();
+    }
+  });
+
+  it("an unreadable index list counts as missing, never as present", () => {
+    expect(
+      disposablesNeedIndex({ disposablesOn: true, indexes: null }),
+    ).not.toBeNull();
+  });
+
+  it("says nothing while the flag is off", () => {
+    expect(
+      disposablesNeedIndex({ disposablesOn: false, indexes: null }),
     ).toBeNull();
   });
 });

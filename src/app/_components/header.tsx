@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   ClipboardList,
   ClipboardCheck,
+  Package,
   FileText,
   LogOut,
   UserCircle,
@@ -25,6 +26,7 @@ import { useSession } from "next-auth/react";
 import { signOut } from "next-auth/react";
 import { api } from "~/trpc/react";
 import { DIRECTOR_HOME_HREF } from "~/lib/proposals/links";
+import { DISPOSABLES_HREF } from "~/lib/disposables/links";
 
 // Loaded on the client only: the bell's queries stay out of every page's
 // initial render, and a page that never signs in never fetches them.
@@ -58,6 +60,14 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
   // director's own page says why when a read failed.
   const showDirector =
     api.proposal.directorEntry.useQuery(undefined, {
+      enabled: Boolean(session),
+      retry: false,
+      staleTime: 60_000,
+    }).data?.show === true;
+  // The Disposables entry: the same rule. Drawn only when the SERVER says the
+  // switch is on and this person can read requests (a head of a CCA, or JCRC).
+  const showDisposables =
+    api.disposable.entry.useQuery(undefined, {
       enabled: Boolean(session),
       retry: false,
       staleTime: 60_000,
@@ -138,6 +148,9 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     ...(isCcaHead ? [{ name: "Manage CCAs", href: "/cca", icon: Users }] : []),
     ...(showDirector
       ? [{ name: "Director", href: DIRECTOR_HOME_HREF, icon: ClipboardCheck }]
+      : []),
+    ...(showDisposables
+      ? [{ name: "Disposables", href: DISPOSABLES_HREF, icon: Package }]
       : []),
     ...(isScrc ? [{ name: "Staff", href: "/scrc", icon: Landmark }] : []),
     ...(canReachAdmin

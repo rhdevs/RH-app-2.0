@@ -30,6 +30,7 @@ vi.mock("~/trpc/react", () => ({
     },
     // The Director entry is its own test (headerDirectorEntry.test.tsx).
     proposal: { directorEntry: { useQuery: () => ({ data: undefined }) } },
+    disposable: { entry: { useQuery: () => ({ data: undefined }) } },
   },
 }));
 

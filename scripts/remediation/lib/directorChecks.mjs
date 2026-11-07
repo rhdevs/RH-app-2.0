@@ -23,6 +23,8 @@
  * (see `isGating`).
  */
 
+import { sameKey } from "../create-transcript-indexes.mjs";
+
 /** Who holds `jcrc` right now: stored on their role row and not past a step-out. */
 export function liveJcrcSet(userRoles, terms, now) {
   const ended = new Set(
@@ -141,16 +143,19 @@ export function evaluateDirectorChecks({
  * entered (`always`) always does. Otherwise the check gates when the run was
  * given `--directors`, when `directors.enabled` is on, or when the switch
  * that THIS check blocks is on: `proposals.enabled` for the "no director"
- * line. `disposables.enabled` does not exist yet, so only the first two can
- * gate the disposables line.
+ * line, `disposables.enabled` for the "Social director" line.
  *
  * @param {{ always: boolean, blocks: "proposals" | "disposables" | null }} check
- * @param {{ flagArg: boolean, directorsOn: boolean, proposalsOn: boolean }} state
+ * @param {{ flagArg: boolean, directorsOn: boolean, proposalsOn: boolean, disposablesOn?: boolean }} state
  */
-export function isGating(check, { flagArg, directorsOn, proposalsOn }) {
+export function isGating(
+  check,
+  { flagArg, directorsOn, proposalsOn, disposablesOn },
+) {
   if (check.always) return true;
   if (flagArg || directorsOn) return true;
-  return check.blocks === "proposals" && proposalsOn === true;
+  if (check.blocks === "proposals") return proposalsOn === true;
+  return check.blocks === "disposables" && disposablesOn === true;
 }
 
 /**
@@ -170,5 +175,61 @@ export function proposalsNeedDirectors({ proposalsOn, directorsOn }) {
     label: "proposals.enabled is on but directors.enabled is off",
     offenders: ["turn on directors.enabled"],
     note: "no director can act on a submitted proposal until it is on",
+  };
+}
+
+/**
+ * `disposables.enabled` on with `directors.enabled` off: heads can file
+ * requests, but the Social director guard fails closed while the directors
+ * switch is off, so nobody can decide them. Same shape as
+ * `proposalsNeedDirectors`; returns the one RED line, or null when fine.
+ *
+ * @param {{ disposablesOn: boolean, directorsOn: boolean }} state
+ * @returns {{ label: string, offenders: string[], note: string } | null}
+ */
+export function disposablesNeedDirectors({ disposablesOn, directorsOn }) {
+  if (disposablesOn !== true || directorsOn === true) return null;
+  return {
+    label: "disposables.enabled is on but directors.enabled is off",
+    offenders: ["turn on directors.enabled"],
+    note: "no one can decide a disposable request until it is on",
+  };
+}
+
+/** The partial unique index on the proposal link, as the script builds it. */
+export const DISPOSABLE_PROPOSAL_INDEX = {
+  name: "disposable_request_proposal_unique",
+  key: { proposalID: 1 },
+  partialFilterExpression: { proposalID: { $gt: "" } },
+};
+
+/**
+ * `disposables.enabled` on while the DisposableRequest partial unique index is
+ * not in place (A3): the "one request per proposal" rule would rest on a
+ * pre-check alone. `indexes` is the `listIndexes` answer's `firstBatch`, or
+ * null when it could not be read: an unanswered question is not "present", so
+ * null counts as missing. Returns the one RED line, or null when fine (or when
+ * the flag is not on; the doctor reports nothing for an unused feature).
+ *
+ * @param {{ disposablesOn: boolean, indexes: any[] | null }} state
+ * @returns {{ label: string, offenders: string[], note: string } | null}
+ */
+export function disposablesNeedIndex({ disposablesOn, indexes }) {
+  if (disposablesOn !== true) return null;
+  const want = DISPOSABLE_PROPOSAL_INDEX;
+  const found = (indexes ?? []).find(
+    (i) =>
+      i?.name === want.name &&
+      i.unique === true &&
+      sameKey(i.key, want.key) &&
+      JSON.stringify(i.partialFilterExpression) ===
+        JSON.stringify(want.partialFilterExpression),
+  );
+  if (found) return null;
+  return {
+    label:
+      "disposables.enabled is on but the DisposableRequest index is missing",
+    offenders: [`DisposableRequest.${want.name}`],
+    note: "run create-disposable-reminder-indexes.mjs --commit before the flag",
   };
 }

@@ -30,6 +30,7 @@ vi.mock("~/trpc/react", () => ({
     proposal: {
       directorEntry: { useQuery: query("directorEntry") },
     },
+    disposable: { entry: { useQuery: query("disposableEntry") } },
   },
 }));
 
@@ -75,6 +76,53 @@ describe("the Director navigation entry", () => {
     useSession.mockReturnValue({ data: null, status: "unauthenticated" });
     render();
     expect((optionsSeen.directorEntry as { enabled: boolean }).enabled).toBe(
+      false,
+    );
+  });
+});
+
+describe("the Disposables navigation entry", () => {
+  beforeEach(() => {
+    for (const k of Object.keys(answers)) delete answers[k];
+    useSession.mockReturnValue({
+      data: { user: { userID: "E1", roles: ["resident"] } },
+      status: "authenticated",
+    });
+  });
+
+  it("is drawn only when the server says the person can read requests", () => {
+    answers.disposableEntry = { data: { show: true } };
+    expect(render()).toContain("Disposables");
+
+    answers.disposableEntry = { data: { show: false } };
+    expect(render()).not.toContain("Disposables");
+  });
+
+  it("is hidden while loading and when the read failed", () => {
+    answers.disposableEntry = { data: undefined, isLoading: true };
+    expect(render()).not.toContain("Disposables");
+    answers.disposableEntry = { data: undefined, error: new Error("x") };
+    expect(render()).not.toContain("Disposables");
+  });
+
+  it("does not come from the session's roles", () => {
+    useSession.mockReturnValue({
+      data: {
+        user: {
+          userID: "E1",
+          roles: ["resident", "jcrc", "admin", "cca_head"],
+        },
+      },
+      status: "authenticated",
+    });
+    answers.disposableEntry = { data: { show: false } };
+    expect(render()).not.toContain("Disposables");
+  });
+
+  it("asks only once signed in", () => {
+    useSession.mockReturnValue({ data: null, status: "unauthenticated" });
+    render();
+    expect((optionsSeen.disposableEntry as { enabled: boolean }).enabled).toBe(
       false,
     );
   });

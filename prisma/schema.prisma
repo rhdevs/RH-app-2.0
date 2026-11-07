@@ -1768,6 +1768,56 @@ model CalendarFeedToken {
 }
 
 // ---------------------------------------------------------------------------
+// DISPOSABLES (socporthub merge, PR 13, F16). A head asks the Social director
+// for plates, cups, bowls, forks and spoons for a collection day. Not
+// year-based: deliberately NO `academicYear` field. A request belongs to the
+// CCA, so it outlives the head who filed it. Indexes:
+// scripts/remediation/create-disposable-reminder-indexes.mjs, which also builds
+// the PARTIAL unique index disposable_request_proposal that Prisma cannot
+// express (one request per proposal; requests without a link are outside it).
+// ---------------------------------------------------------------------------
+
+model DisposableRequest {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  ccaID          Int
+  /// The requester's canonical id, or null once their account is deleted
+  /// (userAdmin.ts). Always written explicitly: a missing key never matches a
+  /// null filter on MongoDB.
+  createdBy      String?
+  title          String
+  description    String
+  /// Optional link to a Proposal, as its 24-character hex id (a plain string
+  /// on purpose: the partial unique index filters on strings). Null when none.
+  proposalID     String?
+  plates         Int
+  cups           Int
+  bowls          Int
+  forks          Int
+  spoons         Int
+  /// The collection day as a Singapore date key ("YYYY-MM-DD", sgtDayKey).
+  collectionDay  String
+  /// The collection time of day in Singapore ("HH:mm").
+  collectionTime String
+  /// "pending" | "approved" | "rejected". WRITTEN ONLY by
+  /// services/disposables/transition.ts, apart from this default at creation;
+  /// a source scan keeps it so. "draft" is not built before phase 8.
+  status         String    @default("pending")
+  /// Bumped on every change; every write is a compare-and-set on it.
+  version        Int       @default(0)
+  /// The Social director who approved or rejected it, and when. Null while
+  /// pending, and null again once their account is deleted.
+  decidedBy      String?
+  decidedAt      DateTime?
+  /// An optional note from the decision, shown to the CCA's heads.
+  decisionNote   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([ccaID, collectionDay], map: "disposable_request_cca_day")
+  @@index([status, collectionDay], map: "disposable_request_status_day")
+}
+
+// ---------------------------------------------------------------------------
 // TRANSCRIPT (docs/transcript/SPEC.md). Every model below is a NEW, UNVALIDATED
 // collection — the validator-guarded CCA / UserCCA / User silently reject new
 // fields (code 121), so nothing transcript-specific lives on them. All are keyed
