@@ -189,14 +189,14 @@ async function assertMayScan(
   userID: string,
   roles: string[],
   event: { ccaID: number | null; scannerUserIDs: string[] },
-): Promise<void> {
+): Promise<"owner" | "nominee"> {
   // 1. The owner always may — the same two ownership shapes as loadOwnedEvent.
   if (event.ccaID == null) {
-    if (computeCapabilities(roles).manageHallEvents) return;
+    if (computeCapabilities(roles).manageHallEvents) return "owner";
   } else {
     try {
       await assertHeadsCca(db, { userID, roles }, event.ccaID);
-      return;
+      return "owner";
     } catch {
       // Not a head of this CCA. Fall through to the nominee branch rather than
       // rethrowing: being nominated is a second, independent way in, and
@@ -233,12 +233,34 @@ async function assertMayScan(
     // A HALL EVENT HAS NO MEMBERSHIP SET TO RE-VALIDATE AGAINST, so being on
     // the list is enough. Volunteers at hall events (AUX events in particular)
     // are ordinary residents, not holders of manageHallEvents. Taking someone
-    // off the door is done by removing them from the list.
-    return;
+    // off the door is done by removing them from the list. They scan QR codes
+    // only: see assertMayCheckInByHand.
+    return "nominee";
   }
 
   if (!(await isLiveCcaMember(db, event.ccaID, userID))) {
     throw new TRPCError({ code: "FORBIDDEN", message: "NOT_A_SCANNER" });
+  }
+  return "nominee";
+}
+
+/**
+ * The by-hand door tools (the roster with names and matric suffixes, manual
+ * check-in, undo): everyone assertMayScan admits EXCEPT a hall-event
+ * volunteer. A volunteer can be any signed-in resident, so handing them every
+ * signup's name and matric suffix, and a check-in for any account, would let
+ * them check friends into an AUX event for points without the friend being
+ * there. A QR scan needs the attendee's own phone; that is all they get.
+ */
+async function assertMayCheckInByHand(
+  db: PrismaClient,
+  userID: string,
+  roles: string[],
+  event: { ccaID: number | null; scannerUserIDs: string[] },
+): Promise<void> {
+  const who = await assertMayScan(db, userID, roles, event);
+  if (who === "nominee" && event.ccaID == null) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "QR_ONLY" });
   }
 }
 
@@ -3232,7 +3254,7 @@ export const eventRouter = createTRPCRouter({
           message: "NOT_PUBLISHED",
         });
       }
-      await assertMayScan(ctx.db, userID, roles, event);
+      await assertMayCheckInByHand(ctx.db, userID, roles, event);
 
       const nowSec = Math.floor(Date.now() / 1000);
       const attWindow = resolveAttendanceWindow(event);
@@ -3265,12 +3287,27 @@ export const eventRouter = createTRPCRouter({
         });
       }
 
-      return recordCheckIn(ctx.db, {
+      const result = await recordCheckIn(ctx.db, {
         eventID: input.eventID,
         subjectUserID: input.userID,
         scannerUserID: userID,
         method: "manual",
       });
+      // A manual check-in needs no proof the person was there, and at an AUX
+      // event it awards points, so unlike a QR scan it is audited, with the
+      // resident in the target column where the audit log can filter on it.
+      if (!result.alreadyCheckedIn) {
+        await writeAudit(ctx.db, {
+          actorUserID: userID,
+          actorRoles: roles,
+          targetUserID: input.userID,
+          targetCcaID: event.ccaID ?? undefined,
+          targetEventID: event.eventID,
+          action: "event.checkin.manual",
+          reason: `manual check-in for ${input.userID}`,
+        });
+      }
+      return result;
     }),
 
   /**
@@ -3295,7 +3332,7 @@ export const eventRouter = createTRPCRouter({
       if (!event) {
         throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
       }
-      await assertMayScan(ctx.db, userID, roles, event);
+      await assertMayCheckInByHand(ctx.db, userID, roles, event);
 
       const removed = await ctx.db.eventAttendance.deleteMany({
         where: { eventID: input.eventID, userID: input.userID },
@@ -3350,6 +3387,7 @@ export const eventRouter = createTRPCRouter({
           enabled: false as const,
           configured: isQrConfigured(),
           mayScan: false,
+          mayCheckInByHand: false,
           published: false,
           opensAt: null,
           closesAt: null,
@@ -3367,10 +3405,13 @@ export const eventRouter = createTRPCRouter({
       }
 
       let mayScan = true;
+      let mayCheckInByHand = true;
       try {
-        await assertMayScan(ctx.db, userID, roles, event);
+        const who = await assertMayScan(ctx.db, userID, roles, event);
+        mayCheckInByHand = who === "owner" || event.ccaID != null;
       } catch {
         mayScan = false;
+        mayCheckInByHand = false;
       }
 
       const attWindow = resolveAttendanceWindow(event);
@@ -3385,6 +3426,7 @@ export const eventRouter = createTRPCRouter({
         enabled: true as const,
         configured: isQrConfigured(),
         mayScan,
+        mayCheckInByHand,
         published: normalizeStatus(event.status) === "published",
         opensAt: attWindow?.opensAt ?? null,
         closesAt: attWindow?.closesAt ?? null,
@@ -3431,7 +3473,7 @@ export const eventRouter = createTRPCRouter({
       if (!event) {
         throw new TRPCError({ code: "NOT_FOUND", message: "NO_SUCH_EVENT" });
       }
-      await assertMayScan(ctx.db, userID, roles, event);
+      await assertMayCheckInByHand(ctx.db, userID, roles, event);
 
       const [signups, attendance] = await Promise.all([
         ctx.db.eventSignup.findMany({

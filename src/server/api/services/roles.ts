@@ -382,6 +382,9 @@ export const AUDIT_ACTIONS = [
   // ERASES a claim about where a person physically was, and after it there
   // is no row left to carry that fact.
   "event.checkin.undo",
+  // A MANUAL check-in is audited even though a QR one is not: it needs no
+  // proof the person was at the door, and at an AUX event it awards points.
+  "event.checkin.manual",
   // Admin CRUD over USER DETAILS (/admin/users detail dialog). NOTE what is
   // absent: no "user.create" (signup + PendingRoleGrant own onboarding) and no
   // role action — these endpoints are NOT a second writer of UserRole.roles
