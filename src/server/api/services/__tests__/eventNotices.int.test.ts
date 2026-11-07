@@ -66,6 +66,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let ipCounter = 0;
     let savedFlags: { key: string; value: string }[] = [];
     const ops: string[] = [];
+    const race: { beforeCancelWrite: (() => Promise<void>) | null } = {
+      beforeCancelWrite: null,
+    };
 
     const as = (userID: string, roles: string[]) =>
       createCaller({
@@ -75,6 +78,17 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             $allModels: {
               async $allOperations({ model, operation, args, query }) {
                 ops.push(`${model}.${operation}`);
+                const hook = race.beforeCancelWrite;
+                if (
+                  hook &&
+                  model === "Event" &&
+                  operation === "updateMany" &&
+                  (args as { data?: { status?: string } }).data?.status ===
+                    "canceled"
+                ) {
+                  race.beforeCancelWrite = null;
+                  await hook();
+                }
                 return query(args);
               },
             },
@@ -261,6 +275,28 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         body: 'Too <wet> & "cold"',
       });
       expect(await inbox(USERS.second)).toHaveLength(1);
+    });
+
+    it("still tells the residents when a review publishes the event between the cancel's read and its write", async () => {
+      const id = await makeEvent({ status: "submitted", publishedAt: null });
+      race.beforeCancelWrite = async () => {
+        await db.event.update({
+          where: { eventID: id },
+          data: { status: "published", publishedAt: new Date() },
+        });
+      };
+      await as(USERS.head, HEAD).cancelEvent({ eventID: id, reason: "Rain" });
+      expect(race.beforeCancelWrite).toBeNull();
+      expect((await eventRow(id)).status).toBe("canceled");
+      expect(await inbox(USERS.resident)).toHaveLength(1);
+      expect(await inbox(USERS.second)).toHaveLength(1);
+    });
+
+    it("tells nobody when a draft that was never published is canceled", async () => {
+      const id = await makeEvent({ status: "draft", publishedAt: null });
+      await as(USERS.head, HEAD).cancelEvent({ eventID: id });
+      expect((await eventRow(id)).status).toBe("canceled");
+      expect(await totalRows()).toBe(0);
     });
 
     it("tells the signed-up residents when the JCRC cancels", async () => {
