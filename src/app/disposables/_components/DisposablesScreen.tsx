@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 
 import { api } from "~/trpc/react";
@@ -9,6 +9,7 @@ import { Button } from "~/components/ui/button";
 import { disposableErrorMessage } from "~/lib/disposables/errors";
 import {
   filtersToInput,
+  HALL_WIDE_FILTER,
   NO_FILTERS,
   type DisposableFilters,
 } from "~/lib/disposables/filters";
@@ -38,6 +39,11 @@ const fieldClass =
  * is rendered as React text.
  *
  * With `ccaID` the screen is the CCA dashboard's tab: that CCA only.
+ *
+ * Each request shows the event it is for (its live title while the event
+ * exists, the title kept when it was filed after that), a warning when the
+ * event was canceled or declined (the request itself is unchanged), and the
+ * other requests for the same event. A hall-wide request has no CCA.
  */
 export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
   const enabled = api.disposable.enabled.useQuery(undefined, {
@@ -50,6 +56,25 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
     retry: false,
     enabled: on,
   });
+  // The event filter offers the events seen on any list so far, so choosing one
+  // does not remove it from the choices.
+  const [knownEvents, setKnownEvents] = useState<Map<number, string>>(
+    new Map(),
+  );
+  useEffect(() => {
+    const items = list.data?.items;
+    if (!items) return;
+    setKnownEvents((prev) => {
+      const next = new Map(prev);
+      for (const r of items) {
+        if (r.event) next.set(r.event.eventID, r.event.title ?? "(untitled)");
+      }
+      return next.size === prev.size &&
+        [...next].every(([id, title]) => prev.get(id) === title)
+        ? prev
+        : next;
+    });
+  }, [list.data]);
 
   if (enabled.isLoading) {
     return <p className="text-sm text-gray-500">Loading…</p>;
@@ -76,6 +101,11 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
 
   const { items, viewer, ccaOptions, more, skipped, hasSocialDirector } =
     list.data;
+  const eventOptions = new Map(knownEvents);
+  for (const r of items) {
+    if (r.event)
+      eventOptions.set(r.event.eventID, r.event.title ?? "(untitled)");
+  }
   const set = (patch: Partial<DisposableFilters>) =>
     setFilters((f) => ({ ...f, ...patch }));
 
@@ -120,18 +150,39 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
             ))}
           </select>
         </label>
-        {ccaID === undefined && ccaOptions.length > 1 && (
+        {ccaID === undefined &&
+          (ccaOptions.length > 1 || viewer.showHallWide) && (
+            <label className="text-xs text-gray-600">
+              CCA
+              <select
+                className={`${fieldClass} mt-1 block`}
+                value={filters.ccaID}
+                onChange={(e) => set({ ccaID: e.target.value })}
+              >
+                <option value="">All</option>
+                {viewer.showHallWide && (
+                  <option value={HALL_WIDE_FILTER}>Hall-wide</option>
+                )}
+                {ccaOptions.map((c) => (
+                  <option key={c.ccaID} value={c.ccaID}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        {eventOptions.size > 0 && (
           <label className="text-xs text-gray-600">
-            CCA
+            Event
             <select
               className={`${fieldClass} mt-1 block`}
-              value={filters.ccaID}
-              onChange={(e) => set({ ccaID: e.target.value })}
+              value={filters.eventID}
+              onChange={(e) => set({ eventID: e.target.value })}
             >
               <option value="">All</option>
-              {ccaOptions.map((c) => (
-                <option key={c.ccaID} value={c.ccaID}>
-                  {c.name}
+              {[...eventOptions].map(([id, title]) => (
+                <option key={id} value={id}>
+                  {title}
                 </option>
               ))}
             </select>
@@ -206,7 +257,7 @@ export default function DisposablesScreen({ ccaID }: { ccaID?: number }) {
   );
 }
 
-function quantitiesText(r: Row) {
+function quantitiesText(r: Record<(typeof DISPOSABLE_ITEMS)[number], number>) {
   return DISPOSABLE_ITEMS.filter((i) => r[i] > 0)
     .map((i) => `${r[i]} ${ITEM_LABELS[i].toLowerCase()}`)
     .join(", ");
@@ -277,9 +328,25 @@ function RequestItem({ row }: { row: Row }) {
             {row.title}
           </p>
           <p className="text-xs text-gray-500">
-            {row.ccaName ?? `CCA ${row.ccaID}`}
+            {row.hallWide ? "Hall-wide" : (row.ccaName ?? `CCA ${row.ccaID}`)}
             {row.requestedBy ? ` · ${row.requestedBy}` : ""}
           </p>
+          {row.event && (
+            <p className="text-xs text-gray-700">
+              For {row.event.title ?? "an event"}
+              {row.event.state === "gone" && " (the event no longer exists)"}
+            </p>
+          )}
+          {row.event?.state === "canceled" && (
+            <p role="status" className="text-xs font-medium text-amber-700">
+              This event was canceled. The request is unchanged.
+            </p>
+          )}
+          {row.event?.state === "declined" && (
+            <p role="status" className="text-xs font-medium text-amber-700">
+              This event was declined. The request is unchanged.
+            </p>
+          )}
           <p className="text-xs text-gray-700">{quantitiesText(row)}</p>
           <p className="text-xs text-gray-500">
             Collect {row.collectionDay} at {row.collectionTime}
@@ -293,6 +360,21 @@ function RequestItem({ row }: { row: Row }) {
             <p className="mt-1 text-xs text-gray-600">
               Note: {row.decisionNote}
             </p>
+          )}
+          {row.sameEvent.length > 0 && (
+            <div className="mt-2 rounded-md bg-gray-50 px-3 py-2">
+              <p className="text-xs font-medium text-gray-700">
+                Other requests for this event
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {row.sameEvent.map((o) => (
+                  <li key={o.id} className="text-xs text-gray-600">
+                    {o.title} · {DISPOSABLE_STATUS_LABELS[o.status]} ·{" "}
+                    {quantitiesText(o)} · {o.collectionDay} {o.collectionTime}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
         <span

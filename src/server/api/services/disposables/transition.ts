@@ -33,11 +33,13 @@ export const DISPOSABLE_CONFLICT = "DISPOSABLE_CONFLICT";
 export const DISPOSABLE_BAD_MOVE = "DISPOSABLE_BAD_MOVE";
 export const DISPOSABLE_GONE = "DISPOSABLE_NOT_FOUND";
 
-/** The fields an edit replaces. */
+/**
+ * The fields an edit replaces. The tag (event, proposal) and the CCA are not
+ * among them: an edit cannot move a request to another event.
+ */
 export type RequestContent = {
   title: string;
   description: string;
-  proposalID: string | null;
   plates: number;
   cups: number;
   bowls: number;
@@ -51,8 +53,11 @@ export type ChangeInput = {
   id: string;
   /** The version the caller saw. The write applies only if it is still this. */
   expectedVersion: number;
-  /** The CCA the caller checked access for; the write needs it unchanged. */
-  expectedCcaID: number;
+  /**
+   * The CCA the caller checked access for; the write needs it unchanged. Null is
+   * a hall-wide request (always stored as an explicit null).
+   */
+  expectedCcaID: number | null;
   /** The status the caller saw. */
   from: DisposableStatus;
   /** Equal to `from` for an edit that keeps the status. */
@@ -66,7 +71,8 @@ export type ChangeInput = {
 
 export type ChangedRequest = {
   id: string;
-  ccaID: number;
+  /** Null for a request for a hall-wide event. */
+  ccaID: number | null;
   /** The requester, or null once their account is deleted. */
   createdBy: string | null;
   title: string;
@@ -150,7 +156,7 @@ export async function changeRequest(
 
 export type RemovedRequest = {
   id: string;
-  ccaID: number;
+  ccaID: number | null;
   createdBy: string | null;
   title: string;
 };
@@ -158,7 +164,7 @@ export type RemovedRequest = {
 /** Delete one request, with the notices in the same transaction. */
 export async function removeRequest(
   db: PrismaClient,
-  input: { id: string; expectedCcaID: number },
+  input: { id: string; expectedCcaID: number | null },
   options: { inTransaction?: InTransaction<RemovedRequest> } = {},
 ): Promise<RemovedRequest> {
   try {

@@ -56,6 +56,8 @@ const AT_LEAST_ONE = { message: "Ask for at least one item" };
 const hasAnItem = (q: Record<DisposableItem, number>) => totalItems(q) >= 1;
 
 const proposalID = z.string().regex(/^[a-f\d]{24}$/i);
+/** `Event.eventID`: a positive whole number (not the row's ObjectId). */
+const eventID = z.number().int().positive();
 const requestID = z.string().regex(/^[a-f\d]{24}$/i);
 const dayField = z
   .string()
@@ -64,10 +66,14 @@ const timeField = z
   .string()
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "Use a time like 14:30" });
 
+/**
+ * What a request says about itself. The tag (event or proposal) is NOT here:
+ * it is chosen once, when the request is filed, and cannot be changed by an
+ * edit (to retag, delete the request and file it again).
+ */
 const content = {
   title: text(DISPOSABLE_TITLE_MAX).pipe(z.string().min(1)),
   description: text(DISPOSABLE_DESCRIPTION_MAX),
-  proposalID: proposalID.nullable(),
   plates: quantity,
   cups: quantity,
   bowls: quantity,
@@ -77,14 +83,25 @@ const content = {
   collectionTime: timeField,
 };
 
+export const NEEDS_A_TAG = {
+  message: "Choose the event this is for, or a proposal",
+};
+const hasATag = (v: { eventID: number | null; proposalID: string | null }) =>
+  v.eventID !== null || v.proposalID !== null;
+
+/**
+ * Filing needs an event, or a proposal that has no event yet. There is NO ccaID
+ * here: the CCA comes from the event (or the proposal), never from the browser.
+ */
 export const disposableCreateInput = z
   .object({
-    ccaID: z.number().int().positive(),
+    eventID: eventID.nullable().default(null),
+    proposalID: proposalID.nullable().default(null),
     ...content,
     description: content.description.default(""),
-    proposalID: content.proposalID.default(null),
   })
-  .refine(hasAnItem, AT_LEAST_ONE);
+  .refine(hasAnItem, AT_LEAST_ONE)
+  .refine(hasATag, NEEDS_A_TAG);
 
 /** An edit sends the whole form again; `version` is the one the editor loaded. */
 export const disposableUpdateInput = z
@@ -93,7 +110,6 @@ export const disposableUpdateInput = z
     version: z.number().int().min(0),
     ...content,
     description: content.description.default(""),
-    proposalID: content.proposalID.default(null),
   })
   .refine(hasAnItem, AT_LEAST_ONE);
 
@@ -115,15 +131,19 @@ export const disposableListInput = z
   .object({
     status: z.enum(DISPOSABLE_STATUSES).optional(),
     ccaID: z.number().int().positive().optional(),
+    /** Only requests for hall-wide events (they have no CCA). */
+    hallWide: z.literal(true).optional(),
+    eventID: eventID.optional(),
     /** Inclusive Singapore date keys. */
     from: dayField.optional(),
     to: dayField.optional(),
   })
+  .refine((v) => v.ccaID === undefined || v.hallWide === undefined, {
+    message: "Choose a CCA or hall-wide, not both",
+  })
   .default({});
 
-export const disposableProposalChoicesInput = z.object({
-  ccaID: z.number().int().positive(),
-});
+export const disposableCanFileInput = z.object({ eventID });
 
 export type DisposableCreateInput = z.infer<typeof disposableCreateInput>;
 export type DisposableUpdateInput = z.infer<typeof disposableUpdateInput>;

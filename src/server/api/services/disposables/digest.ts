@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 
 import { sgtDayKey } from "~/lib/time/sgt";
 import { assertSocialDirector } from "~/server/api/services/directorGuard";
+import { liveEventsOf, requestEventOf } from "./eventTag";
 import { namesOf, SELECT, storedRow, type StoredRow } from "./read";
 
 /** The most collections one day's digest reads; far above a real day. */
@@ -38,7 +39,12 @@ export type CollectionDigest = {
   day: string;
   items: Array<{
     id: string;
+    /** Null for a request for a hall-wide event (see `hallWide`). */
     ccaName: string | null;
+    hallWide: boolean;
+    /** The event it is for: live title, else the one kept when it was filed. */
+    eventTitle: string | null;
+    eventState: "ok" | "canceled" | "declined" | "gone" | null;
     title: string;
     collectionTime: string;
     plates: number;
@@ -65,20 +71,29 @@ export async function collectionDigest(
   await assertSocialDirector(db, userID, now);
   const day = sgtDayKey(now);
   const { rows, skipped, more } = await approvedOn(db, day);
-  const names = await namesOf(db, [...new Set(rows.map((r) => r.ccaID))]);
+  const names = await namesOf(db, [
+    ...new Set(rows.flatMap((r) => (r.ccaID !== null ? [r.ccaID] : []))),
+  ]);
+  const live = await liveEventsOf(db, rows);
   return {
     day,
-    items: rows.map((r) => ({
-      id: r.id,
-      ccaName: names.get(r.ccaID) ?? null,
-      title: r.title,
-      collectionTime: r.collectionTime,
-      plates: r.plates,
-      cups: r.cups,
-      bowls: r.bowls,
-      forks: r.forks,
-      spoons: r.spoons,
-    })),
+    items: rows.map((r) => {
+      const event = requestEventOf(r, live);
+      return {
+        id: r.id,
+        ccaName: r.ccaID !== null ? (names.get(r.ccaID) ?? null) : null,
+        hallWide: r.ccaID === null,
+        eventTitle: event?.title ?? null,
+        eventState: event?.state ?? null,
+        title: r.title,
+        collectionTime: r.collectionTime,
+        plates: r.plates,
+        cups: r.cups,
+        bowls: r.bowls,
+        forks: r.forks,
+        spoons: r.spoons,
+      };
+    }),
     skipped,
     more,
   };

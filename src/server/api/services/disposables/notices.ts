@@ -10,7 +10,9 @@ import type { ChangedRequest, RemovedRequest } from "./transition";
  * The inbox notices for the disposable moves (merge proposal 4.3, 4.9). Every
  * function runs on the TRANSACTION client of the change, so the notice commits
  * or rolls back with it, and recipients come from CcaHead rows and the strict
- * guard, never from the request. The body is the request's title, plus the
+ * guard, never from the browser. A request for a HALL-WIDE event has no CCA and
+ * so no heads: its notices go to whoever filed it (the stored `createdBy`),
+ * which is null, and so nobody, once their account is deleted. The body is the request's title, plus the
  * decision note for a decision; nothing else leaves the row. The person who
  * acted is never told what they just did.
  *
@@ -20,10 +22,16 @@ import type { ChangedRequest, RemovedRequest } from "./transition";
  */
 
 type Tx = Prisma.TransactionClient;
-type Notified = Pick<ChangedRequest, "ccaID" | "title">;
+type Notified = Pick<ChangedRequest, "ccaID" | "createdBy" | "title">;
 
 const bodyOf = (title: string, note: string | null) =>
   (note ? `${title}: ${note}` : title).slice(0, 1000);
+
+/** A CCA's current heads, or for a hall-wide request the person who filed it. */
+async function recipientsOf(tx: Tx, row: Notified): Promise<string[]> {
+  if (row.ccaID !== null) return headsOrRefuse(tx, row.ccaID);
+  return row.createdBy !== null ? [row.createdBy] : [];
+}
 
 async function toHeads(
   tx: Tx,
@@ -31,11 +39,9 @@ async function toHeads(
   actorID: string,
   spec: { kind: string; title: string; body: string },
 ) {
-  const heads = (await headsOrRefuse(tx, row.ccaID)).filter(
-    (id) => id !== actorID,
-  );
+  const told = (await recipientsOf(tx, row)).filter((id) => id !== actorID);
   await notify(tx, {
-    recipients: heads,
+    recipients: told,
     kind: spec.kind,
     title: spec.title,
     body: spec.body,

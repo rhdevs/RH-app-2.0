@@ -11,7 +11,8 @@ import type { DisposableStatus } from "./status";
  *    too, can act on nothing (A9, 4.9: a head creates and reads only), except
  *    that a head of the request's CCA may nudge the Social director about a
  *    PENDING request. The Social director never sees the nudge: it would go
- *    to themselves.
+ *    to themselves. A request for a HALL-WIDE event has no CCA, so the person
+ *    who filed it nudges instead.
  */
 export type RequestActions = {
   approve: boolean;
@@ -26,13 +27,23 @@ export function requestActions(input: {
   status: DisposableStatus;
   /** The viewer heads the request's CCA now (the strict read). */
   isHeadOfCca?: boolean;
+  /** The request is hall-wide and the viewer is the person who filed it. */
+  isHallWideFiler?: boolean;
 }): RequestActions {
-  const { isSocialDirector, status, isHeadOfCca = false } = input;
+  const {
+    isSocialDirector,
+    status,
+    isHeadOfCca = false,
+    isHallWideFiler = false,
+  } = input;
   return {
     approve: isSocialDirector && status === "pending",
     reject: isSocialDirector && status === "pending",
     edit: isSocialDirector,
     delete: isSocialDirector,
-    nudge: !isSocialDirector && isHeadOfCca && status === "pending",
+    nudge:
+      !isSocialDirector &&
+      (isHeadOfCca || isHallWideFiler) &&
+      status === "pending",
   };
 }

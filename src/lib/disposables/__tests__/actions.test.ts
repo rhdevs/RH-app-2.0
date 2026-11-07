@@ -60,6 +60,31 @@ describe("requestActions", () => {
   });
 });
 
+describe("requestActions for a hall-wide request", () => {
+  it("the person who filed it nudges while it is pending, and gets nothing else", () => {
+    const filer = { isSocialDirector: false, isHallWideFiler: true };
+    expect(requestActions({ ...filer, status: "pending" })).toEqual({
+      approve: false,
+      reject: false,
+      edit: false,
+      delete: false,
+      nudge: true,
+    });
+    expect(requestActions({ ...filer, status: "approved" }).nudge).toBe(false);
+    expect(requestActions({ ...filer, status: "rejected" }).nudge).toBe(false);
+  });
+
+  it("the Social director never nudges, even for one they filed", () => {
+    expect(
+      requestActions({
+        isSocialDirector: true,
+        isHallWideFiler: true,
+        status: "pending",
+      }).nudge,
+    ).toBe(false);
+  });
+});
+
 describe("canMove", () => {
   it("allows a decision from pending, the way back from approved, and nothing from rejected", () => {
     expect(canMove("pending", "approved")).toBe(true);

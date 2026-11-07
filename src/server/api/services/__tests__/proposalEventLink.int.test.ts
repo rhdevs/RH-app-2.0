@@ -140,6 +140,11 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         select: { id: true },
       });
       const ids = mine.map((p) => p.id);
+      await db.disposableRequest.deleteMany({
+        where: {
+          OR: [{ ccaID: { in: CCAS } }, { createdBy: { in: IDS } }],
+        },
+      });
       await db.proposalStatusHistory.deleteMany({
         where: { proposalID: { in: ids } },
       });
@@ -264,17 +269,44 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         release = resolve;
       });
       const timer = setTimeout(release, 8_000);
+      const wait = async () => {
+        arrived += 1;
+        if (arrived >= parties) release();
+        await gate;
+        clearTimeout(timer);
+      };
+      // The claim runs in a transaction (it moves the proposal's disposables
+      // request with it), so the gate sits on the transaction's own client.
       const client = proxied(db, (prop) =>
-        prop === "proposal"
-          ? delegateWith("proposal", {
-              updateMany: async (args: never) => {
-                arrived += 1;
-                if (arrived >= parties) release();
-                await gate;
-                clearTimeout(timer);
-                return db.proposal.updateMany(args);
-              },
-            })
+        prop === "$transaction"
+          ? (fn: (tx: unknown) => Promise<unknown>, opts?: never) =>
+              db.$transaction(
+                (tx) =>
+                  fn(
+                    new Proxy(tx, {
+                      get(t, p) {
+                        if (p !== "proposal") {
+                          return Reflect.get(t, p) as unknown;
+                        }
+                        return new Proxy(t.proposal, {
+                          get(d, m) {
+                            if (m === "updateMany") {
+                              return async (args: never) => {
+                                await wait();
+                                return t.proposal.updateMany(args);
+                              };
+                            }
+                            const v = Reflect.get(d, m) as unknown;
+                            return typeof v === "function"
+                              ? (v as (...x: unknown[]) => unknown).bind(d)
+                              : v;
+                          },
+                        });
+                      },
+                    }),
+                  ),
+                opts,
+              )
           : undefined,
       );
       return { client, arrived: () => arrived };
@@ -1178,6 +1210,88 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const row = await rowOf(stored.id);
         expect(row.eventID).toBeNull();
         expect(await eventsOf()).toHaveLength(0);
+      });
+
+      it("a backed-out claim moves the disposables request back, even after a write conflict", async () => {
+        const { Prisma } = await import("@prisma/client");
+        const stored = await stage({ willBeEvent: false });
+        await filed(stored.id);
+        const request = await db.disposableRequest.create({
+          data: {
+            ccaID: CCA_A,
+            eventID: null,
+            eventTitle: null,
+            createdBy: U.headA,
+            title: "Hall dinner",
+            description: "Supper",
+            proposalID: stored.id,
+            plates: 1,
+            cups: 0,
+            bowls: 0,
+            forks: 0,
+            spoons: 0,
+            collectionDay: "2099-06-15",
+            collectionTime: "18:30",
+            decidedBy: null,
+            decidedAt: null,
+            decisionNote: null,
+          },
+        });
+        // The first look misses the filing; the look after the claim sees it.
+        // The claim is the first transaction and the backout the second: the
+        // second ends in a write conflict once, and is retried.
+        let looks = 0;
+        let transactions = 0;
+        const late = proxied(db, (prop) => {
+          if (prop === "milestoneSubmission") {
+            return {
+              findUnique: (args: never) => {
+                looks += 1;
+                return looks === 1
+                  ? Promise.resolve(null)
+                  : db.milestoneSubmission.findUnique(args);
+              },
+            };
+          }
+          if (prop === "$transaction") {
+            return (...args: unknown[]) => {
+              transactions += 1;
+              if (transactions === 2) {
+                return Promise.reject(
+                  new Prisma.PrismaClientKnownRequestError("conflict", {
+                    code: "P2034",
+                    clientVersion: "test",
+                  }),
+                );
+              }
+              return (
+                db.$transaction as unknown as (
+                  ...a: unknown[]
+                ) => Promise<unknown>
+              )(...args);
+            };
+          }
+          return undefined;
+        });
+
+        expect(
+          await errorOf(
+            as(U.headA, EVERYTHING, late).createEvent({ id: stored.id }),
+          ),
+        ).toBe("PRECONDITION_FAILED:EVENT_MILESTONE_FILED");
+
+        expect(transactions).toBe(3);
+        expect((await rowOf(stored.id)).eventID).toBeNull();
+        expect(await eventsOf()).toHaveLength(0);
+        expect(
+          await db.disposableRequest.findUniqueOrThrow({
+            where: { id: request.id },
+          }),
+        ).toMatchObject({
+          eventID: null,
+          eventTitle: null,
+          proposalID: stored.id,
+        });
       });
 
       it("an abandoned claim is recovered when nothing is filed, and refused when something is", async () => {

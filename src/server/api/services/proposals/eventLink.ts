@@ -1,11 +1,10 @@
-import type { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
 import { headEventHref, headProposalHref } from "~/lib/proposals/links";
 import {
   EVENT_DESCRIPTION_MAX,
   EVENT_PUBLIC_DESCRIPTION_MAX,
-  EVENT_TITLE_MAX,
   normalizeStatus,
 } from "~/lib/schemas/event";
 import { createEventRow } from "~/server/api/services/eventDraft";
@@ -14,6 +13,11 @@ import {
   assertEventsEnabled,
   nextEventId,
 } from "~/server/api/services/events";
+import {
+  moveProposalRequestBack,
+  moveProposalRequestToEvent,
+  proposalEventTitle,
+} from "~/server/api/services/disposables/eventTag";
 import { notify } from "~/server/api/services/notifications";
 import { assertCcaHead, PROPOSAL_NOT_FOUND } from "./access";
 import { assertWithinLimit } from "./limits";
@@ -37,6 +41,12 @@ import { assertWithinLimit } from "./limits";
  * The automatic step runs only while `events.enabled` is on, and a failure in
  * it never undoes or fails the approval (it logs the error name and returns).
  * Nothing here publishes: publishing stays `event.publish`, a head's action.
+ *
+ * The claim in step 4 also moves the proposal's disposables request, if it has
+ * one, to the new Event (merge proposal 4.9, A66): the same transaction sets
+ * the request's `eventID`, `eventTitle` and `ccaID` and keeps its `proposalID`.
+ * The request is moved again once the Event row exists, for one filed between
+ * the claim and the row. A backed-out claim puts the request back.
  *
  * Nothing in `event.*` reads any of this (A32); the dependency runs one way.
  */
@@ -198,7 +208,7 @@ function eventRowFrom(source: Source, eventID: number, ownerID: string) {
     eventID,
     ccaID: source.ccaID,
     createdBy: ownerID,
-    title: source.title.trim().slice(0, EVENT_TITLE_MAX),
+    title: proposalEventTitle(source.title),
     description:
       description === "" ? null : description.slice(0, EVENT_DESCRIPTION_MAX),
     startTime: timed ? start : null,
@@ -217,6 +227,35 @@ async function hasMilestoneFiling(db: LinkDb, id: string): Promise<boolean> {
     select: { id: true },
   });
   return row !== null;
+}
+
+/** Retries after a write conflict on the claim or its backout (3 tries in all). */
+const CONFLICT_RETRIES = 2;
+
+const isWriteConflict = (err: unknown) =>
+  err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2034";
+
+/**
+ * Run one transaction, retrying a write conflict (P2034) up to
+ * CONFLICT_RETRIES more times. The transaction also writes the proposal's
+ * disposables request, so a conflict does not by itself mean another press won
+ * the claim: after each conflict `settled` looks at the stored state and may
+ * return the answer instead of retrying. Any other error, and a conflict that
+ * outlasts the retries, is rethrown for the caller's failure path.
+ */
+async function retryOnConflict<T>(
+  attempt: () => Promise<T>,
+  settled: () => Promise<T | undefined>,
+): Promise<T> {
+  for (let tries = 0; ; tries += 1) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (!isWriteConflict(err) || tries >= CONFLICT_RETRIES) throw err;
+      const answer = await settled();
+      if (answer !== undefined) return answer;
+    }
+  }
 }
 
 async function linkAndCreate(
@@ -240,26 +279,77 @@ async function linkAndCreate(
     }
   }
   const eventID = await nextEventId(db);
-  const claimed = await db.proposal.updateMany({
-    where: {
-      id: source.id,
-      ccaID: source.ccaID,
-      status: { in: statuses },
-      ...eventIDIs(expected),
+  const move = {
+    proposalID: source.id,
+    eventID,
+    proposalTitle: source.title,
+    ccaID: source.ccaID,
+  };
+  // One transaction: the claim and the move of the proposal's disposables
+  // request, so no reader sees one without the other.
+  // A write conflict can come from another press claiming the proposal, or from
+  // someone editing the request the move writes. Look at the proposal: if its
+  // event is no longer the one this press read, it lost (as a compare-and-set
+  // that matched nothing); otherwise try again with the same id.
+  const claimed = await retryOnConflict(
+    () =>
+      db.$transaction(async (tx) => {
+        const won = await tx.proposal.updateMany({
+          where: {
+            id: source.id,
+            ccaID: source.ccaID,
+            status: { in: statuses },
+            ...eventIDIs(expected),
+          },
+          data: { eventID, eventClaimedAt: new Date() },
+        });
+        if (won.count === 1) await moveProposalRequestToEvent(tx, move);
+        return won;
+      }),
+    async () => {
+      const now = await db.proposal.findUnique({
+        where: { id: source.id },
+        select: { eventID: true },
+      });
+      return (now?.eventID ?? null) === expected ? undefined : { count: 0 };
     },
-    data: { eventID, eventClaimedAt: new Date() },
-  });
+  );
   if (claimed.count !== 1) return { outcome: "lost_race" };
   // Write-then-check: the filing side re-reads the claim after it commits, so
   // whichever of the two writes lands second sees the other and backs out.
   if (await hasMilestoneFiling(db, source.id)) {
-    await db.proposal.updateMany({
-      where: { id: source.id, eventID },
-      data: { eventID: expected, eventClaimedAt: source.eventClaimedAt },
-    });
+    await retryOnConflict(
+      () =>
+        db.$transaction(async (tx) => {
+          await tx.proposal.updateMany({
+            where: { id: source.id, eventID },
+            data: { eventID: expected, eventClaimedAt: source.eventClaimedAt },
+          });
+          await moveProposalRequestBack(tx, {
+            proposalID: source.id,
+            eventID,
+            to: expected,
+          });
+        }),
+      () => Promise.resolve(undefined),
+    );
     return { outcome: "milestone_filed" };
   }
   await createEventRow(db, eventRowFrom(source, eventID, ownerID));
+  // A request filed after the claim saw the proposal's claimed id as "no
+  // event yet"; now that the Event exists, move it too (idempotent). The Event
+  // is made, so a failure here is logged by code and does not undo "created".
+  await moveProposalRequestToEvent(db, move).catch((err: unknown) =>
+    console.error(
+      JSON.stringify({
+        evt: "proposal_event_request_move_failed",
+        code:
+          err instanceof Prisma.PrismaClientKnownRequestError
+            ? err.code
+            : "unknown",
+      }),
+    ),
+  );
   return { outcome: "created", eventID };
 }
 

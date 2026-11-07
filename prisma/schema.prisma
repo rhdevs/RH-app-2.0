@@ -1771,7 +1771,9 @@ model CalendarFeedToken {
 // DISPOSABLES (socporthub merge, PR 13, F16). A head asks the Social director
 // for plates, cups, bowls, forks and spoons for a collection day. Not
 // year-based: deliberately NO `academicYear` field. A request belongs to the
-// CCA, so it outlives the head who filed it. Indexes:
+// CCA, so it outlives the head who filed it; a request for a hall-wide event
+// belongs to no CCA (null ccaID). Every request is tagged to an Event, or to a
+// Proposal that has no Event yet. Indexes:
 // scripts/remediation/create-disposable-reminder-indexes.mjs, which also builds
 // the PARTIAL unique index disposable_request_proposal that Prisma cannot
 // express (one request per proposal; requests without a link are outside it).
@@ -1779,7 +1781,22 @@ model CalendarFeedToken {
 
 model DisposableRequest {
   id             String    @id @default(auto()) @map("_id") @db.ObjectId
-  ccaID          Int
+  /// The CCA the request belongs to, read from its event (or from its proposal
+  /// when it has no event). NULL means HALL-WIDE, the same meaning as
+  /// Event.ccaID: the request is for a hall-wide event and belongs to no CCA.
+  /// Never the reserved 0 that bookings use. Always written explicitly, even
+  /// when null (a missing key never matches a null filter on MongoDB). Safe as
+  /// a nullable here for the reason Event.ccaID is: no row existed in
+  /// production when it was relaxed.
+  ccaID          Int?
+  /// The Event this is for (Event.eventID), or null for a request tagged only
+  /// to a proposal that has no Event yet. Not a foreign key. Always written
+  /// explicitly. Several requests may share one event.
+  eventID        Int?
+  /// The Event's title when the request was filed (or when its proposal's Event
+  /// was made), so the request still says what it was for if the draft is
+  /// deleted. Shown only when the Event is gone; otherwise the live title is.
+  eventTitle     String?
   /// The requester's canonical id, or null once their account is deleted
   /// (userAdmin.ts). Always written explicitly: a missing key never matches a
   /// null filter on MongoDB.
@@ -1815,6 +1832,7 @@ model DisposableRequest {
 
   @@index([ccaID, collectionDay], map: "disposable_request_cca_day")
   @@index([status, collectionDay], map: "disposable_request_status_day")
+  @@index([eventID], map: "disposable_request_event")
 }
 
 // ---------------------------------------------------------------------------

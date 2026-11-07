@@ -18,7 +18,8 @@ import { assertWithinLimit } from "./limits";
  * so a second press the same day, from any tab, writes nothing.
  *
  * WHO MAY NUDGE: a head of the request's CCA now, by the strict read, with the
- * CCA taken from the STORED request. Anyone else, the Social director and every
+ * CCA taken from the STORED request; for a request with no CCA (a hall-wide
+ * event) the person who filed it. Anyone else, the Social director and every
  * other JCRC member included, gets the same NOT_FOUND a missing id gets. Only a
  * PENDING request can be nudged: that is the state where the director has
  * something to do.
@@ -53,13 +54,16 @@ export async function nudgeSocialDirector(
   now: Date = new Date(),
 ): Promise<DisposableNudgeResult> {
   const viewer = await loadViewer(db, userID);
-  const row = viewer.headedCcaIDs.length
-    ? await db.disposableRequest.findUnique({
-        where: { id: requestID },
-        select: { ccaID: true, status: true },
-      })
-    : null;
-  if (!row || !viewer.headedCcaIDs.includes(row.ccaID)) throw notFound();
+  const row = await db.disposableRequest.findUnique({
+    where: { id: requestID },
+    select: { ccaID: true, createdBy: true, status: true },
+  });
+  const mayNudge =
+    row !== null &&
+    (row.ccaID === null
+      ? row.createdBy === userID
+      : viewer.headedCcaIDs.includes(row.ccaID));
+  if (!row || !mayNudge) throw notFound();
   await assertWithinLimit("nudge", userID);
   if (row.status !== "pending") {
     throw new TRPCError({ code: "CONFLICT", message: DISPOSABLE_NOT_PENDING });
