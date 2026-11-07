@@ -507,5 +507,29 @@ ${MATRIC.ben},1`,
         expect.arrayContaining([year, PAST]),
       );
     });
+
+    it("leaves a cancelled or declined event's check-ins out of the total", async () => {
+      const kept = await makeEvent({ status: null });
+      const cancelled = await makeEvent();
+      const declined = await makeEvent();
+      for (const id of [kept, cancelled, declined]) {
+        await w.setEventAux(db, actor(), id, true);
+        await w.addEventAttendees(db, actor(), id, MATRIC.ann);
+      }
+      expect((await totalOf(USERS.ann))?.fromEvents).toBe(3);
+
+      // Cancelled after it was flagged: the flag stays, the AUX does not.
+      await db.event.update({
+        where: { eventID: cancelled },
+        data: { status: "canceled" },
+      });
+      await db.event.update({
+        where: { eventID: declined },
+        data: { status: "declined" },
+      });
+      expect((await totalOf(USERS.ann))?.fromEvents).toBe(1);
+      const detail = await totals.auxDetail(db, year, USERS.ann);
+      expect(detail.events.map((e) => e.eventID)).toEqual([kept]);
+    });
   },
 );

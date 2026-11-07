@@ -1,6 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
 
-import { tallyAux, type AuxTotal } from "~/lib/auxPoints";
+import {
+  isClosedEventStatus,
+  tallyAux,
+  type AuxTotal,
+} from "~/lib/auxPoints";
 import { actorLabels } from "~/server/api/services/transcript/residents";
 import { auxPeople, type AuxPerson } from "./people";
 import { sgtIsoDate } from "./year";
@@ -25,9 +29,13 @@ export function auxEventsOf(db: PrismaClient, year: string) {
 async function sourcesOf(db: PrismaClient, year: string) {
   const events = await db.event.findMany({
     where: { auxYear: year },
-    select: { eventID: true },
+    select: { eventID: true, status: true },
   });
-  const eventIDs = events.map((e) => e.eventID);
+  // Filtered here, not in the query: status is optional, and on Mongo a
+  // `not` filter is easy to get wrong for a null or missing field.
+  const eventIDs = events
+    .filter((e) => !isClosedEventStatus(e.status))
+    .map((e) => e.eventID);
   const [eventCheckIns, recordAttendees, awards] = await Promise.all([
     eventIDs.length === 0
       ? Promise.resolve([])
@@ -101,7 +109,9 @@ export async function auxDetail(
   year: string,
   userID: string,
 ) {
-  const events = await auxEventsOf(db, year);
+  const events = (await auxEventsOf(db, year)).filter(
+    (e) => !isClosedEventStatus(e.status),
+  );
   const titles = new Map(events.map((e) => [e.eventID, e]));
   const [checkIns, records, awards] = await Promise.all([
     events.length === 0
