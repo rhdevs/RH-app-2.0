@@ -144,9 +144,15 @@ export const proposalFinishInput = z.object({
   version: versionField,
 });
 
-/** One page of the review queue; `cursor` is the id the page starts at. */
+/**
+ * One page of the review queue. `cursor` is the opaque value the previous
+ * page returned: the submission time (epoch milliseconds, or "none") and id of
+ * the LAST row that page showed, joined by "_". The next page is every row
+ * after that position, so it holds even if that row has left review.
+ */
+export const QUEUE_CURSOR = /^(\d{1,16}|none)_([a-f\d]{24})$/i;
 export const proposalQueueInput = z.object({
-  cursor: proposalId.optional(),
+  cursor: z.string().regex(QUEUE_CURSOR).optional(),
 });
 
 export const proposalIdInput = z.object({ id: proposalId });

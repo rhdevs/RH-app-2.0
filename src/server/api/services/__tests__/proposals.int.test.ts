@@ -11,6 +11,7 @@ import {
   vi,
 } from "vitest";
 import { isLocalDevDatabase } from "../transcript/__tests__/localDbGate";
+import { resetProposalsFlagCache } from "../proposals/flag";
 
 /**
  * INTEGRATION TESTS of the proposal core against the LOCAL development
@@ -90,6 +91,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           update: { value },
         });
       }
+      // The flag is cached per lambda for a few seconds; a test that flips it
+      // expects the next call to see the new value.
+      resetProposalsFlagCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
