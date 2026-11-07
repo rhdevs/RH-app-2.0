@@ -422,9 +422,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const position = await flagged();
         for (const [, userID, roles] of STAFF.slice(1)) {
           const api = positionsApi(userID, roles);
+          // Staff may set holders of an ordinary position through the Positions
+          // router, but a flagged one only through the staff door.
           expect(
             await errorOf(api.addHolder({ id: position, userID: U.plain2 })),
-          ).toMatch(/^FORBIDDEN/);
+          ).toBe("FORBIDDEN:USE_DIRECTOR_PANEL");
+          expect(
+            await errorOf(api.removeHolder({ id: position, userID: U.holder })),
+          ).toBe("FORBIDDEN:USE_DIRECTOR_PANEL");
           expect(await errorOf(api.delete({ id: position }))).toMatch(
             /^FORBIDDEN/,
           );
