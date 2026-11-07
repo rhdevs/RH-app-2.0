@@ -7,7 +7,8 @@ import { rateLimit } from "~/lib/rateLimit";
  * same one-hour window the feedback form uses. They are set well above what a
  * working head does (a CCA files a handful of proposals a term, and an editor
  * that saves as it goes sends tens of updates), so only a script or a stuck
- * client reaches them.
+ * client reaches them. A director works a queue, so approve, return and finish
+ * get a ceiling well above a day's review.
  */
 export const PROPOSAL_WINDOW_MS = 60 * 60 * 1000;
 export const PROPOSAL_LIMITS = {
@@ -15,6 +16,9 @@ export const PROPOSAL_LIMITS = {
   update: 120,
   submit: 20,
   upload: 30,
+  approve: 60,
+  return: 60,
+  finish: 60,
 } as const;
 
 export type LimitedAction = keyof typeof PROPOSAL_LIMITS;

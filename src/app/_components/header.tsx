@@ -11,6 +11,7 @@ import {
   Users,
   LayoutGrid,
   ClipboardList,
+  ClipboardCheck,
   FileText,
   LogOut,
   UserCircle,
@@ -23,6 +24,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { signOut } from "next-auth/react";
 import { api } from "~/trpc/react";
+import { DIRECTOR_HOME_HREF } from "~/lib/proposals/links";
 
 // Loaded on the client only: the bell's queries stay out of every page's
 // initial render, and a page that never signs in never fetches them.
@@ -49,6 +51,17 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
       retry: false,
       staleTime: 60_000,
     }).data?.enabled === true;
+  // The Director entry: drawn only when the SERVER says this person directs at
+  // least one CCA right now (strict guard, both switches on). It is not
+  // derived from session roles or positions, which can be stale. An error, an
+  // off switch or a person who directs nothing all leave it hidden; the
+  // director's own page says why when a read failed.
+  const showDirector =
+    api.proposal.directorEntry.useQuery(undefined, {
+      enabled: Boolean(session),
+      retry: false,
+      staleTime: 60_000,
+    }).data?.show === true;
   const transcriptReady =
     api.transcript.mine.readiness.useQuery(undefined, {
       enabled: Boolean(session) && transcriptEnabled,
@@ -123,6 +136,9 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     { name: "CCAs", href: "/ccas", icon: LayoutGrid },
     { name: "Events", href: "/events", icon: CalendarDays },
     ...(isCcaHead ? [{ name: "Manage CCAs", href: "/cca", icon: Users }] : []),
+    ...(showDirector
+      ? [{ name: "Director", href: DIRECTOR_HOME_HREF, icon: ClipboardCheck }]
+      : []),
     ...(isScrc ? [{ name: "Staff", href: "/scrc", icon: Landmark }] : []),
     ...(canReachAdmin
       ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }]

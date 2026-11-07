@@ -37,8 +37,9 @@ export const PROPOSAL_STATUS_LABELS: Record<ProposalStatus, string> = {
  * - A head submits from `draft`, and resubmits from `needs_action`.
  * - `finished` and `canceled` are final.
  *
- * Who may make each move is the caller's business (in this PR only submit has
- * a caller). This table says only which moves exist.
+ * Who may make each move is the caller's business: a head submits, a director
+ * of the CCA approves, returns and finishes (services/proposals/review.ts).
+ * This table says only which moves exist.
  */
 export const PROPOSAL_TRANSITIONS: Record<
   ProposalStatus,
@@ -77,3 +78,25 @@ export const SUBMITTABLE_STATUSES: readonly ProposalStatus[] = [
   "draft",
   "needs_action",
 ];
+
+/**
+ * The three moves a director makes, each from ONE status. The review service
+ * and the screens both read this, and a test checks every entry is a move the
+ * table above has, so the buttons, the server and the table cannot disagree.
+ */
+export const REVIEW_MOVES = {
+  approve: { from: "in_review", to: "cleared" },
+  return: { from: "in_review", to: "needs_action" },
+  finish: { from: "cleared", to: "finished" },
+} as const satisfies Record<
+  string,
+  { from: ProposalStatus; to: ProposalStatus }
+>;
+export type ReviewAction = keyof typeof REVIEW_MOVES;
+
+/** The review actions a director could take on a proposal in this status. */
+export function reviewActionsFor(status: string): ReviewAction[] {
+  return (Object.keys(REVIEW_MOVES) as ReviewAction[]).filter(
+    (action) => REVIEW_MOVES[action].from === status,
+  );
+}

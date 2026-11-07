@@ -289,10 +289,11 @@ describe("proposal access never uses a forgiving read", () => {
     const code = stripComments(
       read("src/server/api/services/proposals/access.ts"),
     );
-    // One in assertCcaHead, one in assertProposalReader; each calls
-    // refuseOnFailure, which throws FORBIDDEN.
-    expect(code.match(/\bcatch\b/g)).toHaveLength(2);
-    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(2);
+    // One each in assertCcaHead, assertProposalReader, proposalAccess,
+    // assertProposalDirector, directedCcasOrRefuse, directorsOrRefuse and readSelfApproved; each
+    // calls refuseOnFailure, which throws FORBIDDEN.
+    expect(code.match(/\bcatch\b/g)).toHaveLength(7);
+    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(7);
     expect(code).toMatch(/function refuseOnFailure\(err: unknown\): never/);
   });
 
@@ -310,8 +311,15 @@ describe("proposal access never uses a forgiving read", () => {
     expect(code).toMatch(
       /const gated = identifiedProcedure\s*\.use\(sanitizeErrors\)\s*\.use\(/,
     );
-    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(5);
+    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(10);
     expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
+    // The navigation entry's query is the one deliberate exception: it must
+    // answer `show: false` for everyone else, so the switch check lives in the
+    // service, and it is still wrapped in sanitizeErrors.
+    expect(code).toMatch(
+      /directorEntry: identifiedProcedure\s*\.use\(sanitizeErrors\)/,
+    );
+    expect(code.match(/^ {2}\w+: identifiedProcedure/gm)).toHaveLength(1);
   });
 
   it("create, update and submit each spend rate-limit budget after the access check", () => {
@@ -343,11 +351,17 @@ describe("the proposal screens render server text as text", () => {
     (f) =>
       f.includes("/cca/_components/Proposal") ||
       f.includes("/cca/[ccaID]/proposals/") ||
-      f === "src/app/cca/_lib/proposalForm.ts",
+      f === "src/app/cca/_lib/proposalForm.ts" ||
+      f.startsWith("src/app/director/") ||
+      f === "src/lib/proposals/historyLine.ts",
   );
 
   it("finds the screens", () => {
-    expect(SCREENS.length).toBeGreaterThanOrEqual(6);
+    expect(SCREENS.length).toBeGreaterThanOrEqual(12);
+    expect(SCREENS).toContain(
+      "src/app/director/_components/DirectorProposal.tsx",
+    );
+    expect(SCREENS).toContain("src/app/director/_components/DirectorHome.tsx");
   });
 
   it("none injects HTML, evaluates a string or calls an event procedure", () => {
@@ -362,6 +376,104 @@ describe("the proposal screens render server text as text", () => {
   it("none sends a status: the screens only save and submit", () => {
     for (const f of SCREENS) {
       expect(stripComments(read(f)), f).not.toMatch(/\bstatus\s*:/);
+    }
+  });
+});
+
+describe("approve, return and finish cannot skip the guard", () => {
+  const REVIEW = "src/server/api/services/proposals/review.ts";
+  const ACCESS = "src/server/api/services/proposals/access.ts";
+  const code = () => stripComments(read(REVIEW));
+
+  it("all three go through the one shared move", () => {
+    const c = code();
+    expect(c.match(/return reviewMove\(/g)).toHaveLength(3);
+    for (const action of ["approve", "return", "finish"]) {
+      expect(c).toMatch(new RegExp(`reviewMove\\(db, userID, "${action}"`));
+    }
+    // The shared move is the only caller of the status writer.
+    expect(c.match(/\btransitionProposal\(/g)).toHaveLength(1);
+  });
+
+  it("the director guard runs first, then the budget, then the move", () => {
+    const c = code();
+    const guard = c.indexOf("await assertProposalDirector(");
+    const limit = c.indexOf("await assertWithinLimit(action, userID)");
+    const move = c.indexOf("await transitionProposal(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(limit).toBeGreaterThan(guard);
+    expect(move).toBeGreaterThan(limit);
+    // The CCA the guard is asked about is the STORED row's, never the input's.
+    expect(c).toMatch(/assertProposalDirector\(db, userID, row\.ccaID,/);
+    expect(c).not.toMatch(/input\.ccaID|input\.cca\b/);
+    // The load that supplies it is the first read.
+    expect(c.indexOf("db.proposal.findUnique(")).toBeLessThan(guard);
+  });
+
+  it("the guard is the strict isDirectorOf, with its read failure refused", () => {
+    const c = stripComments(read(ACCESS));
+    const start = c.indexOf("export async function assertProposalDirector");
+    expect(start).toBeGreaterThan(-1);
+    const body = c.slice(start, c.indexOf("\n}\n", start));
+    expect(body).toMatch(/await isDirectorOf\(/);
+    expect(body).toMatch(/return refuseOnFailure\(err\)/);
+  });
+
+  it("the self-approved label is read inside the transaction, from the actor and the stored row", () => {
+    const c = code();
+    expect(c).toMatch(/selfApproved: \(tx, proposal\) =>/);
+    expect(c).toMatch(/readSelfApproved\(tx, userID, proposal\)/);
+    // It is never taken from the request.
+    expect(c).not.toMatch(/input\.selfApproved|input\.approverID/);
+    const schema = stripComments(read("src/lib/schemas/proposal.ts"));
+    expect(schema).not.toMatch(/selfApproved|approverID/);
+  });
+
+  it("the head's notice is written on the transaction client", () => {
+    const c = code();
+    expect(c).toMatch(/inTransaction: \(tx, proposal\) =>/);
+    expect(c).toMatch(/notify\(tx,/);
+    expect(c).not.toMatch(/notify\(db,/);
+  });
+
+  it("every move starts from the status the table allows", () => {
+    const status = stripComments(read("src/lib/proposals/status.ts"));
+    for (const [action, from, to] of [
+      ["approve", "in_review", "cleared"],
+      ["return", "in_review", "needs_action"],
+      ["finish", "cleared", "finished"],
+    ] as const) {
+      expect(status).toMatch(
+        new RegExp(`${action}: \\{ from: "${from}", to: "${to}" \\}`),
+      );
+    }
+  });
+
+  it("the director's views make one guard call each and no per-proposal check", () => {
+    const c = stripComments(
+      read("src/server/api/services/proposals/directorView.ts"),
+    );
+    // mustDirectSome (home and queue) and the navigation entry.
+    expect(c.match(/directedCcasOrRefuse\(/g)).toHaveLength(2);
+    expect(c).not.toMatch(
+      /isDirectorOf|currentDirectorIDs|assertProposalDirector/,
+    );
+    // Drafts are filtered out of the counts (B19) and the queue is in_review.
+    expect(c).toMatch(/status: \{ not: "draft" \}/);
+    expect(c).toMatch(/status: "in_review"/);
+  });
+
+  it("the new files use none of the forgiving reads", () => {
+    for (const f of [
+      REVIEW,
+      "src/server/api/services/proposals/directorView.ts",
+      "src/server/api/services/proposals/names.ts",
+      "src/app/director/_components/DirectorHome.tsx",
+      "src/app/director/_components/DirectorProposal.tsx",
+    ]) {
+      const c = stripComments(read(f));
+      expect(c, f).not.toMatch(/getUserRoles|myPositionCcas|overseesAll/);
+      expect(c, f).not.toMatch(/session\.user\.roles|useSession/);
     }
   });
 });

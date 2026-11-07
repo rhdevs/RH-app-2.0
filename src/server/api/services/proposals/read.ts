@@ -1,18 +1,32 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
-import { EDITABLE_STATUSES, isProposalStatus } from "~/lib/proposals/status";
-import { assertProposalReader, type ProposalViewer } from "./access";
+import {
+  EDITABLE_STATUSES,
+  isProposalStatus,
+  reviewActionsFor,
+  type ReviewAction,
+} from "~/lib/proposals/status";
+import {
+  assertProposalReader,
+  proposalAccess,
+  type ProposalViewer,
+} from "./access";
 import { PROPOSAL_NOT_FOUND } from "./drafts";
+import { displayNames } from "./names";
 
 /**
- * What a reader sees. Two rules shape it:
+ * What a reader sees. Three rules shape it:
  *  - A director sees a proposal only once it has been SUBMITTED. A draft is
  *    the head's work in progress; for a director it does not exist (NOT_FOUND,
  *    and it is missing from the list).
  *  - No person id leaves the server. The author and the actors of history
  *    rows are reduced to "is it me", so the screens never hold ids of people
- *    who are not the viewer.
+ *    who are not the viewer. The one name that is shown is the APPROVER's, as a
+ *    display name: the trail exists to show who approved (A47).
+ *  - The review actions offered are the ones the strict director guard allows
+ *    this person NOW, for the proposal's status. They are a convenience for the
+ *    screen; approve, return and finish check the guard again themselves.
  * `eventID` is not returned: nothing in this PR uses it.
  */
 
@@ -29,6 +43,7 @@ export type ProposalListItem = {
 
 export type ProposalDetail = ProposalListItem & {
   ccaID: number;
+  ccaName: string | null;
   description: string;
   blastMessage: string | null;
   plannedStart: number | null;
@@ -40,6 +55,8 @@ export type ProposalDetail = ProposalListItem & {
   createdByMe: boolean;
   viewer: ProposalViewer;
   canEdit: boolean;
+  /** What this person, as a director of the CCA now, may do next. */
+  reviewActions: ReviewAction[];
   history: Array<{
     id: string;
     fromStatus: string;
@@ -47,6 +64,8 @@ export type ProposalDetail = ProposalListItem & {
     at: Date;
     byMe: boolean;
     selfApproved: boolean;
+    /** The approver's display name; null if unknown or the account is gone. */
+    approverName: string | null;
     note: string | null;
   }>;
 };
@@ -64,7 +83,7 @@ export async function getProposal(
     throw new TRPCError({ code: "NOT_FOUND", message: PROPOSAL_NOT_FOUND });
   }
   // A non-reader gets the same NOT_FOUND as a missing id.
-  const viewer = await assertProposalReader(db, userID, row.ccaID, {
+  const { viewer, isDirector } = await proposalAccess(db, userID, row.ccaID, {
     hideExistence: true,
   });
   if (hiddenFromDirector(viewer, row.status)) {
@@ -75,9 +94,20 @@ export async function getProposal(
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: 200,
   });
+  const [names, cca] = await Promise.all([
+    displayNames(
+      db,
+      history.flatMap((h) => (h.approverID ? [h.approverID] : [])),
+    ),
+    db.cCA.findFirst({
+      where: { ccaID: row.ccaID },
+      select: { ccaName: true },
+    }),
+  ]);
   return {
     id: row.id,
     ccaID: row.ccaID,
+    ccaName: cca?.ccaName ?? null,
     category: row.category,
     title: row.title,
     description: row.description,
@@ -97,6 +127,7 @@ export async function getProposal(
       viewer === "head" &&
       isProposalStatus(row.status) &&
       EDITABLE_STATUSES.includes(row.status),
+    reviewActions: isDirector ? reviewActionsFor(row.status) : [],
     history: history.map((h) => ({
       id: h.id,
       fromStatus: h.fromStatus,
@@ -104,6 +135,7 @@ export async function getProposal(
       at: h.createdAt,
       byMe: h.actorID === userID,
       selfApproved: h.selfApproved,
+      approverName: h.approverID ? (names.get(h.approverID) ?? null) : null,
       note: h.note,
     })),
   };

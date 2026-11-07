@@ -146,6 +146,8 @@ export function describeProposalError(message: string | undefined): {
         return "Only a head of this CCA can do that.";
       case "NOT_PROPOSAL_READER":
         return "You cannot see this CCA's proposals.";
+      case "NOT_DIRECTOR":
+        return "Only a director of this CCA can do that.";
       case "PROPOSAL_ACCESS_CHECK_FAILED":
         return "We could not check your access just now. Try again shortly.";
       case "PROPOSAL_CONFLICT":

@@ -114,6 +114,47 @@ export const proposalSubmitInput = z.object({
   version: z.number().int().min(0),
 });
 
+/**
+ * The director's three moves each name the version the director read, so an
+ * approval cannot land on content that was returned, edited and resubmitted
+ * since (the head's tab and the director's are different tabs).
+ */
+export const PROPOSAL_NOTE_MAX = 500;
+const versionField = z.number().int().min(0);
+
+/** The optional note on an approval (Q32). Blank means none. */
+export const proposalApproveInput = z.object({
+  id: proposalId,
+  version: versionField,
+  note: text(PROPOSAL_NOTE_MAX)
+    .transform((s) => (s === "" ? null : s))
+    .nullable()
+    .optional(),
+});
+
+/** A return needs a short reason, kept in the history for the head. */
+export const proposalReturnInput = z.object({
+  id: proposalId,
+  version: versionField,
+  reason: text(PROPOSAL_NOTE_MAX).pipe(z.string().min(1)),
+});
+
+export const proposalFinishInput = z.object({
+  id: proposalId,
+  version: versionField,
+});
+
+/**
+ * One page of the review queue. `cursor` is the opaque value the previous
+ * page returned: the submission time (epoch milliseconds, or "none") and id of
+ * the LAST row that page showed, joined by "_". The next page is every row
+ * after that position, so it holds even if that row has left review.
+ */
+export const QUEUE_CURSOR = /^(\d{1,16}|none)_([a-f\d]{24})$/i;
+export const proposalQueueInput = z.object({
+  cursor: z.string().regex(QUEUE_CURSOR).optional(),
+});
+
 export const proposalIdInput = z.object({ id: proposalId });
 export const proposalListInput = z.object({ ccaID });
 
