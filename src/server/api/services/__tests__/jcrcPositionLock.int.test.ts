@@ -886,16 +886,25 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("ok");
       });
 
-      it("keeps cancelling a step-out possible on an unflagged position", async () => {
+      it("refuses cancelling a step-out on an unflagged position too, with the plain message", async () => {
+        // The base handover rule (only earlier, never cancelled) holds for every
+        // position; the flagged one only differs in the refusal it names.
         const id = await unflagged();
         expect(await errorOf(handOver(U.holder, id, [U.successor]))).toBe("ok");
         expect(
           await errorOf(as(U.holder, JCRC).setStepOut({ stepOutAt: null })),
-        ).toBe("ok");
+        ).toBe("FORBIDDEN:STEP_OUT_ONLY_EARLIER");
+        expect(
+          await errorOf(
+            as(U.holder, JCRC).setStepOut({
+              stepOutAt: new Date(Date.now() + 48 * HOUR),
+            }),
+          ),
+        ).toBe("FORBIDDEN:STEP_OUT_ONLY_EARLIER");
         const row = await db.jcrcPositionHolder.findFirst({
           where: { positionID: id, userID: U.holder },
         });
-        expect(row?.endsAt ?? null).toBeNull();
+        expect(row?.endsAt).not.toBeNull();
       });
 
       it("writes the same audit row as any holder added to a flagged position", async () => {

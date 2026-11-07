@@ -2,7 +2,11 @@ import { TRPCError } from "@trpc/server";
 import type { JcrcPosition, PrismaClient } from "@prisma/client";
 
 import { getUserRoles } from "~/server/api/services/access";
-import { ADMIN_ROLE, JCRC_ROLE } from "~/server/api/services/roles";
+import {
+  ADMIN_ROLE,
+  holdsStaffRole,
+  JCRC_ROLE,
+} from "~/server/api/services/roles";
 import { activeHolderWhere } from "~/server/api/services/jcrcPositions";
 import { isPositionVacant } from "~/server/api/services/directorGuard";
 import {
@@ -74,6 +78,82 @@ function assertInScope(ctx: EditContext, row: PositionRow | null): void {
   if (!row) throw notFound();
   if (!isFlaggedPosition(row)) {
     throw new TRPCError({ code: "FORBIDDEN", message: NOT_FLAGGED });
+  }
+}
+
+export const USE_DIRECTOR_PANEL = "USE_DIRECTOR_PANEL";
+
+/**
+ * The Positions router's holder calls are open to staff (they set who may hand
+ * a position over), but a FLAGGED position is changed by staff only through the
+ * staff door, which is `flaggedOnly` and has its own panel. Someone who is
+ * staff and neither an admin nor a JCRC member is refused here; admins and
+ * JCRC members are judged by the lock as before.
+ */
+function assertDoorFitsFlagged(
+  ctx: EditContext,
+  row: PositionRow | null,
+): void {
+  if (ctx.flaggedOnly || !row || !isFlaggedPosition(row)) return;
+  const roles = ctx.actorRoles;
+  if (!roles.includes(ADMIN_ROLE) && !roles.includes(JCRC_ROLE)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: USE_DIRECTOR_PANEL });
+  }
+}
+
+/** The subset of `userIDs` who hold a staff role or admin right now. */
+export async function staffOrAdmin(
+  db: PrismaClient,
+  userIDs: readonly string[],
+): Promise<Set<string>> {
+  const unique = [...new Set(userIDs)];
+  const roles = await Promise.all(unique.map((id) => getUserRoles(db, id)));
+  return new Set(
+    unique.filter(
+      (_, i) => roles[i]!.includes(ADMIN_ROLE) || holdsStaffRole(roles[i]!),
+    ),
+  );
+}
+
+const isStaffOrAdmin = (roles: readonly string[]) =>
+  roles.includes(ADMIN_ROLE) || holdsStaffRole([...roles]);
+
+/**
+ * What a JCRC member (not staff) may not do to holder rows. Staff decide who
+ * may hand over, so a JCRC member cannot:
+ *  - change or remove a row staff or an admin assigned: re-assigning it would
+ *    strip its handover right, removing it is staff's call;
+ *  - add someone who is stepping out, to any position: an open row cancels
+ *    their step-out and keeps them on the JCRC beside their successors.
+ * Staff re-assigning is how a mistaken handover is undone. (On a flagged
+ * position a member never gets this far: the lock refuses them first.)
+ */
+async function assertJcrcMayChangeRow(
+  db: PrismaClient,
+  positionID: string,
+  userID: string,
+  adding: boolean,
+): Promise<void> {
+  if (adding) {
+    const [steppingOut, term] = await Promise.all([
+      db.jcrcPositionHolder.count({
+        where: { userID, endsAt: { not: null } },
+      }),
+      db.jcrcTerm.findUnique({ where: { userID } }),
+    ]);
+    if (steppingOut > 0 || term) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "HOLDER_STEPPING_OUT",
+      });
+    }
+  }
+  const row = await db.jcrcPositionHolder.findFirst({
+    where: { positionID, userID },
+    select: { assignedBy: true },
+  });
+  if (row && (await staffOrAdmin(db, [row.assignedBy])).size > 0) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "STAFF_ASSIGNED_ROW" });
   }
 }
 
@@ -340,6 +420,7 @@ export async function addPositionHolder(
     assertInScope(ctx, row);
     const isLocked = row !== null && isFlaggedPosition(row);
     if (isLocked) assertMayEditFlaggedPosition(actorRoles);
+    assertDoorFitsFlagged(ctx, row);
     if (input.userID === actor) {
       if (isLocked) {
         throw new TRPCError({
@@ -352,6 +433,11 @@ export async function addPositionHolder(
       }
     }
     if (!row) throw notFound();
+    // A JCRC member may not touch a row staff assigned, or add someone who is
+    // stepping out.
+    if (!isStaffOrAdmin(actorRoles)) {
+      await assertJcrcMayChangeRow(db, input.id, input.userID, true);
+    }
     const targetRoles = await getUserRoles(db, input.userID);
     if (!targetRoles.includes(JCRC_ROLE)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "TARGET_NOT_JCRC" });
@@ -426,6 +512,10 @@ export async function removePositionHolder(
       assertInScope(ctx, row);
       const isLocked = row !== null && isFlaggedPosition(row);
       if (isLocked) assertMayEditFlaggedPosition(ctx.actorRoles);
+      assertDoorFitsFlagged(ctx, row);
+      if (!isStaffOrAdmin(ctx.actorRoles)) {
+        await assertJcrcMayChangeRow(db, input.id, input.userID, false);
+      }
       if (row) await touchPosition(tx, row);
       const removed = await tx.jcrcPositionHolder.deleteMany({
         where: { positionID: input.id, userID: input.userID },

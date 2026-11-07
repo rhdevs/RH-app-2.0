@@ -13,9 +13,13 @@ const COPY: Record<string, string> = {
   SUCCESSOR_NOT_SIGNED_IN:
     "A successor hasn't signed in to the app yet. Ask them to sign in once, then try again.",
   SELF_ASSIGNED_POSITION:
-    "You added yourself to this position, so you can't hand it over. Ask another JCRC member, an RF or Hall Office to assign it to you.",
+    "You added yourself to this position, so you can't hand it over. Ask an RF or Hall Office to assign it to you.",
+  POSITION_NOT_STAFF_ASSIGNED:
+    "Only positions an RF or Hall Office assigned to you can be handed over. Ask them to assign it to you first.",
   ALREADY_HANDED_OVER:
-    "You've already handed this position over. Someone else has to assign it to you again first.",
+    "You've already handed this position over. An RF or Hall Office has to assign it to you again first.",
+  STEP_OUT_ONLY_EARLIER:
+    "Your step-out date can only move earlier. To undo a handover, ask an RF or Hall Office to assign the position to you again.",
   ONE_SUCCESSOR_ONLY:
     "A position that gives director powers goes to one successor. Pick one person.",
   NEEDS_STAFF_CONFIRMATION:
@@ -25,13 +29,19 @@ const COPY: Record<string, string> = {
   STEP_OUT_LOCKED:
     "A position that gives director powers can't have its step-out date cancelled or moved later. You can still move it earlier.",
   SELF_ASSIGN:
-    "You can't add yourself to a position. Ask another JCRC member to add you.",
+    "You can't add yourself to a position. Ask an RF or Hall Office to assign it to you.",
+  STAFF_ASSIGNED_ROW:
+    "An RF or Hall Office assigned this, so only they can change or remove it.",
+  HOLDER_STEPPING_OUT:
+    "This member is stepping out after a handover. Only an RF or Hall Office can give them a position again.",
   NO_STEP_OUT_PENDING: "You don't have a step-out date to change.",
   CONFLICT: "Someone changed this at the same time. Reload and try again.",
   POSITION_LOCKED:
     "This position gives director powers, so only an admin, an RF or the Hall Office can change its name, CCAs or holders.",
   SELF_ASSIGN_FLAGGED:
     "Nobody can add themselves to a position that gives director powers, admins included. Ask someone else to add you.",
+  USE_DIRECTOR_PANEL:
+    "Positions that give director powers are set from the Director positions panel.",
   NOT_FLAGGED:
     "This panel only changes positions that give director powers. Use the Positions page for the others.",
   NOT_STAFF: "Only an admin, an RF or the Hall Office can use this.",
