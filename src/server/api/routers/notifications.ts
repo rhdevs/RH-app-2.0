@@ -1,10 +1,15 @@
 import { z } from "zod";
 
+import { TRPCError } from "@trpc/server";
+
+import { rateLimit } from "~/lib/rateLimit";
 import {
   createTRPCRouter,
   identifiedProcedure,
   protectedProcedure,
+  sanitizeErrors,
 } from "~/server/api/trpc";
+import { runDueCheck } from "~/server/api/services/dueCheck/runner";
 import {
   areNotificationsEnabled,
   assertNotificationsEnabled,
@@ -14,6 +19,16 @@ import {
 export const LIST_MAX = 50;
 export const LIST_DEFAULT = 20;
 const MARK_MAX = 100;
+
+/**
+ * The bell fires the due check once per browser tab per Singapore day, so a
+ * working person sends a handful a day (every new tab counts as a session).
+ * Only a script or a broken client reaches 30 an hour.
+ */
+export const DUE_CHECK_LIMIT = 30;
+export const DUE_CHECK_WINDOW_MS = 60 * 60 * 1000;
+export const dueCheckLimitKey = (userID: string) =>
+  `notifications.dueCheck:${userID}`;
 
 const objectId = z.string().regex(/^[a-f\d]{24}$/i);
 
@@ -41,6 +56,30 @@ export const notificationsRouter = createTRPCRouter({
       where: { userID: ctx.session.user.userID, readAt: null },
     }),
   })),
+
+  /**
+   * Write the caller's own timed notices that are due (4.4). A mutation, not a
+   * read, so it runs only when the bell fires it. It takes NO input: it works
+   * for the signed-in user and nobody else, from stored state, and writes only
+   * to that user's inbox. Gated on `notifications.enabled` by `inbox` (fail
+   * closed). The logic is `runDueCheck(db, userID)`, which a cron route can
+   * call later for any one user id.
+   */
+  runDueCheck: inbox.use(sanitizeErrors).mutation(async ({ ctx }) => {
+    const userID = ctx.session.user.userID;
+    const limited = await rateLimit(
+      dueCheckLimitKey(userID),
+      DUE_CHECK_LIMIT,
+      DUE_CHECK_WINDOW_MS,
+    );
+    if (!limited.allowed) {
+      throw new TRPCError({
+        code: "TOO_MANY_REQUESTS",
+        message: `RATE_LIMITED:${limited.retryAfter}`,
+      });
+    }
+    return runDueCheck(ctx.db, userID);
+  }),
 
   /** Newest first, one bounded page at a time. */
   list: inbox
