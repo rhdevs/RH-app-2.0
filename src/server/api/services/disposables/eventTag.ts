@@ -28,6 +28,16 @@ export const DISPOSABLE_NEEDS_TAG = "DISPOSABLE_NEEDS_TAG";
 export const DISPOSABLE_EVENT_MISMATCH = "DISPOSABLE_EVENT_MISMATCH";
 /** Followed by `:<eventID>`, so the screen can point at the event. */
 export const DISPOSABLE_PROPOSAL_HAS_EVENT = "DISPOSABLE_PROPOSAL_HAS_EVENT";
+/** A draft or canceled proposal is not something a request can be filed for. */
+export const DISPOSABLE_PROPOSAL_NOT_OPEN = "DISPOSABLE_PROPOSAL_NOT_OPEN";
+
+/**
+ * Proposal statuses a request cannot be tagged to: a draft has not been
+ * submitted, a canceled one is over. A proposal has no "declined" status; the
+ * director returns it (`needs_action`) and the head can resubmit, so a returned
+ * one is still open.
+ */
+const UNTAGGABLE_PROPOSAL_STATUSES: readonly string[] = ["draft", "canceled"];
 
 type EventDb = Pick<PrismaClient, "event">;
 
@@ -84,7 +94,7 @@ export async function resolveTarget(
       ? null
       : await db.proposal.findUnique({
           where: { id: input.proposalID },
-          select: { id: true, ccaID: true, eventID: true },
+          select: { id: true, ccaID: true, eventID: true, status: true },
         });
   if (input.proposalID !== null && !proposal)
     throw bad(DISPOSABLE_BAD_PROPOSAL);
@@ -132,7 +142,9 @@ export async function resolveTarget(
     event: null,
     problem: linked
       ? `${DISPOSABLE_PROPOSAL_HAS_EVENT}:${linked.eventID}`
-      : null,
+      : UNTAGGABLE_PROPOSAL_STATUSES.includes(p.status)
+        ? DISPOSABLE_PROPOSAL_NOT_OPEN
+        : null,
   };
 }
 

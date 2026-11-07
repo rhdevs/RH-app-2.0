@@ -369,6 +369,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           title,
           description: "x",
           createdBy: U.headA,
+          // A request is filed for a submitted proposal, not a draft.
+          status: "in_review",
         },
       });
 
