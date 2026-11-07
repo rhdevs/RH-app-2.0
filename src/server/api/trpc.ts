@@ -451,6 +451,19 @@ export const roleManagerProcedure = roleProcedure(JCRC_ROLE);
 export const scrcProcedure = roleProcedure(SCRC_ROLE, HALL_OFFICE_ROLE);
 
 /**
+ * Who holds which JCRC position: admin, jcrc and both staff roles. A holder
+ * row assigned by staff or an admin is what lets a JCRC member hand over
+ * (services/jcrcHandover.ts), so staff must be able to assign one. Gates only
+ * jcrcPositions.list / jcrcMembers / addHolder / removeHolder, each of which
+ * re-reads roles live; position CRUD stays on roleManagerProcedure.
+ */
+export const positionHolderProcedure = roleProcedure(
+  JCRC_ROLE,
+  SCRC_ROLE,
+  HALL_OFFICE_ROLE,
+);
+
+/**
  * READ-ONLY oversight of CCAs and events: admin, jcrc or scrc.
  *
  * Wider than either of the two above, and safe only because everything behind
