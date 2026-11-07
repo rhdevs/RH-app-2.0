@@ -13,18 +13,35 @@ export const FEEDBACK_DISABLED = "FEEDBACK_DISABLED";
 export const FEEDBACK_LIMIT = 5;
 export const FEEDBACK_WINDOW_MS = 60 * 60 * 1000;
 
-/** Fail CLOSED: an absent row, any value but "on", or a failed read is off. */
+const FLAG_TTL_MS = 15_000;
+let flagCache: { at: number; on: boolean } | null = null;
+
+/**
+ * Fail CLOSED: an absent row, any value but "on", or a failed read is off.
+ * Cached per lambda for 15 seconds, like areNotificationsEnabled, because the
+ * layout asks on every page view; a failed read is not cached.
+ */
 export async function isFeedbackEnabled(
   db: Pick<PrismaClient, "systemFlag">,
 ): Promise<boolean> {
+  if (flagCache && Date.now() - flagCache.at < FLAG_TTL_MS) {
+    return flagCache.on;
+  }
   try {
     const row = await db.systemFlag.findUnique({
       where: { key: FEEDBACK_FLAG_KEY },
     });
-    return row?.value === "on";
+    const on = row?.value === "on";
+    flagCache = { at: Date.now(), on };
+    return on;
   } catch {
     return false;
   }
+}
+
+/** Test/ops seam: drop the per-lambda cache so the next read hits the row. */
+export function resetFeedbackFlagCache(): void {
+  flagCache = null;
 }
 
 /** Called first in every gated procedure. */
@@ -64,10 +81,15 @@ export async function submitFeedback(
       data: { userID, category: input.category, message: input.message },
       select: { id: true },
     });
-    const admins = await tx.userRole.findMany({
+    const candidates = await tx.userRole.findMany({
       where: { OR: [{ roles: { has: ADMIN_ROLE } }, { role: ADMIN_ROLE }] },
-      select: { userID: true },
+      select: { userID: true, roles: true, role: true },
     });
+    // Same rule as getUserRoles: the legacy `role` counts only when `roles`
+    // is empty.
+    const admins = candidates.filter((c) =>
+      c.roles?.length ? c.roles.includes(ADMIN_ROLE) : c.role === ADMIN_ROLE,
+    );
     await notify(tx, {
       recipients: admins.map((a) => a.userID),
       kind: "feedback.submitted",
