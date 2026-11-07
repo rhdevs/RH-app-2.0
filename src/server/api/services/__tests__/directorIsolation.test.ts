@@ -309,6 +309,8 @@ const MAY_READ_POSITIONS = [
   // The staff door: one shared edit path and the router that calls it.
   "src/server/api/services/jcrcPositionEdits.ts",
   "src/server/api/routers/jcrcPositionsStaff.ts",
+  // Account deletion removes the deleted person's holder rows (no read, one delete).
+  "src/server/api/services/userAdmin.ts",
 ];
 const POSITION_DATA =
   /\b(jcrcPosition(Cca|Holder)?|JcrcPosition(Cca|Holder)?|vetsProposals|handlesDisposables)\b/;

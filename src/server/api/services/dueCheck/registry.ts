@@ -1,4 +1,5 @@
 import { ccaNoDirectorKind } from "./ccaNoDirector";
+import { disposablesNoDirectorKind } from "./disposablesNoDirector";
 import type { DueKind } from "./types";
 
 /**
@@ -6,7 +7,10 @@ import type { DueKind } from "./types";
  * nothing else: the runner reads this list and is not touched. A kind that
  * needs a new index must have its script run before its flag goes on.
  *
- * Phase 4 (disposable digest and nudges) and phase 5 (milestone reminders)
- * register here.
+ * PR 13 registered the no-Social-director notice. PR 14 (disposable digest and
+ * nudges) and phase 5 (milestone reminders) register here.
  */
-export const DUE_KINDS: readonly DueKind[] = [ccaNoDirectorKind];
+export const DUE_KINDS: readonly DueKind[] = [
+  ccaNoDirectorKind,
+  disposablesNoDirectorKind,
+];

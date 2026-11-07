@@ -338,6 +338,33 @@ export const sanitizeErrors = t.middleware(async ({ next, path }) => {
 });
 
 /**
+ * Turns ONE named unique index's violation (Prisma P2002) into a CONFLICT with
+ * a message the screen knows, so two writers racing past a check do not both
+ * see "Something went wrong.". Any other P2002, and every other error, passes
+ * through unchanged (and sanitizeErrors, placed before this, hides it). Reads
+ * the settled result instead of catching, so the services keep their no-catch
+ * rule. Put it AFTER sanitizeErrors in the chain so it runs first.
+ */
+export const mapUniqueViolation = (indexName: string, message: string) =>
+  t.middleware(async ({ next }) => {
+    const result = await next();
+    if (!result.ok) {
+      const cause = result.error.cause as
+        | { code?: unknown; message?: unknown; meta?: unknown }
+        | undefined;
+      if (
+        cause?.code === "P2002" &&
+        `${String(cause.message)} ${JSON.stringify(cause.meta ?? null)}`.includes(
+          indexName,
+        )
+      ) {
+        throw new TRPCError({ code: "CONFLICT", message });
+      }
+    }
+    return result;
+  });
+
+/**
  * Reusable role middleware. Authenticated AND holds at least one of `allowed`.
  * `admin` implicitly satisfies every role check.
  *

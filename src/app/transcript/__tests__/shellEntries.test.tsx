@@ -11,6 +11,7 @@ import type { Capabilities } from "~/server/api/services/roles";
 const enabledQuery = vi.fn();
 const feedbackQuery = vi.fn();
 const proposalQuery = vi.fn();
+const disposableQuery = vi.fn();
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/admin" }));
 vi.mock("~/app/_components/header", () => ({ default: () => null }));
@@ -25,6 +26,9 @@ vi.mock("~/trpc/react", () => ({
     },
     proposal: {
       enabled: { useQuery: (...a: unknown[]) => proposalQuery(...a) },
+    },
+    disposable: {
+      enabled: { useQuery: (...a: unknown[]) => disposableQuery(...a) },
     },
     cca: {
       listMine: {
@@ -68,6 +72,8 @@ describe("transcript entries in the admin and CCA shells", () => {
     feedbackQuery.mockReturnValue({ data: { enabled: false } });
     proposalQuery.mockReset();
     proposalQuery.mockReturnValue({ data: { enabled: false } });
+    disposableQuery.mockReset();
+    disposableQuery.mockReturnValue({ data: { enabled: false } });
   });
 
   it.each(answers)("hide both entries while the switch is %s", (_n, answer) => {
@@ -153,5 +159,28 @@ describe("the CCA Proposals tab", () => {
     proposalQuery.mockReturnValue({ data: { enabled: true } });
 
     expect(cca()).toContain("/cca/7/proposals");
+  });
+});
+
+describe("the CCA Disposables tab", () => {
+  beforeEach(() => {
+    enabledQuery.mockReset();
+    enabledQuery.mockReturnValue({ data: { enabled: false } });
+    proposalQuery.mockReset();
+    proposalQuery.mockReturnValue({ data: { enabled: false } });
+    disposableQuery.mockReset();
+  });
+
+  it.each(answers)("is hidden while the switch is %s", (_n, answer) => {
+    disposableQuery.mockReturnValue(answer);
+
+    expect(cca()).not.toContain("/cca/7/disposables");
+    expect(cca()).toContain("Overview");
+  });
+
+  it("shows once the switch is on", () => {
+    disposableQuery.mockReturnValue({ data: { enabled: true } });
+
+    expect(cca()).toContain("/cca/7/disposables");
   });
 });
