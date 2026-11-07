@@ -1583,6 +1583,29 @@ model Notification {
 }
 
 // ---------------------------------------------------------------------------
+// IN-APP FEEDBACK (socporthub merge, PR 3, F27). A report a signed-in user
+// sends to the admins. A new, unvalidated collection; nothing is added to
+// User or to any validated collection. Not year-based, so there is
+// deliberately NO `academicYear` field. The only writer is the
+// feedback.submit procedure; indexes come from
+// scripts/remediation/create-notification-indexes.mjs.
+// ---------------------------------------------------------------------------
+
+/// A report from one user. `message` is plain text, never HTML.
+model Feedback {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  /// The submitter's canonical id. Rows go with the account (userAdmin.ts).
+  userID    String
+  /// "bug", "suggestion" or "other".
+  category  String
+  message   String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt], map: "feedback_created")
+  @@index([userID, createdAt], map: "feedback_user_created")
+}
+
+// ---------------------------------------------------------------------------
 // TRANSCRIPT (docs/transcript/SPEC.md). Every model below is a NEW, UNVALIDATED
 // collection — the validator-guarded CCA / UserCCA / User silently reject new
 // fields (code 121), so nothing transcript-specific lives on them. All are keyed

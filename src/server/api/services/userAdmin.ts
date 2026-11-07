@@ -1164,6 +1164,9 @@ export async function deleteUserAccountCascade(
       deleted.notification = (
         await tx.notification.deleteMany({ where })
       ).count;
+      // Their feedback reports: keyed on the canonical id, and the text may
+      // name them, so it goes with the account rather than staying unattributed.
+      deleted.feedback = (await tx.feedback.deleteMany({ where })).count;
     }
 
     /* ---- (d) the User row, LAST and BY ObjectId ---------------------------

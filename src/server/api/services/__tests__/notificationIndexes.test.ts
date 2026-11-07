@@ -74,8 +74,8 @@ const TTL_NAME = "notification_expiry";
 const body = modelBody("Notification");
 
 describe("create-notification-indexes.mjs mirrors prisma/schema.prisma", () => {
-  it("targets only Notification", () => {
-    expect(Object.keys(TARGETS)).toEqual(["Notification"]);
+  it("targets only Notification and Feedback", () => {
+    expect(Object.keys(TARGETS)).toEqual(["Notification", "Feedback"]);
   });
 
   it("has every index the schema declares, with the same names, keys and uniqueness", () => {
@@ -106,6 +106,24 @@ describe("create-notification-indexes.mjs mirrors prisma/schema.prisma", () => {
 
   it("never gives the model a field named academicYear", () => {
     expect(body).not.toMatch(/\bacademicYear\b/);
+  });
+});
+
+describe("the Feedback indexes mirror prisma/schema.prisma", () => {
+  const feedbackBody = modelBody("Feedback");
+
+  it("has every index the schema declares, with the same names, keys and uniqueness, and no others", () => {
+    expect(shape(TARGETS.Feedback!)).toEqual(
+      shape(schemaIndexes(feedbackBody)),
+    );
+    expect(TARGETS.Feedback!.length).toBeGreaterThan(0);
+    expect(
+      TARGETS.Feedback!.some((i) => i.expireAfterSeconds !== undefined),
+    ).toBe(false);
+  });
+
+  it("never gives the model a field named academicYear", () => {
+    expect(feedbackBody).not.toMatch(/\bacademicYear\b/);
   });
 });
 
