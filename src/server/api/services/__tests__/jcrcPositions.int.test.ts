@@ -614,6 +614,91 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(retried.termEndsAt?.getTime()).toBe(input.stepOutAt.getTime());
       });
 
+      it("still ends jcrc when a sweep runs in the middle of a step-out of now", async () => {
+        const { handOverPositions, sweepEndedJcrcTerms } = await import(
+          "~/server/api/services/jcrcHandover"
+        );
+        const id = await makePosition("Mid-sweep", [9010]);
+        await assign(id, USERS.outgoing);
+        const now = new Date();
+        // A positions read elsewhere sweeps just as the successor is given
+        // the position: the outgoing member's claimed rows are already gone.
+        const sweepFirst = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop !== "jcrcPositionHolder") {
+              return Reflect.get(target, prop, receiver);
+            }
+            return new Proxy(target.jcrcPositionHolder, {
+              get(holder, key, r) {
+                if (key !== "upsert") return Reflect.get(holder, key, r);
+                return async (args: never) => {
+                  await sweepEndedJcrcTerms(db, now);
+                  return holder.upsert(args);
+                };
+              },
+            });
+          },
+        });
+        await handOverPositions(
+          sweepFirst,
+          {
+            actorUserID: USERS.outgoing,
+            positionIDs: [id],
+            successorIDs: [USERS.successor],
+            stepOutAt: now,
+          },
+          now,
+        );
+        await sweepEndedJcrcTerms(db, new Date(now.getTime() + 1));
+        expect(await rolesOf(USERS.outgoing)).not.toContain("jcrc");
+        expect(await rolesOf(USERS.successor)).toContain("jcrc");
+      });
+
+      it("releases rows already claimed when a later claim write fails", async () => {
+        const { handOverPositions } = await import(
+          "~/server/api/services/jcrcHandover"
+        );
+        const first = await makePosition("Claim one", [9011]);
+        const second = await makePosition("Claim two", [9012]);
+        await assign(first, USERS.outgoing);
+        await assign(second, USERS.outgoing);
+        let claimWrites = 0;
+        const failSecondClaim = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop !== "jcrcPositionHolder") {
+              return Reflect.get(target, prop, receiver);
+            }
+            return new Proxy(target.jcrcPositionHolder, {
+              get(holder, key, r) {
+                if (key !== "updateMany") return Reflect.get(holder, key, r);
+                return (args: { data: { handedOverAt?: Date | null } }) => {
+                  if (args.data.handedOverAt && ++claimWrites === 2) {
+                    return Promise.reject(new Error("network"));
+                  }
+                  return holder.updateMany(args as never);
+                };
+              },
+            });
+          },
+        });
+        await expect(
+          handOverPositions(failSecondClaim, {
+            actorUserID: USERS.outgoing,
+            positionIDs: [first, second],
+            successorIDs: [USERS.successor],
+            stepOutAt: new Date(Date.now() + DAY),
+          }),
+        ).rejects.toThrow("network");
+        const rows = await db.jcrcPositionHolder.findMany({
+          where: { userID: USERS.outgoing },
+        });
+        expect(rows.map((r) => [r.handedOverAt, r.endsAt])).toEqual([
+          [null, null],
+          [null, null],
+        ]);
+        expect(await rolesOf(USERS.successor)).not.toContain("jcrc");
+      });
+
       it("keeps JCRC members from undoing a handover or changing staff-assigned rows", async () => {
         const id = await makePosition("Guarded", [9007]);
         const other = await makePosition("Other", [9008]);
