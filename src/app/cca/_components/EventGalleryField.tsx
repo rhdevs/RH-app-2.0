@@ -43,7 +43,7 @@ export default function EventGalleryField({
       if (resized.size > EVENT_IMAGE_MAX_BYTES) throw new Error("TOO_LARGE");
       const blob = await upload(eventUploadPath(eventID, "photo"), resized, {
         access: "public",
-        contentType: "image/webp",
+        contentType: resized.type || "image/jpeg",
         handleUploadUrl: "/api/event/upload",
       });
       onChange([...value, blob.url]);

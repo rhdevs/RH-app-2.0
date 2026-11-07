@@ -76,12 +76,21 @@ const FLAT: FlatCsvCca[] = [
   },
 ];
 
+const AUX = {
+  year: "AY2026/27",
+  rows: [
+    { matric: "a9910105x", name: "Lim, Test 05", aux: 3 },
+    { matric: "A9910104X", name: "=Test 04", aux: 1 },
+  ],
+};
+
 const build = (over: Partial<Parameters<typeof buildBundleCsv>[0]> = {}) =>
   buildBundleCsv({
     defaultRange: DEFAULT_RANGE,
     waivers: WAIVERS,
     ccas: CCAS,
     flat: FLAT,
+    aux: AUX,
     exportedAt: AT,
     ...over,
   });
@@ -117,27 +126,75 @@ function parseCsv(text: string): string[][] {
 
 const FIXTURE =
   [
-    "formatVersion,section,scope,ccaID,ccaName,matric,name,flatPoints,type,sport,ihgResult,ihgCap,meanMin,meanMax,sdMin,sdMax,note,exportedAt",
-    `1,settings,default,,,,,,,,,,10,14,2,5,,${STAMP}`,
-    `1,settings,waiver,9101,"Drama, Film & Theatre",,,,,,,,12,15,1.5,5,Small CCA (<10 members),${STAMP}`,
-    `1,cca,,9001,Hall Choir,,,12,1x,N,,,,,,,,${STAMP}`,
-    `1,cca,,9002,"'=Dance, Crew",,,7.5,,N,,,,,,,,${STAMP}`,
-    `1,cca,,9101,"Drama, Film & Theatre",,,,1x,N,,,,,,,,${STAMP}`,
-    `1,cca,,9201,Soccer (M),,,,1x,Y,1st,12,,,,,,${STAMP}`,
-    `1,cca,,9202,Touch Rugby (W),,,,1x,Y,,,,,,,,${STAMP}`,
-    `1,flat,,9001,Hall Choir,A9910101X,"Tan, Test 01",12,,,,,,,,,,${STAMP}`,
-    `1,flat,,9001,Hall Choir,A9910102X,Test Member 02,12,,,,,,,,,,${STAMP}`,
-    `1,flat,,9002,"'=Dance, Crew",A9910103X,'@Test 03,7.5,,,,,,,,,,${STAMP}`,
+    "formatVersion,section,scope,ccaID,ccaName,matric,name,flatPoints,type,sport,ihgResult,ihgCap,meanMin,meanMax,sdMin,sdMax,note,aux,exportedAt",
+    `2,settings,default,,,,,,,,,,10,14,2,5,,,${STAMP}`,
+    `2,settings,waiver,9101,"Drama, Film & Theatre",,,,,,,,12,15,1.5,5,Small CCA (<10 members),,${STAMP}`,
+    `2,cca,,9001,Hall Choir,,,12,1x,N,,,,,,,,,${STAMP}`,
+    `2,cca,,9002,"'=Dance, Crew",,,7.5,,N,,,,,,,,,${STAMP}`,
+    `2,cca,,9101,"Drama, Film & Theatre",,,,1x,N,,,,,,,,,${STAMP}`,
+    `2,cca,,9201,Soccer (M),,,,1x,Y,1st,12,,,,,,,${STAMP}`,
+    `2,cca,,9202,Touch Rugby (W),,,,1x,Y,,,,,,,,,${STAMP}`,
+    `2,flat,,9001,Hall Choir,A9910101X,"Tan, Test 01",12,,,,,,,,,,,${STAMP}`,
+    `2,flat,,9001,Hall Choir,A9910102X,Test Member 02,12,,,,,,,,,,,${STAMP}`,
+    `2,flat,,9002,"'=Dance, Crew",A9910103X,'@Test 03,7.5,,,,,,,,,,,${STAMP}`,
+    `2,aux,AY2026/27,,,A9910104X,'=Test 04,,,,,,,,,,,1,${STAMP}`,
+    `2,aux,AY2026/27,,,A9910105X,"Lim, Test 05",,,,,,,,,,,3,${STAMP}`,
   ].join("\r\n") + "\r\n";
 
 describe("buildBundleCsv", () => {
-  it("writes the pinned 11-line fixture byte for byte", () => {
+  it("writes the pinned 13-line fixture byte for byte", () => {
     expect(build()).toBe(FIXTURE);
   });
 
-  it("has an 18-name header and the three sections", () => {
-    expect(BUNDLE_EXPORT_HEADER).toHaveLength(18);
-    expect(BUNDLE_SECTIONS).toEqual(["settings", "cca", "flat"]);
+  it("has a 19-name header and the four sections", () => {
+    expect(BUNDLE_EXPORT_HEADER).toHaveLength(19);
+    expect(BUNDLE_SECTIONS).toEqual(["settings", "cca", "flat", "aux"]);
+  });
+
+  it("stamps format version 2 on every row", () => {
+    for (const r of parseCsv(build()).slice(1)) expect(r[0]).toBe("2");
+  });
+
+  it("sorts aux rows by matric and writes the count in the aux column", () => {
+    const rows = parseCsv(build()).filter((r) => r[1] === "aux");
+    expect(rows.map((r) => [r[2], r[5], r[17]])).toEqual([
+      ["AY2026/27", "A9910104X", "1"],
+      ["AY2026/27", "A9910105X", "3"],
+    ]);
+  });
+
+  it("leaves the aux cell blank on every other section", () => {
+    for (const r of parseCsv(build()).slice(1)) {
+      if (r[1] !== "aux") expect(r[17]).toBe("");
+    }
+  });
+
+  it("writes no aux rows when nobody has AUX", () => {
+    const csv = build({ aux: { year: "AY2026/27", rows: [] } });
+    expect(csv).not.toContain("\r\n2,aux,");
+  });
+
+  it("skips a zero count and throws on a bad aux matric or count", () => {
+    const zero = build({
+      aux: {
+        year: "AY2026/27",
+        rows: [{ matric: "A9910104X", name: "Z", aux: 0 }],
+      },
+    });
+    expect(zero).not.toContain("\r\n2,aux,");
+    expect(() =>
+      build({
+        aux: { year: "AY2026/27", rows: [{ matric: "x", name: "Z", aux: 1 }] },
+      }),
+    ).toThrow(/matric/);
+    expect(() =>
+      build({
+        aux: {
+          year: "AY2026/27",
+          rows: [{ matric: "A9910104X", name: "Z", aux: 1.5 }],
+        },
+      }),
+    ).toThrow(/AUX/);
   });
 
   it("fills a waiver's blank fields from the default", () => {
@@ -155,7 +212,7 @@ describe("buildBundleCsv", () => {
       ],
     });
     expect(csv).toContain(
-      `1,settings,waiver,9101,Drama,,,,,,,,10,15,2,5,,${STAMP}`,
+      `2,settings,waiver,9101,Drama,,,,,,,,10,15,2,5,,,${STAMP}`,
     );
   });
 
@@ -230,7 +287,7 @@ describe("buildBundleCsv", () => {
       flat: [],
       waivers: [],
     });
-    expect(csv).toContain(`1,cca,,9301,Chess,,,,1x,N,,,,,,,,${STAMP}`);
+    expect(csv).toContain(`2,cca,,9301,Chess,,,,1x,N,,,,,,,,,${STAMP}`);
   });
 
   it("does not mutate frozen inputs", () => {
@@ -259,8 +316,8 @@ describe("buildBundleCsv", () => {
     ]);
   });
 
-  it("has 18 cells on every line", () => {
-    for (const r of parseCsv(build())) expect(r).toHaveLength(18);
+  it("has 19 cells on every line", () => {
+    for (const r of parseCsv(build())) expect(r).toHaveLength(19);
   });
 });
 

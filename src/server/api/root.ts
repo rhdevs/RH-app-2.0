@@ -3,6 +3,7 @@ import { facilityBookingRouter } from "~/server/api/routers/facilitiesBooking";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 import { userRouter } from "./routers/user";
 import { adminRouter } from "./routers/admin";
+import { auxRouter } from "./routers/auxPoints";
 import { ccaRouter } from "./routers/cca";
 import { ccaAdminRouter } from "./routers/ccaAdmin";
 import { ccaApplicationsRouter } from "./routers/ccaApplications";
@@ -10,6 +11,8 @@ import { ccaApplicationsHeadRouter } from "./routers/ccaApplicationsHead";
 import { ccaPointsRouter } from "./routers/ccaPoints";
 import { ccaRecruitmentRouter } from "./routers/ccaRecruitment";
 import { eventRouter } from "./routers/event";
+import { jcrcPositionsRouter } from "./routers/jcrcPositions";
+import { notificationsRouter } from "./routers/notifications";
 import { transcriptRouter } from "./routers/transcript";
 import { transcriptManageRouter } from "./routers/transcriptManage";
 import { userAdminRouter } from "./routers/userAdmin";
@@ -64,9 +67,15 @@ export const appRouter = createTRPCRouter({
    * bundleExportData (the sandbox bundle, audited). See routers/ccaPoints.ts.
    */
   ccaPoints: ccaPointsRouter,
+  /** AUX counts for points: JCRC only (manageCcaPointsRanges). See routers/auxPoints.ts. */
+  aux: auxRouter,
   /** Events: head authoring, JCRC review, resident timeline + signup. Behind
    * the events.enabled switch; object-scoped per event's ccaID. */
   event: eventRouter,
+  // JCRC positions: views only, plus the JCRC self-handover.
+  jcrcPositions: jcrcPositionsRouter,
+  /** The signed-in user's in-app inbox, behind notifications.enabled. */
+  notifications: notificationsRouter,
   /** Transcripts: year control, the resident's own transcript, preview. See routers/transcript.ts. */
   transcript: transcriptRouter,
   /** Transcript management: head, JCRC and admin edits. See routers/transcriptManage.ts. */

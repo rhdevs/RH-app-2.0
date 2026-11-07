@@ -68,10 +68,10 @@ export default async function ScrcLayout({
 
   return (
     <div className="mb-14 min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      {/* Must match the nav link's `name` in header.tsx ("Hall Office") —
+      {/* Must match the nav link's `name` in header.tsx ("Staff") —
           isActive() compares currentPage to link.name before falling back to
           the pathname. */}
-      <Header currentPage="Hall Office" />
+      <Header currentPage="Staff" />
       {/* max-w-7xl, matching /admin rather than /cca: this surface is panels and
           tables, not a sidebar plus a content column, so a capped measure keeps
           the tables readable on a wide screen. */}

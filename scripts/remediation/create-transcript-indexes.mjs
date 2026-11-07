@@ -203,14 +203,38 @@ export const TARGETS = {
   ],
 };
 
-/** The createIndexes spec for one entry. */
-const specOf = (ix) =>
-  ix.unique
-    ? { key: ix.key, name: ix.name, unique: true }
-    : { key: ix.key, name: ix.name };
+/**
+ * The createIndexes spec for one entry. `expireAfterSeconds` (optional, a TTL
+ * index) is passed through when an entry sets it, including 0.
+ */
+const specOf = (ix) => ({
+  key: ix.key,
+  name: ix.name,
+  ...(ix.unique && { unique: true }),
+  ...(ix.expireAfterSeconds !== undefined && {
+    expireAfterSeconds: ix.expireAfterSeconds,
+  }),
+});
 
-/** Server fields on a listed index that say nothing about its shape. */
-const NEUTRAL = new Set(["v", "key", "name", "ns", "unique", "background"]);
+/**
+ * Server fields on a listed index that say nothing about its shape.
+ * `expireAfterSeconds` is compared on its own by `classify`, not ignored.
+ */
+const NEUTRAL = new Set([
+  "v",
+  "key",
+  "name",
+  "ns",
+  "unique",
+  "background",
+  "expireAfterSeconds",
+]);
+
+/** The TTL of a listed index or a wanted entry; undefined when there is none. */
+const ttlOf = (i) =>
+  i?.expireAfterSeconds === undefined
+    ? undefined
+    : numify(i.expireAfterSeconds);
 
 export const sameKey = (a, b) => {
   const ak = Object.entries(a ?? {});
@@ -245,6 +269,12 @@ export function classify(want, existing) {
         note: `name "${want.name}" exists with unique=${byName.unique === true}, wanted ${want.unique}`,
       };
     }
+    if (ttlOf(byName) !== ttlOf(want)) {
+      return {
+        status: "conflict",
+        note: `name "${want.name}" exists with expireAfterSeconds=${ttlOf(byName)}, wanted ${ttlOf(want)}`,
+      };
+    }
     const extra = extraOptions(byName);
     if (extra.length) {
       return {
@@ -256,7 +286,11 @@ export function classify(want, existing) {
   }
   const byKey = existing.find((i) => sameKey(i?.key, want.key));
   if (byKey) {
-    if ((byKey.unique === true) !== want.unique || extraOptions(byKey).length) {
+    if (
+      (byKey.unique === true) !== want.unique ||
+      ttlOf(byKey) !== ttlOf(want) ||
+      extraOptions(byKey).length
+    ) {
       return {
         status: "conflict",
         note: `key ${JSON.stringify(want.key)} exists as "${byKey.name}" with different uniqueness/options`,
@@ -283,7 +317,12 @@ const IDEMPOTENT_CODES = new Map([
  * `{ aborted, created }`; a refusal also sets process.exitCode, as the script
  * always did.
  */
-export async function apply(db, commit, targets = TARGETS) {
+export async function apply(
+  db,
+  commit,
+  targets = TARGETS,
+  { script = "create-transcript-indexes.mjs", label = "transcript" } = {},
+) {
   const COMMIT = commit;
   const aborted = (msg) => {
     abort(msg);
@@ -344,14 +383,14 @@ export async function apply(db, commit, targets = TARGETS) {
   }
 
   {
-    banner("create-transcript-indexes.mjs", COMMIT);
+    banner(script, COMMIT);
     console.log(`target: ${describeTarget(process.env.DATABASE_URL)}`);
     const total = Object.values(targets).reduce(
       (n, list) => n + list.length,
       0,
     );
     console.log(
-      `This run touches ONLY the ${Object.keys(targets).length} transcript collections (${total} indexes besides _id_).\n`,
+      `This run touches ONLY the ${Object.keys(targets).length} ${label} collections (${total} indexes besides _id_).\n`,
     );
 
     // -- 1. read everything, plan, refuse on any conflict --------------------
@@ -476,12 +515,12 @@ export async function apply(db, commit, targets = TARGETS) {
     if (red.length) {
       for (const p of red) console.error(`  RED  ${p}`);
       return aborted(
-        `the transcript indexes are NOT all in place. Do not ship until this is clean: a Prisma @@unique on Mongo enforces nothing by itself.`,
+        `the ${label} indexes are NOT all in place. Do not ship until this is clean: a Prisma @@unique on Mongo enforces nothing by itself.`,
       );
     }
-    console.log(`all ${total} transcript indexes are present.`);
+    console.log(`all ${total} ${label} indexes are present.`);
     console.log(
-      `\nNOW run index-census.mjs again and diff it against the census taken before. The only acceptable delta is the transcript collections; User.email_unique_ci MUST still be present.`,
+      `\nNOW run index-census.mjs again and diff it against the census taken before. The only acceptable delta is the ${label} collections; User.email_unique_ci MUST still be present.`,
     );
     return { aborted: false, created: pending };
   }

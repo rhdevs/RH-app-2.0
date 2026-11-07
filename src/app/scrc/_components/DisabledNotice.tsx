@@ -28,7 +28,7 @@ import { PowerOff } from "lucide-react";
  */
 const DISABLED_COPY: Record<string, { title: string; hint: string }> = {
   SCRC_DISABLED: {
-    title: "Hall Office tools aren’t switched on yet",
+    title: "Staff tools aren’t switched on yet",
     hint: "The role exists and you can reach this page, but the tools behind it are still turned off. An admin switches them on with the scrc.enabled setting; it takes effect within about fifteen seconds, with no redeploy.",
   },
   EVENTS_DISABLED: {

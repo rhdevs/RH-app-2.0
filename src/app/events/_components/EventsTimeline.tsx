@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { CalendarDays, MapPin, Users, Check } from "lucide-react";
+import { CalendarDays, MapPin, Users, Check, Ban, Clock } from "lucide-react";
 
 import { api } from "~/trpc/react";
 import type { RouterOutputs } from "~/trpc/react";
@@ -11,33 +11,44 @@ import {
   formatDateTime,
   formatDayHeading,
   dayKey,
+  isStillOn,
   nowSec,
 } from "~/app/events/_lib/format";
 import { ownerLabel } from "~/lib/schemas/event";
 
 type PublicEvent = RouterOutputs["event"]["listPublished"]["events"][number];
+type MySignup = RouterOutputs["event"]["listMySignups"]["events"][number];
+/** A card: a published event, or one of mine, which may be cancelled. */
+type CardEvent = PublicEvent & Partial<Pick<MySignup, "cancelReason" | "scheduleChangedAt">>;
 
 type Tab = "upcoming" | "mine" | "past";
 
 /**
  * The resident timeline — a Luma-style vertical list grouped by day, with a
  * left date rail. Three views: what's coming up, the events you're going to, and
- * a past archive. All published events come from one query; the tabs filter
- * client-side.
+ * a past archive. Upcoming and Past filter the published list client-side; My
+ * events comes from the resident's own signups, so an event that was cancelled
+ * after they signed up stays there with the reason.
  */
 export default function EventsTimeline() {
-  const list = api.event.listPublished.useQuery(undefined, { retry: false });
   const [tab, setTab] = useState<Tab>("upcoming");
+  const published = api.event.listPublished.useQuery(undefined, {
+    retry: false,
+  });
+  const mine = api.event.listMySignups.useQuery(undefined, {
+    retry: false,
+    enabled: tab === "mine",
+  });
+  const list = tab === "mine" ? mine : published;
 
   const now = nowSec();
 
   const groups = useMemo(() => {
-    const events = list.data?.events ?? [];
+    const events: CardEvent[] = list.data?.events ?? [];
     const filtered = events.filter((e) => {
-      const upcoming = e.startTime == null || e.startTime >= now;
-      if (tab === "upcoming") return upcoming;
-      if (tab === "past") return !upcoming;
-      return e.mySignup; // "mine"
+      if (tab === "mine") return true;
+      const upcoming = isStillOn(e, now);
+      return tab === "upcoming" ? upcoming : !upcoming;
     });
 
     // Past reads newest-first; everything else soonest-first.
@@ -47,7 +58,7 @@ export default function EventsTimeline() {
       return tab === "past" ? bv - av : av - bv;
     });
 
-    const byDay = new Map<string, { heading: string; events: PublicEvent[] }>();
+    const byDay = new Map<string, { heading: string; events: CardEvent[] }>();
     for (const e of ordered) {
       const key = e.startTime == null ? "tbc" : dayKey(e.startTime);
       const heading =
@@ -143,13 +154,17 @@ export default function EventsTimeline() {
   );
 }
 
-function EventCard({ event: e }: { event: PublicEvent }) {
+function EventCard({ event: e }: { event: CardEvent }) {
   // Past events are genuinely done → a muted filled dot. Upcoming events are
   // open, not "completed" → a hollow ring, so the rail never reads as a
   // finished stepper.
-  const isPast = e.startTime != null && e.startTime < nowSec();
+  const isPast = !isStillOn(e, nowSec());
+  const isCancelled = e.status === "canceled";
+  const scheduleChanged = !isCancelled && !isPast && e.scheduleChangedAt != null;
+  // A cancelled event has no page to open: the card itself says why.
+  const Wrapper = isCancelled ? "div" : Link;
   return (
-    <Link
+    <Wrapper
       href={`/events/${e.eventID}`}
       className="group relative -ml-[1.05rem] block"
     >
@@ -181,7 +196,11 @@ function EventCard({ event: e }: { event: PublicEvent }) {
               <h3 className="truncate text-base font-semibold text-gray-900">
                 {e.title?.trim() || "Untitled event"}
               </h3>
-              {e.mySignup && (
+              {isCancelled ? (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">
+                  <Ban className="h-3 w-3" /> Cancelled
+                </span>
+              ) : e.mySignup && (
                 <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
                   <Check className="h-3 w-3" /> Going
                 </span>
@@ -211,9 +230,22 @@ function EventCard({ event: e }: { event: PublicEvent }) {
                 {e.capacity != null ? `/${e.capacity} going` : " going"}
               </span>
             </div>
+            {isCancelled && (
+              <p className="mt-2 text-xs text-gray-600">
+                {e.cancelReason?.trim()
+                  ? `Cancelled by the organisers: ${e.cancelReason}`
+                  : "Cancelled by the organisers."}
+              </p>
+            )}
+            {scheduleChanged && (
+              <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-700">
+                <Clock className="h-3.5 w-3.5" /> The time or place has
+                changed since it was published. Check the details above.
+              </p>
+            )}
           </div>
         </div>
       </div>
-    </Link>
+    </Wrapper>
   );
 }

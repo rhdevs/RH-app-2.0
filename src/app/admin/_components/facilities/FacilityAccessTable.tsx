@@ -37,7 +37,8 @@ const ROLE_LABEL: Record<string, string> = {
   resident: "Residents only",
   jcrc: "JCRC only",
   cca_head: "CCA heads only",
-  scrc: "Hall Office",
+  scrc: "SCRC (RFs)",
+  hall_office: "Hall Office",
 };
 
 /**
@@ -278,6 +279,7 @@ export default function FacilityAccessTable() {
                       | "jcrc"
                       | "cca_head"
                       | "scrc"
+                      | "hall_office"
                     )[],
                   })
                 }

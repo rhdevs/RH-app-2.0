@@ -44,8 +44,11 @@ export const EXPORT_FORMAT_VERSION = 2;
 export const FLAT_FORMAT_VERSION = 1;
 export const SETTINGS_FORMAT_VERSION = 1;
 
-/** The JCRC bundle's own version, stamped on every row. Never reuse EXPORT_FORMAT_VERSION. */
-export const BUNDLE_FORMAT_VERSION = 1;
+/**
+ * The JCRC bundle's own version, stamped on every row. Never reuse
+ * EXPORT_FORMAT_VERSION. 2 added the `aux` column and section.
+ */
+export const BUNDLE_FORMAT_VERSION = 2;
 
 /**
  * A CCA's points type, set by JCRC on /admin/points. The bundle carries these

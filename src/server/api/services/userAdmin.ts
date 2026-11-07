@@ -1160,6 +1160,10 @@ export async function deleteUserAccountCascade(
       // NO `tx.order.deleteMany` HERE. The supper domain is left whole, on
       // purpose and as a unit — see the residue block below for the argument.
       deleted.gym = (await tx.gym.deleteMany({ where })).count;
+      // Their inbox: personal data keyed on the canonical id, theirs to lose.
+      deleted.notification = (
+        await tx.notification.deleteMany({ where })
+      ).count;
     }
 
     /* ---- (d) the User row, LAST and BY ObjectId ---------------------------

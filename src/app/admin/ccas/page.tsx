@@ -6,6 +6,7 @@ import CcaPicker, {
   type CcaOption,
 } from "~/app/admin/_components/bulk/CcaPicker";
 import { useCapabilities } from "~/app/admin/_components/AdminCapabilityContext";
+import { usePositionScope } from "~/app/admin/_components/PositionView";
 import RosterPanel from "~/app/_components/RosterPanel";
 import CcaHeadsManager from "./_components/CcaHeadsManager";
 import RecruitmentControlPanel from "./_components/RecruitmentControlPanel";
@@ -39,6 +40,7 @@ import RecruitmentControlPanel from "./_components/RecruitmentControlPanel";
 export default function AdminCcasPage() {
   const cap = useCapabilities();
   const [selected, setSelected] = useState<CcaOption | null>(null);
+  const scope = usePositionScope("ccas");
 
   return (
     <div className="space-y-6">
@@ -61,6 +63,7 @@ export default function AdminCcasPage() {
       <CcaPicker
         value={selected?.ccaID ?? null}
         onChange={(cca) => setSelected(cca)}
+        pinnedCcaIDs={scope.myCcaIDs}
       />
 
       {selected ? (

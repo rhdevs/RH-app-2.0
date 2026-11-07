@@ -1,5 +1,6 @@
 import type { CcaPointsConfig, Prisma, PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
+import { pointsYearStartedAt } from "~/lib/auxPoints";
 
 import {
   DEFAULT_RANGE,
@@ -300,7 +301,10 @@ export async function writeEntryOpen(
   now: Date,
   yearStartedAt?: Date,
 ): Promise<void> {
-  const stamp = yearStartedAt ? { yearStartedAt } : {};
+  // A new points year also moves the AUX year (lib/auxPoints).
+  const stamp = yearStartedAt
+    ? { yearStartedAt, pointsYear: pointsYearStartedAt(yearStartedAt) }
+    : {};
   await db.ccaPointsConfig.upsert({
     where: { scope: DEFAULT_SCOPE },
     create: {

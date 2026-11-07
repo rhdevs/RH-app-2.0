@@ -176,11 +176,24 @@ export async function nextEventId(db: PrismaClient): Promise<number> {
 /* -------------------------------------------------------------------------- */
 
 const LOCK_STALE_MS = 30_000;
-const LOCK_MAX_ATTEMPTS = 50;
-const LOCK_RETRY_MS = 100;
+/** How long a signup waits for its turn before giving up (well under the
+ *  serverless timeout). */
+const LOCK_WAIT_BUDGET_MS = 8_000;
+const LOCK_RETRY_BASE_MS = 25;
+const LOCK_RETRY_CAP_MS = 400;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Full-jitter backoff. A fixed 100 ms retry made every waiter wake in lockstep
+ * when a popular event opened, so most of them collided again and gave up
+ * after 50 tries with "busy". Spreading the retries lets the queue drain.
+ */
+export function lockRetryDelayMs(attempt: number, random = Math.random): number {
+  const ceiling = Math.min(LOCK_RETRY_CAP_MS, LOCK_RETRY_BASE_MS * 2 ** attempt);
+  return Math.floor(random() * ceiling) + 1;
 }
 
 /**
@@ -196,7 +209,8 @@ export async function withEventLock<T>(
   const key = `event:${eventID}`;
   let acquired = false;
 
-  for (let attempt = 0; attempt < LOCK_MAX_ATTEMPTS; attempt++) {
+  const deadline = Date.now() + LOCK_WAIT_BUDGET_MS;
+  for (let attempt = 0; Date.now() < deadline; attempt++) {
     try {
       await db.eventLock.create({ data: { key } });
       acquired = true;
@@ -206,15 +220,13 @@ export async function withEventLock<T>(
       await db.eventLock.deleteMany({
         where: { key, createdAt: { lt: new Date(Date.now() - LOCK_STALE_MS) } },
       });
-      await sleep(LOCK_RETRY_MS);
+      await sleep(lockRetryDelayMs(attempt));
     }
   }
 
   if (!acquired) {
-    throw new TRPCError({
-      code: "CONFLICT",
-      message: "This event is busy right now — please try again.",
-    });
+    // A code, not prose: the client words it (see errorCopy).
+    throw new TRPCError({ code: "CONFLICT", message: "EVENT_BUSY" });
   }
 
   try {
@@ -255,9 +267,26 @@ export async function withEventLock<T>(
  * QUESTIONS_FROZEN CAN NEVER SUCCEED ON A RETRY, so the UI must not map it to a
  * "try again" string — see T-35 and the copy in plan 02 §11.2.
  */
+/**
+ * May questions be edited at this status? Draft and changes_requested always.
+ * A PUBLISHED event too while review is off (`allowPublished`): the freeze at
+ * approval protected what a JCRC reviewer had approved, and with review off
+ * there is no reviewer. The zero-signups rule in assertQuestionsEditable still
+ * applies, so nobody's answers are invalidated.
+ */
+export function questionsEditableScope(
+  status: string | null,
+  allowPublished: boolean,
+): boolean {
+  const normal = normalizeStatus(status);
+  if (editScope(normal) === "all") return true;
+  return allowPublished && normal === "published";
+}
+
 export async function assertQuestionsEditable(
   db: PrismaClient,
   event: { eventID: number; status: string | null },
+  opts: { allowPublished: boolean } = { allowPublished: false },
 ): Promise<void> {
   // QUESTIONS ARE EDITABLE ONLY WHILE THE EVENT IS FULLY EDITABLE — scope
   // `"all"`, i.e. draft and changes_requested. NOT merely `!== "none"`.
@@ -276,7 +305,11 @@ export async function assertQuestionsEditable(
   // user ruled on 2026-08-27: freeze at approval. A head who spots a typo after
   // approval needs JCRC to send the event back, which is the same round trip
   // any other post-approval change already takes.
-  if (editScope(normalizeStatus(event.status)) !== "all") {
+  //
+  // With review OFF (the default) there is no reviewer to protect, so a
+  // published event's questions may change until the first signup — see
+  // questionsEditableScope. The signups check below then becomes live.
+  if (!questionsEditableScope(event.status, opts.allowPublished)) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "EVENT_LOCKED",

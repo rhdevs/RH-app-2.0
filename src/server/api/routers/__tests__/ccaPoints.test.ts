@@ -17,12 +17,19 @@ vi.mock("~/server/api/services/ccaDirectory", () => ({
   buildDirectoryEntries: vi.fn(),
 }));
 vi.mock("~/server/api/services/ccaRoster", () => ({ resolveRoster: vi.fn() }));
+vi.mock("~/server/api/services/auxPoints/totals", () => ({
+  auxTotals: vi.fn(async () => []),
+}));
+vi.mock("~/server/api/services/auxPoints/year", () => ({
+  readAuxYear: vi.fn(async () => "AY2026/27"),
+}));
 
 import { ccaPointsRouter } from "~/server/api/routers/ccaPoints";
 import { writeAudit } from "~/server/api/routers/admin";
 import { getUserRoles } from "~/server/api/services/access";
 import { buildDirectoryEntries } from "~/server/api/services/ccaDirectory";
 import { resolveRoster } from "~/server/api/services/ccaRoster";
+import { auxTotals } from "~/server/api/services/auxPoints/totals";
 import { pointsErrorCopy } from "~/app/admin/points/_components/errorCopy";
 import { DEFAULT_RANGE } from "~/lib/points/constants";
 import { createCallerFactory } from "~/server/api/trpc";
@@ -332,10 +339,45 @@ describe("ccaPoints.bundleExportData", () => {
     expect(entry).toMatchObject({
       action: "ccaPoints.bundle.export",
       actorUserID: USER,
-      reason: "3 CCA(s), 1 flat CCA(s), 2 member(s)",
+      reason: "3 CCA(s), 1 flat CCA(s), 2 member(s); 0 AUX rows",
     });
     expect(JSON.stringify(entry)).not.toContain("A9900001Z");
     expect(JSON.stringify(entry)).not.toContain("Test Member 1");
+    expect(result.aux).toEqual({ year: "AY2026/27", rows: [], noMatric: [] });
+  });
+
+  it("sends AUX totals by matric and names back anyone without one", async () => {
+    mockedRoles.mockResolvedValue(["jcrc"]);
+    vi.mocked(auxTotals).mockResolvedValueOnce([
+      {
+        userID: "E0000001",
+        name: "Test One",
+        matric: "A9900001Z",
+        fromEvents: 2,
+        fromAwards: 1,
+        total: 3,
+      },
+      {
+        userID: "E0000002",
+        name: "Test Two",
+        matric: null,
+        fromEvents: 1,
+        fromAwards: 0,
+        total: 1,
+      },
+    ]);
+    const db = bundleDb([], []);
+
+    const result = await caller(db, ["jcrc"]).bundleExportData();
+
+    expect(result.aux).toEqual({
+      year: "AY2026/27",
+      rows: [{ matric: "A9900001Z", name: "Test One", aux: 3 }],
+      noMatric: ["Test Two"],
+    });
+    expect(mockedAudit.mock.calls[0]?.[1]).toMatchObject({
+      reason: "0 CCA(s), 0 flat CCA(s), 0 member(s); 1 AUX rows",
+    });
   });
 
   it("reports a stored default row as effectiveDefault and a note-only waiver with null ranges", async () => {

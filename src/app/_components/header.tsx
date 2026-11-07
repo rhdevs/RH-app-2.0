@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { lazy, Suspense, useState, useEffect, useRef } from "react";
 import {
   Menu,
   X,
@@ -23,6 +23,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { signOut } from "next-auth/react";
 import { api } from "~/trpc/react";
+
+// Loaded on the client only: the bell's queries stay out of every page's
+// initial render, and a page that never signs in never fetches them.
+const NotificationBell = lazy(() => import("./NotificationBell"));
 
 interface HeaderProps {
   currentPage: string;
@@ -51,6 +55,13 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
       retry: false,
       staleTime: 60_000,
     }).data?.ready === true && transcriptEnabled;
+
+  // Draws nothing while notifications.enabled is off.
+  const bell = (
+    <Suspense fallback={null}>
+      <NotificationBell signedIn={Boolean(session)} />
+    </Suspense>
+  );
 
   /**
    * COSMETIC ONLY. The real gate is the server-side guard in
@@ -94,7 +105,8 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
    * cosmetic either way — /scrc/layout.tsx does the real check with a LIVE role
    * read, and every procedure behind it re-checks its own capability.
    */
-  const isScrc = roles.includes("scrc");
+  // Both staff roles (RFs and Hall Office) share the /scrc surface.
+  const isScrc = roles.includes("scrc") || roles.includes("hall_office");
 
   const navLinks = [
     { name: "Home", href: "/", icon: Home },
@@ -111,9 +123,7 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     { name: "CCAs", href: "/ccas", icon: LayoutGrid },
     { name: "Events", href: "/events", icon: CalendarDays },
     ...(isCcaHead ? [{ name: "Manage CCAs", href: "/cca", icon: Users }] : []),
-    ...(isScrc
-      ? [{ name: "Hall Office", href: "/scrc", icon: Landmark }]
-      : []),
+    ...(isScrc ? [{ name: "Staff", href: "/scrc", icon: Landmark }] : []),
     ...(canReachAdmin
       ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }]
       : []),
@@ -235,6 +245,7 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
           <div className="hidden items-center space-x-4 md:flex">
             {session ? (
               <div className="flex items-center space-x-3">
+                {bell}
                 <span className="text-sm text-emerald-100">
                   Welcome back, {session.user.name}!
                 </span>
@@ -347,12 +358,15 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
             )}
           </div>
 
-          <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="rounded-lg p-2 text-emerald-100 transition-colors duration-200 hover:bg-emerald-700 md:hidden"
-          >
-            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+          <div className="flex items-center space-x-1 md:hidden">
+            {bell}
+            <button
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="rounded-lg p-2 text-emerald-100 transition-colors duration-200 hover:bg-emerald-700"
+            >
+              {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
+          </div>
         </div>
 
         {isMobileMenuOpen && (

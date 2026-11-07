@@ -32,6 +32,8 @@ import {
   GRANTABLE_ROLES,
   JCRC_ROLE,
   SCRC_ROLE,
+  HALL_OFFICE_ROLE,
+  holdsStaffRole,
   assignableBy,
   asStoredCanonicalUserID,
   canonicalFromNusnetID,
@@ -259,10 +261,13 @@ export type JcrcCandidateResult =
 const TARGET_DISCRIMINATING = new Set<string>([
   "CANNOT_MODIFY_AN_ADMIN",
   "CANNOT_HOLD_JCRC_AND_SCRC",
+  // The same G8 oracle for the Hall Office half of the old `scrc` role.
+  "CANNOT_HOLD_JCRC_AND_HALL_OFFICE",
   "NOT_A_CANONICAL_USERID",
   "CANNOT_REMOVE_LAST_ADMIN",
   "USE_CCA_HEAD_ENDPOINT",
   "CANNOT_REVOKE_SCRC_FROM_OTHERS",
+  "CANNOT_REVOKE_HALL_OFFICE_FROM_OTHERS",
 ]);
 
 const listInput = z.object({
@@ -440,7 +445,12 @@ async function resolveCcaHeadTarget(
   const user = await db.user.findFirst({
     where: {
       OR: [
-        { email: { equals: `${key.toLowerCase()}@u.nus.edu`, mode: "insensitive" } },
+        {
+          email: {
+            equals: `${key.toLowerCase()}@u.nus.edu`,
+            mode: "insensitive",
+          },
+        },
         { userID: key },
       ],
     },
@@ -466,7 +476,6 @@ async function resolveCcaHeadTarget(
   }
   return canonical;
 }
-
 
 /**
  * Tier-ordered resolution, restricted to the two HIGH-CONFIDENCE tiers.
@@ -803,7 +812,7 @@ export async function assertCanMutateRoles(opts: {
   if (
     !actorIsAdmin &&
     !actorRoles.includes(JCRC_ROLE) &&
-    !actorRoles.includes(SCRC_ROLE)
+    !holdsStaffRole(actorRoles)
   ) {
     await deny("NOT_A_ROLE_MANAGER"); // G1
   }
@@ -1091,6 +1100,12 @@ export async function applyRoleChange(opts: {
       });
     }
     throw err;
+  }
+
+  // A fresh appointment starts a fresh term: a JcrcTerm left from an earlier
+  // handover would otherwise strip the new `jcrc` (see services/jcrcTerm.ts).
+  if (opts.added.includes(JCRC_ROLE)) {
+    await db.jcrcTerm.deleteMany({ where: { userID: targetUserID } });
   }
 
   await writeAudit(db, {
@@ -1479,35 +1494,39 @@ export const adminRouter = createTRPCRouter({
 
   getStats: roleManagerProcedure.query(async ({ ctx }) => {
     const c = caps(ctx.session.user.roles);
-    const [totalUsers, jcrc, ccaHead, scrc, admins] = await Promise.all([
-      ctx.db.user.count(),
-      ctx.db.userRole.count({
-        where: { OR: [{ roles: { has: JCRC_ROLE } }, { role: JCRC_ROLE }] },
-      }),
-      ctx.db.userRole.count({
-        where: {
-          OR: [{ roles: { has: CCA_HEAD_ROLE } }, { role: CCA_HEAD_ROLE }],
-        },
-      }),
-      // Hall office. A COUNT, visible to every manager, deliberately unlike
-      // `admins` below — the hall office is an appointed body whose size is
-      // ordinary operational information, not the `seeAdminIdentities` line.
-      // Counting it here is also the cheapest standing answer to "how many
-      // accounts can appoint the JCRC", which is the number worth watching.
-      // The legacy `role` scalar is included for symmetry only: `scrc` is
-      // absent from PRECEDENCE and so is never mirrored into it.
-      ctx.db.userRole.count({
-        where: { OR: [{ roles: { has: SCRC_ROLE } }, { role: SCRC_ROLE }] },
-      }),
-      ctx.db.userRole.count({
-        where: { OR: [{ roles: { has: ADMIN_ROLE } }, { role: ADMIN_ROLE }] },
-      }),
-    ]);
+    const [totalUsers, jcrc, ccaHead, scrc, hallOffice, admins] =
+      await Promise.all([
+        ctx.db.user.count(),
+        ctx.db.userRole.count({
+          where: { OR: [{ roles: { has: JCRC_ROLE } }, { role: JCRC_ROLE }] },
+        }),
+        ctx.db.userRole.count({
+          where: {
+            OR: [{ roles: { has: CCA_HEAD_ROLE } }, { role: CCA_HEAD_ROLE }],
+          },
+        }),
+        // Hall office. A COUNT, visible to every manager, deliberately unlike
+        // `admins` below — the hall office is an appointed body whose size is
+        // ordinary operational information, not the `seeAdminIdentities` line.
+        // Counting it here is also the cheapest standing answer to "how many
+        // accounts can appoint the JCRC", which is the number worth watching.
+        // The legacy `role` scalar is included for symmetry only: `scrc` is
+        // absent from PRECEDENCE and so is never mirrored into it.
+        ctx.db.userRole.count({
+          where: { OR: [{ roles: { has: SCRC_ROLE } }, { role: SCRC_ROLE }] },
+        }),
+        // Hall Office, split out of `scrc`. Never in PRECEDENCE either.
+        ctx.db.userRole.count({ where: { roles: { has: HALL_OFFICE_ROLE } } }),
+        ctx.db.userRole.count({
+          where: { OR: [{ roles: { has: ADMIN_ROLE } }, { role: ADMIN_ROLE }] },
+        }),
+      ]);
     return {
       totalUsers,
       jcrc,
       ccaHead,
       scrc,
+      hallOffice,
       admins: c.seeAdminIdentities ? admins : null,
     };
   }),
@@ -1804,7 +1823,9 @@ export const adminRouter = createTRPCRouter({
       // relative to what ELSE the caller can ask. Any new read added to this
       // surface must be checked against setJcrcRole's cause set, not just on its
       // own.
-      if (stored.includes(SCRC_ROLE)) {
+      // Both staff roles answer the same way, under the same audit string, so
+      // the split does not turn this into an oracle for which one they hold.
+      if (holdsStaffRole(stored)) {
         await record("TARGET_HOLDS_SCRC", candidateID);
         return { status: "NOT_AVAILABLE" };
       }
@@ -2013,7 +2034,7 @@ export const adminRouter = createTRPCRouter({
       // G8's question, likewise. Without this the exclusion invariant would
       // itself become an oracle for "who holds scrc" — which open question 3
       // decided this role must NOT be able to enumerate.
-      if (storedAll.includes(SCRC_ROLE)) {
+      if (holdsStaffRole(storedAll)) {
         throw await unavailable("TARGET_HOLDS_SCRC");
       }
 
@@ -2088,7 +2109,10 @@ export const adminRouter = createTRPCRouter({
         // The guards have ALREADY written their own audit row before throwing
         // (assertCanMutateRoles' deny() is audited outside any transaction,
         // I-15), so the real reason is on the record without writing a second.
-        if (err instanceof TRPCError && TARGET_DISCRIMINATING.has(err.message)) {
+        if (
+          err instanceof TRPCError &&
+          TARGET_DISCRIMINATING.has(err.message)
+        ) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "SCRC_TARGET_UNAVAILABLE",
@@ -2302,12 +2326,7 @@ export const adminRouter = createTRPCRouter({
         actorRoles,
         input.fromUserID,
       );
-      await assertMayManageCcaHeadOf(
-        ctx.db,
-        actorUserID,
-        actorRoles,
-        toUserID,
-      );
+      await assertMayManageCcaHeadOf(ctx.db, actorUserID, actorRoles, toUserID);
 
       const [beforeFrom, beforeTo] = await Promise.all([
         getUserRoles(ctx.db, input.fromUserID),
@@ -2340,12 +2359,7 @@ export const adminRouter = createTRPCRouter({
             remainingFrom > 0,
             actorUserID,
           ),
-          afterTo: await writeCcaHeadString(
-            tx,
-            toUserID,
-            true,
-            actorUserID,
-          ),
+          afterTo: await writeCcaHeadString(tx, toUserID, true, actorUserID),
         };
       });
 
@@ -2814,7 +2828,10 @@ export const adminRouter = createTRPCRouter({
     // make the one account this phase exists for the one account nobody can
     // debug.
     .input(
-      z.object({ userID: roleTargetUserIDSchema, facilityID: z.number().int() }),
+      z.object({
+        userID: roleTargetUserIDSchema,
+        facilityID: z.number().int(),
+      }),
     )
     .query(async ({ ctx, input }) => {
       const [decision, requiredRoles, roles] = await Promise.all([
