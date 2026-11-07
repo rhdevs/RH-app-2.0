@@ -1548,8 +1548,18 @@ export const eventRouter = createTRPCRouter({
         action: "event.cancel",
         reason: [event.title, reason].filter(Boolean).join("; ") || undefined,
       });
-      if (status === "published")
-        await noticeEventCanceled(ctx.db, event, reason);
+      // The read above can be stale: a review that published the row between
+      // the read and the write leaves publishedAt stamped, and the signed-up
+      // residents must still be told. Decide from the row as the write left it.
+      const wasPublished =
+        status === "published" ||
+        (
+          await ctx.db.event.findUnique({
+            where: { eventID: input.eventID },
+            select: { publishedAt: true },
+          })
+        )?.publishedAt != null;
+      if (wasPublished) await noticeEventCanceled(ctx.db, event, reason);
       return { status: "canceled" as const };
     }),
 
