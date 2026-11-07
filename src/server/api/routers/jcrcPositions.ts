@@ -2,13 +2,19 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import type { PrismaClient } from "@prisma/client";
 
-import { createTRPCRouter, roleManagerProcedure } from "~/server/api/trpc";
+import {
+  createTRPCRouter,
+  positionHolderProcedure,
+  roleManagerProcedure,
+} from "~/server/api/trpc";
 import { getUserRoles } from "~/server/api/services/access";
 import {
   ADMIN_ROLE,
+  holdsStaffRole,
   JCRC_ROLE,
   userIDSchema,
 } from "~/server/api/services/roles";
+import { assertScrcEnabled } from "~/server/api/services/scrcFlag";
 import {
   activeHolderWhere,
   myPositionCcas,
@@ -25,6 +31,7 @@ import {
   listPositions,
   removePositionHolder,
   replacePositionCcas,
+  staffOrAdmin,
   updatePosition,
 } from "~/server/api/services/jcrcPositionEdits";
 import {
@@ -61,6 +68,10 @@ import {
  * so a flag change and a holder or CCA change that overlap cannot both commit:
  * the loser gets CONFLICT CONFIRMATION_STALE and the person tries again.
  *
+ * HOLDERS are also set by staff (RFs and Hall Office), from the Staff page:
+ * only a row staff or an admin assigned can be handed over, which is what stops
+ * the handover from minting `jcrc` (services/jcrcHandover.ts).
+ *
  * Every procedure re-reads roles LIVE (I-5): roleManagerProcedure admits on the
  * session, and a member whose term ended a minute ago must not keep editing.
  */
@@ -77,6 +88,20 @@ async function assertManager(db: PrismaClient, userID: string) {
   if (!roles.includes(ADMIN_ROLE) && !roles.includes(JCRC_ROLE)) {
     throw new TRPCError({ code: "FORBIDDEN", message: "NOT_JCRC" });
   }
+  return roles;
+}
+
+/**
+ * May see and set holders: admin, jcrc, or staff. Staff also need the
+ * `scrc.enabled` switch, like every other Staff-page tool.
+ */
+async function assertHolderManager(db: PrismaClient, userID: string) {
+  const roles = await getUserRoles(db, userID);
+  if (roles.includes(ADMIN_ROLE) || roles.includes(JCRC_ROLE)) return roles;
+  if (!holdsStaffRole(roles)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "NOT_JCRC" });
+  }
+  await assertScrcEnabled(db);
   return roles;
 }
 
@@ -109,8 +134,8 @@ const stepOutSchema = z.coerce
 
 export const jcrcPositionsRouter = createTRPCRouter({
   /** Every position with its CCAs, current holders and, if flagged, whether it is vacant. */
-  list: roleManagerProcedure.query(async ({ ctx }) => {
-    await assertManager(ctx.db, ctx.session.user.userID);
+  list: positionHolderProcedure.query(async ({ ctx }) => {
+    await assertHolderManager(ctx.db, ctx.session.user.userID);
     const now = new Date();
     await sweepEndedJcrcTerms(ctx.db, now);
     return listPositions(ctx.db, { flaggedOnly: false, now });
@@ -131,29 +156,44 @@ export const jcrcPositionsRouter = createTRPCRouter({
       }),
       ctx.db.jcrcTerm.findUnique({ where: { userID } }),
     ]);
-    const positions = await ctx.db.jcrcPosition.findMany({
-      where: { id: { in: held.map((h) => h.positionID) } },
-      select: {
-        id: true,
-        name: true,
-        vetsProposals: true,
-        handlesDisposables: true,
-      },
-    });
+    const [positions, staffAssigners] = await Promise.all([
+      ctx.db.jcrcPosition.findMany({
+        where: { id: { in: held.map((h) => h.positionID) } },
+        select: {
+          id: true,
+          name: true,
+          vetsProposals: true,
+          handlesDisposables: true,
+        },
+      }),
+      staffOrAdmin(
+        ctx.db,
+        held.map((h) => h.assignedBy),
+      ),
+    ]);
     return {
       scope,
-      positions: positions.map((p) => ({
-        id: p.id,
-        name: p.name,
-        endsAt: held.find((h) => h.positionID === p.id)?.endsAt ?? null,
-      })),
+      positions: positions.map((p) => {
+        const row = held.find((h) => h.positionID === p.id);
+        return {
+          id: p.id,
+          name: p.name,
+          endsAt: row?.endsAt ?? null,
+          // A hint for the page only; handOver re-checks all of this.
+          canHandOver:
+            row != null &&
+            row.handedOverAt == null &&
+            row.assignedBy !== userID &&
+            staffAssigners.has(row.assignedBy),
+        };
+      }),
       termEndsAt: term?.endsAt ?? null,
     };
   }),
 
   /** Current JCRC members: the people a position can be given to. */
-  jcrcMembers: roleManagerProcedure.query(async ({ ctx }) => {
-    await assertManager(ctx.db, ctx.session.user.userID);
+  jcrcMembers: positionHolderProcedure.query(async ({ ctx }) => {
+    await assertHolderManager(ctx.db, ctx.session.user.userID);
     const rows = await ctx.db.userRole.findMany({
       where: { OR: [{ roles: { has: JCRC_ROLE } }, { role: JCRC_ROLE }] },
       select: { userID: true },
@@ -351,11 +391,11 @@ export const jcrcPositionsRouter = createTRPCRouter({
    * themselves to a flagged position (an admin may to an unflagged one). The
    * rules live in services/jcrcPositionEdits.ts, shared with the staff panel.
    */
-  addHolder: roleManagerProcedure
+  addHolder: positionHolderProcedure
     .input(z.object({ id: objectIDSchema, userID: userIDSchema }))
     .mutation(async ({ ctx, input }) => {
       const actor = ctx.session.user.userID;
-      const actorRoles = await assertManager(ctx.db, actor);
+      const actorRoles = await assertHolderManager(ctx.db, actor);
       return addPositionHolder(
         ctx.db,
         { actor, actorRoles, flaggedOnly: false },
@@ -364,11 +404,11 @@ export const jcrcPositionsRouter = createTRPCRouter({
     }),
 
   /** Removes a holder from a position. Their `jcrc` role is untouched. */
-  removeHolder: roleManagerProcedure
+  removeHolder: positionHolderProcedure
     .input(z.object({ id: objectIDSchema, userID: userIDSchema }))
     .mutation(async ({ ctx, input }) => {
       const actor = ctx.session.user.userID;
-      const actorRoles = await assertManager(ctx.db, actor);
+      const actorRoles = await assertHolderManager(ctx.db, actor);
       return removePositionHolder(
         ctx.db,
         { actor, actorRoles, flaggedOnly: false },
@@ -393,7 +433,11 @@ export const jcrcPositionsRouter = createTRPCRouter({
       });
     }),
 
-  /** Move (a date) or cancel (null) the caller's own pending step-out. */
+  /**
+   * Bring the caller's own pending step-out forward (never later). `null`
+   * stays in the input so the service can refuse a cancel by name; a date
+   * parser would read it as the start of 1970, which is "step out now".
+   */
   setStepOut: roleManagerProcedure
     .input(z.object({ stepOutAt: stepOutSchema.nullable() }))
     .mutation(async ({ ctx, input }) => {

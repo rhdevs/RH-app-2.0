@@ -25,6 +25,8 @@ function mapDoorError(e: { message?: string } | null | undefined): string {
     return "Events are switched off right now.";
   if (m === "NOT_A_SCANNER")
     return "You're not on this event's door list. The head who created the event can add you.";
+  if (m === "QR_ONLY")
+    return "Volunteers check people in by scanning their code. Ask a hall events organiser to tick someone off by hand.";
   if (m === "NOT_PUBLISHED")
     return "This event isn't live, so there's nobody to check in yet.";
   if (m === "DOOR_NOT_OPEN")
@@ -81,7 +83,7 @@ export default function DoorScanner({ eventID }: { eventID: number }) {
   );
   const roster = api.event.getDoorRoster.useQuery(
     { eventID },
-    { retry: false, enabled: status.data?.mayScan === true },
+    { retry: false, enabled: status.data?.mayCheckInByHand === true },
   );
 
   const [camera, setCamera] = useState<CameraState>({ kind: "idle" });
@@ -438,84 +440,89 @@ export default function DoorScanner({ eventID }: { eventID: number }) {
               ? "On the signup list."
               : "Not on the list — walk-in, recorded."}
           </p>
-          <button
-            type="button"
-            onClick={() =>
-              undo.mutate({
-                eventID,
-                userID: lastResult.userID,
-                reason: "Undone at the door",
-              })
-            }
-            disabled={undo.isPending}
-            className="mt-2 text-xs text-gray-600 underline disabled:opacity-50"
-          >
-            {undo.isPending ? "Undoing…" : "Undo this"}
-          </button>
+          {s.mayCheckInByHand && (
+            <button
+              type="button"
+              onClick={() =>
+                undo.mutate({
+                  eventID,
+                  userID: lastResult.userID,
+                  reason: "Undone at the door",
+                })
+              }
+              disabled={undo.isPending}
+              className="mt-2 text-xs text-gray-600 underline disabled:opacity-50"
+            >
+              {undo.isPending ? "Undoing…" : "Undo this"}
+            </button>
+          )}
         </div>
       )}
 
       {/* ----------------------------------------------------- manual list */}
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <h2 className="text-base font-semibold text-gray-900">
-          Or find them on the list
-        </h2>
-        <p className="mt-1 text-xs text-gray-500">
-          Works without a camera. Search by name, or the last four of a matric.
-        </p>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Name or ••••567X"
-          className="mt-3 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-        />
-
-        {roster.isPending && (
-          <p className="mt-3 text-sm text-gray-500">Loading the list…</p>
-        )}
-        {roster.error && (
-          <p className="mt-3 text-sm text-red-700">{mapDoorError(roster.error)}</p>
-        )}
-
-        <ul className="mt-3 divide-y divide-gray-100">
-          {filtered.map((r) => (
-            <li
-              key={r.userID}
-              className="flex items-center justify-between gap-3 py-2"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm text-gray-900">
-                  {r.displayName ?? r.userID}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {r.block !== null ? `Block ${r.block}` : "—"}
-                  {r.matricSuffix ? ` · ••••${r.matricSuffix}` : ""}
-                </p>
-              </div>
-              {r.checkedIn ? (
-                <span className="shrink-0 text-xs text-green-700">In</span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => manual.mutate({ eventID, userID: r.userID })}
-                  disabled={manual.isPending || !s.open}
-                  className="shrink-0 rounded-md border border-gray-300 px-3 py-1.5 text-xs disabled:opacity-50"
-                >
-                  Check in
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-
-        {roster.data && filtered.length === 0 && (
-          <p className="mt-3 text-sm text-gray-500">
-            {query.trim()
-              ? "Nobody on the list matches that. If they didn't sign up, scan their code instead — walk-ins are fine."
-              : "Nobody has signed up for this event."}
+      {/* Not for hall-event volunteers: QR only (assertMayCheckInByHand). */}
+      {s.mayCheckInByHand && (
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+          <h2 className="text-base font-semibold text-gray-900">
+            Or find them on the list
+          </h2>
+          <p className="mt-1 text-xs text-gray-500">
+            Works without a camera. Search by name, or the last four of a matric.
           </p>
-        )}
-      </div>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Name or ••••567X"
+            className="mt-3 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+          />
+
+          {roster.isPending && (
+            <p className="mt-3 text-sm text-gray-500">Loading the list…</p>
+          )}
+          {roster.error && (
+            <p className="mt-3 text-sm text-red-700">{mapDoorError(roster.error)}</p>
+          )}
+
+          <ul className="mt-3 divide-y divide-gray-100">
+            {filtered.map((r) => (
+              <li
+                key={r.userID}
+                className="flex items-center justify-between gap-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-gray-900">
+                    {r.displayName ?? r.userID}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {r.block !== null ? `Block ${r.block}` : "—"}
+                    {r.matricSuffix ? ` · ••••${r.matricSuffix}` : ""}
+                  </p>
+                </div>
+                {r.checkedIn ? (
+                  <span className="shrink-0 text-xs text-green-700">In</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => manual.mutate({ eventID, userID: r.userID })}
+                    disabled={manual.isPending || !s.open}
+                    className="shrink-0 rounded-md border border-gray-300 px-3 py-1.5 text-xs disabled:opacity-50"
+                  >
+                    Check in
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          {roster.data && filtered.length === 0 && (
+            <p className="mt-3 text-sm text-gray-500">
+              {query.trim()
+                ? "Nobody on the list matches that. If they didn't sign up, scan their code instead — walk-ins are fine."
+                : "Nobody has signed up for this event."}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

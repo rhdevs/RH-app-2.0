@@ -2,7 +2,9 @@ import type { PrismaClient } from "@prisma/client";
 import { dropEndedJcrcRole } from "./jcrcTerm";
 import {
   ADMIN_ROLE,
+  HALL_OFFICE_ROLE,
   JCRC_ROLE,
+  SCRC_ROLE,
   DEFAULT_ROLE,
   BASELINE_ROLE,
   ensureBaseline,
@@ -295,7 +297,20 @@ export function canBookWithRoles(
 ): boolean {
   if (userRoles.includes(ADMIN_ROLE)) return true; // implicit bypass, never stored
   const req = requiredRoles.length ? requiredRoles : DEFAULT_REQUIRED_ROLES;
-  return req.some((r) => userRoles.includes(r));
+  const roles = withStaffEquivalents(userRoles);
+  return req.some((r) => roles.includes(r));
+}
+
+/**
+ * `hall_office` books whatever `scrc` books. Hall-office accounts used to hold
+ * `scrc`, and every stored FacilityAccess requirement still names `scrc`, so
+ * without this a re-roled account loses rooms it booked the day before. One
+ * direction only: an RF does not gain a room that names `hall_office`.
+ */
+function withStaffEquivalents(userRoles: readonly string[]): readonly string[] {
+  return userRoles.includes(HALL_OFFICE_ROLE) && !userRoles.includes(SCRC_ROLE)
+    ? [...userRoles, SCRC_ROLE]
+    : userRoles;
 }
 
 /**
@@ -317,7 +332,8 @@ function canBookLegacy(
 ): boolean {
   if (rawRequiredRoles.length === 0) return true; // pre-D-1 open-to-all
   if (userRoles.includes(ADMIN_ROLE)) return true;
-  return rawRequiredRoles.some((r) => userRoles.includes(r));
+  const roles = withStaffEquivalents(userRoles);
+  return rawRequiredRoles.some((r) => roles.includes(r));
 }
 
 /** Raw (un-defaulted) requirement, for the legacy path and the bulk map. */
