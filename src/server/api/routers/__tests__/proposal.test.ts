@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The router module pulls in NextAuth and Prisma through trpc.ts; neither is
 // needed to exercise the checks, so both are replaced.
@@ -6,9 +6,15 @@ vi.mock("~/server/auth", () => ({ auth: vi.fn() }));
 vi.mock("~/server/db", () => ({ db: {} }));
 
 import { proposalRouter } from "~/server/api/routers/proposal";
+import { resetProposalsFlagCache } from "~/server/api/services/proposals/flag";
 import { createCallerFactory } from "~/server/api/trpc";
 
 const createCaller = createCallerFactory(proposalRouter);
+
+// The flag read is cached per lambda: every test starts with it empty.
+beforeEach(() => {
+  resetProposalsFlagCache();
+});
 
 const ME = "E1000001";
 const ID = "0123456789abcdef01234567";

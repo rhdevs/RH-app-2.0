@@ -1,7 +1,8 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
 import { PROPOSAL_STATUSES, type ProposalStatus } from "~/lib/proposals/status";
+import { QUEUE_CURSOR } from "~/lib/schemas/proposal";
 import { NOT_DIRECTOR } from "~/server/api/services/directorGuard";
 import { directedCcasOrRefuse } from "./access";
 import { isProposalsEnabled } from "./flag";
@@ -52,9 +53,44 @@ export type QueueItem = {
 
 export type DirectorQueue = {
   items: QueueItem[];
-  /** The id the next page starts at, or null at the end. */
+  /**
+   * Where the next page starts: the position (submission time, id) of this
+   * page's last row, or null at the end. A position, not a row to find again,
+   * so approving or returning that row before "Show more" loses nothing.
+   */
   nextCursor: string | null;
 };
+
+const BAD_CURSOR = "BAD_QUEUE_CURSOR";
+
+/** The filter for every row after a cursor, in (submittedAt, id) order. */
+function afterCursor(cursor: string): Prisma.ProposalWhereInput {
+  const match = QUEUE_CURSOR.exec(cursor);
+  if (!match) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: BAD_CURSOR });
+  }
+  const [, at, id] = match as unknown as [string, string, string];
+  if (at === "none") {
+    // Rows without a submission time sort first, so everything with one follows.
+    return {
+      OR: [
+        { submittedAt: null, id: { gt: id } },
+        { submittedAt: { not: null } },
+      ],
+    };
+  }
+  const time = new Date(Number(at));
+  if (Number.isNaN(time.getTime())) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: BAD_CURSOR });
+  }
+  return {
+    OR: [{ submittedAt: { gt: time } }, { submittedAt: time, id: { gt: id } }],
+  };
+}
+
+function cursorOf(row: { id: string; submittedAt: Date | null }): string {
+  return `${row.submittedAt ? row.submittedAt.getTime() : "none"}_${row.id}`;
+}
 
 /** The caller's CCAs, or a refusal: nobody who directs none gets past here. */
 async function mustDirectSome(
@@ -123,10 +159,13 @@ export async function getDirectorQueue(
   const ccaIDs = await mustDirectSome(db, userID);
   const [rows, ccaRows] = await Promise.all([
     db.proposal.findMany({
-      where: { ccaID: { in: ccaIDs }, status: "in_review" },
+      where: {
+        ccaID: { in: ccaIDs },
+        status: "in_review",
+        ...(cursor !== undefined && afterCursor(cursor)),
+      },
       orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
       take: QUEUE_PAGE + 1,
-      ...(cursor !== undefined && { cursor: { id: cursor } }),
       select: {
         id: true,
         ccaID: true,
@@ -164,7 +203,9 @@ export async function getDirectorQueue(
       unread: unread.get(r.id) ?? 0,
     })),
     nextCursor:
-      rows.length > QUEUE_PAGE ? (rows[QUEUE_PAGE]?.id ?? null) : null,
+      rows.length > QUEUE_PAGE && page.length > 0
+        ? cursorOf(page[page.length - 1]!)
+        : null,
   };
 }
 
