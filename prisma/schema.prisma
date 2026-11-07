@@ -1836,6 +1836,91 @@ model DisposableRequest {
 }
 
 // ---------------------------------------------------------------------------
+// EQUIPMENT LOANS FOR EVENTS (socporthub merge, PR 14b, F23). The Social
+// director keeps a list of hall equipment; an event's leaders ask to borrow some
+// of it for a window; the director approves, rejects or cancels. NEW models
+// only: no existing model is touched. Behind `equipment.enabled` (default off).
+// Not year-based: deliberately NO `academicYear` field. Indexes: run `prisma
+// generate` only, NEVER `db push` (on this cluster a push drops indexes the
+// schema cannot express, such as User.email_unique_ci); then run
+// scripts/remediation/create-equipment-indexes.mjs (dry run by default,
+// --commit to apply) before switching `equipment.enabled` on.
+// ---------------------------------------------------------------------------
+
+/// One line of a loan: an item and how many of it.
+type EquipmentLine {
+  /// The EquipmentItem's id (24-character hex). Not a foreign key.
+  itemID   String
+  quantity Int
+}
+
+model EquipmentItem {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  /// A free-text note ("two of the six have broken legs"). Empty, never absent.
+  note      String   @default("")
+  /// How many the hall owns. Never negative.
+  quantity  Int
+  /// A retired item cannot be put on a new loan or approved. Never deleted once
+  /// any loan names it. Always written explicitly (a missing key never matches
+  /// a false filter on MongoDB).
+  retired   Boolean  @default(false)
+  /// Bumped by every approval that names the item and by every edit. The stock
+  /// check is only safe because concurrent approvals of loans that share an
+  /// item both write this row, so MongoDB makes one of them retry (P2034).
+  version   Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EquipmentLoan {
+  id              String          @id @default(auto()) @map("_id") @db.ObjectId
+  /// The Event this is for (Event.eventID). Not a foreign key.
+  eventID         Int
+  /// The CCA, copied from the event when the loan was filed, never from the
+  /// form. NULL means HALL-WIDE (the same meaning as Event.ccaID). Always
+  /// written explicitly, even when null.
+  ccaID           Int?
+  /// The requester's canonical id, or null once their account is deleted
+  /// (userAdmin.ts). Always written explicitly.
+  requestedBy     String?
+  lines           EquipmentLine[]
+  /// The borrow window, epoch seconds like Event.startTime. returnAt > collectAt.
+  collectAt       Int
+  returnAt        Int
+  /// "requested" | "approved" | "rejected" | "collected" | "returned" |
+  /// "canceled". WRITTEN ONLY by services/equipment/transition.ts, apart from
+  /// this default at creation; a source scan keeps it so.
+  status          String          @default("requested")
+  decidedBy       String?
+  decidedAt       DateTime?
+  /// Why it was rejected (required on a rejection) or canceled by the director.
+  reason          String?
+  collectedAt     DateTime?
+  returnedAt      DateTime?
+  returnedBy      String?
+  /// The optional return photo's PATHNAME in the private store
+  /// (equipment-return/<loan id>/...), never an address, plus its checked type
+  /// and size. All three are null together.
+  returnPhoto     String?
+  returnPhotoType String?
+  returnPhotoSize Int?
+  /// An optional note from the director, shown to the event's leaders.
+  directorNote    String?
+  /// A director cancel is kept apart from the approval it may follow.
+  canceledBy      String?
+  canceledAt      DateTime?
+  cancelReason    String?
+  /// Bumped on every change; every write is a compare-and-set on it.
+  version         Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([eventID], map: "equipment_loan_event")
+  @@index([status, collectAt], map: "equipment_loan_status_collect")
+}
+
+// ---------------------------------------------------------------------------
 // DEADLINE BROADCASTS (socporthub merge, PR 14, F22). A director sends a
 // message with a deadline to chosen CCAs; each CCA's heads mark it done. Not
 // year-based: deliberately NO `academicYear` field. Who gets told is NOT

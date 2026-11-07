@@ -1282,6 +1282,35 @@ export async function deleteUserAccountCascade(
           data: { assessedBy: null },
         })
       ).count;
+      // EQUIPMENT LOANS belong to the event's CCA and the Social director's
+      // board, so the rows stay and only the four references to this person are
+      // cleared (explicit nulls, as above). Whoever registers under the same
+      // canonical id later is not tied to old loans, so gets none of their
+      // notices. A decision keeps its date, reason and note.
+      deleted.equipmentRequesterCleared = (
+        await tx.equipmentLoan.updateMany({
+          where: { requestedBy: cid },
+          data: { requestedBy: null },
+        })
+      ).count;
+      deleted.equipmentDeciderCleared = (
+        await tx.equipmentLoan.updateMany({
+          where: { decidedBy: cid },
+          data: { decidedBy: null },
+        })
+      ).count;
+      deleted.equipmentReturnerCleared = (
+        await tx.equipmentLoan.updateMany({
+          where: { returnedBy: cid },
+          data: { returnedBy: null },
+        })
+      ).count;
+      deleted.equipmentCancellerCleared = (
+        await tx.equipmentLoan.updateMany({
+          where: { canceledBy: cid },
+          data: { canceledBy: null },
+        })
+      ).count;
     }
 
     /* ---- (d) the User row, LAST and BY ObjectId ---------------------------

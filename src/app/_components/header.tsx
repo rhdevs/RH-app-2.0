@@ -13,6 +13,7 @@ import {
   ClipboardList,
   ClipboardCheck,
   Package,
+  Boxes,
   Bell,
   FileText,
   LogOut,
@@ -28,6 +29,7 @@ import { signOut } from "next-auth/react";
 import { api } from "~/trpc/react";
 import { DIRECTOR_HOME_HREF } from "~/lib/proposals/links";
 import { DISPOSABLES_HREF } from "~/lib/disposables/links";
+import { EQUIPMENT_HREF } from "~/lib/equipment/links";
 import { REMINDERS_HREF } from "~/lib/reminders/links";
 
 // Loaded on the client only: the bell's queries stay out of every page's
@@ -70,6 +72,14 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
   // switch is on and this person can read requests (a head of a CCA, or JCRC).
   const showDisposables =
     api.disposable.entry.useQuery(undefined, {
+      enabled: Boolean(session),
+      retry: false,
+      staleTime: 60_000,
+    }).data?.show === true;
+  // The Equipment entry: the same rule. Drawn only when the SERVER says the
+  // switch is on and this person can read the loan board.
+  const showEquipment =
+    api.equipment.entry.useQuery(undefined, {
       enabled: Boolean(session),
       retry: false,
       staleTime: 60_000,
@@ -173,6 +183,9 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
       : []),
     ...(showDisposables
       ? [{ name: "Disposables", href: DISPOSABLES_HREF, icon: Package }]
+      : []),
+    ...(showEquipment
+      ? [{ name: "Equipment", href: EQUIPMENT_HREF, icon: Boxes }]
       : []),
     ...(isScrc ? [{ name: "Staff", href: "/scrc", icon: Landmark }] : []),
     ...(canReachAdmin

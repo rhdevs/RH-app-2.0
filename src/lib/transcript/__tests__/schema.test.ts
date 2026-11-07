@@ -532,6 +532,8 @@ describe("schema: guarded collections are untouched", () => {
       "ProposalCommentRead",
       "CalendarFeedToken",
       "DisposableRequest",
+      "EquipmentItem",
+      "EquipmentLoan",
       "ReminderBroadcast",
       "ReminderTarget",
       "MilestoneEvidence",
