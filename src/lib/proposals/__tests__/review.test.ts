@@ -97,10 +97,25 @@ describe("the review inputs", () => {
     expect(parsed).toEqual({ id: ID, version: 2 });
   });
 
-  it("the queue cursor is an id or nothing", () => {
+  it("the queue cursor is a position (time and id) or nothing", () => {
     expect(proposalQueueInput.parse({})).toEqual({});
     expect(proposalQueueInput.safeParse({ cursor: "x" }).success).toBe(false);
-    expect(proposalQueueInput.parse({ cursor: ID }).cursor).toBe(ID);
+    // A bare id was the old cursor; it is no longer one.
+    expect(proposalQueueInput.safeParse({ cursor: ID }).success).toBe(false);
+    for (const cursor of [`1700000000000_${ID}`, `none_${ID}`]) {
+      expect(proposalQueueInput.parse({ cursor }).cursor).toBe(cursor);
+    }
+    for (const cursor of [
+      `-1_${ID}`,
+      `1700000000000_${ID}0`,
+      `1700000000000_zzzzzzzzzzzzzzzzzzzzzzzz`,
+      `12345678901234567_${ID}`,
+      `1700000000000${ID}`,
+    ]) {
+      expect(proposalQueueInput.safeParse({ cursor }).success, cursor).toBe(
+        false,
+      );
+    }
   });
 });
 

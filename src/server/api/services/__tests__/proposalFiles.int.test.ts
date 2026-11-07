@@ -11,6 +11,7 @@ import {
 } from "vitest";
 import type * as VercelBlob from "@vercel/blob";
 import { isLocalDevDatabase } from "../transcript/__tests__/localDbGate";
+import { resetProposalsFlagCache } from "../proposals/flag";
 
 // Every Blob call is replaced: no real store, no real token.
 const blob = vi.hoisted(() => ({ del: vi.fn() }));
@@ -90,6 +91,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           update: { value },
         });
       }
+      // The flag is cached per lambda for a few seconds; a test that flips it
+      // expects the next call to see the new value.
+      resetProposalsFlagCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {

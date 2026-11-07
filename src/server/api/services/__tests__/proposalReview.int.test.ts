@@ -11,6 +11,7 @@ import {
   vi,
 } from "vitest";
 import { isLocalDevDatabase } from "../transcript/__tests__/localDbGate";
+import { resetProposalsFlagCache } from "../proposals/flag";
 
 /**
  * INTEGRATION TESTS of the director's review (approve, return, finish), the
@@ -103,6 +104,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           update: { value },
         });
       }
+      // The flag is cached per lambda for a few seconds; a test that flips it
+      // expects the next call to see the new value.
+      resetProposalsFlagCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -1451,17 +1455,66 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           })),
         });
         const first = await as(U.dirB).directorQueue({});
-        expect(first.nextCursor).toBe(b1.id);
-        // The row the cursor points at is approved before "Show more".
-        await as(U.dirB).approve(b1);
+        // The cursor is the position of the page's LAST row, not a row of the
+        // next page to be found again.
+        expect(first.nextCursor).toMatch(/^[0-9]+_[a-f0-9]{24}$/);
+        expect(first.nextCursor).not.toBe(b1.id);
+        const lastShown = first.items[first.items.length - 1]!;
+        expect(first.nextCursor!.endsWith(`_${lastShown.id}`)).toBe(true);
+        // The row the cursor stands on leaves review before "Show more".
+        await db.proposal.update({
+          where: { id: lastShown.id },
+          data: { status: "approved" },
+        });
         const second = await as(U.dirB).directorQueue({
           cursor: first.nextCursor!,
         });
-        expect(second.items.map((i) => i.id)).not.toContain(b1.id);
-        // No row of the first page comes back, and nothing is an error.
+        // The page after it is still there, whole, and nothing repeats.
+        expect(second.items.map((i) => i.id)).toEqual([b1.id]);
         const seen = new Set(first.items.map((i) => i.id));
         for (const i of second.items) expect(seen.has(i.id)).toBe(false);
         expect(second.nextCursor).toBeNull();
+      });
+
+      it("pages rows that share one submission time without a repeat or a gap", async () => {
+        const same = new Date(Date.now() - 10 * HOUR);
+        await db.proposal.createMany({
+          data: Array.from({ length: 53 }, (_, i) => ({
+            ccaID: CCA_B,
+            createdBy: U.headB,
+            category: "pubs",
+            title: `Tie ${i}`,
+            description: "x",
+            blastMessage: null,
+            plannedStart: null,
+            plannedEnd: null,
+            posterUrl: null,
+            docLink: null,
+            status: "in_review",
+            version: 1,
+            eventID: null,
+            submittedAt: same,
+          })),
+        });
+        const first = await as(U.dirB).directorQueue({});
+        expect(first.items).toHaveLength(50);
+        const second = await as(U.dirB).directorQueue({
+          cursor: first.nextCursor!,
+        });
+        expect(second.items).toHaveLength(3);
+        expect(second.nextCursor).toBeNull();
+        const all = [...first.items, ...second.items].map((i) => i.id);
+        expect(new Set(all).size).toBe(53);
+        const ids = [...all];
+        expect(ids).toEqual([...ids].sort());
+      });
+
+      it("refuses a cursor that is not one of ours", async () => {
+        expect(
+          await errorOf(
+            as(U.dirB).directorQueue({ cursor: "not-a-cursor" } as never),
+          ),
+        ).toMatch(/^BAD_REQUEST/);
       });
     });
 
