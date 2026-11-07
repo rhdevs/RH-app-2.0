@@ -10,6 +10,7 @@ import type { Capabilities } from "~/server/api/services/roles";
  */
 const enabledQuery = vi.fn();
 const feedbackQuery = vi.fn();
+const proposalQuery = vi.fn();
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/admin" }));
 vi.mock("~/app/_components/header", () => ({ default: () => null }));
@@ -21,6 +22,9 @@ vi.mock("~/trpc/react", () => ({
     },
     feedback: {
       enabled: { useQuery: (...a: unknown[]) => feedbackQuery(...a) },
+    },
+    proposal: {
+      enabled: { useQuery: (...a: unknown[]) => proposalQuery(...a) },
     },
     cca: {
       listMine: {
@@ -62,6 +66,8 @@ describe("transcript entries in the admin and CCA shells", () => {
     enabledQuery.mockReset();
     feedbackQuery.mockReset();
     feedbackQuery.mockReturnValue({ data: { enabled: false } });
+    proposalQuery.mockReset();
+    proposalQuery.mockReturnValue({ data: { enabled: false } });
   });
 
   it.each(answers)("hide both entries while the switch is %s", (_n, answer) => {
@@ -126,5 +132,26 @@ describe("the admin Feedback tab", () => {
     expect(feedbackQuery.mock.calls.at(-1)![1]).toMatchObject({
       enabled: true,
     });
+  });
+});
+
+describe("the CCA Proposals tab", () => {
+  beforeEach(() => {
+    enabledQuery.mockReset();
+    enabledQuery.mockReturnValue({ data: { enabled: false } });
+    proposalQuery.mockReset();
+  });
+
+  it.each(answers)("is hidden while the switch is %s", (_n, answer) => {
+    proposalQuery.mockReturnValue(answer);
+
+    expect(cca()).not.toContain("/cca/7/proposals");
+    expect(cca()).toContain("Overview");
+  });
+
+  it("shows once the switch is on", () => {
+    proposalQuery.mockReturnValue({ data: { enabled: true } });
+
+    expect(cca()).toContain("/cca/7/proposals");
   });
 });

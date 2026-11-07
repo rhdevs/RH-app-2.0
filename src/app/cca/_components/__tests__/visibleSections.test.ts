@@ -31,6 +31,19 @@ describe("visibleSections", () => {
   });
 });
 
+describe("visibleSections and Proposals", () => {
+  it("hides the Proposals tab from a viewer who does not head this CCA", () => {
+    const withProposals = [{ slug: "members" }, { slug: "proposals" }];
+    expect(visibleSections(withProposals, false).map((s) => s.slug)).toEqual([
+      "members",
+    ]);
+    expect(visibleSections(withProposals, true).map((s) => s.slug)).toEqual([
+      "members",
+      "proposals",
+    ]);
+  });
+});
+
 describe("headsThisCca", () => {
   it("is false while the viewer's CCAs are still loading", () => {
     expect(headsThisCca(undefined, 9005)).toBe(false);

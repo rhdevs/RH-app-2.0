@@ -1,9 +1,9 @@
 /**
- * Dashboard sections that are for this CCA's own heads only. Today that is just
- * Points: JCRC and admin reach the other sections through the dashboard's
+ * Dashboard sections that are for this CCA's own heads only. Points and
+ * Proposals: JCRC and admin reach the other sections through the dashboard's
  * manager access, but the points page admits only the CCA's heads.
  */
-const HEADS_ONLY_SLUGS: readonly string[] = ["points"];
+const HEADS_ONLY_SLUGS: readonly string[] = ["points", "proposals"];
 
 /**
  * Does the viewer head THIS CCA? `listMine` is "the CCAs I head", so a match means

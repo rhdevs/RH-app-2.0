@@ -15,6 +15,7 @@ import { feedbackRouter } from "./routers/feedback";
 import { jcrcPositionsRouter } from "./routers/jcrcPositions";
 import { jcrcPositionsStaffRouter } from "./routers/jcrcPositionsStaff";
 import { notificationsRouter } from "./routers/notifications";
+import { proposalRouter } from "./routers/proposal";
 import { transcriptRouter } from "./routers/transcript";
 import { transcriptManageRouter } from "./routers/transcriptManage";
 import { userAdminRouter } from "./routers/userAdmin";
@@ -74,6 +75,8 @@ export const appRouter = createTRPCRouter({
   /** Events: head authoring, JCRC review, resident timeline + signup. Behind
    * the events.enabled switch; object-scoped per event's ccaID. */
   event: eventRouter,
+  /** CCA proposals filed with the CCA's director, behind proposals.enabled. */
+  proposal: proposalRouter,
   /** In-app feedback to the admins, behind feedback.enabled. */
   feedback: feedbackRouter,
   // JCRC positions: views only, plus the JCRC self-handover.

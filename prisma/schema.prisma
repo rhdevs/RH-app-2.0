@@ -1620,6 +1620,99 @@ model Feedback {
 }
 
 // ---------------------------------------------------------------------------
+// PROPOSALS (merge proposal 4.1, 4.6). A proposal is an INTERNAL plan a CCA
+// head files with the CCA's director; it is NOT an Event, and the Event model
+// and its statuses are untouched. Four NEW, validator-free collections, keyed
+// on the ccaID business key and the canonical userID, never an ObjectId. No
+// field is named `academicYear`, so none joins the retention registry. Indexes
+// come from scripts/remediation/create-proposal-indexes.mjs (never `prisma db
+// push`); `proposals.enabled` goes on only after that script has run.
+// ---------------------------------------------------------------------------
+
+model Proposal {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  ccaID        Int
+  /// The author's canonical id, or null once their account is deleted: the
+  /// proposal belongs to the CCA, so it stays for its other readers
+  /// (userAdmin.ts). Always written explicitly, since a missing key never
+  /// matches a null filter on MongoDB.
+  createdBy    String?
+  /// A key of PROPOSAL_CATEGORIES (src/lib/proposals/categories.ts).
+  category     String
+  title        String
+  description  String
+  /// The public blast text; some categories require it at submit.
+  blastMessage String?
+  /// Planned start and end, epoch seconds (the Event convention). Null = unset.
+  plannedStart Int?
+  plannedEnd   Int?
+  /// "draft" | "in_review" | "needs_action" | "cleared" | "finished" |
+  /// "canceled". WRITTEN ONLY by transitionProposal (services/proposals/
+  /// transition.ts), apart from this default at creation; a source scan in
+  /// proposalStatusWriter.test.ts keeps it so.
+  status       String    @default("draft")
+  /// Bumped on every content edit and every transition. Submit validates the
+  /// content it read and writes only if this is still the value it read, so
+  /// an edit landing in between fails the submit instead of sending content
+  /// nobody validated.
+  version      Int       @default(0)
+  /// The linked Event's `eventID`, once a later PR creates one. Optional and
+  /// unused here; nothing in this PR reads or writes it.
+  eventID      Int?
+  submittedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([ccaID, status], map: "proposal_cca_status")
+  @@index([createdBy], map: "proposal_creator")
+}
+
+/// One row per status change, written in the same transaction as the change.
+/// Append-only: nothing updates or deletes a row except account deletion
+/// nulling the person ids (userAdmin.ts).
+model ProposalStatusHistory {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  proposalID   String   @db.ObjectId
+  fromStatus   String
+  toStatus     String
+  /// Who made the change; null once their account is deleted.
+  actorID      String?
+  /// Who approved, when toStatus is "cleared". The review PR fills it in;
+  /// null until then, and null again once their account is deleted.
+  approverID   String?
+  /// True when the approver is also a head of the CCA. The label outlives the
+  /// approver's account.
+  selfApproved Boolean  @default(false)
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@index([proposalID, createdAt], map: "proposal_history_proposal_created")
+}
+
+/// The comment thread of a proposal (written by a later PR).
+model ProposalComment {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  proposalID String   @db.ObjectId
+  /// The author; null once their account is deleted, the comment stays.
+  authorID   String?
+  body       String
+  createdAt  DateTime @default(now())
+
+  @@index([proposalID, createdAt], map: "proposal_comment_proposal_created")
+}
+
+/// Where each reader has read up to in a proposal's thread (a later PR).
+model ProposalCommentRead {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  proposalID String   @db.ObjectId
+  userID     String
+  readAt     DateTime
+
+  @@unique([proposalID, userID], map: "proposal_comment_read_unique")
+  @@index([userID], map: "proposal_comment_read_user")
+}
+
+// ---------------------------------------------------------------------------
 // TRANSCRIPT (docs/transcript/SPEC.md). Every model below is a NEW, UNVALIDATED
 // collection — the validator-guarded CCA / UserCCA / User silently reject new
 // fields (code 121), so nothing transcript-specific lives on them. All are keyed

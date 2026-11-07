@@ -11,6 +11,7 @@ import {
   CalendarClock,
   CalendarDays,
   FileText,
+  FilePenLine,
 } from "lucide-react";
 
 import { api } from "~/trpc/react";
@@ -33,6 +34,7 @@ const SECTIONS = [
   { slug: "details", label: "CCA details", icon: Pencil },
   { slug: "events", label: "Events", icon: CalendarDays },
   { slug: "points", label: "Points", icon: ClipboardList },
+  { slug: "proposals", label: "Proposals", icon: FilePenLine },
   { slug: "transcript", label: "Transcript", icon: FileText },
 ] as const;
 
@@ -65,10 +67,20 @@ export default function CcaDashboardShell({
       retry: false,
       staleTime: 60_000,
     }).data?.enabled === true;
+  // Likewise the Proposals tab, until the proposals switch is known to be on.
+  const proposalsEnabled =
+    api.proposal.enabled.useQuery(undefined, {
+      retry: false,
+      staleTime: 60_000,
+    }).data?.enabled === true;
   const sections = visibleSections(
     SECTIONS,
     headsThisCca(data?.ccas, ccaID),
-  ).filter((s) => s.slug !== "transcript" || transcriptEnabled);
+  ).filter(
+    (s) =>
+      (s.slug !== "transcript" || transcriptEnabled) &&
+      (s.slug !== "proposals" || proposalsEnabled),
+  );
 
   const isActive = (slug: string) => {
     const base = `/cca/${ccaID}`;

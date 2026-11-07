@@ -318,7 +318,7 @@ export const requireMatric = t.middleware(async ({ ctx, next }) => {
  * does the zodError attached by the errorFormatter). The real message is logged
  * server-side so the sanitisation does not also destroy the diagnostic.
  */
-const sanitizeErrors = t.middleware(async ({ next, path }) => {
+export const sanitizeErrors = t.middleware(async ({ next, path }) => {
   const result = await next();
   if (!result.ok && result.error.code === "INTERNAL_SERVER_ERROR") {
     console.error(

@@ -526,6 +526,10 @@ describe("schema: guarded collections are untouched", () => {
       "AuxRecordAttendee",
       "Notification",
       "Feedback",
+      "Proposal",
+      "ProposalStatusHistory",
+      "ProposalComment",
+      "ProposalCommentRead",
     ]).toEqual(expect.arrayContaining(added));
   });
 });
