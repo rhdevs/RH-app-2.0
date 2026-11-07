@@ -38,6 +38,8 @@ const {
   disposablesNeedIndex,
   remindersNeedDirectors,
   remindersNeedIndex,
+  milestonesNeedDirectors,
+  milestonesNeedIndex,
 } = (await import(/* @vite-ignore */ lib)) as {
   evaluateDirectorChecks: (input: Input) => {
     flaggedPositions: number;
@@ -59,6 +61,14 @@ const {
   }) => { label: string; offenders: string[]; note: string } | null;
   remindersNeedIndex: (state: {
     remindersOn: boolean;
+    indexes: unknown[] | null;
+  }) => { label: string; offenders: string[]; note: string } | null;
+  milestonesNeedDirectors: (state: {
+    milestonesOn: boolean;
+    directorsOn: boolean;
+  }) => { label: string; offenders: string[]; note: string } | null;
+  milestonesNeedIndex: (state: {
+    milestonesOn: boolean;
     indexes: unknown[] | null;
   }) => { label: string; offenders: string[]; note: string } | null;
   disposablesNeedDirectors: (state: {
@@ -662,6 +672,61 @@ describe("remindersNeedDirectors and remindersNeedIndex", () => {
     ).not.toBeNull();
     expect(
       remindersNeedIndex({ remindersOn: false, indexes: null }),
+    ).toBeNull();
+  });
+});
+
+describe("milestonesNeedDirectors and milestonesNeedIndex", () => {
+  const good = {
+    name: "milestone_evidence_pathname",
+    key: { pathname: 1 },
+    unique: true,
+  };
+
+  it("directors off with milestones on is RED, and fine otherwise", () => {
+    expect(
+      milestonesNeedDirectors({ milestonesOn: true, directorsOn: false })
+        ?.offenders,
+    ).toEqual(["turn on directors.enabled"]);
+    expect(
+      milestonesNeedDirectors({ milestonesOn: true, directorsOn: true }),
+    ).toBeNull();
+    expect(
+      milestonesNeedDirectors({ milestonesOn: false, directorsOn: false }),
+    ).toBeNull();
+  });
+
+  it("is green with the unique pathname index in place, also as extended JSON", () => {
+    expect(
+      milestonesNeedIndex({ milestonesOn: true, indexes: [good] }),
+    ).toBeNull();
+    expect(
+      milestonesNeedIndex({
+        milestonesOn: true,
+        indexes: [{ ...good, key: { pathname: { $numberInt: "1" } } }],
+      }),
+    ).toBeNull();
+  });
+
+  it("is RED when the index is absent, not unique, or has another key", () => {
+    for (const indexes of [
+      [],
+      [{ ...good, unique: false }],
+      [{ ...good, key: { ccaID: 1 } }],
+      [{ ...good, key: { pathname: 1, ccaID: 1 } }],
+    ]) {
+      expect(
+        milestonesNeedIndex({ milestonesOn: true, indexes })?.offenders,
+      ).toEqual(["MilestoneEvidence.milestone_evidence_pathname"]);
+    }
+  });
+
+  it("an unreadable index list counts as missing, and a flag that is off says nothing", () => {
+    expect(
+      milestonesNeedIndex({ milestonesOn: true, indexes: null }),
+    ).not.toBeNull();
+    expect(
+      milestonesNeedIndex({ milestonesOn: false, indexes: null }),
     ).toBeNull();
   });
 });

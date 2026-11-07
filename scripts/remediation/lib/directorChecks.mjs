@@ -286,3 +286,54 @@ export function disposablesNeedIndex({ disposablesOn, indexes }) {
     note: "run create-disposable-reminder-indexes.mjs --commit before the flag",
   };
 }
+
+/**
+ * `milestones.enabled` on with `directors.enabled` off: heads can upload
+ * evidence, but a director's right to view it comes from the director guard,
+ * which fails closed while its switch is off, so no director could ever open
+ * it. Same shape as `remindersNeedDirectors`.
+ *
+ * @param {{ milestonesOn: boolean, directorsOn: boolean }} state
+ * @returns {{ label: string, offenders: string[], note: string } | null}
+ */
+export function milestonesNeedDirectors({ milestonesOn, directorsOn }) {
+  if (milestonesOn !== true || directorsOn === true) return null;
+  return {
+    label: "milestones.enabled is on but directors.enabled is off",
+    offenders: ["turn on directors.enabled"],
+    note: "no director can open milestone evidence until it is on",
+  };
+}
+
+/** The unique pathname index on MilestoneEvidence, as the script builds it. */
+export const MILESTONE_EVIDENCE_INDEX = {
+  name: "milestone_evidence_pathname",
+  key: { pathname: 1 },
+};
+
+/**
+ * `milestones.enabled` on while the MilestoneEvidence unique pathname index is
+ * not in place: "one row per stored file" would rest on no constraint.
+ * `indexes` is the `listIndexes` answer's `firstBatch`, or null when it could
+ * not be read: an unanswered question is not "present", so null counts as
+ * missing. Returns the one RED line, or null when fine (or when the flag is
+ * not on).
+ *
+ * @param {{ milestonesOn: boolean, indexes: any[] | null }} state
+ * @returns {{ label: string, offenders: string[], note: string } | null}
+ */
+export function milestonesNeedIndex({ milestonesOn, indexes }) {
+  if (milestonesOn !== true) return null;
+  const want = MILESTONE_EVIDENCE_INDEX;
+  const found = (indexes ?? []).find(
+    (i) =>
+      i?.name === want.name && i.unique === true && sameKey(i.key, want.key),
+  );
+  if (found) return null;
+  return {
+    label:
+      "milestones.enabled is on but the MilestoneEvidence index is missing",
+    offenders: [`MilestoneEvidence.${want.name}`],
+    note: "run create-milestone-indexes.mjs --commit before the flag",
+  };
+}

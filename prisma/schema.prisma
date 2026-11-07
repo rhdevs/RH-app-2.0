@@ -1865,6 +1865,43 @@ model ReminderTarget {
 }
 
 // ---------------------------------------------------------------------------
+// MILESTONE EVIDENCE (socporthub merge, PR 15, F21). A photo a CCA's head
+// uploads as evidence for a milestone. Private: the file sits in a SEPARATE,
+// private Vercel Blob store and is read only through
+// src/app/api/milestone-evidence/[id]/route.ts, which checks on every request
+// that the viewer heads or directs the owning CCA. Not year-based:
+// deliberately NO `academicYear` field. Indexes:
+// scripts/remediation/create-milestone-indexes.mjs (PR 16 adds its two
+// collections to the same script).
+// ---------------------------------------------------------------------------
+
+model MilestoneEvidence {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  /// The owning CCA. Set by the server from the verified upload path, never
+  /// from a body field.
+  ccaID        Int
+  /// The blob's PATHNAME in the private store (milestone-evidence/<ccaID>/...),
+  /// not an address: no address is ever stored or sent to a browser.
+  pathname     String
+  /// One of the image allowlist (never SVG), stored so the serving route can
+  /// answer with it without trusting the file.
+  contentType  String
+  size         Int
+  /// The uploader's canonical id, or null once their account is deleted
+  /// (userAdmin.ts). The CCA keeps the evidence. Always written explicitly: a
+  /// missing key never matches a null filter on MongoDB.
+  uploadedBy   String?
+  /// The milestone submission this belongs to, as its 24-character hex id (a
+  /// plain string, like DisposableRequest.proposalID). Null until PR 16 links
+  /// it; null rows are the "unattached" ones the cap and the lazy cleanup use.
+  submissionID String?
+  createdAt    DateTime @default(now())
+
+  @@unique([pathname], map: "milestone_evidence_pathname")
+  @@index([ccaID, submissionID, createdAt], map: "milestone_evidence_cca_submission")
+}
+
+// ---------------------------------------------------------------------------
 // TRANSCRIPT (docs/transcript/SPEC.md). Every model below is a NEW, UNVALIDATED
 // collection — the validator-guarded CCA / UserCCA / User silently reject new
 // fields (code 121), so nothing transcript-specific lives on them. All are keyed

@@ -534,6 +534,7 @@ describe("schema: guarded collections are untouched", () => {
       "DisposableRequest",
       "ReminderBroadcast",
       "ReminderTarget",
+      "MilestoneEvidence",
     ]).toEqual(expect.arrayContaining(added));
   });
 });

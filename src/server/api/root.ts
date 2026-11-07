@@ -13,6 +13,7 @@ import { ccaRecruitmentRouter } from "./routers/ccaRecruitment";
 import { calendarRouter } from "./routers/calendar";
 import { eventRouter } from "./routers/event";
 import { disposableRouter } from "./routers/disposable";
+import { milestoneEvidenceRouter } from "./routers/milestoneEvidence";
 import { reminderRouter } from "./routers/reminder";
 import { feedbackRouter } from "./routers/feedback";
 import { jcrcPositionsRouter } from "./routers/jcrcPositions";
@@ -84,6 +85,8 @@ export const appRouter = createTRPCRouter({
   disposable: disposableRouter,
   /** Deadline broadcasts from directors to CCA heads, behind reminders.enabled. */
   reminder: reminderRouter,
+  /** Private milestone evidence photos, behind milestones.enabled. */
+  milestoneEvidence: milestoneEvidenceRouter,
   /** In-app feedback to the admins, behind feedback.enabled. */
   feedback: feedbackRouter,
   // JCRC positions: views only, plus the JCRC self-handover.
