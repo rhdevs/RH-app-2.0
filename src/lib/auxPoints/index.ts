@@ -26,6 +26,14 @@ export const AUX_REASON_PRESETS = [
   "Fire warden (Sem 2)",
 ] as const;
 
+/**
+ * A cancelled or declined event cannot be flagged AUX, and its check-ins stop
+ * counting if it is closed after it was flagged.
+ */
+export function isClosedEventStatus(status: string | null): boolean {
+  return status === "canceled" || status === "declined";
+}
+
 export function isValidAuxAmount(n: number): boolean {
   return Number.isInteger(n) && n >= AUX_AWARD_MIN && n <= AUX_AWARD_MAX;
 }
