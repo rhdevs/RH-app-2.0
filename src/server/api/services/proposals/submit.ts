@@ -5,6 +5,7 @@ import {
   isProposalCategory,
   missingForSubmit,
 } from "~/lib/proposals/categories";
+import { directorProposalHref } from "~/lib/proposals/links";
 import { isProposalStatus, SUBMITTABLE_STATUSES } from "~/lib/proposals/status";
 import { ADMIN_ROLE, HALL_OFFICE_ROLE, SCRC_ROLE } from "~/lib/roleNames";
 import { currentDirectorIDs } from "~/server/api/services/directorGuard";
@@ -128,7 +129,7 @@ async function noticeOfSubmission(
       kind: "proposal.submitted",
       title: "A proposal is ready for your review",
       body: title,
-      href: `/cca/${ccaID}/proposals/${proposalID}`,
+      href: directorProposalHref(proposalID),
     });
     return;
   }

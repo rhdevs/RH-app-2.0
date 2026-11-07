@@ -28,6 +28,8 @@ vi.mock("~/trpc/react", () => ({
       enabled: { useQuery: (...a: unknown[]) => enabledQuery(...a) },
       mine: { readiness: { useQuery: (...a: unknown[]) => useQuery(...a) } },
     },
+    // The Director entry is its own test (headerDirectorEntry.test.tsx).
+    proposal: { directorEntry: { useQuery: () => ({ data: undefined }) } },
   },
 }));
 

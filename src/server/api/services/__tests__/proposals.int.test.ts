@@ -11,6 +11,7 @@ import {
   vi,
 } from "vitest";
 import { isLocalDevDatabase } from "../transcript/__tests__/localDbGate";
+import { resetProposalsFlagCache } from "../proposals/flag";
 
 /**
  * INTEGRATION TESTS of the proposal core against the LOCAL development
@@ -90,6 +91,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           update: { value },
         });
       }
+      // The flag is cached per lambda for a few seconds; a test that flips it
+      // expects the next call to see the new value.
+      resetProposalsFlagCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -104,9 +108,17 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /** The rate-limit counters these test users could have left behind. */
     const limitKeys = () =>
-      (["create", "update", "submit", "upload"] as const).flatMap((action) =>
-        IDS.map((id) => `proposal.${action}:${id}`),
-      );
+      (
+        [
+          "create",
+          "update",
+          "submit",
+          "upload",
+          "approve",
+          "return",
+          "finish",
+        ] as const
+      ).flatMap((action) => IDS.map((id) => `proposal.${action}:${id}`));
 
     const clean = async () => {
       await db.rateLimit.deleteMany({ where: { key: { in: limitKeys() } } });
@@ -606,13 +618,16 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       };
       const rows = () => db.proposal.count({ where: { ccaID: CCA_A } });
 
-      it("the ceilings are create 10, update 120, submit 20 an hour", async () => {
+      it("the ceilings are create 10, update 120, submit 20, upload 30, approve, return and finish 60 an hour", async () => {
         const limits = await import("../proposals/limits");
         expect(limits.PROPOSAL_LIMITS).toEqual({
           create: 10,
           update: 120,
           submit: 20,
           upload: 30,
+          approve: 60,
+          return: 60,
+          finish: 60,
         });
         expect(limits.PROPOSAL_WINDOW_MS).toBe(3_600_000);
       });
@@ -798,7 +813,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(notices.map((n) => [n.userID, n.kind])).toEqual([
           [U.dirA, "proposal.submitted"],
         ]);
-        expect(notices[0]?.href).toBe(`/cca/${CCA_A}/proposals/${made.id}`);
+        expect(notices[0]?.href).toBe(`/director/proposals/${made.id}`);
       });
 
       it("refuses an incomplete proposal, naming what is missing, and writes nothing", async () => {

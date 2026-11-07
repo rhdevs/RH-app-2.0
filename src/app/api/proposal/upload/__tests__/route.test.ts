@@ -67,6 +67,7 @@ vi.mock("~/server/db", () => ({
 }));
 
 import { POST } from "../route";
+import { resetProposalsFlagCache } from "~/server/api/services/proposals/flag";
 import {
   PROPOSAL_POSTER_CONTENT_TYPES,
   PROPOSAL_POSTER_MAX_BYTES,
@@ -98,6 +99,7 @@ async function mint(pathname = proposalPosterPath(ID)) {
 }
 
 beforeEach(() => {
+  resetProposalsFlagCache();
   h.session = { user: { userID: ME } };
   h.flag = "on";
   h.proposal = { ccaID: CCA, status: "draft" };
@@ -188,6 +190,7 @@ describe("minting a poster token", () => {
       `proposal/${ID}/poster/../../event/1/banner`,
       "../poster",
     ]) {
+      resetProposalsFlagCache(); // each pass reads the flag row afresh
       h.calls = [];
       const { body } = await mint(bad);
       expect(body.error).toBe("BAD_PATHNAME");

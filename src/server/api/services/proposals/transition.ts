@@ -18,8 +18,11 @@ import { canTransition, type ProposalStatus } from "~/lib/proposals/status";
  *     changed means a stale caller, and the answer is CONFLICT with nothing
  *     written. This is what makes two directors pressing approve and return at
  *     once safe: exactly one of them wins;
- *  2. a `ProposalStatusHistory` row, with a place for the approver and the
- *     self-approved label (the review PR fills them in);
+ *  2. a `ProposalStatusHistory` row, carrying the approver and the
+ *     self-approved label when the move is an approval. The label can be
+ *     worked out INSIDE this transaction (`options.selfApproved`), after the
+ *     compare-and-set has applied and before the row is written, so a failed
+ *     read of it rolls the whole move back;
  *  3. an audit row (`proposal.transition`, RoleAuditLog) written on the SAME
  *     transaction client. This is deliberately unlike writeAudit, which takes
  *     the plain client so a denial survives its own rollback: here the audit
@@ -49,9 +52,11 @@ export type TransitionInput = {
   to: ProposalStatus;
   /** Who made the move. */
   actorID: string;
+  /** If set, the write also needs the proposal still in this CCA (the one the caller checked access for). */
+  expectedCcaID?: number;
   /** If set, the write also needs the proposal still at this content version. */
   expectedVersion?: number;
-  /** Who approved (when `to` is "cleared"). Null until the review PR. */
+  /** Who approved (when `to` is "cleared"). */
   approverID?: string | null;
   /** True when the approver is also a head of the CCA. */
   selfApproved?: boolean;
@@ -61,11 +66,22 @@ export type TransitionInput = {
 export type TransitionedProposal = {
   id: string;
   ccaID: number;
+  /** The author, or null once their account is deleted. */
+  createdBy: string | null;
   title: string;
   version: number;
 };
 
 export type TransitionOptions = {
+  /**
+   * Works out the self-approved label inside the transaction, from the
+   * transaction client, once the compare-and-set has applied. Overrides
+   * `input.selfApproved`. If it throws, nothing is written.
+   */
+  selfApproved?: (
+    tx: Prisma.TransactionClient,
+    proposal: TransitionedProposal,
+  ) => Promise<boolean>;
   /** Runs inside the transaction, after the three writes. */
   inTransaction?: (
     tx: Prisma.TransactionClient,
@@ -93,6 +109,9 @@ export async function transitionProposal(
         where: {
           id: input.proposalID,
           status: input.from,
+          ...(input.expectedCcaID !== undefined && {
+            ccaID: input.expectedCcaID,
+          }),
           ...(input.expectedVersion !== undefined && {
             version: input.expectedVersion,
           }),
@@ -107,9 +126,19 @@ export async function transitionProposal(
 
       const row = await tx.proposal.findUnique({
         where: { id: input.proposalID },
-        select: { id: true, ccaID: true, title: true, version: true },
+        select: {
+          id: true,
+          ccaID: true,
+          createdBy: true,
+          title: true,
+          version: true,
+        },
       });
       if (!row) throw conflict();
+
+      const selfApproved = options.selfApproved
+        ? await options.selfApproved(tx, row)
+        : (input.selfApproved ?? false);
 
       await tx.proposalStatusHistory.create({
         data: {
@@ -118,7 +147,7 @@ export async function transitionProposal(
           toStatus: input.to,
           actorID: input.actorID,
           approverID: input.approverID ?? null,
-          selfApproved: input.selfApproved ?? false,
+          selfApproved,
           note: input.note ?? null,
         },
       });

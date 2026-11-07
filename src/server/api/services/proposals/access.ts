@@ -1,13 +1,20 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
-import { isDirectorOf } from "~/server/api/services/directorGuard";
+import {
+  currentDirectorIDs,
+  directedCcaIDs,
+  isDirectorOf,
+  NOT_DIRECTOR,
+} from "~/server/api/services/directorGuard";
 
 /**
  * Who may touch a CCA's proposals, decided from the stored rows every time.
  *
  * - A HEAD (a `CcaHead` row for THIS CCA) reads, writes and submits.
- * - A DIRECTOR of the CCA (directorGuard) may read what has been submitted.
+ * - A DIRECTOR of the CCA (directorGuard) reads what has been submitted, and
+ *   approves, returns and finishes it. A person can be both: a director who
+ *   also heads the CCA may approve their own proposal (merge proposal 4.2).
  * - Everyone else is refused, admins who are neither included.
  *
  * NOT used, on purpose: `getUserRoles` (forgiving: a failed read keeps stored
@@ -118,4 +125,102 @@ export async function assertProposalReader(
   }
   if (viewer === null) throw denial(NOT_PROPOSAL_READER, options);
   return viewer;
+}
+
+/**
+ * Like assertProposalReader, but also says whether the person directs the CCA
+ * even when they head it too, so a head who is a director is shown the review
+ * actions. Both reads are strict, and either failing refuses the whole call.
+ */
+export async function proposalAccess(
+  db: ProposalAccessDb,
+  userID: string,
+  ccaID: number,
+  options?: DenialOptions,
+): Promise<{ viewer: ProposalViewer; isDirector: boolean }> {
+  let head: boolean;
+  let director: boolean;
+  try {
+    head = await headsCca(db, userID, ccaID);
+    director = await isDirectorOf(db, userID, ccaID);
+  } catch (err) {
+    return refuseOnFailure(err);
+  }
+  if (!head && !director) throw denial(NOT_PROPOSAL_READER, options);
+  return { viewer: head ? "head" : "director", isDirector: director };
+}
+
+/**
+ * Refuse unless this person is a director of this CCA NOW, by the strict
+ * guard. The CCA is the stored proposal's, never the browser's. A refusal says
+ * nothing a missing id would not say when `hideExistence` is set. A read that
+ * throws refuses and logs the error name only.
+ */
+export async function assertProposalDirector(
+  db: ProposalAccessDb,
+  userID: string,
+  ccaID: number,
+  options?: DenialOptions,
+): Promise<void> {
+  let allowed: boolean;
+  try {
+    allowed = await isDirectorOf(db, userID, ccaID);
+  } catch (err) {
+    return refuseOnFailure(err);
+  }
+  if (!allowed) throw denial(NOT_DIRECTOR, options);
+}
+
+/**
+ * The CCAs this person directs now (possibly none), by the strict guard,
+ * filtered in the query to their own flagged positions. A read that throws
+ * refuses and logs the error name only; it is never an empty list.
+ */
+export async function directedCcasOrRefuse(
+  db: Parameters<typeof directedCcaIDs>[0],
+  userID: string,
+): Promise<number[]> {
+  try {
+    return await directedCcaIDs(db, userID);
+  } catch (err) {
+    return refuseOnFailure(err);
+  }
+}
+
+/**
+ * Everyone who directs this CCA now (possibly nobody), by the strict guard,
+ * for the outcome notices. Run on the move's transaction client, so a read
+ * that throws refuses, logs the error name only and rolls the move back.
+ */
+export async function directorsOrRefuse(
+  db: Parameters<typeof currentDirectorIDs>[0],
+  ccaID: number,
+): Promise<string[]> {
+  try {
+    return await currentDirectorIDs(db, ccaID);
+  } catch (err) {
+    return refuseOnFailure(err);
+  }
+}
+
+/**
+ * The self-approved label: true when the approver is the proposal's author or
+ * a head of its CCA right now. Run INSIDE the approval's transaction, so the
+ * answer and the history row it goes on come from one snapshot. A read that
+ * throws refuses the approval: a missing label would hide the very thing the
+ * trail exists to show.
+ */
+export async function readSelfApproved(
+  db: Pick<ProposalAccessDb, "ccaHead">,
+  approverID: string,
+  proposal: { ccaID: number; createdBy: string | null },
+): Promise<boolean> {
+  try {
+    if (proposal.createdBy !== null && proposal.createdBy === approverID) {
+      return true;
+    }
+    return await headsCca(db, approverID, proposal.ccaID);
+  } catch (err) {
+    return refuseOnFailure(err);
+  }
 }

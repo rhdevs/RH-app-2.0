@@ -21,6 +21,7 @@ import {
   PROPOSAL_DESCRIPTION_MAX,
   PROPOSAL_TITLE_MAX,
 } from "~/lib/schemas/proposal";
+import { historyLine } from "~/lib/proposals/historyLine";
 import { formatDateTime } from "~/app/events/_lib/format";
 import {
   isOwnProposalPosterUrl,
@@ -480,17 +481,7 @@ export default function ProposalEditor({
           <ul className="space-y-1 text-sm text-gray-600">
             {loaded.history.map((h) => (
               <li key={h.id}>
-                {isProposalStatus(h.fromStatus)
-                  ? PROPOSAL_STATUS_LABELS[h.fromStatus]
-                  : "Unknown"}
-                {" to "}
-                {isProposalStatus(h.toStatus)
-                  ? PROPOSAL_STATUS_LABELS[h.toStatus]
-                  : "Unknown"}
-                {", "}
-                {formatDateTime(toEpoch(h.at))}
-                {h.selfApproved ? " (approved by a head of this CCA)" : ""}
-                {h.note ? `: ${h.note}` : ""}
+                {historyLine(h, (at) => formatDateTime(toEpoch(at)))}
               </li>
             ))}
           </ul>

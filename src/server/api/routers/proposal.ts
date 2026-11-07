@@ -1,7 +1,11 @@
 import {
+  proposalApproveInput,
   proposalCreateInput,
+  proposalFinishInput,
   proposalIdInput,
   proposalListInput,
+  proposalQueueInput,
+  proposalReturnInput,
   proposalSubmitInput,
   proposalUpdateInput,
 } from "~/lib/schemas/proposal";
@@ -20,9 +24,19 @@ import {
   isProposalsEnabled,
 } from "~/server/api/services/proposals/flag";
 import {
+  getDirectorEntry,
+  getDirectorHome,
+  getDirectorQueue,
+} from "~/server/api/services/proposals/directorView";
+import {
   getProposal,
   listProposals,
 } from "~/server/api/services/proposals/read";
+import {
+  approveProposal,
+  finishProposal,
+  returnProposal,
+} from "~/server/api/services/proposals/review";
 import { submitProposal } from "~/server/api/services/proposals/submit";
 
 /**
@@ -33,12 +47,16 @@ import { submitProposal } from "~/server/api/services/proposals/submit";
  * the services from stored rows, by the CCA a stored proposal belongs to or
  * the CCA id the browser sent, never from the session's roles:
  *  - create / update / submit: a head of that CCA only;
- *  - get / list: that CCA's heads and directors only.
+ *  - get / list: that CCA's heads and directors only;
+ *  - approve / return / finish: a director of the proposal's CCA, worked out
+ *    from the STORED proposal's CCA by the strict guard (review.ts);
+ *  - directorHome / directorQueue: only the CCAs the caller directs now.
  * An admin who is neither is refused. Where the caller names a proposal id
  * (get, update, submit) a missing id and another CCA's id give the same
- * NOT_FOUND. create / update / submit also carry a per-person hourly ceiling
- * (services/proposals/limits.ts). Status is never an input and never
- * written here: submit calls `transitionProposal`, the only status writer.
+ * NOT_FOUND. create / update / submit / approve / return / finish also carry
+ * a per-person hourly ceiling (services/proposals/limits.ts). Status is never
+ * an input and never written here: the services call `transitionProposal`,
+ * the only status writer.
  *
  * There is no head "cancel" in this PR: the proposal's 4.1 and F06 give heads
  * "write and submit", and the table already carries the canceled status for
@@ -90,4 +108,42 @@ export const proposalRouter = createTRPCRouter({
     .mutation(({ ctx, input }) =>
       submitProposal(ctx.db, ctx.session.user.userID, input),
     ),
+
+  approve: gated
+    .input(proposalApproveInput)
+    .mutation(({ ctx, input }) =>
+      approveProposal(ctx.db, ctx.session.user.userID, input),
+    ),
+
+  return: gated
+    .input(proposalReturnInput)
+    .mutation(({ ctx, input }) =>
+      returnProposal(ctx.db, ctx.session.user.userID, input),
+    ),
+
+  finish: gated
+    .input(proposalFinishInput)
+    .mutation(({ ctx, input }) =>
+      finishProposal(ctx.db, ctx.session.user.userID, input),
+    ),
+
+  directorHome: gated.query(({ ctx }) =>
+    getDirectorHome(ctx.db, ctx.session.user.userID),
+  ),
+
+  directorQueue: gated
+    .input(proposalQueueInput)
+    .query(({ ctx, input }) =>
+      getDirectorQueue(ctx.db, ctx.session.user.userID, input.cursor),
+    ),
+
+  /**
+   * Whether the navigation shows the director's entry. NOT gated: off and
+   * "not a director" are both a plain `{ show: false }`, so every page load of
+   * every signed-in user does not log a refusal. A failed guard read is an
+   * error, which the header treats as "hide it".
+   */
+  directorEntry: identifiedProcedure
+    .use(sanitizeErrors)
+    .query(({ ctx }) => getDirectorEntry(ctx.db, ctx.session.user.userID)),
 });
