@@ -1234,6 +1234,29 @@ export async function deleteUserAccountCascade(
           data: { decidedBy: null },
         })
       ).count;
+      // BROADCASTS belong to the CCAs they address and to whoever directs them
+      // now, so the rows stay and only the references to this person are
+      // cleared. A sender keeps no power through the row (cancelling is decided
+      // by who directs the target CCAs now), and a head's done mark stays as a
+      // date with no name.
+      deleted.reminderSenderCleared = (
+        await tx.reminderBroadcast.updateMany({
+          where: { createdBy: cid },
+          data: { createdBy: null },
+        })
+      ).count;
+      deleted.reminderCancellerCleared = (
+        await tx.reminderBroadcast.updateMany({
+          where: { cancelledBy: cid },
+          data: { cancelledBy: null },
+        })
+      ).count;
+      deleted.reminderDoneByCleared = (
+        await tx.reminderTarget.updateMany({
+          where: { doneBy: cid },
+          data: { doneBy: null },
+        })
+      ).count;
     }
 
     /* ---- (d) the User row, LAST and BY ObjectId ---------------------------

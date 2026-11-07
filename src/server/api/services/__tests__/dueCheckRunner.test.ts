@@ -210,6 +210,8 @@ describe("runDueCheck", () => {
     expect(DUE_KINDS.map((k) => k.name)).toEqual([
       "cca_no_director",
       "disposables_no_director",
+      "collection_digest",
+      "broadcast_nudge",
     ]);
   });
 });

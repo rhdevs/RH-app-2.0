@@ -31,6 +31,7 @@ vi.mock("~/trpc/react", () => ({
       directorEntry: { useQuery: query("directorEntry") },
     },
     disposable: { entry: { useQuery: query("disposableEntry") } },
+    reminder: { entry: { useQuery: query("reminderEntry") } },
   },
 }));
 
@@ -117,6 +118,32 @@ describe("the Disposables navigation entry", () => {
     });
     answers.disposableEntry = { data: { show: false } };
     expect(render()).not.toContain("Disposables");
+  });
+
+  it("draws Reminders for a head, with the open count, and Director for a director or the Social director", () => {
+    answers.reminderEntry = {
+      data: { director: false, social: false, head: true, open: 2 },
+    };
+    expect(render()).toContain("Reminders (2)");
+    expect(render()).not.toContain("Director");
+
+    answers.reminderEntry = {
+      data: { director: true, social: false, head: false, open: 0 },
+    };
+    expect(render()).toContain("Director");
+    expect(render()).not.toContain("Reminders");
+
+    answers.reminderEntry = {
+      data: { director: false, social: true, head: false, open: 0 },
+    };
+    expect(render()).toContain("Director");
+  });
+
+  it("hides the reminder entries on an error", () => {
+    answers.reminderEntry = { data: undefined, error: new Error("x") };
+    const html = render();
+    expect(html).not.toContain("Reminders");
+    expect(html).not.toContain("Director");
   });
 
   it("asks only once signed in", () => {

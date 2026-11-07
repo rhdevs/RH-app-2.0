@@ -69,6 +69,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let runDueCheck: typeof RunDueCheck;
     let kindUnderTest: DueKind;
     let resetNotificationsCache: () => void;
+    let resetDisposablesCache: () => void;
     const original: Record<string, string | null> = {};
     let ipCounter = 0;
 
@@ -105,6 +106,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       }
       resetNotificationsCache();
+      // disposables.enabled is cached for a few seconds as well.
+      resetDisposablesCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -324,6 +327,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ));
       ({ resetNotificationsFlagCache: resetNotificationsCache } = await import(
         "~/server/api/services/notifications"
+      ));
+      ({ resetDisposablesFlagCache: resetDisposablesCache } = await import(
+        "~/server/api/services/disposables/flag"
       ));
       for (const key of FLAGS) {
         original[key] =
@@ -1161,7 +1167,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect((await stored(made.id)).version).toBe(1);
       });
 
-      it("approve racing delete: the row ends up gone, and an approved notice exists only if the approval won", async () => {
+      it("approve racing delete: either order is valid, and each outcome is whole", async () => {
         const made = await file();
 
         const [approved, deleted] = await Promise.all([
@@ -1171,15 +1177,32 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           errorOf(as(U.social).delete({ id: made.id })),
         ]);
 
-        expect(deleted).toBe("ok");
-        expect(["ok", NOT_FOUND, CONFLICT]).toContain(approved);
-        expect(
-          await db.disposableRequest.count({ where: { id: made.id } }),
-        ).toBe(0);
-        expect((await noticesFor(U.headA, "disposable.approved")).length).toBe(
-          approved === "ok" ? 1 : 0,
-        );
-        expect(await noticesFor(U.headA, "disposable.deleted")).toHaveLength(1);
+        const rows = await db.disposableRequest.count({
+          where: { id: made.id },
+        });
+        const approvedNotices = (
+          await noticesFor(U.headA, "disposable.approved")
+        ).length;
+        const deletedNotices = (await noticesFor(U.headA, "disposable.deleted"))
+          .length;
+        // At least one of the two succeeded.
+        expect(approved === "ok" || deleted === "ok").toBe(true);
+
+        if (deleted === "ok") {
+          // The delete won (it may have run before or after the approval).
+          expect(rows).toBe(0);
+          expect(deletedNotices).toBe(1);
+          expect(["ok", NOT_FOUND, CONFLICT]).toContain(approved);
+          expect(approvedNotices).toBe(approved === "ok" ? 1 : 0);
+        } else {
+          // The approval committed first and the delete lost: it wrote nothing.
+          expect(deleted).toBe(CONFLICT);
+          expect(approved).toBe("ok");
+          expect(rows).toBe(1);
+          expect((await stored(made.id)).status).toBe("approved");
+          expect(approvedNotices).toBe(1);
+          expect(deletedNotices).toBe(0);
+        }
       });
 
       it("validates the edit like a new request", async () => {

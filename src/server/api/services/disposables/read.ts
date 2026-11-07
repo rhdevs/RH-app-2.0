@@ -36,7 +36,7 @@ const quantity = z.number().int().min(0).max(DISPOSABLE_ITEM_CAP);
  * unknown status, a quantity out of range, a collection day that is not a real
  * date) is COUNTED and SKIPPED, so one bad row never breaks the list (A2, A3).
  */
-const storedRow = z.object({
+export const storedRow = z.object({
   id: z.string().min(1),
   ccaID: z.number().int(),
   createdBy: z.string().nullable(),
@@ -56,9 +56,9 @@ const storedRow = z.object({
   decidedAt: z.date().nullable(),
   createdAt: z.date(),
 });
-type StoredRow = z.infer<typeof storedRow>;
+export type StoredRow = z.infer<typeof storedRow>;
 
-const SELECT = {
+export const SELECT = {
   id: true,
   ccaID: true,
   createdBy: true,
@@ -134,6 +134,7 @@ function toView(
     can: requestActions({
       isSocialDirector: viewer.isSocialDirector,
       status: row.status,
+      isHeadOfCca: viewer.headedCcaIDs.includes(row.ccaID),
     }),
   };
 }
@@ -141,7 +142,7 @@ function toView(
 const notReader = () =>
   new TRPCError({ code: "FORBIDDEN", message: NOT_DISPOSABLE_READER });
 
-async function namesOf(
+export async function namesOf(
   db: Pick<PrismaClient, "cCA">,
   ccaIDs: readonly number[],
 ): Promise<Map<number, string>> {

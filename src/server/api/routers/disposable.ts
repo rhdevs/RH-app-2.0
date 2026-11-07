@@ -20,6 +20,8 @@ import {
   assertDisposablesEnabled,
   isDisposablesEnabled,
 } from "~/server/api/services/disposables/flag";
+import { collectionDigest } from "~/server/api/services/disposables/digest";
+import { nudgeSocialDirector } from "~/server/api/services/disposables/nudge";
 import {
   getEntry,
   getRequest,
@@ -45,7 +47,9 @@ import {
  *  - list / get: that CCA's heads, and every JCRC member for all (a head of
  *    another CCA is refused even the read);
  *  - update / approve / reject / delete: the Social director only (the holder of the
- *    exactly-one handlesDisposables position), by the strict guard.
+ *    exactly-one handlesDisposables position), by the strict guard;
+ *  - digest: the Social director only, by the same guard;
+ *  - nudge: a head of the request's CCA (anyone else gets NOT_FOUND).
  * An admin who is none of these is refused. Status is never an input and never
  * written here: the services call `transition.ts`, the only status writer.
  * A race for one proposal's single request ends in DISPOSABLE_PROPOSAL_TAKEN,
@@ -121,6 +125,21 @@ export const disposableRouter = createTRPCRouter({
     .input(disposableDecideInput)
     .mutation(({ ctx, input }) =>
       decideRequest(ctx.db, ctx.session.user.userID, "rejected", input),
+    ),
+
+  /**
+   * Today's approved collections, for the Social director only (F19). A plain
+   * query: it writes nothing. Anyone else is refused by the strict guard.
+   */
+  digest: gated.query(({ ctx }) =>
+    collectionDigest(ctx.db, ctx.session.user.userID),
+  ),
+
+  /** A head nudges the Social director about a pending request (F21, B59). */
+  nudge: gated
+    .input(disposableIdInput)
+    .mutation(({ ctx, input }) =>
+      nudgeSocialDirector(ctx.db, ctx.session.user.userID, input.id),
     ),
 
   delete: gated

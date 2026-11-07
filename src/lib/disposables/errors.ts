@@ -17,6 +17,15 @@ const KNOWN: ReadonlyArray<readonly [string, string]> = [
   ["NOT_SOCIAL_DIRECTOR", "Only the Social director can do that."],
   ["DISPOSABLE_BAD_MOVE", "That is not possible for a request in this state."],
   ["DISPOSABLE_NOT_FOUND", "That request no longer exists."],
+  [
+    "DISPOSABLE_NOT_PENDING",
+    "Only a request waiting for a decision can be nudged.",
+  ],
+  [
+    "DISPOSABLE_NUDGE_TRY_AGAIN",
+    "That did not go through because of a clash. Press it again.",
+  ],
+  ["NOTIFICATIONS_DISABLED", "Notices are not switched on yet."],
   ["NOT_CCA_HEAD", "Only a head of this CCA can do that."],
   ["NOT_DISPOSABLE_READER", "You cannot see these requests."],
   ["DISPOSABLES_DISABLED", "Disposables requests are not switched on yet."],
