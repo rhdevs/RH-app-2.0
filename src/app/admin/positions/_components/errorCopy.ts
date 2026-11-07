@@ -21,6 +21,14 @@ const COPY: Record<string, string> = {
   STEP_OUT_ONLY_EARLIER:
     "Your step-out date can only move earlier. To undo a handover, ask an RF or Hall Office to assign the position to you again.",
   SCRC_DISABLED: "The Staff page is switched off right now.",
+  ONE_SUCCESSOR_ONLY:
+    "A position that gives director powers goes to one successor. Pick one person.",
+  NEEDS_STAFF_CONFIRMATION:
+    "You were handed this director position, so you can't hand it on yet. An admin, an RF or the Hall Office has to confirm you as its holder first.",
+  HEADS_LISTED_CCA:
+    "That person heads a CCA this position oversees, so they can't hold it.",
+  STEP_OUT_LOCKED:
+    "A position that gives director powers can't have its step-out date cancelled or moved later. You can still move it earlier.",
   SELF_ASSIGN:
     "You can't add yourself to a position. Ask an RF or Hall Office to assign it to you.",
   STAFF_ASSIGNED_ROW:
@@ -29,6 +37,16 @@ const COPY: Record<string, string> = {
     "This member is stepping out after a handover. Only an RF or Hall Office can give them a position again.",
   NO_STEP_OUT_PENDING: "You don't have a step-out date to change.",
   CONFLICT: "Someone changed this at the same time. Reload and try again.",
+  POSITION_LOCKED:
+    "This position gives director powers, so only an admin, an RF or the Hall Office can change its name, CCAs or holders.",
+  SELF_ASSIGN_FLAGGED:
+    "Nobody can add themselves to a position that gives director powers, admins included. Ask someone else to add you.",
+  ADMIN_REQUIRED: "Only an admin can set or clear director powers.",
+  DIRECTORS_DISABLED: "Director powers are switched off.",
+  CONFIRMATION_STALE:
+    "The holders or CCAs changed while you were working. Reload and try again.",
+  SELF_ASSIGNED_HOLDER:
+    "A current holder added themselves to this position. Remove them and have someone else add them first.",
 };
 
 export function positionsErrorCopy(message: string | undefined): string {

@@ -52,8 +52,9 @@ const ADMIN_TABS = [
     icon: Users2,
     requires: "viewAnyCcaRoster",
   },
-  // JCRC positions: views only (the "My positions" filter) and the JCRC
-  // self-handover. admin + jcrc, the holders of manageCcaHeads.
+  // JCRC positions: views (the "My positions" filter) except for a flagged
+  // position, which is locked to admin and where only an admin sets the flags;
+  // plus the JCRC self-handover. admin + jcrc, the holders of manageCcaHeads.
   {
     href: "/admin/positions",
     label: "Positions",
