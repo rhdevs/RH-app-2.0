@@ -1031,13 +1031,21 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect((await rowOf(stored.id)).eventID).toBeNull();
       });
 
-      it("allows a director who also heads the CCA, and that person becomes no owner unless the creator is gone", async () => {
+      it("allows a director who also heads the CCA, and the draft is theirs", async () => {
         const stored = await stage({ willBeEvent: false });
         const made = await as(U.dirHead).createEvent({ id: stored.id });
         expect(made.created).toBe(true);
         const [event] = await eventsOf();
-        // Owned by the proposal's creator, not by whoever pressed.
-        expect(event!.createdBy).toBe(U.headA);
+        // Owned by whoever pressed, not by the proposal's creator.
+        expect(event!.createdBy).toBe(U.dirHead);
+      });
+
+      it("makes the head who pressed the button the owner, not the creator (#130)", async () => {
+        const stored = await stage({ willBeEvent: false });
+        await as(U.headA2).createEvent({ id: stored.id });
+        const [event] = await eventsOf();
+        expect(event!.createdBy).toBe(U.headA2);
+        expect(event!.createdBy).not.toBe(U.headA);
       });
 
       it("refuses an unknown id the same way as another CCA's", async () => {
@@ -1231,6 +1239,30 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await as(U.headA).createEvent({ id: stored.id });
         const [event] = await eventsOf();
         expect(event!.createdBy).toBe(U.headA);
+      });
+    });
+
+    describe("an author who no longer heads the CCA (#130)", () => {
+      it("makes no draft automatically and tells the heads; the button makes the pressing head the owner", async () => {
+        const sub = await submitted(true);
+        await db.ccaHead.deleteMany({
+          where: { ccaID: CCA_A, userID: U.headA },
+        });
+        const quiet = captureErrors();
+        const r = await as(U.dirA).approve(sub);
+        quiet.restore();
+        expect(r.eventDraft).toBe("no_owner");
+        expect(await eventsOf()).toHaveLength(0);
+        expect((await rowOf(sub.id)).eventID).toBeNull();
+        expect(
+          await db.notification.count({
+            where: { kind: "proposal.event_draft_failed", userID: U.headA2 },
+          }),
+        ).toBe(1);
+
+        await as(U.headA2).createEvent({ id: sub.id });
+        const [event] = await eventsOf();
+        expect(event!.createdBy).toBe(U.headA2);
       });
     });
 

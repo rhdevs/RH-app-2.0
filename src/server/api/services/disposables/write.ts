@@ -16,6 +16,7 @@ import {
   noticeDecision,
   noticeDeleted,
   noticeEditedBySocialDirector,
+  noticeFiled,
 } from "./notices";
 import {
   changeRequest,
@@ -82,7 +83,7 @@ async function assertProposalLinkable(
  * written here: the schema default ("pending") applies, so `transition.ts`
  * stays the only code that names a status. Optional columns are written as
  * explicit nulls because on MongoDB a missing key does not match a `null`
- * filter.
+ * filter. The Social director is told afterwards, best effort.
  */
 export async function createRequest(
   db: PrismaClient,
@@ -94,7 +95,7 @@ export async function createRequest(
   await assertWithinLimit("create", userID);
   assertNotPast(input.collectionDay, now);
   await assertProposalLinkable(db, input.ccaID, input.proposalID);
-  return db.disposableRequest.create({
+  const created = await db.disposableRequest.create({
     data: {
       ccaID: input.ccaID,
       createdBy: userID,
@@ -114,6 +115,9 @@ export async function createRequest(
     },
     select: { id: true, version: true },
   });
+  // After the save, best effort: it never throws and never fails the filing.
+  await noticeFiled(db, { id: created.id, title: input.title }, userID);
+  return created;
 }
 
 /**

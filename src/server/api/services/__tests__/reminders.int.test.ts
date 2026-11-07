@@ -76,6 +76,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let nudgeKind: DueKind;
     let digestKind: DueKind;
     let resetCache: () => void;
+    let resetRemindersCache: () => void;
+    let resetDisposablesCache: () => void;
     let sgtDayKey: (d: Date) => string;
     const original: Record<string, string | null> = {};
     let ipCounter = 0;
@@ -117,6 +119,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       }
       resetCache();
+      // reminders.enabled and disposables.enabled are cached as well.
+      resetRemindersCache();
+      resetDisposablesCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -374,6 +379,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ));
       ({ resetNotificationsFlagCache: resetCache } = await import(
         "~/server/api/services/notifications"
+      ));
+      ({ resetRemindersFlagCache: resetRemindersCache } = await import(
+        "~/server/api/services/reminders/flag"
+      ));
+      ({ resetDisposablesFlagCache: resetDisposablesCache } = await import(
+        "~/server/api/services/disposables/flag"
       ));
       ({ sgtDayKey } = await import("~/lib/time/sgt"));
       for (const key of FLAGS) {

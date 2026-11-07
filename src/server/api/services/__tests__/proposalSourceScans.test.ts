@@ -755,9 +755,10 @@ describe("disposables follows the same rules as proposals", () => {
     expect(code).toMatch(/function refuseOnFailure\(err: unknown\): never/);
   });
 
-  it("the other disposable services catch nothing, apart from the flag read and the conflict mapping", () => {
+  it("the other disposable services catch nothing, apart from the flag read, the conflict mapping and the best-effort filed notice", () => {
     for (const f of DISPOSABLE_FILES) {
       if (f.endsWith("/access.ts") || f.endsWith("/flag.ts")) continue;
+      if (f.endsWith("/notices.ts")) continue;
       if (f === TRANSITION_D) continue;
       if (f.endsWith("/nudge.ts")) continue; // same-day race, see below
       expect(stripComments(read(f)), f).not.toMatch(/\bcatch\b/);
@@ -774,6 +775,21 @@ describe("disposables follows the same rules as proposals", () => {
     expect(nudge).toMatch(/throw err;/);
     // The CCA comes from the stored request, never from the client.
     expect(nudge).not.toMatch(/input\.ccaID/);
+  });
+
+  it("notices.ts catches in exactly one place: the best-effort filed notice, which logs a name and never rethrows (#134)", () => {
+    const code = stripComments(
+      read("src/server/api/services/disposables/notices.ts"),
+    );
+    expect(code.match(/\bcatch\b/g)).toHaveLength(1);
+    expect(code).not.toMatch(/throw err/);
+    const start = code.indexOf("export async function noticeFiled");
+    const end = code.indexOf(String.fromCharCode(10, 125, 10), start);
+    const body = code.slice(start, end);
+    expect(body).toMatch(/catch \(err\)/);
+    expect(body).toMatch(/notify\(db,/);
+    expect(body).toMatch(/currentSocialDirectorIDs\(db\)/);
+    expect(body).toMatch(/id\.trim\(\) !== ""/);
   });
 
   it("transition.ts rethrows everything but a write conflict", () => {
@@ -860,7 +876,9 @@ describe("disposables follows the same rules as proposals", () => {
       read("src/server/api/services/disposables/notices.ts"),
     );
     expect(code).toMatch(/notify\(tx,/);
-    expect(code).not.toMatch(/notify\(db,/);
+    // The one exception is the filed notice: it runs after the request is
+    // saved, on the plain client, and is best effort.
+    expect(code.match(/notify\(db,/g)).toHaveLength(1);
   });
 });
 

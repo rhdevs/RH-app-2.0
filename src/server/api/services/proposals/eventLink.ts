@@ -314,6 +314,19 @@ async function noticeDraftNotMade(db: LinkDb, source: Source): Promise<void> {
   }
 }
 
+/** The proposal's author, if they still head its CCA; otherwise null. */
+async function authorIfStillHead(
+  db: LinkDb,
+  source: Source,
+): Promise<string | null> {
+  if (source.createdBy === null) return null;
+  const head = await db.ccaHead.findFirst({
+    where: { ccaID: source.ccaID, userID: source.createdBy },
+    select: { userID: true },
+  });
+  return head ? source.createdBy : null;
+}
+
 /**
  * Run right after an approval commits. Makes the draft when the head asked for
  * one and `events.enabled` is on. NEVER throws: whatever goes wrong is logged
@@ -322,10 +335,12 @@ async function noticeDraftNotMade(db: LinkDb, source: Source): Promise<void> {
  * made. Only a `cleared` proposal is drafted here; the button also accepts one
  * that has since finished.
  *
- * The draft's owner is the proposal's creator. If their id was cleared by
- * account deletion (B16) no draft is made here, since the director who
- * approved must not own it; a head can press the button, which then makes them
- * the owner.
+ * The draft's owner is the proposal's creator, but only while they still head
+ * the CCA: the owner counts for door scanning and the JCRC "New" marker, so it
+ * must be someone who can open and publish the draft. If their id was cleared
+ * by account deletion (B16), or they no longer head the CCA, no draft is made
+ * here, since the director who approved must not own it; the heads are told,
+ * and a head can press the button, which then makes them the owner.
  */
 export async function draftEventAfterApproval(
   db: LinkDb,
@@ -343,14 +358,13 @@ export async function draftEventAfterApproval(
     }
     if (source.willBeEvent !== true) return "not_requested";
     if (!(await areEventsEnabled(db))) return "events_off";
-    if (source.createdBy === null) {
+    const ownerID = await authorIfStillHead(db, source);
+    if (ownerID === null) {
       console.error(JSON.stringify({ evt: "proposal_event_no_owner" }));
       await noticeDraftNotMade(db, source);
       return "no_owner";
     }
-    const result = await linkAndCreate(db, source, source.createdBy, [
-      "cleared",
-    ]);
+    const result = await linkAndCreate(db, source, ownerID, ["cleared"]);
     if (result.outcome === "created") {
       await noticeDraftMade(db, source, result.eventID);
       return "created";
@@ -391,12 +405,8 @@ export async function createEventFromProposal(
       message: EVENT_NOT_APPROVED,
     });
   }
-  const result = await linkAndCreate(
-    db,
-    source,
-    source.createdBy ?? userID,
-    BUTTON_STATUSES,
-  );
+  // The draft belongs to the head who pressed the button.
+  const result = await linkAndCreate(db, source, userID, BUTTON_STATUSES);
   if (result.outcome === "in_progress") {
     throw new TRPCError({ code: "CONFLICT", message: EVENT_BEING_MADE });
   }
