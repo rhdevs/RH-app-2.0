@@ -137,7 +137,7 @@ async function main() {
   try { pending = await findAll(db, "PendingRoleGrant"); } catch { /* may not exist yet */ }
   const nowMs = Date.now();
   const livePriv = pending.filter((p) =>
-    (p.roles ?? []).some((r) => r === "admin" || r === "jcrc" || r === "scrc") &&
+    (p.roles ?? []).some((r) => r === "admin" || r === "jcrc" || r === "scrc" || r === "hall_office") &&
     (!p.expiresAt || new Date(p.expiresAt?.$date ?? p.expiresAt).getTime() > nowMs));
   for (const p of livePriv) {
     blocking.push(`PendingRoleGrant ${p.userID}: outstanding ${JSON.stringify(p.roles)} created by ` +

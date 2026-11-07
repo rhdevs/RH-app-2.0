@@ -17,6 +17,10 @@ import {
 
 import { api } from "~/trpc/react";
 import { ownerLabel } from "~/lib/schemas/event";
+import {
+  PositionViewToggle,
+  usePositionScope,
+} from "~/app/admin/_components/PositionView";
 
 /**
  * The JCRC's hall-wide view.
@@ -56,6 +60,10 @@ export default function HallInsights() {
   // 180 days by default — long enough to cover a semester of events without
   // pretending to know when one started.
   const [days, setDays] = useState<number>(180);
+  // Hall events (no ccaID) belong to no position, so both views keep them.
+  // "How busy the hall is" stays hall-wide on purpose.
+  const scope = usePositionScope("insights");
+  const inView = (ccaID: number | null) => ccaID === null || scope.shows(ccaID);
 
   const { fromSec, toSec } = useMemo(() => {
     const now = Math.floor(Date.now() / 1000);
@@ -81,7 +89,7 @@ export default function HallInsights() {
   const { events, byCca, byWeek } = stats.data;
 
   const turnoutData = events
-    .filter((e) => e.checkedIn > 0)
+    .filter((e) => e.checkedIn > 0 && inView(e.ccaID))
     .map((e) => ({
       name: (e.title ?? `#${e.eventID}`).slice(0, 18),
       signedUp: e.signups,
@@ -89,7 +97,7 @@ export default function HallInsights() {
       walkedIn: e.walkIns,
     }));
 
-  const ccaData = byCca.map((c) => ({
+  const ccaData = byCca.filter((c) => inView(c.ccaID)).map((c) => ({
     name: ownerLabel(c.ccaID, c.ccaName),
     events: c.events,
   }));
@@ -111,6 +119,7 @@ export default function HallInsights() {
             {r.label}
           </button>
         ))}
+        <PositionViewToggle state={scope} />
         <span className="ml-auto text-sm text-gray-500">
           {events.length} {events.length === 1 ? "event" : "events"}
         </span>

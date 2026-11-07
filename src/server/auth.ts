@@ -84,6 +84,7 @@ import {
   getAuthEnforcement,
   isMatricRequired,
 } from "~/server/api/services/access";
+import { dropEndedJcrcRole } from "~/server/api/services/jcrcTerm";
 // The D-7 break-glass ALLOWLIST — the collection half. Read its header before
 // touching either call site below: it is the only thing in this app that can
 // turn an address the domain rule rejects into an authorization key, and the
@@ -1109,7 +1110,12 @@ export const authOptions = {
         // I-4: resolved LIVE, per request. Nothing here is written into the
         // token — a revoked admin loses admin on the very next page load
         // rather than at the end of the 30-day JWT lifetime.
-        const roles = normalizeStoredRoles(stored);
+        // ...including the end of a handed-over JCRC term (jcrcTerm.ts).
+        const roles = await dropEndedJcrcRole(
+          db,
+          userID,
+          normalizeStoredRoles(stored),
+        );
         session.user.roles = roles;
         session.user.isAdmin = roles.includes(ADMIN_ROLE);
 

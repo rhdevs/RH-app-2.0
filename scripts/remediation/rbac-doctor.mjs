@@ -361,10 +361,10 @@ async function main() {
   // with the identical filter in verify-legacy-drop.mjs, which BLOCKS the drop;
   // this one only reports, so a divergence shows up here as a quiet undercount.
   // cca_head cannot travel the deferred path (no ASSIGNABLE_BY entry).
-  const privPending = pending.filter((p) => (p.roles ?? []).some((r) => r === "admin" || r === "jcrc" || r === "scrc"));
+  const privPending = pending.filter((p) => (p.roles ?? []).some((r) => r === "admin" || r === "jcrc" || r === "scrc" || r === "hall_office"));
   const expired = pending.filter((p) => p.expiresAt && new Date(p.expiresAt?.$date ?? p.expiresAt).getTime() <= nowMs);
   line("PendingRoleGrant: outstanding", pending.length);
-  line("  of which admin/jcrc/scrc", privPending.length, {
+  line("  of which admin/jcrc/scrc/hall_office", privPending.length, {
     bad: privPending.map((p) => `${p.userID}:${JSON.stringify(p.roles)}`),
     note: "requires named sign-off before the legacy drop" });
   line("  expired, unclaimed", expired.length, { info: true });

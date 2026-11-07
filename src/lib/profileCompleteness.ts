@@ -19,7 +19,11 @@
  * over-admitting. Read MINIMAL_PROFILE_ROLES below before adding anything to it.
  */
 
-export type ProfileField = "displayName" | "telegramHandle" | "block" | "matric";
+export type ProfileField =
+  | "displayName"
+  | "telegramHandle"
+  | "block"
+  | "matric";
 
 /**
  * A required-field set that is STRUCTURALLY INCAPABLE OF BEING EMPTY.
@@ -75,7 +79,8 @@ export const REQUIRED_PROFILE_FIELDS: NonEmptyProfileFields = Object.freeze([
  * question to ask is whether the gate still protects anybody.
  */
 export const MINIMAL_PROFILE_ROLES = Object.freeze({
-  scrc: "Hall office staff. Not a resident: no matric to hold, no hall block to live in, and no reason to publish a Telegram handle to residents. Their display name is the only field the app renders about them.",
+  hall_office: "Hall office staff. Same reasons as the RFs below.",
+  scrc: "Resident Fellows and hall staff. Not a resident: no matric to hold, no hall block to live in, and no reason to publish a Telegram handle to residents. Their display name is the only field the app renders about them.",
 } as const);
 
 /**

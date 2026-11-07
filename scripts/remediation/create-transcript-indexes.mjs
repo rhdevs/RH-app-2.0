@@ -283,7 +283,12 @@ const IDEMPOTENT_CODES = new Map([
  * `{ aborted, created }`; a refusal also sets process.exitCode, as the script
  * always did.
  */
-export async function apply(db, commit, targets = TARGETS) {
+export async function apply(
+  db,
+  commit,
+  targets = TARGETS,
+  { script = "create-transcript-indexes.mjs", label = "transcript" } = {},
+) {
   const COMMIT = commit;
   const aborted = (msg) => {
     abort(msg);
@@ -344,14 +349,14 @@ export async function apply(db, commit, targets = TARGETS) {
   }
 
   {
-    banner("create-transcript-indexes.mjs", COMMIT);
+    banner(script, COMMIT);
     console.log(`target: ${describeTarget(process.env.DATABASE_URL)}`);
     const total = Object.values(targets).reduce(
       (n, list) => n + list.length,
       0,
     );
     console.log(
-      `This run touches ONLY the ${Object.keys(targets).length} transcript collections (${total} indexes besides _id_).\n`,
+      `This run touches ONLY the ${Object.keys(targets).length} ${label} collections (${total} indexes besides _id_).\n`,
     );
 
     // -- 1. read everything, plan, refuse on any conflict --------------------
@@ -476,12 +481,12 @@ export async function apply(db, commit, targets = TARGETS) {
     if (red.length) {
       for (const p of red) console.error(`  RED  ${p}`);
       return aborted(
-        `the transcript indexes are NOT all in place. Do not ship until this is clean: a Prisma @@unique on Mongo enforces nothing by itself.`,
+        `the ${label} indexes are NOT all in place. Do not ship until this is clean: a Prisma @@unique on Mongo enforces nothing by itself.`,
       );
     }
-    console.log(`all ${total} transcript indexes are present.`);
+    console.log(`all ${total} ${label} indexes are present.`);
     console.log(
-      `\nNOW run index-census.mjs again and diff it against the census taken before. The only acceptable delta is the transcript collections; User.email_unique_ci MUST still be present.`,
+      `\nNOW run index-census.mjs again and diff it against the census taken before. The only acceptable delta is the ${label} collections; User.email_unique_ci MUST still be present.`,
     );
     return { aborted: false, created: pending };
   }

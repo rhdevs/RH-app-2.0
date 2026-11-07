@@ -31,18 +31,33 @@ export type CcaOption = { ccaID: number; ccaName: string; category: string };
  * The id is shown next to every name on purpose. It is the value that actually
  * gets written to CcaHead.ccaID, so it is the thing worth confirming before a
  * list of thirty people is attached to it.
+ *
+ * `pinnedCcaIDs` (the caller's JCRC positions) lists those CCAs first under
+ * "Your positions". It only ORDERS the list: every CCA stays in it and in the
+ * search, because a position is a view, never a limit.
  */
 export default function CcaPicker({
   value,
   onChange,
+  pinnedCcaIDs = [],
 }: {
   value: number | null;
   onChange: (cca: CcaOption | null) => void;
+  pinnedCcaIDs?: readonly number[];
 }) {
   const [open, setOpen] = useState(false);
   const { data: ccas, isPending, error } = api.admin.listCcas.useQuery();
 
   const selected = ccas?.find((c) => c.ccaID === value) ?? null;
+  const pinned = (ccas ?? []).filter((c) => pinnedCcaIDs.includes(c.ccaID));
+  const rest = (ccas ?? []).filter((c) => !pinnedCcaIDs.includes(c.ccaID));
+  const groups =
+    pinned.length > 0
+      ? [
+          { heading: "Your positions", items: pinned },
+          { heading: "All CCAs", items: rest },
+        ]
+      : [{ heading: undefined, items: rest }];
 
   if (error) {
     return (
@@ -82,30 +97,32 @@ export default function CcaPicker({
           <CommandInput placeholder="Search by name or id…" />
           <CommandList>
             <CommandEmpty>No CCA matches that.</CommandEmpty>
-            <CommandGroup>
-              {(ccas ?? []).map((c) => (
-                <CommandItem
-                  // The searchable text. Name AND id, so "142" finds it too.
-                  key={c.ccaID}
-                  value={`${c.ccaName} ${c.ccaID} ${c.category}`}
-                  onSelect={() => {
-                    onChange(c);
-                    setOpen(false);
-                  }}
-                >
-                  <CheckIcon
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      value === c.ccaID ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  <span className="flex-1">{c.ccaName}</span>
-                  <span className="ml-2 font-mono text-xs text-gray-400">
-                    {c.ccaID}
-                  </span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
+            {groups.map((g) => (
+              <CommandGroup key={g.heading ?? "all"} heading={g.heading}>
+                {g.items.map((c) => (
+                  <CommandItem
+                    // The searchable text. Name AND id, so "142" finds it too.
+                    key={c.ccaID}
+                    value={`${c.ccaName} ${c.ccaID} ${c.category}`}
+                    onSelect={() => {
+                      onChange(c);
+                      setOpen(false);
+                    }}
+                  >
+                    <CheckIcon
+                      className={cn(
+                        "mr-2 h-4 w-4",
+                        value === c.ccaID ? "opacity-100" : "opacity-0",
+                      )}
+                    />
+                    <span className="flex-1">{c.ccaName}</span>
+                    <span className="ml-2 font-mono text-xs text-gray-400">
+                      {c.ccaID}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>
