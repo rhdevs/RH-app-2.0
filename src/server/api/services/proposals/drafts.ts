@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
+import { defaultWillBeEvent } from "~/lib/proposals/categories";
 import { EDITABLE_STATUSES } from "~/lib/proposals/status";
 import type {
   ProposalCreateInput,
@@ -39,6 +40,7 @@ export async function createProposal(
       blastMessage: input.blastMessage,
       plannedStart: input.plannedStart,
       plannedEnd: input.plannedEnd,
+      willBeEvent: input.willBeEvent ?? defaultWillBeEvent(input.category),
       eventID: null,
       posterUrl: null,
       docLink: input.docLink,
@@ -88,6 +90,9 @@ export async function updateProposal(
     ...(input.plannedEnd !== undefined && { plannedEnd: input.plannedEnd }),
     ...(input.posterUrl !== undefined && { posterUrl: input.posterUrl }),
     ...(input.docLink !== undefined && { docLink: input.docLink }),
+    ...(input.willBeEvent !== undefined && {
+      willBeEvent: input.willBeEvent,
+    }),
   };
   if (Object.keys(data).length === 0) {
     throw new TRPCError({ code: "BAD_REQUEST", message: NOTHING_TO_UPDATE });

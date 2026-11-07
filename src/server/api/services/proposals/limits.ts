@@ -19,6 +19,7 @@ export const PROPOSAL_LIMITS = {
   approve: 60,
   return: 60,
   finish: 60,
+  createEvent: 30,
 } as const;
 
 export type LimitedAction = keyof typeof PROPOSAL_LIMITS;

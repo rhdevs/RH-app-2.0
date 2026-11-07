@@ -1,5 +1,6 @@
 import { normalizeDocLink } from "~/lib/schemas/proposalFiles";
 import {
+  defaultWillBeEvent,
   isProposalCategory,
   missingForSubmit,
   type ProposalCategory,
@@ -25,6 +26,8 @@ export type ProposalFormState = {
   /** Null until a poster is uploaded; it needs the saved proposal's id. */
   posterUrl: string | null;
   docLink: string;
+  /** "This will be an event": make a linked Event draft on approval. */
+  willBeEvent: boolean;
 };
 
 export const EMPTY_PROPOSAL_FORM: ProposalFormState = {
@@ -36,7 +39,24 @@ export const EMPTY_PROPOSAL_FORM: ProposalFormState = {
   endLocal: "",
   posterUrl: null,
   docLink: "",
+  willBeEvent: defaultWillBeEvent("event"),
 };
+
+/**
+ * Changing the type moves "This will be an event" to the new type's default,
+ * unless the head had already set it away from the old type's default.
+ */
+export function withCategory(
+  f: ProposalFormState,
+  category: ProposalCategory,
+): ProposalFormState {
+  const untouched = f.willBeEvent === defaultWillBeEvent(f.category);
+  return {
+    ...f,
+    category,
+    willBeEvent: untouched ? defaultWillBeEvent(category) : f.willBeEvent,
+  };
+}
 
 export function formFromProposal(p: {
   category: string;
@@ -47,6 +67,8 @@ export function formFromProposal(p: {
   plannedEnd: number | null;
   posterUrl?: string | null;
   docLink?: string | null;
+  /** Null or absent on a row from before the field: off. */
+  willBeEvent?: boolean | null;
 }): ProposalFormState {
   return {
     category: isProposalCategory(p.category) ? p.category : "event",
@@ -57,6 +79,7 @@ export function formFromProposal(p: {
     endLocal: epochToLocalInput(p.plannedEnd),
     posterUrl: p.posterUrl ?? null,
     docLink: p.docLink ?? "",
+    willBeEvent: p.willBeEvent === true,
   };
 }
 
@@ -70,6 +93,7 @@ export function saveFieldsFromForm(f: ProposalFormState) {
     plannedStart: f.startLocal === "" ? null : localInputToEpoch(f.startLocal),
     plannedEnd: f.endLocal === "" ? null : localInputToEpoch(f.endLocal),
     docLink: f.docLink.trim() === "" ? null : f.docLink,
+    willBeEvent: f.willBeEvent,
   };
 }
 
@@ -108,7 +132,8 @@ export function sameForm(a: ProposalFormState, b: ProposalFormState): boolean {
     a.startLocal === b.startLocal &&
     a.endLocal === b.endLocal &&
     a.posterUrl === b.posterUrl &&
-    a.docLink === b.docLink
+    a.docLink === b.docLink &&
+    a.willBeEvent === b.willBeEvent
   );
 }
 
@@ -156,6 +181,12 @@ export function describeProposalError(message: string | undefined): {
         return "This proposal could not be found.";
       case "PROPOSAL_NOT_EDITABLE":
         return "This proposal can no longer be edited.";
+      case "EVENTS_DISABLED":
+        return "Events are not switched on, so an event draft cannot be made.";
+      case "EVENT_BEING_MADE":
+        return "The event draft is still being made. Try again shortly.";
+      case "PROPOSAL_NOT_APPROVED":
+        return "An event draft can be made once the proposal is approved.";
       case "END_NOT_AFTER_START":
         return "The end must be after the start.";
       default:

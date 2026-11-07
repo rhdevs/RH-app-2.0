@@ -25,6 +25,7 @@ describe("the form to and from stored values", () => {
       plannedEnd: START + 3600,
       posterUrl: "https://example.test/p.webp",
       docLink: "https://docs.example.com/plan",
+      willBeEvent: true,
     });
     expect(form.startLocal).toBe("2027-03-01T10:00");
     expect(form.endLocal).toBe("2027-03-01T11:00");
@@ -36,6 +37,7 @@ describe("the form to and from stored values", () => {
       plannedStart: START,
       plannedEnd: START + 3600,
       docLink: "https://docs.example.com/plan",
+      willBeEvent: true,
     });
     expect(updateFieldsFromForm(form).posterUrl).toBe(
       "https://example.test/p.webp",

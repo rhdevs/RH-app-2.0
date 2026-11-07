@@ -28,6 +28,15 @@ import { historyLine } from "~/lib/proposals/historyLine";
 const FIELD =
   "w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-gray-50";
 
+/** A plain line when the approval did not make the head's event draft. */
+const draftNoteFor = (outcome: string | undefined): string | null =>
+  outcome === "failed" ||
+  outcome === "no_owner" ||
+  outcome === "events_off" ||
+  outcome === "in_progress"
+    ? "The event draft was not made. The head can press Create event on the proposal."
+    : null;
+
 const toEpoch = (d: Date | string) => Math.floor(new Date(d).getTime() / 1000);
 
 const SELF_APPROVED_TEXT =
@@ -64,6 +73,7 @@ export default function DirectorProposal({
   const [open, setOpen] = useState<ReviewAction | null>(null);
   const [text, setText] = useState("");
   const [failure, setFailure] = useState<string | null>(null);
+  const [draftNote, setDraftNote] = useState<string | null>(null);
 
   if (enabled.isLoading || (on && detail.isLoading)) {
     return <p className="text-sm text-gray-500">Loading…</p>;
@@ -114,10 +124,15 @@ export default function DirectorProposal({
   };
   const run = async (action: ReviewAction) => {
     setFailure(null);
+    setDraftNote(null);
     const base = { id: loaded.id, version: loaded.version };
     try {
       if (action === "approve") {
-        await approve.mutateAsync({ ...base, note: text.trim() || null });
+        const done = await approve.mutateAsync({
+          ...base,
+          note: text.trim() || null,
+        });
+        setDraftNote(draftNoteFor(done.eventDraft));
       } else if (action === "return") {
         await returnIt.mutateAsync({ ...base, reason: text });
       } else {
@@ -331,6 +346,22 @@ export default function DirectorProposal({
             </p>
           )}
         </section>
+      )}
+
+      {(loaded.event || loaded.eventMissing || loaded.eventBeingMade) && (
+        <p className="text-sm text-gray-700">
+          <span className="font-medium">Event: </span>
+          {loaded.event
+            ? `${loaded.event.title ?? "Untitled event"} (${loaded.event.status})`
+            : loaded.eventBeingMade
+              ? "the event draft is still being made"
+              : "the event draft is missing. It was deleted or could not be made."}
+        </p>
+      )}
+      {draftNote && (
+        <p role="status" className="text-sm text-amber-800">
+          {draftNote}
+        </p>
       )}
 
       {loaded.history.length > 0 && (
