@@ -770,10 +770,11 @@ describe("disposables follows the same rules as proposals", () => {
     expect(code).toMatch(/function refuseOnFailure\(err: unknown\): never/);
   });
 
-  it("the other disposable services catch nothing, apart from the flag read, the conflict mapping and the best-effort filed notice", () => {
+  it("the other disposable services catch nothing, apart from the flag read, the conflict mapping, the best-effort filed notice and the best-effort tag", () => {
     for (const f of DISPOSABLE_FILES) {
       if (f.endsWith("/access.ts") || f.endsWith("/flag.ts")) continue;
       if (f.endsWith("/notices.ts")) continue;
+      if (f.endsWith("/write.ts")) continue; // best-effort tag, see below
       if (f === TRANSITION_D) continue;
       if (f.endsWith("/nudge.ts")) continue; // same-day race, see below
       expect(stripComments(read(f)), f).not.toMatch(/\bcatch\b/);
@@ -805,6 +806,22 @@ describe("disposables follows the same rules as proposals", () => {
     expect(body).toMatch(/notify\(db,/);
     expect(body).toMatch(/currentSocialDirectorIDs\(db\)/);
     expect(body).toMatch(/id\.trim\(\) !== ""/);
+  });
+
+  it("write.ts catches in exactly one place: the best-effort tag after the save, which logs a name and never rethrows (#138)", () => {
+    const code = stripComments(
+      read("src/server/api/services/disposables/write.ts"),
+    );
+    expect(code.match(/\bcatch\b/g)).toHaveLength(1);
+    expect(code).not.toMatch(/throw err/);
+    const at = code.indexOf("try {");
+    const body = code.slice(at, code.indexOf("noticeFiled(db,", at));
+    expect(body).toMatch(
+      /await tagIfProposalGotAnEvent\(db, made\.id, target\)/,
+    );
+    expect(body).toMatch(/catch \(err\)/);
+    expect(body).toMatch(/err instanceof Error \? err\.name : typeof err/);
+    expect(body).not.toMatch(/err\.message/);
   });
 
   it("transition.ts rethrows everything but a write conflict", () => {
