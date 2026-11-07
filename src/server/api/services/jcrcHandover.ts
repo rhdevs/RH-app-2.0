@@ -5,6 +5,12 @@ import { applyRoleChange, writeAudit } from "~/server/api/routers/admin";
 import { getUserRoles } from "~/server/api/services/access";
 import { activeHolderWhere } from "~/server/api/services/jcrcPositions";
 import {
+  POSITION_AUDIT,
+  assertNoListedCcaHead,
+  auditFlaggedChange,
+  flaggedPositionsAmong,
+} from "~/server/api/services/jcrcPositionLock";
+import {
   ADMIN_ROLE,
   holdsStaffRole,
   isGrantableRole,
@@ -36,6 +42,21 @@ import {
  *    keeps the position but not a second handover; someone else has to assign
  *    the position again first.
  * Every grant is still audited as `jcrc.handover`.
+ *
+ * A FLAGGED POSITION (a director position) IS HANDED OVER TO EXACTLY ONE
+ * SUCCESSOR, WITH NO CHAINS. The holder list of a flagged position is what an
+ * admin confirmed, so a handover may replace one holder with one successor and
+ * nothing more:
+ *  - one successor, who must not head a CCA the position lists;
+ *  - the successor's row is marked (`handoverFrom`) and cannot be handed over
+ *    again until an admin, RF or Hall Office assigns the person again, which
+ *    clears the mark;
+ *  - once a row is handed over, the outgoing holder cannot cancel the step-out
+ *    or push it later (setStepOut), or they would stay a director beside the
+ *    successor;
+ *  - the successor's row writes the same audit row as any other holder added
+ *    to a flagged position.
+ * A position with no flag keeps the rules above exactly as before.
  *
  * SUCCESSORS MUST HAVE SIGNED IN. A pending grant is redeemed against the
  * granter's own assignable roles, and a jcrc may assign none, so a queued
@@ -159,7 +180,12 @@ export async function handOverPositions(
       positionID: { in: positionIDs },
       ...activeHolderWhere(now),
     },
-    select: { positionID: true, assignedBy: true, handedOverAt: true },
+    select: {
+      positionID: true,
+      assignedBy: true,
+      handedOverAt: true,
+      handoverFrom: true,
+    },
   });
   if (held.length !== positionIDs.length) refuse("NOT_YOUR_POSITION");
   if (held.some((h) => h.assignedBy === actorUserID)) {
@@ -171,6 +197,14 @@ export async function handOverPositions(
     where: { id: { in: positionIDs } },
     select: { name: true },
   });
+  const flagged = await flaggedPositionsAmong(db, positionIDs);
+  const flaggedIDs = new Set(flagged.map((p) => p.id));
+  if (flagged.length > 0) {
+    if (new Set(input.successorIDs).size > 1) refuse("ONE_SUCCESSOR_ONLY");
+    if (held.some((h) => flaggedIDs.has(h.positionID) && h.handoverFrom)) {
+      refuse("NEEDS_STAFF_CONFIRMATION");
+    }
+  }
   const stepOutAt =
     input.stepOutAt.getTime() < now.getTime() ? now : input.stepOutAt;
   const reason = [
@@ -183,6 +217,13 @@ export async function handOverPositions(
     .slice(0, HANDOVER_REASON_MAX);
 
   const plans = await planSuccessors(db, actorUserID, input.successorIDs);
+  if (flagged.length > 0) {
+    await assertNoListedCcaHead(
+      db,
+      plans.map((p) => p.userID),
+      flagged.map((p) => p.id),
+    );
+  }
 
   // NOT ATOMIC: successors are granted one by one. A failure part-way leaves
   // the earlier successors granted and the caller's own rows untouched, and a
@@ -192,6 +233,9 @@ export async function handOverPositions(
     await grantJcrc(db, actorUserID, actorRoles, plan, reason);
     granted.push(plan.userID);
     for (const positionID of positionIDs) {
+      const viaHandover = flaggedIDs.has(positionID)
+        ? { handoverFrom: actorUserID }
+        : {};
       await db.jcrcPositionHolder.upsert({
         where: { positionID_userID: { positionID, userID: plan.userID } },
         create: {
@@ -199,13 +243,25 @@ export async function handOverPositions(
           userID: plan.userID,
           assignedBy: actorUserID,
           endsAt: null,
+          ...viaHandover,
         },
         update: {
           endsAt: null,
           handedOverAt: null,
           assignedBy: actorUserID,
           assignedAt: now,
+          ...viaHandover,
         },
+      });
+    }
+    for (const position of flagged) {
+      await auditFlaggedChange(db, {
+        actorUserID,
+        actorRoles,
+        action: POSITION_AUDIT.addHolder,
+        position,
+        targetUserID: plan.userID,
+        detail: `holder added by handover from ${actorUserID}`,
       });
     }
     await writeAudit(db, {
@@ -236,6 +292,10 @@ export async function handOverPositions(
 /**
  * Move or cancel the caller's own step-out date. `null` cancels it: they keep
  * their handed-over positions (alongside the successors) and `jcrc`.
+ *
+ * NOT FOR A FLAGGED POSITION: a pending row on one can neither be cancelled nor
+ * moved later (STEP_OUT_LOCKED), or the outgoing holder would stay a director
+ * next to the successor. It may still be moved earlier.
  */
 export async function setStepOut(
   db: PrismaClient,
@@ -244,10 +304,26 @@ export async function setStepOut(
   now: Date = new Date(),
 ): Promise<{ termEndsAt: Date | null }> {
   const pendingRows = { userID: actorUserID, endsAt: { gt: now } };
-  const count = await db.jcrcPositionHolder.count({ where: pendingRows });
-  if (count === 0) refuse("NO_STEP_OUT_PENDING");
+  const pending = await db.jcrcPositionHolder.findMany({
+    where: pendingRows,
+    select: { positionID: true, endsAt: true },
+  });
+  if (pending.length === 0) refuse("NO_STEP_OUT_PENDING");
   const endsAt =
     stepOutAt && stepOutAt.getTime() < now.getTime() ? now : stepOutAt;
+  const flaggedPending = await flaggedPositionsAmong(
+    db,
+    pending.map((r) => r.positionID),
+  );
+  const lockedIDs = new Set(flaggedPending.map((p) => p.id));
+  const locked = pending.filter((r) => lockedIDs.has(r.positionID));
+  if (
+    locked.length > 0 &&
+    (endsAt === null ||
+      locked.some((r) => endsAt.getTime() > r.endsAt!.getTime()))
+  ) {
+    refuse("STEP_OUT_LOCKED");
+  }
   await db.jcrcPositionHolder.updateMany({
     where: pendingRows,
     data: { endsAt },

@@ -23,7 +23,12 @@ const clean = (s: string) =>
 const text = (max: number) => z.string().max(max).transform(clean);
 
 /** Epoch seconds, a whole number after 2000 and before 2200. */
-const epochSeconds = z.number().int().min(946_684_800).max(7_258_118_400);
+/**
+ * The stored columns are 32-bit integers, so the upper bound is the largest
+ * one (January 2038), not a far-future date a database write would overflow on.
+ */
+const MAX_EPOCH_SECONDS = 2_147_483_647;
+const epochSeconds = z.number().int().min(946_684_800).max(MAX_EPOCH_SECONDS);
 
 const ccaID = z.number().int().positive();
 const proposalId = z.string().regex(/^[a-f\d]{24}$/i);
@@ -142,9 +147,15 @@ export const proposalFinishInput = z.object({
   version: versionField,
 });
 
-/** One page of the review queue; `cursor` is the id the page starts at. */
+/**
+ * One page of the review queue. `cursor` is the opaque value the previous
+ * page returned: the submission time (epoch milliseconds, or "none") and id of
+ * the LAST row that page showed, joined by "_". The next page is every row
+ * after that position, so it holds even if that row has left review.
+ */
+export const QUEUE_CURSOR = /^(\d{1,16}|none)_([a-f\d]{24})$/i;
 export const proposalQueueInput = z.object({
-  cursor: proposalId.optional(),
+  cursor: z.string().regex(QUEUE_CURSOR).optional(),
 });
 
 export const proposalIdInput = z.object({ id: proposalId });
