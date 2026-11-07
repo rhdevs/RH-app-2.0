@@ -43,6 +43,38 @@ export function activeHolderWhere(
 }
 
 /**
+ * Ends this person's current holder rows on FLAGGED positions (director
+ * positions) as of now. Called by applyRoleChange, inside its transaction, when
+ * `jcrc` is taken away: the director guard already ignores a holder without a
+ * live `jcrc`, but the row would wake up the day `jcrc` is granted again.
+ * Rows on unflagged positions are views only and stay. It changes rows and
+ * decides nothing about who may act.
+ */
+export async function endFlaggedHolderRows(
+  db: Pick<PrismaClient, "jcrcPositionHolder" | "jcrcPosition">,
+  userID: string,
+  now: Date = new Date(),
+): Promise<void> {
+  const held = await db.jcrcPositionHolder.findMany({
+    where: { userID, ...activeHolderWhere(now) },
+    select: { positionID: true },
+  });
+  if (held.length === 0) return;
+  const flagged = await db.jcrcPosition.findMany({
+    where: {
+      id: { in: held.map((h) => h.positionID) },
+      OR: [{ vetsProposals: true }, { handlesDisposables: true }],
+    },
+    select: { id: true },
+  });
+  if (flagged.length === 0) return;
+  await db.jcrcPositionHolder.updateMany({
+    where: { userID, positionID: { in: flagged.map((p) => p.id) } },
+    data: { endsAt: now },
+  });
+}
+
+/**
  * Pure core of myPositionCcas. A member who holds no position, or any
  * oversees-all position, sees every CCA: the ship-day default is that nothing
  * changes for anyone until positions are set up.

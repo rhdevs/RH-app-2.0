@@ -98,6 +98,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           OR: [{ positionID: { in: ids } }, { userID: { in: ALL_IDS } }],
         },
       });
+      await db.ccaHead.deleteMany({ where: { userID: { in: ALL_IDS } } });
       await db.jcrcPosition.deleteMany({ where: { id: { in: ids } } });
       await db.jcrcTerm.deleteMany({ where: { userID: { in: ALL_IDS } } });
       await db.pendingRoleGrant.deleteMany({
@@ -785,6 +786,199 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }),
           ),
         ).toBe("FORBIDDEN:SELF_ASSIGNED_POSITION");
+      });
+    });
+
+    // ----------------------------------- #125: the escape routes of a handover
+    describe("handover on a flagged position: one successor, no chains", () => {
+      const HOUR = 60 * 60 * 1000;
+      const handOver = (
+        who: string,
+        id: string,
+        successors: string[],
+        stepOutAt: Date = new Date(Date.now() + HOUR),
+      ) =>
+        as(who, JCRC).handOver({
+          positionIDs: [id],
+          successorIDs: successors,
+          stepOutAt,
+        });
+
+      it("refuses more than one successor, and writes nothing", async () => {
+        const id = await flagged();
+        expect(
+          await errorOf(handOver(U.holder, id, [U.successor, U.unplaced])),
+        ).toBe("FORBIDDEN:ONE_SUCCESSOR_ONLY");
+        expect(await holdersOf(id)).toEqual([U.holder]);
+        const row = await db.userRole.findUnique({
+          where: { userID: U.successor },
+        });
+        expect(row?.roles).toEqual(["resident"]);
+      });
+
+      it("still allows several successors on an unflagged position", async () => {
+        const id = await unflagged();
+        expect(
+          await errorOf(handOver(U.holder, id, [U.successor, U.unplaced])),
+        ).toBe("ok");
+        expect(await holdersOf(id)).toEqual(
+          [U.holder, U.successor, U.unplaced].sort(),
+        );
+      });
+
+      it("marks the successor's row and refuses to hand it on until staff assign again", async () => {
+        const id = await flagged();
+        expect(await errorOf(handOver(U.holder, id, [U.successor]))).toBe("ok");
+        const marked = await db.jcrcPositionHolder.findFirst({
+          where: { positionID: id, userID: U.successor },
+        });
+        expect(marked?.handoverFrom).toBe(U.holder);
+
+        // The chain: the successor hands it on at once.
+        expect(await errorOf(handOver(U.successor, id, [U.unplaced]))).toBe(
+          "FORBIDDEN:NEEDS_STAFF_CONFIRMATION",
+        );
+        expect(await holdersOf(id)).toEqual([U.holder, U.successor].sort());
+
+        // An admin assigning the successor again confirms them.
+        expect(
+          await errorOf(
+            as(U.admin, ADMIN).addHolder({ id, userID: U.successor }),
+          ),
+        ).toBe("ok");
+        const confirmed = await db.jcrcPositionHolder.findFirst({
+          where: { positionID: id, userID: U.successor },
+        });
+        expect(confirmed?.handoverFrom ?? null).toBeNull();
+        expect(await errorOf(handOver(U.successor, id, [U.unplaced]))).toBe(
+          "ok",
+        );
+      });
+
+      it("refuses a second handover of the same row, and a cancelled or later step-out", async () => {
+        const id = await flagged();
+        expect(await errorOf(handOver(U.holder, id, [U.successor]))).toBe("ok");
+        expect(await errorOf(handOver(U.holder, id, [U.unplaced]))).toBe(
+          "FORBIDDEN:ALREADY_HANDED_OVER",
+        );
+        expect(
+          await errorOf(as(U.holder, JCRC).setStepOut({ stepOutAt: null })),
+        ).toBe("FORBIDDEN:STEP_OUT_LOCKED");
+        expect(
+          await errorOf(
+            as(U.holder, JCRC).setStepOut({
+              stepOutAt: new Date(Date.now() + 48 * HOUR),
+            }),
+          ),
+        ).toBe("FORBIDDEN:STEP_OUT_LOCKED");
+        // The outgoing holder is still on the way out.
+        const outgoing = await db.jcrcPositionHolder.findFirst({
+          where: { positionID: id, userID: U.holder },
+        });
+        expect(outgoing?.endsAt).not.toBeNull();
+        // Moving the date earlier is allowed.
+        expect(
+          await errorOf(
+            as(U.holder, JCRC).setStepOut({
+              stepOutAt: new Date(Date.now() + HOUR / 2),
+            }),
+          ),
+        ).toBe("ok");
+      });
+
+      it("keeps cancelling a step-out possible on an unflagged position", async () => {
+        const id = await unflagged();
+        expect(await errorOf(handOver(U.holder, id, [U.successor]))).toBe("ok");
+        expect(
+          await errorOf(as(U.holder, JCRC).setStepOut({ stepOutAt: null })),
+        ).toBe("ok");
+        const row = await db.jcrcPositionHolder.findFirst({
+          where: { positionID: id, userID: U.holder },
+        });
+        expect(row?.endsAt ?? null).toBeNull();
+      });
+
+      it("writes the same audit row as any holder added to a flagged position", async () => {
+        const id = await flagged();
+        expect(await errorOf(handOver(U.holder, id, [U.successor]))).toBe("ok");
+        const added = (await positionAudit()).filter(
+          (a) => a.action === "jcrcPosition.holder.add",
+        );
+        expect(added).toHaveLength(1);
+        expect(added[0]?.actorUserID).toBe(U.holder);
+        expect(added[0]?.targetUserID).toBe(U.successor);
+        expect(added[0]?.reason).toContain(id);
+      });
+
+      it("refuses a successor who heads a CCA the position lists, and writes nothing", async () => {
+        const id = await flagged();
+        await db.ccaHead.create({ data: { userID: U.successor, ccaID: 9002 } });
+        expect(await errorOf(handOver(U.holder, id, [U.successor]))).toBe(
+          "FORBIDDEN:HEADS_LISTED_CCA",
+        );
+        expect(await holdersOf(id)).toEqual([U.holder]);
+        const row = await db.userRole.findUnique({
+          where: { userID: U.successor },
+        });
+        expect(row?.roles).toEqual(["resident"]);
+        // Heading some other CCA does not matter.
+        await db.ccaHead.deleteMany({ where: { userID: U.successor } });
+        await db.ccaHead.create({ data: { userID: U.successor, ccaID: 9099 } });
+        expect(await errorOf(handOver(U.holder, id, [U.successor]))).toBe("ok");
+      });
+
+      it("lets staff assign a CCA head to an unflagged position, and refuses on a flagged one", async () => {
+        await db.ccaHead.create({ data: { userID: U.plain, ccaID: 9001 } });
+        const open = await unflagged();
+        expect(
+          await errorOf(
+            as(U.admin, ADMIN).addHolder({ id: open, userID: U.plain }),
+          ),
+        ).toBe("ok");
+        const id = await flagged();
+        expect(
+          await errorOf(as(U.admin, ADMIN).addHolder({ id, userID: U.plain })),
+        ).toBe("FORBIDDEN:HEADS_LISTED_CCA");
+        expect(await holdersOf(id)).toEqual([U.holder]);
+      });
+    });
+
+    // ------------------------ #125: taking jcrc away ends director positions
+    describe("removing jcrc ends the person's rows on flagged positions", () => {
+      it("ends the flagged row, keeps the unflagged one, and a later jcrc does not revive it", async () => {
+        const { applyRoleChange } = await import("~/server/api/routers/admin");
+        const hot = await flagged();
+        const open = await unflagged();
+        expect(await guard.isDirectorOf(db, U.holder, 9001)).toBe(true);
+
+        await applyRoleChange({
+          db,
+          actorUserID: U.admin,
+          actorRoles: ["admin"],
+          targetUserID: U.holder,
+          before: ["jcrc"],
+          after: [],
+          added: [],
+          removed: ["jcrc"],
+          reason: "test",
+        });
+
+        const flaggedRow = await db.jcrcPositionHolder.findFirst({
+          where: { positionID: hot, userID: U.holder },
+        });
+        const openRow = await db.jcrcPositionHolder.findFirst({
+          where: { positionID: open, userID: U.holder },
+        });
+        expect(flaggedRow?.endsAt).not.toBeNull();
+        expect(flaggedRow!.endsAt!.getTime()).toBeLessThanOrEqual(Date.now());
+        expect(openRow?.endsAt ?? null).toBeNull();
+
+        // jcrc is granted again later: the old director row stays dead.
+        await db.userRole.update({
+          where: { userID: U.holder },
+          data: { roles: ["resident", "jcrc"], role: "jcrc" },
+        });
+        expect(await guard.isDirectorOf(db, U.holder, 9001)).toBe(false);
       });
     });
 

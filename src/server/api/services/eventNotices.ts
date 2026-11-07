@@ -40,18 +40,18 @@ async function signedUpUsers(db: PrismaClient, eventID: number) {
     select: { userID: true },
     take: MAX_RECIPIENTS,
   });
-  return rows.map((r) => r.userID);
+  return rows.map((r) => r.userID).filter(Boolean);
 }
 
 /** Heads of the event's CCA; a hall-wide event has none, so its author. */
 async function headsOf(db: PrismaClient, event: NoticeEvent) {
-  if (event.ccaID == null) return [event.createdBy];
+  if (event.ccaID == null) return [event.createdBy].filter(Boolean);
   const rows = await db.ccaHead.findMany({
     where: { ccaID: event.ccaID },
     select: { userID: true },
     take: MAX_RECIPIENTS,
   });
-  return rows.map((r) => r.userID);
+  return rows.map((r) => r.userID).filter(Boolean);
 }
 
 type Notice = {
