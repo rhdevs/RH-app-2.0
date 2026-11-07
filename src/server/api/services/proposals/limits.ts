@@ -14,6 +14,7 @@ export const PROPOSAL_LIMITS = {
   create: 10,
   update: 120,
   submit: 20,
+  upload: 30,
 } as const;
 
 export type LimitedAction = keyof typeof PROPOSAL_LIMITS;

@@ -104,7 +104,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     /** The rate-limit counters these test users could have left behind. */
     const limitKeys = () =>
-      (["create", "update", "submit"] as const).flatMap((action) =>
+      (["create", "update", "submit", "upload"] as const).flatMap((action) =>
         IDS.map((id) => `proposal.${action}:${id}`),
       );
 
@@ -612,6 +612,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           create: 10,
           update: 120,
           submit: 20,
+          upload: 30,
         });
         expect(limits.PROPOSAL_WINDOW_MS).toBe(3_600_000);
       });
@@ -811,7 +812,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         );
 
         expect(answer).toBe(
-          "BAD_REQUEST:PROPOSAL_INCOMPLETE:A planned start date and time; A blast message",
+          "BAD_REQUEST:PROPOSAL_INCOMPLETE:A planned start date and time; A blast message; A poster; A document link",
         );
         expect(await snapshot(made.id)).toEqual(before);
       });

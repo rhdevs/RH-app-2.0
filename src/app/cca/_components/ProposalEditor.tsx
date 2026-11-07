@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -22,12 +23,20 @@ import {
 } from "~/lib/schemas/proposal";
 import { formatDateTime } from "~/app/events/_lib/format";
 import {
+  isOwnProposalPosterUrl,
+  normalizeDocLink,
+  PROPOSAL_DOC_LINK_MAX,
+} from "~/lib/schemas/proposalFiles";
+import ProposalPosterField from "./ProposalPosterField";
+import {
   describeProposalError,
+  docLinkIsInvalid,
   EMPTY_PROPOSAL_FORM,
   formFromProposal,
   missingFromForm,
   sameForm,
   saveFieldsFromForm,
+  updateFieldsFromForm,
   type ProposalFormState,
 } from "../_lib/proposalForm";
 
@@ -135,7 +144,7 @@ export default function ProposalEditor({
       return await update.mutateAsync({
         id: loaded.id,
         version: loaded.version,
-        ...fields,
+        ...updateFieldsFromForm(form),
       });
     } catch (e) {
       fail(e);
@@ -175,6 +184,13 @@ export default function ProposalEditor({
   };
 
   const noTitle = form.title.trim() === "";
+  const linkInvalid = docLinkIsInvalid(form);
+  // A stored link is checked again on the way out; one that fails is not shown.
+  const shownLink = normalizeDocLink(loaded?.docLink ?? "");
+  const shownPoster =
+    loaded?.posterUrl && isOwnProposalPosterUrl(loaded.posterUrl, loaded.id)
+      ? loaded.posterUrl
+      : null;
 
   return (
     <div className="space-y-5">
@@ -327,6 +343,88 @@ export default function ProposalEditor({
           />
         </div>
 
+        {editable ? (
+          <>
+            <ProposalPosterField
+              proposalID={loaded?.id}
+              value={form.posterUrl}
+              onChange={(url) => set({ posterUrl: url })}
+              disabled={busy}
+            />
+            <div>
+              <label
+                htmlFor="proposal-doclink"
+                className="mb-1 block text-sm font-medium text-gray-700"
+              >
+                Document link{" "}
+                <span className="text-gray-400">(https only)</span>
+              </label>
+              <input
+                id="proposal-doclink"
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                value={form.docLink}
+                maxLength={PROPOSAL_DOC_LINK_MAX}
+                disabled={busy}
+                aria-invalid={linkInvalid}
+                aria-describedby={
+                  linkInvalid ? "proposal-doclink-error" : undefined
+                }
+                onChange={(e) => set({ docLink: e.target.value })}
+                className={FIELD}
+              />
+              {linkInvalid && (
+                <p
+                  id="proposal-doclink-error"
+                  role="alert"
+                  className="mt-1 text-sm text-red-600"
+                >
+                  The link must start with https:// and have no username or
+                  password.
+                </p>
+              )}
+            </div>
+          </>
+        ) : (
+          (shownPoster || shownLink) && (
+            <div className="space-y-3">
+              {shownPoster && (
+                <div>
+                  <p className="mb-1 text-sm font-medium text-gray-700">
+                    Poster
+                  </p>
+                  <div className="relative h-64 w-full max-w-md overflow-hidden rounded-md border border-gray-200 bg-gray-50">
+                    <Image
+                      src={shownPoster}
+                      alt="Poster"
+                      fill
+                      className="object-contain"
+                      sizes="448px"
+                      unoptimized
+                    />
+                  </div>
+                </div>
+              )}
+              {shownLink && (
+                <p className="text-sm">
+                  <span className="font-medium text-gray-700">
+                    Document link:{" "}
+                  </span>
+                  <a
+                    href={shownLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="break-all text-emerald-700 underline underline-offset-2"
+                  >
+                    {shownLink}
+                  </a>
+                </p>
+              )}
+            </div>
+          )
+        )}
+
         {editable && missing.length > 0 && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             <p className="font-medium">Needed before you can submit</p>
@@ -361,13 +459,13 @@ export default function ProposalEditor({
             <Button
               type="submit"
               variant="outline"
-              disabled={busy || noTitle || !dirty}
+              disabled={busy || noTitle || !dirty || linkInvalid}
             >
               {create.isPending || update.isPending ? "Saving…" : "Save draft"}
             </Button>
             <Button
               type="button"
-              disabled={busy || noTitle || missing.length > 0}
+              disabled={busy || noTitle || missing.length > 0 || linkInvalid}
               onClick={() => void onSubmit()}
             >
               {submit.isPending ? "Submitting…" : "Submit for review"}

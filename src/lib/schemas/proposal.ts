@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { PROPOSAL_CATEGORIES } from "~/lib/proposals/categories";
+import { docLinkField, normalizePosterUrl } from "~/lib/schemas/proposalFiles";
 
 /**
  * Shared proposal validation. Under `src/lib/` and server-import-free so the
@@ -61,6 +62,8 @@ export const proposalCreateInput = z
     blastMessage: fields.blastMessage.default(null),
     plannedStart: fields.plannedStart.default(null),
     plannedEnd: fields.plannedEnd.default(null),
+    // A poster needs the proposal's id, so it can only be added by an update.
+    docLink: docLinkField.default(null),
   })
   .refine(endAfterStart, END_MESSAGE);
 
@@ -78,8 +81,32 @@ export const proposalUpdateInput = z
     blastMessage: fields.blastMessage.optional(),
     plannedStart: fields.plannedStart.optional(),
     plannedEnd: fields.plannedEnd.optional(),
+    /** An address from the poster upload, or null to remove the poster. */
+    posterUrl: z.string().max(2048).nullable().optional(),
+    /** An https document link, or null / blank to clear it. */
+    docLink: docLinkField.optional(),
   })
-  .refine(endAfterStart, END_MESSAGE);
+  .refine(endAfterStart, END_MESSAGE)
+  .superRefine((v, ctx) => {
+    if (
+      typeof v.posterUrl === "string" &&
+      normalizePosterUrl(v.posterUrl, v.id) === null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["posterUrl"],
+        message: "That poster does not belong to this proposal",
+      });
+    }
+  })
+  // Store the canonical spelling, so the replace check compares like with like.
+  .transform((v) => ({
+    ...v,
+    posterUrl:
+      typeof v.posterUrl === "string"
+        ? (normalizePosterUrl(v.posterUrl, v.id) ?? v.posterUrl)
+        : v.posterUrl,
+  }));
 
 /** Submit names the version it validated; see Proposal.version. */
 export const proposalSubmitInput = z.object({

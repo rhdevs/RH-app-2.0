@@ -33,6 +33,8 @@ export type ProposalDetail = ProposalListItem & {
   blastMessage: string | null;
   plannedStart: number | null;
   plannedEnd: number | null;
+  posterUrl: string | null;
+  docLink: string | null;
   version: number;
   createdAt: Date;
   createdByMe: boolean;
@@ -82,6 +84,8 @@ export async function getProposal(
     blastMessage: row.blastMessage,
     plannedStart: row.plannedStart,
     plannedEnd: row.plannedEnd,
+    posterUrl: row.posterUrl ?? null,
+    docLink: row.docLink ?? null,
     status: row.status,
     version: row.version,
     submittedAt: row.submittedAt,

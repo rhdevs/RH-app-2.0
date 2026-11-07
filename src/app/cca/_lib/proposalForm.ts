@@ -1,3 +1,4 @@
+import { normalizeDocLink } from "~/lib/schemas/proposalFiles";
 import {
   isProposalCategory,
   missingForSubmit,
@@ -21,6 +22,9 @@ export type ProposalFormState = {
   blastMessage: string;
   startLocal: string;
   endLocal: string;
+  /** Null until a poster is uploaded; it needs the saved proposal's id. */
+  posterUrl: string | null;
+  docLink: string;
 };
 
 export const EMPTY_PROPOSAL_FORM: ProposalFormState = {
@@ -30,6 +34,8 @@ export const EMPTY_PROPOSAL_FORM: ProposalFormState = {
   blastMessage: "",
   startLocal: "",
   endLocal: "",
+  posterUrl: null,
+  docLink: "",
 };
 
 export function formFromProposal(p: {
@@ -39,6 +45,8 @@ export function formFromProposal(p: {
   blastMessage: string | null;
   plannedStart: number | null;
   plannedEnd: number | null;
+  posterUrl?: string | null;
+  docLink?: string | null;
 }): ProposalFormState {
   return {
     category: isProposalCategory(p.category) ? p.category : "event",
@@ -47,6 +55,8 @@ export function formFromProposal(p: {
     blastMessage: p.blastMessage ?? "",
     startLocal: epochToLocalInput(p.plannedStart),
     endLocal: epochToLocalInput(p.plannedEnd),
+    posterUrl: p.posterUrl ?? null,
+    docLink: p.docLink ?? "",
   };
 }
 
@@ -59,7 +69,18 @@ export function saveFieldsFromForm(f: ProposalFormState) {
     blastMessage: f.blastMessage,
     plannedStart: f.startLocal === "" ? null : localInputToEpoch(f.startLocal),
     plannedEnd: f.endLocal === "" ? null : localInputToEpoch(f.endLocal),
+    docLink: f.docLink.trim() === "" ? null : f.docLink,
   };
+}
+
+/** A save adds the poster, which only an update can carry. */
+export function updateFieldsFromForm(f: ProposalFormState) {
+  return { ...saveFieldsFromForm(f), posterUrl: f.posterUrl };
+}
+
+/** True when the link box holds something the server would refuse. */
+export function docLinkIsInvalid(f: ProposalFormState): boolean {
+  return f.docLink.trim() !== "" && normalizeDocLink(f.docLink) === null;
 }
 
 /** What is still missing for a submit, from the one shared rule table. */
@@ -72,6 +93,8 @@ export function missingFromForm(f: ProposalFormState): string[] {
     blastMessage: s.blastMessage.trim() === "" ? null : s.blastMessage,
     plannedStart: s.plannedStart,
     plannedEnd: s.plannedEnd,
+    posterUrl: f.posterUrl,
+    docLink: s.docLink,
   };
   return missingForSubmit(content);
 }
@@ -83,7 +106,9 @@ export function sameForm(a: ProposalFormState, b: ProposalFormState): boolean {
     a.description === b.description &&
     a.blastMessage === b.blastMessage &&
     a.startLocal === b.startLocal &&
-    a.endLocal === b.endLocal
+    a.endLocal === b.endLocal &&
+    a.posterUrl === b.posterUrl &&
+    a.docLink === b.docLink
   );
 }
 
@@ -127,6 +152,8 @@ export function describeProposalError(message: string | undefined): {
         return "This proposal was changed somewhere else, or has already been submitted. Reload the page to see the latest version.";
       case "PROPOSAL_NOT_FOUND":
         return "This proposal could not be found.";
+      case "PROPOSAL_NOT_EDITABLE":
+        return "This proposal can no longer be edited.";
       case "END_NOT_AFTER_START":
         return "The end must be after the start.";
       default:

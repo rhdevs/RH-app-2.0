@@ -76,6 +76,8 @@ export async function submitProposal(
     blastMessage: row.blastMessage,
     plannedStart: row.plannedStart,
     plannedEnd: row.plannedEnd,
+    posterUrl: row.posterUrl,
+    docLink: row.docLink,
   });
   if (missing.length > 0) {
     throw new TRPCError({
