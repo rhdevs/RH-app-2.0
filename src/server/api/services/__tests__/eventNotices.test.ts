@@ -116,6 +116,26 @@ describe("who is told", () => {
     expect(written(t.createMany).map((r) => r.userID)).toEqual(["E9"]);
   });
 
+  it("leaves out an empty user id so one bad row does not drop the batch", async () => {
+    const t = fakeDb("on");
+    t.signups.mockResolvedValueOnce([{ userID: "" }, { userID: "E1" }]);
+    t.heads.mockResolvedValueOnce([{ userID: "E3" }, { userID: "" }]);
+    await noticeEventCanceled(t.db, event, "Rain");
+    await noticeEventDecided(t.db, event, "approve", null);
+    await noticeEventDecided(
+      t.db,
+      { ...event, ccaID: null, createdBy: "" },
+      "approve",
+      null,
+    );
+    expect(t.createMany).toHaveBeenCalledTimes(2);
+    expect(
+      t.createMany.mock.calls.map((c) =>
+        (c[0] as { data: Array<{ userID: string }> }).data.map((r) => r.userID),
+      ),
+    ).toEqual([["E1"], ["E3"]]);
+  });
+
   it("sends nothing when nobody is signed up", async () => {
     const t = fakeDb("on");
     t.signups.mockResolvedValueOnce([]);
