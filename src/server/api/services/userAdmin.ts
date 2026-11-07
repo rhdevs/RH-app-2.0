@@ -1167,6 +1167,42 @@ export async function deleteUserAccountCascade(
       // Their feedback reports: keyed on the canonical id, and the text may
       // name them, so it goes with the account rather than staying unattributed.
       deleted.feedback = (await tx.feedback.deleteMany({ where })).count;
+      // PROPOSALS. A proposal belongs to the CCA, not to the head who wrote it,
+      // and its other readers (the CCA's other heads and its directors) still
+      // need the proposal and its history, so the rows STAY and only the
+      // reference to this person is cleared. The explicit null matters: on
+      // MongoDB a missing key does not match a `null` filter. The
+      // self-approved label stays on the history row; it records a fact that
+      // does not depend on the person still existing.
+      deleted.proposalAuthorCleared = (
+        await tx.proposal.updateMany({
+          where: { createdBy: cid },
+          data: { createdBy: null },
+        })
+      ).count;
+      deleted.proposalHistoryActorCleared = (
+        await tx.proposalStatusHistory.updateMany({
+          where: { actorID: cid },
+          data: { actorID: null },
+        })
+      ).count;
+      deleted.proposalHistoryApproverCleared = (
+        await tx.proposalStatusHistory.updateMany({
+          where: { approverID: cid },
+          data: { approverID: null },
+        })
+      ).count;
+      // Their comments in a thread stay, unattributed: other people's replies
+      // are written to them. Their read markers are theirs alone and go.
+      deleted.proposalCommentAuthorCleared = (
+        await tx.proposalComment.updateMany({
+          where: { authorID: cid },
+          data: { authorID: null },
+        })
+      ).count;
+      deleted.proposalCommentRead = (
+        await tx.proposalCommentRead.deleteMany({ where })
+      ).count;
     }
 
     /* ---- (d) the User row, LAST and BY ObjectId ---------------------------

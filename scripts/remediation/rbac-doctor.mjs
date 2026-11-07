@@ -28,6 +28,8 @@
  * A second flag and a holder without jcrc are wrong whenever they appear. The
  * other two lines are "not set up yet" until the switches go on, so they are
  * RED only when gating: with `--directors`, or once directors.enabled is "on".
+ * The "no director" line also goes RED once proposals.enabled is "on", since a
+ * CCA with no director leaves its proposals with nobody to review them.
  * Otherwise they print what is missing without failing the run, so the doctor
  * stays usable before anyone has flagged a position.
  *
@@ -58,7 +60,11 @@ import {
   findAll, countWhere, numify, E_FORMAT, ROLE_VOCAB, SENTINEL_FACILITY_ID, legacyCanonicalUserID,
   aggregateAll, isCommit, abort,
 } from "./lib/rbac.mjs";
-import { evaluateDirectorChecks } from "./lib/directorChecks.mjs";
+import {
+  evaluateDirectorChecks,
+  isGating,
+  proposalsNeedDirectors,
+} from "./lib/directorChecks.mjs";
 
 const db = new PrismaClient();
 const ALL_NAMES = process.argv.includes("--names");
@@ -260,6 +266,7 @@ async function directorSection() {
   console.log(``);
   let input;
   let directorsOn;
+  let proposalsOn;
   try {
     const [ccas, positions, links, holders, terms] = await Promise.all([
       findAll(db, "CCA", { ccaID: 1, ccaName: 1 }),
@@ -284,6 +291,16 @@ async function directorSection() {
       })
     )?.cursor?.firstBatch?.[0];
     directorsOn = flagRow?.value === "on";
+    // proposals.enabled is read the same way, read-only. A failed read lands
+    // in the UNREADABLE line below, which is RED: it is never read as "off".
+    const proposalsRow = (
+      await raw({
+        find: "SystemFlag",
+        filter: { key: "proposals.enabled" },
+        limit: 1,
+      })
+    )?.cursor?.firstBatch?.[0];
+    proposalsOn = proposalsRow?.value === "on";
     input = {
       ccas: ccas.map((c) => ({
         ccaID: numify(c.ccaID),
@@ -325,15 +342,34 @@ async function directorSection() {
     return;
   }
 
+  const gateState = {
+    flagArg: DIRECTORS,
+    directorsOn,
+    proposalsOn,
+  };
   const gating = DIRECTORS || directorsOn;
   const { flaggedPositions, checks } = evaluateDirectorChecks(input);
   line("flagged JCRC positions", flaggedPositions, { info: true });
   console.log(
     `      ${gating ? "GATING" : "not gating yet"} (${DIRECTORS ? "--directors" : directorsOn ? "directors.enabled is on" : "directors.enabled is off; pass --directors to gate"})`,
   );
+  if (proposalsOn && !gating) {
+    console.log(
+      "      proposals.enabled is on: the CCAs-with-no-director line is GATING",
+    );
+  }
+  // The pair of stored switches, whatever --directors says: the guard reads
+  // directors.enabled itself. Read-only, like the rest of this section.
+  const mismatch = proposalsNeedDirectors({ proposalsOn, directorsOn });
+  if (mismatch) {
+    line(`  ${mismatch.label}`, 1, {
+      bad: mismatch.offenders,
+      note: mismatch.note,
+    });
+  }
   for (const c of checks) {
     const wrong = c.offenders.length > 0;
-    if (wrong && (c.always || gating)) {
+    if (wrong && isGating(c, gateState)) {
       line(`  ${c.label}`, c.offenders.length, {
         bad: c.offenders,
         note: c.note,

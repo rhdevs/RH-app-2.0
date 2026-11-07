@@ -276,6 +276,46 @@ export async function isPositionVacant(
 }
 
 /**
+ * The people who are directors of this CCA right now, ascending: a live `jcrc`
+ * AND a current holder row on a `vetsProposals` position that lists the CCA.
+ * Used to address a notice (a submitted proposal goes to these people), never
+ * to authorize anything. [] when `directors.enabled` is off, when no flagged
+ * position lists the CCA, or when none has a qualifying holder, so an empty
+ * answer means nobody can act for the CCA now. Rejects if a read fails.
+ */
+export async function currentDirectorIDs(
+  db: GuardDb,
+  ccaID: number,
+  now: Date = new Date(),
+): Promise<string[]> {
+  if (!Number.isInteger(ccaID)) return [];
+  if (!(await readDirectorsFlag(db))) return [];
+  const links = await db.jcrcPositionCca.findMany({
+    where: { ccaID },
+    select: { positionID: true },
+  });
+  if (links.length === 0) return [];
+  const flagged = await db.jcrcPosition.findMany({
+    where: { id: { in: links.map((l) => l.positionID) }, vetsProposals: true },
+    select: { id: true },
+  });
+  if (flagged.length === 0) return [];
+  const holders = await db.jcrcPositionHolder.findMany({
+    where: {
+      positionID: { in: flagged.map((p) => p.id) },
+      ...activeHolderWhere(now),
+    },
+    select: { userID: true },
+  });
+  const live = await liveJcrcHolders(
+    db,
+    holders.map((h) => h.userID),
+    now,
+  );
+  return [...live].sort();
+}
+
+/**
  * Whether no position flagged `vetsProposals` that lists this CCA has a
  * current qualifying holder. A CCA no flagged position lists is vacant too:
  * nobody can act for it. Rejects if a read fails.

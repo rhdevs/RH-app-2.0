@@ -17,7 +17,10 @@
  * Each check says whether it is wrong ALWAYS (`always: true`: a mistake in
  * what was entered) or only wrong once the switches go on (`always: false`: a
  * state that simply is not set up yet). The doctor turns the second kind RED
- * only when it is gating.
+ * only when it is gating. Each of those names the switch it blocks
+ * (`blocks`), so turning `proposals.enabled` on makes the "no director" line
+ * RED without making the disposables line RED, and the other way round
+ * (see `isGating`).
  */
 
 /** Who holds `jcrc` right now: stored on their role row and not past a step-out. */
@@ -48,7 +51,7 @@ const isCurrent = (holder, now) =>
  *   terms: { userID: string, endsAt: Date }[],
  *   now: Date,
  * }} input
- * @returns {{ flaggedPositions: number, checks: { label: string, offenders: string[], always: boolean, note: string }[] }}
+ * @returns {{ flaggedPositions: number, checks: { label: string, offenders: string[], always: boolean, blocks: "proposals" | "disposables" | null, note: string }[] }}
  */
 export function evaluateDirectorChecks({
   ccas,
@@ -104,12 +107,14 @@ export function evaluateDirectorChecks({
         label: "CCAs with no current qualifying director",
         offenders: uncovered,
         always: false,
+        blocks: "proposals",
         note: "BLOCKS proposals.enabled (every CCA needs a flagged position with a holder who has jcrc)",
       },
       {
         label: "more than one position flagged handlesDisposables",
         offenders: secondFlag,
         always: true,
+        blocks: null,
         note: "WARNING: a second flag removes the power silently. Nobody can decide disposable requests until only one position is flagged",
       },
       {
@@ -117,14 +122,53 @@ export function evaluateDirectorChecks({
           "the handlesDisposables position has a current qualifying holder",
         offenders: socialHolder,
         always: false,
+        blocks: "disposables",
         note: "BLOCKS disposables.enabled (exactly one flagged position, with a holder who has jcrc)",
       },
       {
         label: "holders of flagged positions without jcrc",
         offenders: noJcrc,
         always: true,
+        blocks: null,
         note: "they hold no power; remove them or restore jcrc",
       },
     ],
+  };
+}
+
+/**
+ * Does a "not set up yet" check turn RED on this run? A mistake in what was
+ * entered (`always`) always does. Otherwise the check gates when the run was
+ * given `--directors`, when `directors.enabled` is on, or when the switch
+ * that THIS check blocks is on: `proposals.enabled` for the "no director"
+ * line. `disposables.enabled` does not exist yet, so only the first two can
+ * gate the disposables line.
+ *
+ * @param {{ always: boolean, blocks: "proposals" | "disposables" | null }} check
+ * @param {{ flagArg: boolean, directorsOn: boolean, proposalsOn: boolean }} state
+ */
+export function isGating(check, { flagArg, directorsOn, proposalsOn }) {
+  if (check.always) return true;
+  if (flagArg || directorsOn) return true;
+  return check.blocks === "proposals" && proposalsOn === true;
+}
+
+/**
+ * `proposals.enabled` on with `directors.enabled` off: heads can submit, but
+ * the director guard fails closed while its own switch is off, so no director
+ * can ever act on what they submit and the "no director" line (which only
+ * looks at positions) can still be green. Returns the one line to show RED,
+ * naming the switch to turn on, or null when the pair is fine. This is about
+ * the stored switches, not the run's `--directors` argument.
+ *
+ * @param {{ proposalsOn: boolean, directorsOn: boolean }} state
+ * @returns {{ label: string, offenders: string[], note: string } | null}
+ */
+export function proposalsNeedDirectors({ proposalsOn, directorsOn }) {
+  if (proposalsOn !== true || directorsOn === true) return null;
+  return {
+    label: "proposals.enabled is on but directors.enabled is off",
+    offenders: ["turn on directors.enabled"],
+    note: "no director can act on a submitted proposal until it is on",
   };
 }
