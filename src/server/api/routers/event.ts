@@ -3287,16 +3287,17 @@ export const eventRouter = createTRPCRouter({
         });
       }
 
-      const result = await recordCheckIn(ctx.db, {
-        eventID: input.eventID,
-        subjectUserID: input.userID,
-        scannerUserID: userID,
-        method: "manual",
-      });
       // A manual check-in needs no proof the person was there, and at an AUX
       // event it awards points, so unlike a QR scan it is audited, with the
       // resident in the target column where the audit log can filter on it.
-      if (!result.alreadyCheckedIn) {
+      // AUDITED FIRST: written after, a failed audit would leave the check-in
+      // in place and a retry, already checked in, would skip the audit. A
+      // failed check-in after the audit leaves an audited attempt instead.
+      const existing = await ctx.db.eventAttendance.findFirst({
+        where: { eventID: input.eventID, userID: input.userID },
+        select: { eventID: true },
+      });
+      if (!existing) {
         await writeAudit(ctx.db, {
           actorUserID: userID,
           actorRoles: roles,
@@ -3307,7 +3308,12 @@ export const eventRouter = createTRPCRouter({
           reason: `manual check-in for ${input.userID}`,
         });
       }
-      return result;
+      return recordCheckIn(ctx.db, {
+        eventID: input.eventID,
+        subjectUserID: input.userID,
+        scannerUserID: userID,
+        method: "manual",
+      });
     }),
 
   /**
