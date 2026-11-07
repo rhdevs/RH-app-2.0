@@ -38,12 +38,18 @@ const parseIDs = (raw: string) =>
  * JCRC self-handover. Successors get `jcrc` and the positions at once; the
  * caller keeps theirs until the step-out date, then loses the positions and,
  * if those were their last, `jcrc` too. Successors must have signed in to the
- * app at least once, and each position can be handed over once per holder.
+ * app at least once, and a position hands over once, and only if an RF, Hall
+ * Office or an admin assigned it to the caller.
  */
 export default function HandoverPanel({ mine }: { mine: Mine }) {
   const utils = api.useUtils();
-  const handable = mine.positions.filter((p) => p.endsAt === null);
+  const open = mine.positions.filter((p) => p.endsAt === null);
+  const handable = open.filter((p) => p.canHandOver);
+  const waiting = open.filter((p) => !p.canHandOver);
   const stepping = mine.positions.filter((p) => p.endsAt !== null);
+  const earliestStepOut = stepping.length
+    ? new Date(Math.min(...stepping.map((p) => new Date(p.endsAt!).getTime())))
+    : null;
 
   const [chosen, setChosen] = useState<readonly string[]>([]);
   const [successors, setSuccessors] = useState("");
@@ -121,6 +127,7 @@ export default function HandoverPanel({ mine }: { mine: Mine }) {
               aria-label="New step-out date"
               value={moveTo}
               min={toDateInput(new Date())}
+              max={earliestStepOut ? toDateInput(earliestStepOut) : undefined}
               onChange={(e) => setMoveTo(e.target.value)}
               className="h-9 w-44 bg-white"
             />
@@ -132,25 +139,23 @@ export default function HandoverPanel({ mine }: { mine: Mine }) {
                 setStepOutDate.mutate({ stepOutAt: endOfDay(moveTo) })
               }
             >
-              Move date
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={setStepOutDate.isPending}
-              onClick={() => setStepOutDate.mutate({ stepOutAt: null })}
-            >
-              Cancel step-out
+              Bring forward
             </Button>
           </div>
+          <p className="mt-2 text-xs text-amber-900/80">
+            The date can only move earlier. To undo a handover, ask an RF or
+            Hall Office to assign the position to you again.
+          </p>
         </div>
       )}
 
       {handable.length === 0 ? (
         <p className="mt-4 text-sm text-gray-500">
-          {stepping.length > 0
-            ? "Every position you hold is already handed over."
-            : "You don't hold any positions."}
+          {waiting.length > 0
+            ? "An RF or Hall Office has to assign your positions to you before you can hand them over."
+            : stepping.length > 0
+              ? "Every position you hold is already handed over."
+              : "You don't hold any positions."}
         </p>
       ) : (
         <div className="mt-4 space-y-3">

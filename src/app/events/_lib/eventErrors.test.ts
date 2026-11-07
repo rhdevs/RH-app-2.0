@@ -22,6 +22,15 @@ describe("eventErrorMessage", () => {
     );
   });
 
+  it("explains a room the author cannot book, or a closed one", () => {
+    expect(eventErrorMessage(err("FACILITY_RESTRICTED"))).toMatch(
+      /can't book that facility/,
+    );
+    expect(eventErrorMessage(err("FACILITY_CLOSED"))).toMatch(
+      /can't be booked through RHApp/,
+    );
+  });
+
   it("survives a malformed clash payload", () => {
     expect(eventErrorMessage(err("FACILITY_CLASH:{oops"))).toBe(
       "The facility is already booked for that time.",
