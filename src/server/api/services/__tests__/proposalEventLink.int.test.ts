@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import type * as EventLinkModule from "../proposals/eventLink";
 import type * as EventsModule from "../events";
+import type * as ProposalsFlagModule from "../proposals/flag";
 import {
   afterAll,
   beforeAll,
@@ -68,6 +69,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let createCaller: typeof CreateCaller;
     let link: typeof EventLinkModule;
     let events: typeof EventsModule;
+    let proposalsFlag: typeof ProposalsFlagModule;
     const original: Record<string, string | null> = {};
     let ipCounter = 0;
 
@@ -106,6 +108,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       }
       events.resetEventsFlagCache();
+      // proposals.enabled is cached for a few seconds as well.
+      proposalsFlag.resetProposalsFlagCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -287,8 +291,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       );
 
     /** A database where ONE flag key's read fails. */
-    const withFailingFlag = (key: string): PrismaClient =>
-      proxied(db, (prop) =>
+    const withFailingFlag = (key: string): PrismaClient => {
+      proposalsFlag.resetProposalsFlagCache();
+      return proxied(db, (prop) =>
         prop === "systemFlag"
           ? {
               findUnique: (args: { where: { key: string } }) =>
@@ -298,6 +303,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }
           : undefined,
       );
+    };
 
     const captureErrors = () => {
       const spy = vi
@@ -379,6 +385,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ({ createCaller } = await import("~/server/api/root"));
       link = await import("../proposals/eventLink");
       events = await import("../events");
+      proposalsFlag = await import("../proposals/flag");
       for (const key of FLAGS) {
         original[key] =
           (await db.systemFlag.findUnique({ where: { key } }))?.value ?? null;

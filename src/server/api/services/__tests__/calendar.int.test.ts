@@ -58,6 +58,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let createCaller: typeof CreateCaller;
     let buildFeed: typeof BuildFeed;
     let resetEventsFlagCache: () => void;
+    let resetProposalsFlagCache: () => void;
     const original: Record<string, string | null> = {};
     let ipCounter = 0;
     const nowSec = () => Math.floor(Date.now() / 1000);
@@ -91,6 +92,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           update: { value },
         });
       }
+      // proposals.enabled is cached for a few seconds.
+      resetProposalsFlagCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -267,8 +270,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         get: (_t, prop) => patch(prop) ?? value(prop),
       });
     };
-    const withFailingFlag = (key: string): PrismaClient =>
-      proxied(db, (prop) =>
+    const withFailingFlag = (key: string): PrismaClient => {
+      resetProposalsFlagCache();
+      return proxied(db, (prop) =>
         prop === "systemFlag"
           ? {
               findUnique: (args: { where: { key: string } }) =>
@@ -278,6 +282,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
             }
           : undefined,
       );
+    };
     const withFailingTable = (table: string): PrismaClient =>
       proxied(db, (prop) =>
         prop === table
@@ -294,6 +299,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ({ createCaller } = await import("~/server/api/root"));
       ({ buildFeed } = await import("~/server/api/services/calendar/feed"));
       ({ resetEventsFlagCache } = await import("~/server/api/services/events"));
+      ({ resetProposalsFlagCache } = await import(
+        "~/server/api/services/proposals/flag"
+      ));
       for (const key of FLAGS) {
         original[key] =
           (await db.systemFlag.findUnique({ where: { key } }))?.value ?? null;
