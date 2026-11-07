@@ -15,7 +15,9 @@ const U = "E9990201";
 const V = "E9990202";
 const ADMIN_A = "E9990291";
 const ADMIN_B = "E9990292";
-const IDS = [U, V, ADMIN_A, ADMIN_B];
+const LEGACY = "E9990293";
+const MIXED = "E9990294";
+const IDS = [U, V, ADMIN_A, ADMIN_B, LEGACY, MIXED];
 const FEEDBACK_FLAG = "feedback.enabled";
 const NOTIF_FLAG = "notifications.enabled";
 
@@ -60,6 +62,10 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           update: { value },
         });
       }
+      const { resetFeedbackFlagCache } = await import(
+        "~/server/api/services/feedback"
+      );
+      resetFeedbackFlagCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -80,7 +86,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         },
       });
       await db.userRole.deleteMany({
-        where: { userID: { in: [ADMIN_A, ADMIN_B] } },
+        where: { userID: { in: [ADMIN_A, ADMIN_B, LEGACY, MIXED] } },
       });
       await db.rateLimit.deleteMany({
         where: { key: { in: IDS.map((i) => `feedback:${i}`) } },
@@ -156,6 +162,24 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(n.href).toBe("/admin/feedback");
         expect(n.readAt).toBeNull();
       }
+    });
+
+    it("does not tell a user whose legacy role says admin while roles says otherwise", async () => {
+      await db.userRole.createMany({
+        data: [
+          { userID: LEGACY, roles: [], role: "admin" },
+          { userID: MIXED, roles: ["resident"], role: "admin" },
+        ],
+      });
+      await as(U).submit({ category: "bug", message: "who is told" });
+      const recipients = (
+        await db.notification.findMany({
+          where: { kind: "feedback.submitted" },
+        })
+      ).map((n) => n.userID);
+      expect(recipients).toContain(ADMIN_A);
+      expect(recipients).toContain(LEGACY);
+      expect(recipients).not.toContain(MIXED);
     });
 
     it("still saves the report when notifications are off, with no notice", async () => {

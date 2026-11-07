@@ -340,6 +340,8 @@ describe("only the positions files and the one strict guard read positions", () 
         "src/server/api/services/directorGuard.ts",
         "src/server/api/services/jcrcPositionLock.ts",
         "src/server/api/services/jcrcPositionEdits.ts",
+        // endFlaggedHolderRows: ends a person's director rows when jcrc goes.
+        "src/server/api/services/jcrcPositions.ts",
         "src/app/admin/positions/_components/PositionCard.tsx",
         "src/app/admin/positions/_components/DirectorFlags.tsx",
       ].sort(),
