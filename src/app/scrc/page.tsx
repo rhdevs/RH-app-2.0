@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { CalendarCheck, ShieldCheck, Users2 } from "lucide-react";
+import { CalendarCheck, Network, ShieldCheck, Users2 } from "lucide-react";
 
 import type { Capabilities } from "~/server/api/services/roles";
 import { useScrcCapabilities } from "./_components/ScrcCapabilityContext";
 import JcrcRosterPanel from "./_components/JcrcRosterPanel";
 import CcaBrowsePanel from "./_components/CcaBrowsePanel";
 import EventsOversightPanel from "./_components/EventsOversightPanel";
+import PositionHoldersPanel from "./_components/PositionHoldersPanel";
 
 /**
  * The Hall Office dashboard: three panels, one route.
@@ -34,6 +35,15 @@ const PANELS = [
     icon: ShieldCheck,
     requires: "manageJcrcRoster",
     Panel: JcrcRosterPanel,
+  },
+  // Who holds which JCRC position. Only a staff-assigned position can be
+  // handed over (services/jcrcHandover.ts), so it sits beside the roster.
+  {
+    key: "positions",
+    label: "Positions",
+    icon: Network,
+    requires: "manageJcrcRoster",
+    Panel: PositionHoldersPanel,
   },
   {
     key: "ccas",

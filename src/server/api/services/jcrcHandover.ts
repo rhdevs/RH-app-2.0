@@ -32,9 +32,16 @@ import {
  * holding must not be something a member can give themselves, or repeat:
  *  - a holder row the caller assigned to themselves never qualifies (and
  *    addHolder refuses self-assignment for anyone but an admin);
- *  - each holder row hands over ONCE (`handedOverAt`). Cancelling the step-out
- *    keeps the position but not a second handover; someone else has to assign
- *    the position again first.
+ *  - only a row assigned by staff (an RF or Hall Office) or an admin hands
+ *    over. A row a handover created was assigned by the outgoing member, so a
+ *    successor cannot pass the position straight on: staff assign it to them
+ *    first. Without this, every successor could hand over to more successors;
+ *  - each holder row hands over ONCE (`handedOverAt`), claimed with a
+ *    conditional write so two concurrent handovers cannot both pass;
+ *  - after a handover the step-out can only move EARLIER. Cancelling it, or
+ *    pushing it back again and again, would keep `jcrc` for the outgoing
+ *    member on top of the successors'. Staff re-assigning the position is
+ *    how a mistaken handover is undone.
  * Every grant is still audited as `jcrc.handover`.
  *
  * SUCCESSORS MUST HAVE SIGNED IN. A pending grant is redeemed against the
@@ -142,6 +149,92 @@ async function termEndFor(
   return ends.length === 0 ? null : new Date(Math.max(...ends));
 }
 
+/**
+ * Only a row assigned by staff or an admin hands over. Read live (I-5): an RF
+ * who has since left no longer vouches for the rows they assigned.
+ */
+async function assertStaffAssigned(
+  db: PrismaClient,
+  held: readonly { assignedBy: string }[],
+): Promise<void> {
+  const assigners = [...new Set(held.map((h) => h.assignedBy))];
+  for (const assigner of assigners) {
+    const roles = await getUserRoles(db, assigner);
+    if (!roles.includes(ADMIN_ROLE) && !holdsStaffRole(roles)) {
+      refuse("POSITION_NOT_STAFF_ASSIGNED");
+    }
+  }
+}
+
+/**
+ * Marks the caller's rows handed over BEFORE any grant, and only rows not yet
+ * handed over, so of two concurrent handovers of the same row one is refused.
+ */
+async function claimRows(
+  db: PrismaClient,
+  actorUserID: string,
+  positionIDs: readonly string[],
+  now: Date,
+): Promise<void> {
+  const { count } = await db.jcrcPositionHolder.updateMany({
+    where: {
+      userID: actorUserID,
+      positionID: { in: [...positionIDs] },
+      // A row addHolder created has no handedOverAt at all, and on Mongo
+      // `null` alone does not match a missing field.
+      OR: [{ handedOverAt: null }, { handedOverAt: { isSet: false } }],
+    },
+    data: { handedOverAt: now },
+  });
+  if (count !== positionIDs.length) {
+    await releaseClaim(db, actorUserID, positionIDs, now);
+    refuse("ALREADY_HANDED_OVER");
+  }
+}
+
+/** Undoes claimRows. Matches on this call's own timestamp only. */
+async function releaseClaim(
+  db: PrismaClient,
+  actorUserID: string,
+  positionIDs: readonly string[],
+  now: Date,
+): Promise<void> {
+  await db.jcrcPositionHolder.updateMany({
+    where: {
+      userID: actorUserID,
+      positionID: { in: [...positionIDs] },
+      handedOverAt: now,
+    },
+    data: { handedOverAt: null },
+  });
+}
+
+async function giveSuccessorPositions(
+  db: PrismaClient,
+  actorUserID: string,
+  successorID: string,
+  positionIDs: readonly string[],
+  now: Date,
+): Promise<void> {
+  for (const positionID of positionIDs) {
+    await db.jcrcPositionHolder.upsert({
+      where: { positionID_userID: { positionID, userID: successorID } },
+      create: {
+        positionID,
+        userID: successorID,
+        assignedBy: actorUserID,
+        endsAt: null,
+      },
+      update: {
+        endsAt: null,
+        handedOverAt: null,
+        assignedBy: actorUserID,
+        assignedAt: now,
+      },
+    });
+  }
+}
+
 export async function handOverPositions(
   db: PrismaClient,
   input: HandoverInput,
@@ -166,6 +259,7 @@ export async function handOverPositions(
     refuse("SELF_ASSIGNED_POSITION");
   }
   if (held.some((h) => h.handedOverAt != null)) refuse("ALREADY_HANDED_OVER");
+  await assertStaffAssigned(db, held);
 
   const positions = await db.jcrcPosition.findMany({
     where: { id: { in: positionIDs } },
@@ -184,42 +278,42 @@ export async function handOverPositions(
 
   const plans = await planSuccessors(db, actorUserID, input.successorIDs);
 
+  await claimRows(db, actorUserID, positionIDs, now);
   // NOT ATOMIC: successors are granted one by one. A failure part-way leaves
-  // the earlier successors granted and the caller's own rows untouched, and a
+  // the earlier successors granted and releases the caller's claim, so a
   // retry is safe (every write here is an idempotent upsert or a no-op).
   const granted: string[] = [];
-  for (const plan of plans) {
-    await grantJcrc(db, actorUserID, actorRoles, plan, reason);
-    granted.push(plan.userID);
-    for (const positionID of positionIDs) {
-      await db.jcrcPositionHolder.upsert({
-        where: { positionID_userID: { positionID, userID: plan.userID } },
-        create: {
-          positionID,
-          userID: plan.userID,
-          assignedBy: actorUserID,
-          endsAt: null,
-        },
-        update: {
-          endsAt: null,
-          handedOverAt: null,
-          assignedBy: actorUserID,
-          assignedAt: now,
-        },
+  try {
+    for (const plan of plans) {
+      await grantJcrc(db, actorUserID, actorRoles, plan, reason);
+      granted.push(plan.userID);
+      await giveSuccessorPositions(
+        db,
+        actorUserID,
+        plan.userID,
+        positionIDs,
+        now,
+      );
+      await writeAudit(db, {
+        actorUserID,
+        actorRoles,
+        targetUserID: plan.userID,
+        action: "jcrc.handover",
+        reason,
       });
     }
-    await writeAudit(db, {
-      actorUserID,
-      actorRoles,
-      targetUserID: plan.userID,
-      action: "jcrc.handover",
-      reason,
-    });
+  } catch (err) {
+    await releaseClaim(db, actorUserID, positionIDs, now);
+    throw err;
   }
 
   await db.jcrcPositionHolder.updateMany({
-    where: { userID: actorUserID, positionID: { in: positionIDs } },
-    data: { endsAt: stepOutAt, handedOverAt: now },
+    where: {
+      userID: actorUserID,
+      positionID: { in: positionIDs },
+      handedOverAt: now,
+    },
+    data: { endsAt: stepOutAt },
   });
   const termEndsAt = await termEndFor(db, actorUserID);
   if (termEndsAt) {
@@ -234,20 +328,26 @@ export async function handOverPositions(
 }
 
 /**
- * Move or cancel the caller's own step-out date. `null` cancels it: they keep
- * their handed-over positions (alongside the successors) and `jcrc`.
+ * Bring the caller's own step-out date forward. It cannot be cancelled or
+ * moved later: either would let the outgoing member keep `jcrc` on top of the
+ * successors' (see the header). Staff re-assigning the position undoes a
+ * handover made by mistake.
  */
 export async function setStepOut(
   db: PrismaClient,
   actorUserID: string,
-  stepOutAt: Date | null,
+  stepOutAt: Date,
   now: Date = new Date(),
 ): Promise<{ termEndsAt: Date | null }> {
   const pendingRows = { userID: actorUserID, endsAt: { gt: now } };
-  const count = await db.jcrcPositionHolder.count({ where: pendingRows });
-  if (count === 0) refuse("NO_STEP_OUT_PENDING");
-  const endsAt =
-    stepOutAt && stepOutAt.getTime() < now.getTime() ? now : stepOutAt;
+  const pending = await db.jcrcPositionHolder.findMany({
+    where: pendingRows,
+    select: { endsAt: true },
+  });
+  if (pending.length === 0) refuse("NO_STEP_OUT_PENDING");
+  const earliest = Math.min(...pending.map((r) => r.endsAt!.getTime()));
+  if (stepOutAt.getTime() > earliest) refuse("STEP_OUT_ONLY_EARLIER");
+  const endsAt = stepOutAt.getTime() < now.getTime() ? now : stepOutAt;
   await db.jcrcPositionHolder.updateMany({
     where: pendingRows,
     data: { endsAt },
@@ -262,7 +362,7 @@ export async function setStepOut(
   } else {
     await db.jcrcTerm.deleteMany({ where: { userID: actorUserID } });
   }
-  if (endsAt && endsAt.getTime() <= now.getTime()) {
+  if (endsAt.getTime() <= now.getTime()) {
     await sweepEndedJcrcTerms(db, now);
   }
   return { termEndsAt };
