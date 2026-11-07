@@ -62,6 +62,7 @@ const LIMIT_ACTIONS = [
   "finish",
   "comment",
   "nudge",
+  "commentRead",
 ];
 
 describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
@@ -1444,6 +1445,32 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
                 ],
               },
             },
+          }),
+        ).toBe(0);
+      });
+
+      it("the 241st mark-read in an hour is refused and writes no marker; another person is not held up (#131)", async () => {
+        const id = await stage("in_review");
+        await seed("commentRead", U.dirA, 240);
+        expect(
+          await errorOf(as(U.dirA).commentMarkRead({ proposalID: id })),
+        ).toMatch(/^TOO_MANY_REQUESTS:RATE_LIMITED:\d+$/);
+        expect(
+          await db.proposalCommentRead.count({
+            where: { proposalID: id, userID: U.dirA },
+          }),
+        ).toBe(0);
+        expect(
+          await errorOf(as(U.headA).commentMarkRead({ proposalID: id })),
+        ).toBe("ok");
+      });
+
+      it("a refused reader does not spend the mark-read budget", async () => {
+        const id = await stage("in_review");
+        await errorOf(as(U.headB).commentMarkRead({ proposalID: id }));
+        expect(
+          await db.rateLimit.count({
+            where: { key: `proposal.commentRead:${U.headB}` },
           }),
         ).toBe(0);
       });

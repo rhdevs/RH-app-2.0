@@ -1,6 +1,7 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
-import { DISPOSABLES_HREF } from "~/lib/disposables/links";
+import { DISPOSABLES_HREF, disposableHref } from "~/lib/disposables/links";
+import { currentSocialDirectorIDs } from "~/server/api/services/directorGuard";
 import { notify } from "~/server/api/services/notifications";
 import { headsOrRefuse } from "./access";
 import type { ChangedRequest, RemovedRequest } from "./transition";
@@ -13,8 +14,9 @@ import type { ChangedRequest, RemovedRequest } from "./transition";
  * decision note for a decision; nothing else leaves the row. The person who
  * acted is never told what they just did.
  *
- * No notice is written when a request is CREATED: telling the Social director
- * about new requests is the daily digest's job (PR 14).
+ * When a request is FILED the Social director gets one notice too, but that
+ * one is best effort (`noticeFiled`): it is sent after the request is saved,
+ * on the plain client, and a failure is logged and never fails the filing.
  */
 
 type Tx = Prisma.TransactionClient;
@@ -39,6 +41,41 @@ async function toHeads(
     body: spec.body,
     href: DISPOSABLES_HREF,
   });
+}
+
+/**
+ * A request was filed: tell the Social director, with a link to it. Best
+ * effort: it runs after the request is saved and NEVER throws, so a failed
+ * lookup or write is logged by error name and the filing still succeeds. Like
+ * every notice it writes nothing while `notifications.enabled` is off, and
+ * with no Social director (none, two flagged positions, `directors.enabled`
+ * off) there is nobody to tell. Blank ids are dropped and the person who filed
+ * is not told what they just did.
+ */
+export async function noticeFiled(
+  db: PrismaClient,
+  request: { id: string; title: string },
+  actorID: string,
+): Promise<void> {
+  try {
+    const recipients = (await currentSocialDirectorIDs(db)).filter(
+      (id) => id.trim() !== "" && id !== actorID,
+    );
+    await notify(db, {
+      recipients,
+      kind: "disposable.filed",
+      title: "A disposable request was filed",
+      body: bodyOf(request.title, null),
+      href: disposableHref(request.id),
+    });
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        evt: "disposable_filed_notice_failed",
+        error: err instanceof Error ? err.name : typeof err,
+      }),
+    );
+  }
 }
 
 /** The Social director decided: tell the CCA's heads. */
