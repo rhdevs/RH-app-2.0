@@ -69,6 +69,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     let runDueCheck: typeof RunDueCheck;
     let kindUnderTest: DueKind;
     let resetNotificationsCache: () => void;
+    let resetDisposablesCache: () => void;
     const original: Record<string, string | null> = {};
     let ipCounter = 0;
 
@@ -105,6 +106,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       }
       resetNotificationsCache();
+      // disposables.enabled is cached for a few seconds as well.
+      resetDisposablesCache();
     };
 
     const errorOf = async (promise: Promise<unknown>) => {
@@ -324,6 +327,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       ));
       ({ resetNotificationsFlagCache: resetNotificationsCache } = await import(
         "~/server/api/services/notifications"
+      ));
+      ({ resetDisposablesFlagCache: resetDisposablesCache } = await import(
+        "~/server/api/services/disposables/flag"
       ));
       for (const key of FLAGS) {
         original[key] =
