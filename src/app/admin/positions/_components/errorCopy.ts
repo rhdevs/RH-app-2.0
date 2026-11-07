@@ -32,6 +32,11 @@ const COPY: Record<string, string> = {
     "This position gives director powers, so only an admin, an RF or the Hall Office can change its name, CCAs or holders.",
   SELF_ASSIGN_FLAGGED:
     "Nobody can add themselves to a position that gives director powers, admins included. Ask someone else to add you.",
+  NOT_FLAGGED:
+    "This panel only changes positions that give director powers. Use the Positions page for the others.",
+  NOT_STAFF: "Only an admin, an RF or the Hall Office can use this.",
+  SCRC_DISABLED:
+    "The Staff tools are switched off. An admin can still edit positions on the Positions page.",
   ADMIN_REQUIRED: "Only an admin can set or clear director powers.",
   DIRECTORS_DISABLED: "Director powers are switched off.",
   CONFIRMATION_STALE:

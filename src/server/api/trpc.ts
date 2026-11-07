@@ -436,9 +436,13 @@ export const roleManagerProcedure = roleProcedure(JCRC_ROLE);
  * procedures including listUsers, setUserRoles, every bulk-import and
  * pending-grant surface, explainAccess, systemHealth and the whole CCA-head
  * manager. Admitting `scrc` there would hand the hall office the entire manager
- * tier in one character. This builder gates exactly three procedures
+ * tier in one character. This builder gates the JCRC roster procedures
  * (listJcrcRoster / resolveJcrcCandidate / setJcrcRole), each of which ALSO
- * asserts `manageJcrcRoster` and the `scrc.enabled` switch.
+ * asserts `manageJcrcRoster` and the `scrc.enabled` switch, and the staff door
+ * to flagged JCRC positions (routers/jcrcPositionsStaff.ts: status, list,
+ * addHolder, removeHolder, setCcas, rename, delete). Those check staff from a
+ * live role read, assert `scrc.enabled` (all but `status`), and reach only
+ * flagged positions, through the same functions as the Positions router.
  *
  * A jcrc is deliberately NOT admitted: appointing the JCRC is hall-office work,
  * and D-3 already says a jcrc may not grant jcrc.

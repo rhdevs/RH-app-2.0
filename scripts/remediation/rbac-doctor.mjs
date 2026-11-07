@@ -5,6 +5,7 @@
  *   node scripts/remediation/rbac-doctor.mjs
  *   node scripts/remediation/rbac-doctor.mjs --names   # print every offending id
  *   node scripts/remediation/rbac-doctor.mjs --nonnus  # 08 §2 measurement, read-only
+ *   node scripts/remediation/rbac-doctor.mjs --directors  # director checks gate (see below)
  *
  * This is the detection query that is otherwise missing everywhere. It is also
  * surfaced as an /admin health panel (03-admin-dashboard.md) with per-user
@@ -15,6 +16,20 @@
  *                                    "orphans under the OLD key".
  *   The enforcement FLIP past off  — "eligible users MISSING resident",
  *                                    "UNCONFIGURED", "shadow denials, last 24h".
+ *
+ * THE DIRECTOR CHECKS (Q23, "Director positions" section). READ-ONLY, like the
+ * rest: they issue `find` and nothing else. They are the safety net for the
+ * switches proposals.enabled and disposables.enabled:
+ *   - every CCA is listed on a position flagged vetsProposals that has a
+ *     current holder who holds jcrc;
+ *   - exactly one position is flagged handlesDisposables, and it has such a
+ *     holder (a SECOND flag silently removes the power, so it is a loud warning);
+ *   - holders of flagged positions who lack jcrc are listed.
+ * A second flag and a holder without jcrc are wrong whenever they appear. The
+ * other two lines are "not set up yet" until the switches go on, so they are
+ * RED only when gating: with `--directors`, or once directors.enabled is "on".
+ * Otherwise they print what is missing without failing the run, so the doctor
+ * stays usable before anyone has flagged a position.
  *
  * By default every RED line prints up to 20 offending identifiers; --names
  * prints all of them. A bare count is not actionable (I-16).
@@ -43,10 +58,12 @@ import {
   findAll, countWhere, numify, E_FORMAT, ROLE_VOCAB, SENTINEL_FACILITY_ID, legacyCanonicalUserID,
   aggregateAll, isCommit, abort,
 } from "./lib/rbac.mjs";
+import { evaluateDirectorChecks } from "./lib/directorChecks.mjs";
 
 const db = new PrismaClient();
 const ALL_NAMES = process.argv.includes("--names");
 const NONNUS = process.argv.includes("--nonnus");
+const DIRECTORS = process.argv.includes("--directors");
 const raw = (cmd) => db.$runCommandRaw(cmd);
 
 /** Shape test for the ~515 legacy matric ids, same regex as merge-accounts.mjs:63
@@ -232,6 +249,109 @@ function allowlistSection(allowlist, users, userRole) {
   }
 }
 
+const oidOf = (v) => String(v?.$oid ?? v ?? "");
+const dateOf = (v) => {
+  if (v == null) return null;
+  const raw = v.$date ?? v;
+  return new Date(typeof raw === "object" ? numify(raw) : raw);
+};
+
+async function directorSection() {
+  console.log(``);
+  let input;
+  let directorsOn;
+  try {
+    const [ccas, positions, links, holders, terms] = await Promise.all([
+      findAll(db, "CCA", { ccaID: 1, ccaName: 1 }),
+      findAll(db, "JcrcPosition", {
+        name: 1,
+        vetsProposals: 1,
+        handlesDisposables: 1,
+      }),
+      findAll(db, "JcrcPositionCca", { positionID: 1, ccaID: 1 }),
+      findAll(db, "JcrcPositionHolder", {
+        positionID: 1,
+        userID: 1,
+        endsAt: 1,
+      }),
+      findAll(db, "JcrcTerm", { userID: 1, endsAt: 1 }),
+    ]);
+    const flagRow = (
+      await raw({
+        find: "SystemFlag",
+        filter: { key: "directors.enabled" },
+        limit: 1,
+      })
+    )?.cursor?.firstBatch?.[0];
+    directorsOn = flagRow?.value === "on";
+    input = {
+      ccas: ccas.map((c) => ({
+        ccaID: numify(c.ccaID),
+        ccaName: String(c.ccaName ?? ""),
+      })),
+      positions: positions.map((p) => ({
+        id: oidOf(p._id),
+        name: String(p.name ?? ""),
+        vetsProposals: p.vetsProposals === true,
+        handlesDisposables: p.handlesDisposables === true,
+      })),
+      links: links.map((l) => ({
+        positionID: oidOf(l.positionID),
+        ccaID: numify(l.ccaID),
+      })),
+      holders: holders.map((h) => ({
+        positionID: oidOf(h.positionID),
+        userID: String(h.userID ?? ""),
+        endsAt: dateOf(h.endsAt),
+      })),
+      userRoles: await findAll(db, "UserRole", {
+        userID: 1,
+        roles: 1,
+        role: 1,
+      }),
+      terms: terms.map((t) => ({
+        userID: String(t.userID ?? ""),
+        endsAt: dateOf(t.endsAt),
+      })),
+      now: new Date(),
+    };
+  } catch (e) {
+    // FAIL LOUD: an unreadable collection reported as an empty one would print
+    // a clean bill of health over exactly the rows this section inspects.
+    line("Director positions: UNREADABLE", 1, {
+      bad: [String(e?.message ?? e)],
+      note: "not a measured zero — resolve before trusting this report",
+    });
+    return;
+  }
+
+  const gating = DIRECTORS || directorsOn;
+  const { flaggedPositions, checks } = evaluateDirectorChecks(input);
+  line("flagged JCRC positions", flaggedPositions, { info: true });
+  console.log(
+    `      ${gating ? "GATING" : "not gating yet"} (${DIRECTORS ? "--directors" : directorsOn ? "directors.enabled is on" : "directors.enabled is off; pass --directors to gate"})`,
+  );
+  for (const c of checks) {
+    const wrong = c.offenders.length > 0;
+    if (wrong && (c.always || gating)) {
+      line(`  ${c.label}`, c.offenders.length, {
+        bad: c.offenders,
+        note: c.note,
+      });
+    } else if (wrong) {
+      line(`  ${c.label}`, c.offenders.length, {
+        info: true,
+        note: "not set up yet",
+      });
+      console.log(
+        `      ${(ALL_NAMES ? c.offenders : c.offenders.slice(0, 20)).join(", ")}${!ALL_NAMES && c.offenders.length > 20 ? `  … (+${c.offenders.length - 20} more; --names for all)` : ""}`,
+      );
+    } else {
+      line(`  ${c.label}`, 0);
+    }
+  }
+}
+
 async function main() {
   if (NONNUS) return nonNusReport();
   console.log(`\n=== rbac-doctor.mjs ===  ${new Date().toISOString()}\n`);
@@ -386,6 +506,8 @@ async function main() {
     // Not RED by itself — a non-zero count is the SIGNAL the permissive soak
     // exists to produce. It is a human go/no-go, not a machine gate.
     info: true, note: "go/no-go for \"enforce\"" });
+
+  await directorSection();
 
   // --- verdict ----------------------------------------------------------
   console.log(`\n================================`);

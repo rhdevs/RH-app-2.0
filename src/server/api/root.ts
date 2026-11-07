@@ -13,6 +13,7 @@ import { ccaRecruitmentRouter } from "./routers/ccaRecruitment";
 import { eventRouter } from "./routers/event";
 import { feedbackRouter } from "./routers/feedback";
 import { jcrcPositionsRouter } from "./routers/jcrcPositions";
+import { jcrcPositionsStaffRouter } from "./routers/jcrcPositionsStaff";
 import { notificationsRouter } from "./routers/notifications";
 import { transcriptRouter } from "./routers/transcript";
 import { transcriptManageRouter } from "./routers/transcriptManage";
@@ -77,6 +78,7 @@ export const appRouter = createTRPCRouter({
   feedback: feedbackRouter,
   // JCRC positions: views only, plus the JCRC self-handover.
   jcrcPositions: jcrcPositionsRouter,
+  jcrcPositionsStaff: jcrcPositionsStaffRouter,
   /** The signed-in user's in-app inbox, behind notifications.enabled. */
   notifications: notificationsRouter,
   /** Transcripts: year control, the resident's own transcript, preview. See routers/transcript.ts. */
