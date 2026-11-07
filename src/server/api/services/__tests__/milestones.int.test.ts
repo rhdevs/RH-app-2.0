@@ -862,7 +862,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     describe("lazy cleanup", () => {
       const old = () => new Date(Date.now() - 8 * DAY_MS);
 
-      it("clears this CCA's stale unattached photos, file first, on a later upload", async () => {
+      it("clears this CCA's stale unattached photos, row first, on a later upload", async () => {
         const stale = await seed(A, { createdAt: old() });
         const fresh = await seed(A);
         const attached = await seed(A, {
@@ -914,8 +914,14 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(fake.state.removed[0]).toBe(oldest.pathname);
       });
 
-      it("a failed delete leaves the row and does not block the upload", async () => {
+      it("a failed file delete does not block the upload: the row is gone and the file is left for the orphan sweep (#136)", async () => {
         const stale = await seed(A, { createdAt: old() });
+        // The file is as old as its row, so the orphan sweep will take it.
+        fake.files.set(stale.pathname, {
+          size: 1000,
+          contentType: "image/webp",
+          uploadedAt: old(),
+        });
         fake.state.removeFails = true;
         expect(
           await service.authorizeEvidenceUpload(
@@ -927,14 +933,76 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toEqual({ ccaID: A });
         expect(
           await db.milestoneEvidence.findUnique({ where: { id: stale.id } }),
-        ).not.toBeNull();
-        expect(fake.files.has(stale.pathname)).toBe(true);
-        // A later run, with the store working again, clears it.
-        fake.state.removeFails = false;
-        await service.cleanupStaleEvidence(db, fake.storage, A);
-        expect(
-          await db.milestoneEvidence.findUnique({ where: { id: stale.id } }),
         ).toBeNull();
+        expect(fake.files.has(stale.pathname)).toBe(true);
+        // The next upload, with the store working again, removes the orphan.
+        fake.state.removeFails = false;
+        await service.authorizeEvidenceUpload(
+          db,
+          fake.storage,
+          U.headA,
+          pathOf(A, "evidence"),
+        );
+        expect(fake.files.has(stale.pathname)).toBe(false);
+      });
+
+      /** A db where the stale photo gets attached right after it was read. */
+      const attachesAfterRead = (id: string): PrismaClient =>
+        proxied(db, (prop) =>
+          prop === "milestoneEvidence"
+            ? new Proxy(db.milestoneEvidence, {
+                get(t, p) {
+                  const v = Reflect.get(t, p) as unknown;
+                  if (p !== "findMany") {
+                    return typeof v === "function"
+                      ? (v as (...x: unknown[]) => unknown).bind(t)
+                      : v;
+                  }
+                  return async (...args: unknown[]) => {
+                    const found = await (
+                      v as (...x: unknown[]) => Promise<unknown>
+                    ).apply(t, args);
+                    await db.milestoneEvidence.update({
+                      where: { id },
+                      data: { submissionID: "sub-raced" },
+                    });
+                    return found;
+                  };
+                },
+              })
+            : undefined,
+        );
+
+      it("a photo attached between the read and the delete keeps its row and its file (#136)", async () => {
+        const stale = await seed(A, { createdAt: old() });
+        const cleared = await service.cleanupStaleEvidence(
+          attachesAfterRead(stale.id),
+          fake.storage,
+          A,
+        );
+        expect(cleared).toBe(0);
+        const row = await db.milestoneEvidence.findUnique({
+          where: { id: stale.id },
+        });
+        expect(row?.submissionID).toBe("sub-raced");
+        expect(fake.files.has(stale.pathname)).toBe(true);
+        expect(fake.state.removed).toEqual([]);
+      });
+
+      it("deletes the row before the file (#136)", async () => {
+        const stale = await seed(A, { createdAt: old() });
+        let rowGoneWhenFileRemoved: boolean | null = null;
+        const spying = {
+          remove: async (pathname: string) => {
+            rowGoneWhenFileRemoved =
+              (await db.milestoneEvidence.findUnique({
+                where: { id: stale.id },
+              })) === null;
+            return fake.storage.remove(pathname);
+          },
+        };
+        expect(await service.cleanupStaleEvidence(db, spying, A)).toBe(1);
+        expect(rowGoneWhenFileRemoved).toBe(true);
       });
 
       it("a CCA full of stale photos can still upload", async () => {

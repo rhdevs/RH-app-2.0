@@ -64,11 +64,14 @@ const VIEW_SELECT = {
 
 /**
  * Remove up to EVIDENCE_CLEANUP_BATCH of this CCA's unattached photos that are
- * older than the window: the file in the store FIRST, then the row, so a
- * failed delete leaves the row for the next run instead of an orphan file no
- * one can find. A delete that fails is logged by the storage module and
- * skipped, never blocking the upload that triggered this. The row is removed
- * only while it is still unattached. Returns how many were cleared.
+ * older than the window: the ROW first, and only while it is still unattached
+ * (a conditional delete), then the file. A photo attached between the read and
+ * the delete matches nothing, so its row and its file are both kept. If the
+ * file then cannot be deleted, the file is left without a row; that is an
+ * orphan the next upload's `cleanupOrphanEvidence` removes once it is old
+ * enough, so nothing is lost for good. A delete that fails is logged by the
+ * storage module and never blocks the upload that triggered this. Returns how
+ * many rows were cleared.
  */
 export async function cleanupStaleEvidence(
   db: Pick<EvidenceDb, "milestoneEvidence">,
@@ -85,11 +88,13 @@ export async function cleanupStaleEvidence(
   });
   let cleared = 0;
   for (const row of stale) {
-    if (!(await storage.remove(row.pathname))) continue;
-    await db.milestoneEvidence.deleteMany({
+    const deleted = await db.milestoneEvidence.deleteMany({
       where: { id: row.id, submissionID: null },
     });
+    // Attached (or gone) since the read: keep its file.
+    if (deleted.count !== 1) continue;
     cleared += 1;
+    await storage.remove(row.pathname);
   }
   return cleared;
 }
