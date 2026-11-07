@@ -276,43 +276,75 @@ export async function isPositionVacant(
 }
 
 /**
- * The people who are directors of this CCA right now, ascending: a live `jcrc`
- * AND a current holder row on a `vetsProposals` position that lists the CCA.
- * Used to address a notice (a submitted proposal goes to these people), never
- * to authorize anything. [] when `directors.enabled` is off, when no flagged
- * position lists the CCA, or when none has a qualifying holder, so an empty
- * answer means nobody can act for the CCA now. Rejects if a read fails.
+ * The people who are directors of each of these CCAs right now, ascending: a
+ * live `jcrc` AND a current holder row on a `vetsProposals` position that
+ * lists the CCA. Every requested CCA has an entry, [] when `directors.enabled`
+ * is off, no flagged position lists it, or none has a qualifying holder. The
+ * switch is read once, and the links, positions, holders and roles in one
+ * query each however many CCAs are asked about. THE ONE PLACE this rule lives:
+ * `currentDirectorIDs` delegates here. Used to address a notice, never to
+ * authorize anything. Rejects if a read fails.
  */
+export async function currentDirectorIDsByCca(
+  db: GuardDb,
+  ccaIDs: readonly number[],
+  now: Date = new Date(),
+): Promise<Map<number, string[]>> {
+  const ids = [...new Set(ccaIDs.filter((id) => Number.isInteger(id)))];
+  const out = new Map<number, string[]>(ids.map((id) => [id, []]));
+  if (ids.length === 0) return out;
+  if (!(await readDirectorsFlag(db))) return out;
+  const links = await db.jcrcPositionCca.findMany({
+    where: { ccaID: { in: ids } },
+    select: { positionID: true, ccaID: true },
+  });
+  if (links.length === 0) return out;
+  const flagged = await db.jcrcPosition.findMany({
+    where: {
+      id: { in: [...new Set(links.map((l) => l.positionID))] },
+      vetsProposals: true,
+    },
+    select: { id: true },
+  });
+  if (flagged.length === 0) return out;
+  const flaggedIDs = new Set(flagged.map((p) => p.id));
+  const holders = await db.jcrcPositionHolder.findMany({
+    where: { positionID: { in: [...flaggedIDs] }, ...activeHolderWhere(now) },
+    select: { userID: true, positionID: true },
+  });
+  const live = await liveJcrcHolders(
+    db,
+    [...new Set(holders.map((h) => h.userID))],
+    now,
+  );
+  for (const id of ids) {
+    const positions = new Set(
+      links
+        .filter((l) => l.ccaID === id && flaggedIDs.has(l.positionID))
+        .map((l) => l.positionID),
+    );
+    const people = holders
+      .filter((h) => positions.has(h.positionID) && live.has(h.userID))
+      .map((h) => h.userID);
+    out.set(id, [...new Set(people)].sort());
+  }
+  return out;
+}
+
+/** One CCA's directors; see `currentDirectorIDsByCca`. Rejects if a read fails. */
 export async function currentDirectorIDs(
   db: GuardDb,
   ccaID: number,
   now: Date = new Date(),
 ): Promise<string[]> {
-  if (!Number.isInteger(ccaID)) return [];
-  if (!(await readDirectorsFlag(db))) return [];
-  const links = await db.jcrcPositionCca.findMany({
-    where: { ccaID },
-    select: { positionID: true },
-  });
-  if (links.length === 0) return [];
-  const flagged = await db.jcrcPosition.findMany({
-    where: { id: { in: links.map((l) => l.positionID) }, vetsProposals: true },
-    select: { id: true },
-  });
-  if (flagged.length === 0) return [];
-  const holders = await db.jcrcPositionHolder.findMany({
-    where: {
-      positionID: { in: flagged.map((p) => p.id) },
-      ...activeHolderWhere(now),
-    },
-    select: { userID: true },
-  });
-  const live = await liveJcrcHolders(
-    db,
-    holders.map((h) => h.userID),
-    now,
-  );
-  return [...live].sort();
+  return (await currentDirectorIDsByCca(db, [ccaID], now)).get(ccaID) ?? [];
+}
+
+/** The strict read of `directors.enabled`: a failed read rejects. */
+export async function isDirectorsEnabledStrict(
+  db: Pick<PrismaClient, "systemFlag">,
+): Promise<boolean> {
+  return readDirectorsFlag(db);
 }
 
 /**

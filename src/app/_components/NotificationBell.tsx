@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { Bell } from "lucide-react";
 
+import { watchDueCheck } from "~/lib/dueCheck/dailyGate";
 import { api } from "~/trpc/react";
 
 /** Largest count drawn on the badge; anything above reads "99+". */
@@ -17,6 +19,12 @@ export function badgeLabel(count: number): string {
  * is off (or while that answer is loading or failed), and it asks for the
  * unread count only once the switch is known to be on. Both queries are plain
  * reads: opening the app writes nothing.
+ *
+ * Once the switch is on it fires `notifications.runDueCheck` (a mutation) at
+ * most once per browser session and Singapore day (`watchDueCheck`, which
+ * also re-checks when a tab left open becomes visible again), then
+ * invalidates the unread query. A failed run is silent to the person (only the
+ * error name is logged) and never blocks the bell.
  */
 export default function NotificationBell({ signedIn }: { signedIn: boolean }) {
   const enabled =
@@ -25,6 +33,24 @@ export default function NotificationBell({ signedIn }: { signedIn: boolean }) {
       retry: false,
       staleTime: 60_000,
     }).data?.enabled === true;
+  const utils = api.useUtils();
+  const dueCheck = api.notifications.runDueCheck.useMutation({
+    onSettled: () => void utils.notifications.unreadCount.invalidate(),
+    onError: (err) => {
+      console.error(
+        JSON.stringify({
+          evt: "due_check_failed",
+          error: err.data?.code ?? "unknown",
+        }),
+      );
+    },
+  });
+  const { mutate: runDueCheck } = dueCheck;
+  useEffect(() => {
+    if (!signedIn || !enabled) return;
+    // Also when a tab left open comes back on a new Singapore day.
+    return watchDueCheck(document, () => runDueCheck());
+  }, [signedIn, enabled, runDueCheck]);
   const count =
     api.notifications.unreadCount.useQuery(undefined, {
       enabled: signedIn && enabled,

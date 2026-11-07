@@ -3,9 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 
 const enabledQuery = vi.fn();
 const countQuery = vi.fn();
+const mutate = vi.fn();
 vi.mock("~/trpc/react", () => ({
   api: {
+    useUtils: () => ({
+      notifications: { unreadCount: { invalidate: vi.fn() } },
+    }),
     notifications: {
+      runDueCheck: { useMutation: () => ({ mutate }) },
       enabled: { useQuery: (...a: unknown[]) => enabledQuery(...a) },
       unreadCount: { useQuery: (...a: unknown[]) => countQuery(...a) },
     },
