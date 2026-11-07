@@ -43,6 +43,9 @@ const IDS = Object.values(U);
 const CCA_A = 9001;
 const CCA_B = 9002;
 const CCAS = [CCA_A, CCA_B];
+/** Events the tests own: a CCA A event, a CCA B event and a hall-wide one. */
+const EV = { a: 99913001, b: 99913002, hall: 99913003 };
+const EVENT_IDS = Object.values(EV);
 const FLAGS = [
   "disposables.enabled",
   "directors.enabled",
@@ -148,7 +151,16 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
       await db.disposableRequest.deleteMany({
         where: {
-          OR: [{ ccaID: { in: CCAS } }, { createdBy: { in: IDS } }],
+          OR: [
+            { ccaID: { in: CCAS } },
+            { createdBy: { in: IDS } },
+            { eventID: { in: EVENT_IDS } },
+          ],
+        },
+      });
+      await db.event.deleteMany({
+        where: {
+          OR: [{ eventID: { in: EVENT_IDS } }, { ccaID: { in: CCAS } }],
         },
       });
       await db.proposal.deleteMany({
@@ -282,8 +294,36 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           : undefined,
       );
 
+    const hour = 3600;
+    const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+    /** An event the tests own, written directly (published, in a month). */
+    const makeEvent = (
+      eventID: number,
+      ccaID: number | null,
+      over: Record<string, unknown> = {},
+    ) =>
+      db.event.create({
+        data: {
+          eventID,
+          ccaID,
+          createdBy: U.headA,
+          title: `TEST event ${eventID}`,
+          startTime: nowSeconds() + 30 * 24 * hour,
+          endTime: nowSeconds() + 30 * 24 * hour + 2 * hour,
+          status: "published",
+          updatedAt: new Date(),
+          ...over,
+        },
+      });
+
+    /**
+     * A filing for the CCA A event by default. `ccaID: CCA_B` stands for "the
+     * CCA B event"; the server takes the CCA from the event, never from the
+     * input, so no CCA is sent.
+     */
     const input = (over: Record<string, unknown> = {}) => ({
-      ccaID: CCA_A,
+      eventID: over.ccaID === CCA_B ? EV.b : EV.a,
       title: "Hall dinner",
       description: "Supper after the show",
       proposalID: null,
@@ -294,7 +334,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       spoons: 40,
       collectionDay: DAY,
       collectionTime: "18:30",
-      ...over,
+      ...Object.fromEntries(
+        Object.entries(over).filter(([k]) => k !== "ccaID"),
+      ),
     });
 
     /** A pending request, filed by headA through the real procedure. */
@@ -327,6 +369,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           title,
           description: "x",
           createdBy: U.headA,
+          // A request is filed for a submitted proposal, not a draft.
+          status: "in_review",
         },
       });
 
@@ -371,6 +415,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       }
       await makePosition("Social", U.social, { social: true });
       await makePosition("Vetter A", U.vetter, { vets: true, ccaIDs: [CCA_A] });
+      await makeEvent(EV.a, CCA_A);
+      await makeEvent(EV.b, CCA_B);
+      await makeEvent(EV.hall, null);
     });
 
     afterAll(async () => {
@@ -572,12 +619,17 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     describe("proposal link", () => {
       it("links to a proposal of the same CCA, once", async () => {
         const proposal = await makeProposal(CCA_A);
-        const made = await file({ proposalID: proposal.id });
-        expect((await stored(made.id)).proposalID).toBe(proposal.id);
+        const made = await file({ eventID: null, proposalID: proposal.id });
+        const row = await stored(made.id);
+        expect(row.proposalID).toBe(proposal.id);
+        expect(row.ccaID).toBe(CCA_A);
+        expect(row.eventID).toBeNull();
 
         expect(
           await errorOf(
-            as(U.headA).create(input({ proposalID: proposal.id }) as never),
+            as(U.headA).create(
+              input({ eventID: null, proposalID: proposal.id }) as never,
+            ),
           ),
         ).toBe("CONFLICT:DISPOSABLE_PROPOSAL_TAKEN");
       });
@@ -586,12 +638,16 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const other = await makeProposal(CCA_B);
         expect(
           await errorOf(
-            as(U.headA).create(input({ proposalID: other.id }) as never),
+            as(U.headA).create(
+              input({ eventID: null, proposalID: other.id }) as never,
+            ),
           ),
-        ).toBe("BAD_REQUEST:DISPOSABLE_BAD_PROPOSAL");
+        ).toBe(NOT_HEAD);
         expect(
           await errorOf(
-            as(U.headA).create(input({ proposalID: "a".repeat(24) }) as never),
+            as(U.headA).create(
+              input({ eventID: null, proposalID: "a".repeat(24) }) as never,
+            ),
           ),
         ).toBe("BAD_REQUEST:DISPOSABLE_BAD_PROPOSAL");
       });
@@ -606,6 +662,8 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const proposal = await makeProposal(CCA_A);
         const data = {
           ccaID: CCA_A,
+          eventID: null,
+          eventTitle: null,
           createdBy: U.headA,
           title: "t",
           description: "",
@@ -636,20 +694,19 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       it("proposalChoices lists the CCA's proposals for its head only and marks the taken one", async () => {
         const linked = await makeProposal(CCA_A, "TEST linked");
         await makeProposal(CCA_A, "TEST free");
-        await file({ proposalID: linked.id });
+        await file({ eventID: null, proposalID: linked.id });
 
-        const choices = await as(U.headA).proposalChoices({ ccaID: CCA_A });
+        const choices = await as(U.headA).proposalChoices();
 
         expect(choices.map((c) => [c.title, c.taken]).sort()).toEqual([
           ["TEST free", false],
           ["TEST linked", true],
         ]);
-        expect(
-          await errorOf(as(U.headB).proposalChoices({ ccaID: CCA_A })),
-        ).toBe(NOT_HEAD);
-        expect(
-          await errorOf(as(U.social).proposalChoices({ ccaID: CCA_A })),
-        ).toBe(NOT_HEAD);
+        // Only proposals of CCAs the person heads are offered: another CCA's
+        // head, the Social director and an ordinary user get none.
+        expect(await as(U.headB).proposalChoices()).toEqual([]);
+        expect(await as(U.social).proposalChoices()).toEqual([]);
+        expect(await as(U.resident).proposalChoices()).toEqual([]);
       });
     });
 
@@ -666,6 +723,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(res.viewer).toEqual({
           isSocialDirector: false,
           canCreate: true,
+          showHallWide: false,
         });
         expect(res.ccaOptions.map((c) => c.ccaID)).toEqual([CCA_A]);
       });
@@ -1286,41 +1344,26 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("ok");
       });
 
-      it("an edit cannot move the request to another CCA or link another CCA proposal", async () => {
+      it("an edit cannot move the request to another event, CCA or proposal", async () => {
         const made = await file();
         const other = await makeProposal(CCA_B);
 
         const res = await errorOf(
           as(U.social).update(
-            edited(made, { ccaID: CCA_B, proposalID: other.id }) as never,
+            edited(made, {
+              ccaID: CCA_B,
+              eventID: EV.b,
+              proposalID: other.id,
+            }) as never,
           ),
         );
 
-        expect(res).toBe("BAD_REQUEST:DISPOSABLE_BAD_PROPOSAL");
-        expect((await stored(made.id)).ccaID).toBe(CCA_A);
-      });
-
-      it("two edits racing to link one proposal: one wins, the other is told it is taken", async () => {
-        const proposal = await makeProposal(CCA_A);
-        const a = await file({ title: "a" });
-        const b = await file({ title: "b" });
-        const noPrecheck = withoutDuplicatePrecheck();
-
-        const results = await Promise.all([
-          errorOf(
-            as(U.social, EVERYTHING, noPrecheck).update(
-              edited(a, { proposalID: proposal.id }) as never,
-            ),
-          ),
-          errorOf(
-            as(U.social, EVERYTHING, noPrecheck).update(
-              edited(b, { proposalID: proposal.id }) as never,
-            ),
-          ),
-        ]);
-
-        expect(results.filter((r) => r === "ok")).toHaveLength(1);
-        expect(results).toContain("CONFLICT:DISPOSABLE_PROPOSAL_TAKEN");
+        expect(res).toBe("ok");
+        const row = await stored(made.id);
+        expect(row.ccaID).toBe(CCA_A);
+        expect(row.eventID).toBe(EV.a);
+        expect(row.eventTitle).toBe(`TEST event ${EV.a}`);
+        expect(row.proposalID).toBeNull();
       });
     });
 
@@ -1429,7 +1472,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           [U.headA, U.headA2, U.headA, U.headA2].map((id) =>
             errorOf(
               as(id, EVERYTHING, noPrecheck).create(
-                input({ proposalID: proposal.id }) as never,
+                input({ eventID: null, proposalID: proposal.id }) as never,
               ),
             ),
           ),
@@ -1453,7 +1496,11 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
         const results = await Promise.all(
           [U.headA, U.headA2].map((id) =>
-            errorOf(as(id).create(input({ proposalID: proposal.id }) as never)),
+            errorOf(
+              as(id).create(
+                input({ eventID: null, proposalID: proposal.id }) as never,
+              ),
+            ),
           ),
         );
 
@@ -1467,6 +1514,11 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const { createRequest } = await import(
           "~/server/api/services/disposables/write"
         );
+        // The tests' event ends in a month; this one runs on into 2103.
+        await db.event.updateMany({
+          where: { eventID: EV.a },
+          data: { endTime: 4_200_000_000 },
+        });
         const day14 = input({ collectionDay: "2099-06-14" }) as never;
 
         const before = new Date("2099-06-14T15:59:59.999Z");

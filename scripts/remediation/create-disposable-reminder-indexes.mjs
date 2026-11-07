@@ -1,12 +1,13 @@
 /**
- * Creates the INDEXES the disposable-request collection needs: the two the
+ * Creates the INDEXES the disposable-request collection needs: the three the
  * schema declares in prisma/schema.prisma for `DisposableRequest`, plus ONE
  * index Prisma cannot express and that is therefore NOT in the schema:
  * `disposable_request_proposal_unique`, a PARTIAL unique index on `proposalID`
  * (only rows whose link is a non-empty string). One proposal has at most one
  * disposable request; requests with no proposal are outside the index, so they
  * never collide on null. Declared in the schema it would be a plain unique
- * index and every unlinked request would collide.
+ * index and every unlinked request would collide. (An EVENT can have several
+ * requests, so its index, `disposable_request_event`, is a plain one.)
  *
  * The name says "reminder" because the reminder collections (ReminderBroadcast
  * and ReminderTarget, PR 14) are in the SAME TARGETS map below, so one script
@@ -50,6 +51,13 @@ export const TARGETS = {
     {
       name: "disposable_request_status_day",
       key: { status: 1, collectionDay: 1 },
+      unique: false,
+    },
+    // PR 18: requests are tagged to an event. Plain and NOT unique: an event
+    // can have several requests (top-ups, collections on different days).
+    {
+      name: "disposable_request_event",
+      key: { eventID: 1 },
       unique: false,
     },
     {

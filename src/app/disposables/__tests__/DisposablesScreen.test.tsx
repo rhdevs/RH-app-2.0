@@ -45,6 +45,9 @@ const row = (over: Record<string, unknown> = {}) => ({
   id: "a".repeat(24),
   ccaID: 7,
   ccaName: "Hall Choir",
+  hallWide: false,
+  event: { eventID: 31, title: "Choir night", state: "ok" },
+  sameEvent: [],
   title: "Choir supper",
   description: "",
   proposalID: null,
@@ -70,7 +73,7 @@ const data = (over: Record<string, unknown> = {}) => ({
     items: [row()],
     skipped: 0,
     more: false,
-    viewer: { isSocialDirector: false, canCreate: true },
+    viewer: { isSocialDirector: false, canCreate: true, showHallWide: false },
     hasSocialDirector: true,
     ccaOptions: [
       { ccaID: 7, name: "Hall Choir" },
@@ -87,6 +90,7 @@ describe("the disposables screen", () => {
   beforeEach(() => {
     enabledQuery.mockReset();
     listQuery.mockReset();
+    listQuery.mockReturnValue({ data: undefined, isLoading: true });
     listInputs.length = 0;
     enabledQuery.mockReturnValue({ data: { enabled: true } });
   });
@@ -143,7 +147,11 @@ describe("the disposables screen", () => {
   it("the Social director sees Approve, Reject, Edit and Delete on a pending request", () => {
     listQuery.mockReturnValue(
       data({
-        viewer: { isSocialDirector: true, canCreate: false },
+        viewer: {
+          isSocialDirector: true,
+          canCreate: false,
+          showHallWide: true,
+        },
         items: [
           row({
             can: requestActions({
@@ -220,6 +228,126 @@ describe("the disposables screen", () => {
     listQuery.mockReturnValue(data());
     render(7);
     expect(listInputs.at(-1)).toEqual({ ccaID: 7 });
+  });
+
+  it("shows the event a request is for, and nothing alarming while it is fine", () => {
+    listQuery.mockReturnValue(data());
+    const html = render();
+    expect(html).toContain("For Choir night");
+    expect(html).not.toContain("was canceled");
+    expect(html).not.toContain("was declined");
+  });
+
+  it("warns on a canceled or declined event and says the request is unchanged", () => {
+    for (const [state, word] of [
+      ["canceled", "canceled"],
+      ["declined", "declined"],
+    ] as const) {
+      listQuery.mockReturnValue(
+        data({
+          items: [row({ event: { eventID: 31, title: "Choir night", state } })],
+        }),
+      );
+      const html = render();
+      expect(html).toContain(
+        `This event was ${word}. The request is unchanged.`,
+      );
+      // The status badge still says what it was: nothing was written.
+      expect(html).toContain("Pending");
+    }
+  });
+
+  it("shows the kept title when the event no longer exists", () => {
+    listQuery.mockReturnValue(
+      data({
+        items: [
+          row({ event: { eventID: 31, title: "Old name", state: "gone" } }),
+        ],
+      }),
+    );
+    const html = render();
+    expect(html).toContain("For Old name");
+    expect(html).toContain("the event no longer exists");
+  });
+
+  it("labels a hall-wide request and offers Hall-wide in the CCA filter", () => {
+    listQuery.mockReturnValue(
+      data({
+        items: [row({ ccaID: null, ccaName: null, hallWide: true })],
+        viewer: {
+          isSocialDirector: false,
+          canCreate: true,
+          showHallWide: true,
+        },
+        ccaOptions: [{ ccaID: 7, name: "Hall Choir" }],
+      }),
+    );
+    const html = render();
+    expect(html).toContain("Hall-wide");
+    expect(html).toContain('<option value="hall">Hall-wide</option>');
+    expect(html).not.toContain("CCA null");
+  });
+
+  it("does not offer Hall-wide to someone who cannot see such requests", () => {
+    listQuery.mockReturnValue(data());
+    expect(render()).not.toContain('value="hall"');
+  });
+
+  it("offers an event filter from the events on the list", () => {
+    listQuery.mockReturnValue(data());
+    const html = render();
+    expect(html).toContain("Event");
+    expect(html).toContain('<option value="31">Choir night</option>');
+  });
+
+  it("lists the other requests for the same event with this one", () => {
+    listQuery.mockReturnValue(
+      data({
+        items: [
+          row({
+            sameEvent: [
+              {
+                id: "b".repeat(24),
+                title: "Extra forks",
+                status: "approved",
+                collectionDay: "2027-03-13",
+                collectionTime: "10:00",
+                plates: 0,
+                cups: 0,
+                bowls: 0,
+                forks: 25,
+                spoons: 0,
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+    const html = render();
+    expect(html).toContain("Other requests for this event");
+    expect(html).toContain("Extra forks");
+    expect(html).toContain("25 forks");
+    expect(html).toContain("Approved");
+  });
+
+  it("shows Nudge to the filer of a hall-wide request, from the real action rules", () => {
+    listQuery.mockReturnValue(
+      data({
+        items: [
+          row({
+            ccaID: null,
+            ccaName: null,
+            hallWide: true,
+            can: requestActions({
+              isSocialDirector: false,
+              isHallWideFiler: true,
+              status: "pending",
+            }),
+          }),
+        ],
+      }),
+    );
+    expect(render()).toContain(">Nudge the Social director<");
   });
 
   it("an empty list says no requests match", () => {

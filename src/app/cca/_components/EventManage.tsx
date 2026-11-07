@@ -44,6 +44,7 @@ import EventAttendees from "./EventAttendees";
 import EventQuestionBuilder from "./EventQuestionBuilder";
 import EventDoorSection from "./EventDoorSection";
 import EventAttendanceStats from "./EventAttendanceStats";
+import DisposableRequestLink from "~/app/disposables/_components/DisposableRequestLink";
 
 const UNSAVED_QUESTIONS = "Save or discard your signup question changes first.";
 
@@ -177,7 +178,10 @@ function DetailsEditor({
   }
 
   const busy =
-    update.isPending || submit.isPending || decide.isPending || publish.isPending;
+    update.isPending ||
+    submit.isPending ||
+    decide.isPending ||
+    publish.isPending;
   const facilityName = isFacilitySelected(details)
     ? (facilities.data?.find(
         (f) => f.facilityID === Number(details.facilitySelection),
@@ -440,14 +444,17 @@ export default function EventManage({
             {event.location ? ` · ${event.location}` : ""}
           </p>
         </div>
-        {status === "published" && (
-          <Button asChild variant="outline" size="sm">
-            <Link href={`/events/${event.eventID}`} target="_blank">
-              <ExternalLink className="mr-1.5 h-4 w-4" />
-              View public page
-            </Link>
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <DisposableRequestLink eventID={event.eventID} />
+          {status === "published" && (
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/events/${event.eventID}`} target="_blank">
+                <ExternalLink className="mr-1.5 h-4 w-4" />
+                View public page
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* EDITABLE — draft / changes_requested. */}

@@ -347,8 +347,14 @@ describe("the Event link is made once, after the approval, and never fails it", 
     const at = (needle: string) => body.indexOf(needle);
     expect(at("readLinkedEvent(")).toBeGreaterThan(-1);
     expect(at("nextEventId(db)")).toBeGreaterThan(at("readLinkedEvent("));
-    expect(at("db.proposal.updateMany(")).toBeGreaterThan(
-      at("nextEventId(db)"),
+    // The claim runs in one transaction with the move of the proposal's
+    // disposables request (4.9, A66).
+    expect(at("db.$transaction(")).toBeGreaterThan(at("nextEventId(db)"));
+    expect(at("tx.proposal.updateMany(")).toBeGreaterThan(
+      at("db.$transaction("),
+    );
+    expect(at("moveProposalRequestToEvent(tx")).toBeGreaterThan(
+      at("tx.proposal.updateMany("),
     );
     expect(at("createEventRow(")).toBeGreaterThan(at("claimed.count !== 1"));
     // The expected value is the one read, and a missing key counts as null.
@@ -375,8 +381,16 @@ describe("the Event link is made once, after the approval, and never fails it", 
       body.indexOf("linkAndCreate("),
     );
     expect(body).not.toMatch(/\bthrow\b/);
-    // The only other catches are the two best-effort notices.
-    expect(c.match(/\bcatch\b/g)).toHaveLength(3);
+    // The only other catches are the two best-effort notices, the bounded
+    // retry of a write conflict (P2034) on the claim and its backout, and the
+    // log-only catch on the move after the Event exists.
+    expect(c.match(/\bcatch\b/g)).toHaveLength(5);
+    expect(c).toMatch(/err\.code === "P2034"/);
+    expect(c).toMatch(
+      /if \(!isWriteConflict\(err\) \|\| tries >= CONFLICT_RETRIES\) throw err;/,
+    );
+    // The claim and its backout both use it.
+    expect(c.match(/await retryOnConflict\(/g)).toHaveLength(2);
   });
 
   it("the button checks the flag, then the head, then spends budget, then links", () => {
@@ -750,15 +764,17 @@ describe("disposables follows the same rules as proposals", () => {
     const code = stripComments(
       read("src/server/api/services/disposables/access.ts"),
     );
-    expect(code.match(/\bcatch\b/g)).toHaveLength(3);
-    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(3);
+    // loadViewer, loadFiler, mayFile and headsOrRefuse: one each.
+    expect(code.match(/\bcatch\b/g)).toHaveLength(4);
+    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(4);
     expect(code).toMatch(/function refuseOnFailure\(err: unknown\): never/);
   });
 
-  it("the other disposable services catch nothing, apart from the flag read, the conflict mapping and the best-effort filed notice", () => {
+  it("the other disposable services catch nothing, apart from the flag read, the conflict mapping, the best-effort filed notice and the best-effort tag", () => {
     for (const f of DISPOSABLE_FILES) {
       if (f.endsWith("/access.ts") || f.endsWith("/flag.ts")) continue;
       if (f.endsWith("/notices.ts")) continue;
+      if (f.endsWith("/write.ts")) continue; // best-effort tag, see below
       if (f === TRANSITION_D) continue;
       if (f.endsWith("/nudge.ts")) continue; // same-day race, see below
       expect(stripComments(read(f)), f).not.toMatch(/\bcatch\b/);
@@ -792,6 +808,22 @@ describe("disposables follows the same rules as proposals", () => {
     expect(body).toMatch(/id\.trim\(\) !== ""/);
   });
 
+  it("write.ts catches in exactly one place: the best-effort tag after the save, which logs a name and never rethrows (#138)", () => {
+    const code = stripComments(
+      read("src/server/api/services/disposables/write.ts"),
+    );
+    expect(code.match(/\bcatch\b/g)).toHaveLength(1);
+    expect(code).not.toMatch(/throw err/);
+    const at = code.indexOf("try {");
+    const body = code.slice(at, code.indexOf("noticeFiled(db,", at));
+    expect(body).toMatch(
+      /await tagIfProposalGotAnEvent\(db, made\.id, target\)/,
+    );
+    expect(body).toMatch(/catch \(err\)/);
+    expect(body).toMatch(/err instanceof Error \? err\.name : typeof err/);
+    expect(body).not.toMatch(/err\.message/);
+  });
+
   it("transition.ts rethrows everything but a write conflict", () => {
     const code = stripComments(read(TRANSITION_D));
     expect(code.match(/\bcatch\b/g)).toHaveLength(2);
@@ -808,7 +840,7 @@ describe("disposables follows the same rules as proposals", () => {
       /const gated = identifiedProcedure\s*\.use\(sanitizeErrors\)\s*\.use\(/,
     );
     expect(code).toMatch(/await assertDisposablesEnabled\(ctx\.db\)/);
-    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(11);
+    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(12);
     expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
     expect(code).toMatch(
       /entry: identifiedProcedure\s*\.use\(sanitizeErrors\)/,
@@ -861,14 +893,51 @@ describe("disposables follows the same rules as proposals", () => {
     expect(code).not.toMatch(/catch/);
   });
 
-  it("create spends budget only after the head check", () => {
+  it("create works out the CCA from the stored event, checks who may file, then spends budget", () => {
     const code = stripComments(
       read("src/server/api/services/disposables/write.ts"),
     );
-    const head = code.indexOf("await assertCcaHead(db, userID, input.ccaID)");
+    const target = code.indexOf("await resolveTarget(db, input)");
+    const head = code.indexOf("await assertCanFile(db, userID, target.ccaID)");
     const limit = code.indexOf('assertWithinLimit("create"');
-    expect(head).toBeGreaterThan(-1);
+    const problem = code.indexOf("target.problem");
+    const taggable = code.indexOf("assertTaggable(target");
+    expect(target).toBeGreaterThan(-1);
+    expect(head).toBeGreaterThan(target);
     expect(limit).toBeGreaterThan(head);
+    // A stranger is refused before they learn anything about the event, and the
+    // CCA is never an input.
+    expect(problem).toBeGreaterThan(head);
+    expect(taggable).toBeGreaterThan(head);
+    expect(code).not.toMatch(/input\.ccaID/);
+  });
+
+  it("filing for a CCA's event never lets an admin or JCRC member through", () => {
+    const code = stripComments(
+      read("src/server/api/services/disposables/access.ts"),
+    );
+    const start = code.indexOf("export async function mayFile");
+    const body = code.slice(start, code.indexOf("\n}\n", start));
+    // A CCA's event: the heads only. Hall-wide: a live jcrc or an admin.
+    expect(body).toMatch(
+      /if \(ccaID !== null\) return \(await headedCcas\(db, userID\)\)\.includes\(ccaID\);/,
+    );
+    expect(body).toMatch(/holdsLiveJcrc/);
+    expect(body).toMatch(/holdsStoredAdmin/);
+  });
+
+  it("the tag is not editable: update takes no event or proposal", () => {
+    const schema = stripComments(read("src/lib/schemas/disposable.ts"));
+    const start = schema.indexOf("export const disposableUpdateInput");
+    const body = schema.slice(start, schema.indexOf(");", start));
+    expect(body).not.toMatch(/eventID|proposalID|ccaID/);
+    const write = stripComments(
+      read("src/server/api/services/disposables/write.ts"),
+    );
+    const update = write.slice(
+      write.indexOf("export async function updateRequest"),
+    );
+    expect(update).not.toMatch(/eventID|proposalID|eventTitle/);
   });
 
   it("the notices are written on the transaction client", () => {
