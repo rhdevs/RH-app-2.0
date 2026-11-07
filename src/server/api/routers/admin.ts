@@ -53,6 +53,7 @@ import {
   type Capabilities,
   type GrantableRole,
 } from "../services/roles";
+import { endFlaggedHolderRows } from "../services/jcrcPositions";
 import { MATRIC_RE } from "~/lib/schemas/profile";
 
 /**
@@ -1076,6 +1077,15 @@ export async function applyRoleChange(opts: {
       // compare-and-set above is what makes it legal, and it is strictly
       // stronger than an unguarded delta. Do not remove the pre-image check
       // "for speed".
+
+      // A DIRECTOR POSITION DOES NOT OUTLIVE `jcrc`. The director guard already
+      // ignores a holder without a live `jcrc`, but the row would wake up the
+      // day `jcrc` is granted again. So taking `jcrc` away also ends the
+      // person's rows on FLAGGED positions, in the same transaction. Rows on
+      // unflagged positions are views only and stay.
+      if (removed.includes(JCRC_ROLE)) {
+        await endFlaggedHolderRows(tx, targetUserID);
+      }
     });
   } catch (err) {
     // I-15 again, from the transactional side: a denial raised INSIDE the

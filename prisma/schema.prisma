@@ -1492,6 +1492,11 @@ model JcrcPositionHolder {
   /// Set when this holder hands the position over. A holder may hand a
   /// position over once; someone else must assign it again before another.
   handedOverAt DateTime?
+  /// Set on a row of a FLAGGED position that a handover created: the outgoing
+  /// holder. Such a row cannot be handed over again until an admin, RF or Hall
+  /// Office assigns the person again, which clears it. Optional; a missing
+  /// field means the row did not come from a handover. No index, no db push.
+  handoverFrom String?
 
   @@unique([positionID, userID], map: "jcrcPositionHolder_pair")
   @@index([userID], map: "jcrcPositionHolder_userID")

@@ -8,6 +8,7 @@ import { isPositionVacant } from "~/server/api/services/directorGuard";
 import {
   POSITION_AUDIT,
   assertMayEditFlaggedPosition,
+  assertNoListedCcaHead,
   auditFlaggedChange,
   describeSnapshot,
   isFlaggedPosition,
@@ -355,6 +356,9 @@ export async function addPositionHolder(
     if (!targetRoles.includes(JCRC_ROLE)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "TARGET_NOT_JCRC" });
     }
+    // A director who also heads a CCA the position lists would vet their own
+    // CCA's proposals: refused for the Positions router and the staff panel.
+    if (isLocked) await assertNoListedCcaHead(tx, [input.userID], [input.id]);
     await touchPosition(tx, row);
     const key = {
       positionID_userID: { positionID: input.id, userID: input.userID },
@@ -382,6 +386,9 @@ export async function addPositionHolder(
         endsAt: null,
         handedOverAt: null,
         ...(keepsMark ? {} : { assignedBy: actor }),
+        // Staff assigning again confirms a handover successor: the row can be
+        // handed over once more (services/jcrcHandover.ts).
+        ...(isLocked ? { handoverFrom: null } : {}),
         assignedAt: new Date(),
       },
     });
