@@ -77,6 +77,8 @@ import {
   proposalsNeedDirectors,
   disposablesNeedDirectors,
   disposablesNeedIndex,
+  remindersNeedDirectors,
+  remindersNeedIndex,
 } from "./lib/directorChecks.mjs";
 
 const db = new PrismaClient();
@@ -308,6 +310,8 @@ async function directorSection() {
   let proposalsOn;
   let disposablesOn;
   let disposableIndexes;
+  let remindersOn;
+  let reminderIndexes;
   try {
     const [ccas, positions, links, holders, terms] = await Promise.all([
       findAll(db, "CCA", { ccaID: 1, ccaName: 1 }),
@@ -362,6 +366,24 @@ async function directorSection() {
         disposableIndexes = null;
       }
     }
+    const remindersRow = (
+      await raw({
+        find: "SystemFlag",
+        filter: { key: "reminders.enabled" },
+        limit: 1,
+      })
+    )?.cursor?.firstBatch?.[0];
+    remindersOn = remindersRow?.value === "on";
+    reminderIndexes = null;
+    if (remindersOn) {
+      try {
+        const reply = await raw({ listIndexes: "ReminderTarget" });
+        reminderIndexes =
+          reply?.ok === 1 ? (reply?.cursor?.firstBatch ?? []) : null;
+      } catch {
+        reminderIndexes = null;
+      }
+    }
     input = {
       ccas: ccas.map((c) => ({
         ccaID: numify(c.ccaID),
@@ -408,6 +430,7 @@ async function directorSection() {
     directorsOn,
     proposalsOn,
     disposablesOn,
+    remindersOn,
   };
   const gating = DIRECTORS || directorsOn;
   const { flaggedPositions, checks } = evaluateDirectorChecks(input);
@@ -429,6 +452,11 @@ async function directorSection() {
       note: mismatch.note,
     });
   }
+  if (remindersOn && !gating) {
+    console.log(
+      "      reminders.enabled is on: the CCAs-with-no-director line is GATING",
+    );
+  }
   if (disposablesOn && !gating) {
     console.log(
       "      disposables.enabled is on: the Social director line is GATING",
@@ -437,6 +465,8 @@ async function directorSection() {
   for (const m of [
     disposablesNeedDirectors({ disposablesOn, directorsOn }),
     disposablesNeedIndex({ disposablesOn, indexes: disposableIndexes }),
+    remindersNeedDirectors({ remindersOn, directorsOn }),
+    remindersNeedIndex({ remindersOn, indexes: reminderIndexes }),
   ]) {
     if (m) line(`  ${m.label}`, 1, { bad: m.offenders, note: m.note });
   }

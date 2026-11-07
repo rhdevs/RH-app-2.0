@@ -760,8 +760,21 @@ describe("disposables follows the same rules as proposals", () => {
       if (f.endsWith("/access.ts") || f.endsWith("/flag.ts")) continue;
       if (f.endsWith("/notices.ts")) continue;
       if (f === TRANSITION_D) continue;
+      if (f.endsWith("/nudge.ts")) continue; // same-day race, see below
       expect(stripComments(read(f)), f).not.toMatch(/\bcatch\b/);
     }
+  });
+
+  it("nudge.ts catches only a unique-key race or write conflict, and rethrows everything else", () => {
+    const nudge = stripComments(
+      read("src/server/api/services/disposables/nudge.ts"),
+    );
+    expect(nudge.match(/\bcatch\b/g)).toHaveLength(2);
+    expect(nudge).toMatch(/DISPOSABLE_NUDGE_TRY_AGAIN/);
+    expect(nudge).toMatch(/throw first;/);
+    expect(nudge).toMatch(/throw err;/);
+    // The CCA comes from the stored request, never from the client.
+    expect(nudge).not.toMatch(/input\.ccaID/);
   });
 
   it("notices.ts catches in exactly one place: the best-effort filed notice, which logs a name and never rethrows (#134)", () => {
@@ -795,7 +808,7 @@ describe("disposables follows the same rules as proposals", () => {
       /const gated = identifiedProcedure\s*\.use\(sanitizeErrors\)\s*\.use\(/,
     );
     expect(code).toMatch(/await assertDisposablesEnabled\(ctx\.db\)/);
-    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(9);
+    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(11);
     expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
     expect(code).toMatch(
       /entry: identifiedProcedure\s*\.use\(sanitizeErrors\)/,
@@ -833,6 +846,8 @@ describe("disposables follows the same rules as proposals", () => {
     }
     expect(code).not.toMatch(/loadViewer|headedCcaIDs|HEAD_EDITABLE/);
     expect(code).not.toMatch(/noticeEditedByHead/);
+    // The digest and the nudge are not edits: they sit in other files.
+    expect(code).not.toMatch(/collectionDigest|nudgeSocialDirector/);
     expect(stripComments(read("src/lib/disposables/actions.ts"))).not.toMatch(
       /headsCca|HEAD_EDITABLE/,
     );
@@ -864,5 +879,140 @@ describe("disposables follows the same rules as proposals", () => {
     // The one exception is the filed notice: it runs after the request is
     // saved, on the plain client, and is best effort.
     expect(code.match(/notify\(db,/g)).toHaveLength(1);
+  });
+});
+
+describe("reminders (broadcasts, digest and nudges) follow the same rules", () => {
+  const WRITE = "src/server/api/services/reminders/write.ts";
+  const ACCESS = "src/server/api/services/reminders/access.ts";
+  const REMINDER_FILES = SRC_FILES.filter(
+    (f) =>
+      f.startsWith("src/server/api/services/reminders/") ||
+      f === "src/server/api/routers/reminder.ts" ||
+      f === "src/server/api/services/disposables/digest.ts" ||
+      f === "src/server/api/services/dueCheck/collectionDigest.ts" ||
+      f === "src/server/api/services/dueCheck/broadcastNudge.ts",
+  );
+  const problems = (src: string) =>
+    delegateStatusWriteProblems(src, "reminderBroadcast", "ReminderBroadcast");
+
+  it("finds the reminder files", () => {
+    expect(REMINDER_FILES).toContain(WRITE);
+    expect(REMINDER_FILES).toContain(ACCESS);
+    expect(REMINDER_FILES.length).toBeGreaterThanOrEqual(9);
+  });
+
+  it("only write.ts names a status in a broadcast write, and only to cancel", () => {
+    const isClient = (f: string) => /^\s*["']use client["']/.test(read(f));
+    const offenders = SRC_FILES.filter(
+      (f) => f !== WRITE && !isClient(f),
+    ).flatMap((f) => problems(read(f)).map((p) => `${f}: ${p}`));
+    expect(offenders).toEqual([]);
+    const code = stripComments(read(WRITE));
+    expect(code.match(/\.reminderBroadcast\.updateMany\(/g)).toHaveLength(1);
+    expect(code.match(/status:\s*BROADCAST_CANCELLED/g)).toHaveLength(1);
+    // Created with the schema default, and no raw command touches the collection.
+    expect(code).not.toMatch(/reminderBroadcast\.create\([^)]*status/s);
+    expect(code).not.toMatch(/runCommandRaw/);
+  });
+
+  it("no reminder file uses a forgiving role read or the session's roles", () => {
+    for (const f of REMINDER_FILES) {
+      const code = stripComments(read(f));
+      expect(code, f).not.toMatch(/getUserRoles|assertHeadsCca|ccaScope/);
+      expect(code, f).not.toMatch(/myPositionCcas|overseesAll/);
+      expect(code, f).not.toMatch(/session\.user\.roles/);
+      expect(code, f).not.toMatch(/\bgetServerAuthSession|\bauth\(/);
+    }
+  });
+
+  it("access.ts catches only around a whole decision, and only to refuse", () => {
+    const code = stripComments(read(ACCESS));
+    expect(code.match(/\bcatch\b/g)).toHaveLength(3);
+    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(3);
+    expect(code).toMatch(/function refuseOnFailure\(err: unknown\): never/);
+  });
+
+  it("nothing else in the reminder files catches, apart from the flag read", () => {
+    for (const f of REMINDER_FILES) {
+      if (f === ACCESS || f.endsWith("/flag.ts")) continue;
+      expect(stripComments(read(f)), f).not.toMatch(/\bcatch\b/);
+    }
+  });
+
+  it("every gated reminder procedure runs inside sanitizeErrors, behind the flag", () => {
+    const code = stripComments(read("src/server/api/routers/reminder.ts"));
+    expect(code).toMatch(
+      /const gated = identifiedProcedure\s*\.use\(sanitizeErrors\)\s*\.use\(/,
+    );
+    expect(code).toMatch(/await assertRemindersEnabled\(ctx\.db\)/);
+    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(7);
+    expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
+    expect(code).toMatch(
+      /entry: identifiedProcedure\s*\.use\(sanitizeErrors\)/,
+    );
+    // The sender and the CCA are never read from the client, only named to check.
+    expect(code).not.toMatch(/input\.(createdBy|userID|sender)/);
+  });
+
+  it("send checks every CCA with the strict guard before the budget and the write, and again inside the transaction", () => {
+    const code = stripComments(read(WRITE));
+    const start = code.indexOf("export async function sendBroadcast");
+    const body = code.slice(start, code.indexOf("\n}\n", start));
+    const guard = body.indexOf(
+      "await assertDirectsAll(db, userID, input.ccaIDs)",
+    );
+    const limit = body.indexOf('await assertWithinLimit("send"');
+    const tx = body.indexOf("db.$transaction(");
+    const again = body.indexOf(
+      "await assertDirectsAll(tx, userID, input.ccaIDs)",
+    );
+    expect(guard).toBeGreaterThan(-1);
+    expect(limit).toBeGreaterThan(guard);
+    expect(tx).toBeGreaterThan(limit);
+    expect(again).toBeGreaterThan(tx);
+    // Rows and notices share one transaction client; targets go in one write.
+    expect(body).toMatch(/notify\(tx,/);
+    expect(body).not.toMatch(/notify\(db,/);
+    expect(body.match(/reminderTarget\.createMany\(/g)).toHaveLength(1);
+    expect(body).toMatch(/headsOfOrRefuse\(tx,/);
+  });
+
+  it("cancel and mark-done read the guard before they look the row up, and spend budget only after", () => {
+    const code = stripComments(read(WRITE));
+    for (const [fn, guardCall, lookupCall] of [
+      [
+        "cancelBroadcast",
+        "await directedOrRefuse(db, userID)",
+        "reminderTarget.findMany",
+      ],
+      [
+        "markDone",
+        "await headedOrRefuse(db, userID)",
+        "reminderTarget.findUnique",
+      ],
+    ] as const) {
+      const start = code.indexOf(`export async function ${fn}`);
+      const body = code.slice(start, code.indexOf("\n}\n", start));
+      const guard = body.indexOf(guardCall);
+      const lookup = body.indexOf(lookupCall);
+      const limit = body.indexOf("await assertWithinLimit(");
+      expect(guard, fn).toBeGreaterThan(-1);
+      expect(lookup, fn).toBeGreaterThan(guard);
+      expect(limit, fn).toBeGreaterThan(lookup);
+    }
+  });
+
+  it("the due kinds read their flag strictly and write only through the runner", () => {
+    for (const f of [
+      "src/server/api/services/dueCheck/collectionDigest.ts",
+      "src/server/api/services/dueCheck/broadcastNudge.ts",
+    ]) {
+      const code = stripComments(read(f));
+      expect(code, f).toMatch(/db\.systemFlag\.findUnique/);
+      expect(code, f).not.toMatch(
+        /isDisposablesEnabled|isRemindersEnabled|notify\(|\.create\(|\.update|\.delete/,
+      );
+    }
   });
 });

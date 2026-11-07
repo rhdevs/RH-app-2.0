@@ -9,8 +9,10 @@
  * index and every unlinked request would collide.
  *
  * The name says "reminder" because the reminder collections (ReminderBroadcast
- * and ReminderTarget, PR 14) are added to the SAME TARGETS map below, so one
- * script and one drift test cover the whole feature.
+ * and ReminderTarget, PR 14) are in the SAME TARGETS map below, so one script
+ * and one drift test cover the whole feature. Their indexes are all ones the
+ * schema declares; the unique (broadcastID, ccaID) pair is the one the doctor
+ * checks.
  *
  * DO NOT RUN `prisma db push` AGAINST THE CLUSTER INSTEAD OF THIS SCRIPT: a
  * push silently drops `User.email_unique_ci`. See create-transcript-indexes.mjs
@@ -23,8 +25,9 @@
  *   node scripts/remediation/index-census.mjs > census-after.txt
  *   diff census-before.txt census-after.txt
  *
- * ONLY THEN set `disposables.enabled` to "on". The census after must show every
- * index named below; the doctor goes RED if the flag is on and one is missing.
+ * ONLY THEN set `disposables.enabled` or `reminders.enabled` to "on". The census
+ * after must show every index named below; the doctor goes RED if a flag is on
+ * and its index is missing.
  *
  * Same engine as the transcript script (`apply`): dry run by default, never
  * drops or modifies an index, refuses on any conflict or existing duplicate,
@@ -54,6 +57,27 @@ export const TARGETS = {
       key: { proposalID: 1 },
       unique: true,
       partialFilterExpression: { proposalID: { $gt: "" } },
+    },
+  ],
+  ReminderBroadcast: [
+    {
+      name: "reminder_broadcast_status_deadline",
+      key: { status: 1, deadline: 1 },
+      unique: false,
+    },
+  ],
+  // The unique pair is what makes "one row per CCA per broadcast" true under
+  // two writers; the doctor goes RED if reminders.enabled is on without it.
+  ReminderTarget: [
+    {
+      name: "reminder_target_broadcast_cca",
+      key: { broadcastID: 1, ccaID: 1 },
+      unique: true,
+    },
+    {
+      name: "reminder_target_cca_done",
+      key: { ccaID: 1, doneAt: 1 },
+      unique: false,
     },
   ],
 };

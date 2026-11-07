@@ -16,14 +16,22 @@ const errorName = (err: unknown) =>
 const isDuplicateKey = (err: unknown) =>
   err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
 
-/** Keep the notices a kind may write after a long absence. */
+/**
+ * Keep the notices a kind may write after a long absence: for "mostUrgent",
+ * the most urgent of each `group` (all ungrouped notices are one group), in the
+ * order the groups first appeared. Ties keep the first one returned.
+ */
 function selectForCatchUp(kind: DueKind, items: DueNotice[]): DueNotice[] {
   if (kind.catchUp === "all" || items.length <= 1) return items;
-  let best = items[0]!;
+  const best = new Map<string, DueNotice>();
   for (const item of items) {
-    if ((item.urgency ?? 0) > (best.urgency ?? 0)) best = item;
+    const group = item.group ?? "";
+    const current = best.get(group);
+    if (!current || (item.urgency ?? 0) > (current.urgency ?? 0)) {
+      best.set(group, item);
+    }
   }
-  return [best];
+  return [...best.values()];
 }
 
 async function writeOne(

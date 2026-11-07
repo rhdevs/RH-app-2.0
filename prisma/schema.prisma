@@ -1818,6 +1818,53 @@ model DisposableRequest {
 }
 
 // ---------------------------------------------------------------------------
+// DEADLINE BROADCASTS (socporthub merge, PR 14, F22). A director sends a
+// message with a deadline to chosen CCAs; each CCA's heads mark it done. Not
+// year-based: deliberately NO `academicYear` field. Who gets told is NOT
+// stored: it is the CCA's heads at the moment of sending (the inbox rows) and
+// at each nudge (the due check reads CcaHead then). Indexes:
+// scripts/remediation/create-disposable-reminder-indexes.mjs.
+// ---------------------------------------------------------------------------
+
+model ReminderBroadcast {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  /// The sender's canonical id, or null once their account is deleted
+  /// (userAdmin.ts). Always written explicitly: a missing key never matches a
+  /// null filter on MongoDB. The sender keeps no power through this field:
+  /// cancelling is decided by who directs the target CCAs NOW.
+  createdBy   String?
+  title       String
+  message     String
+  /// The deadline as a Singapore date key ("YYYY-MM-DD", sgtDayKey).
+  deadline    String
+  /// "active" | "cancelled". Cancelled stops the nudges and the heads' list.
+  status      String    @default("active")
+  cancelledAt DateTime?
+  cancelledBy String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, deadline], map: "reminder_broadcast_status_deadline")
+}
+
+/// One CCA addressed by one broadcast. `broadcastID` is the 24-character hex
+/// id of the ReminderBroadcast (a plain string, like DisposableRequest's
+/// proposalID).
+model ReminderTarget {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  broadcastID String
+  ccaID       Int
+  /// When a head of this CCA marked it done, and who. Null while open, and
+  /// `doneBy` is null again once that account is deleted.
+  doneAt      DateTime?
+  doneBy      String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([broadcastID, ccaID], map: "reminder_target_broadcast_cca")
+  @@index([ccaID, doneAt], map: "reminder_target_cca_done")
+}
+
+// ---------------------------------------------------------------------------
 // TRANSCRIPT (docs/transcript/SPEC.md). Every model below is a NEW, UNVALIDATED
 // collection — the validator-guarded CCA / UserCCA / User silently reject new
 // fields (code 121), so nothing transcript-specific lives on them. All are keyed

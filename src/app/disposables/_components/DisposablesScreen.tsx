@@ -214,6 +214,7 @@ function quantitiesText(r: Row) {
 
 function RequestItem({ row }: { row: Row }) {
   const utils = api.useUtils();
+  const [nudged, setNudged] = useState<string | null>(null);
   const [mode, setMode] = useState<"idle" | "approve" | "reject" | "delete">(
     "idle",
   );
@@ -239,7 +240,24 @@ function RequestItem({ row }: { row: Row }) {
     onSuccess: done,
     onError: failed,
   });
-  const busy = approve.isPending || reject.isPending || remove.isPending;
+  const nudge = api.disposable.nudge.useMutation({
+    onSuccess: (res) => {
+      setError(null);
+      setNudged(
+        res.status === "no_director"
+          ? "There is no Social director to tell right now."
+          : res.status === "already_sent"
+            ? "You already nudged today."
+            : "The Social director has been nudged.",
+      );
+    },
+    onError: failed,
+  });
+  const busy =
+    approve.isPending ||
+    reject.isPending ||
+    remove.isPending ||
+    nudge.isPending;
   const decide = (kind: "approve" | "reject") => {
     setError(null);
     const input = {
@@ -311,6 +329,19 @@ function RequestItem({ row }: { row: Row }) {
               <Link href={disposableHref(row.id)}>Edit</Link>
             </Button>
           )}
+          {row.can.nudge && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => {
+                setNudged(null);
+                nudge.mutate({ id: row.id });
+              }}
+            >
+              Nudge the Social director
+            </Button>
+          )}
           {row.can.delete && (
             <Button size="sm" variant="ghost" onClick={() => setMode("delete")}>
               Delete
@@ -355,6 +386,11 @@ function RequestItem({ row }: { row: Row }) {
             </Button>
           </div>
         </div>
+      )}
+      {nudged && (
+        <p role="status" className="text-xs text-gray-700">
+          {nudged}
+        </p>
       )}
       {error && (
         <p role="alert" className="text-xs text-red-600">

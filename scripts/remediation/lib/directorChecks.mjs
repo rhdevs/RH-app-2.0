@@ -142,19 +142,23 @@ export function evaluateDirectorChecks({
  * Does a "not set up yet" check turn RED on this run? A mistake in what was
  * entered (`always`) always does. Otherwise the check gates when the run was
  * given `--directors`, when `directors.enabled` is on, or when the switch
- * that THIS check blocks is on: `proposals.enabled` for the "no director"
- * line, `disposables.enabled` for the "Social director" line.
+ * that THIS check blocks is on: `proposals.enabled` or `reminders.enabled`
+ * for the "no director" line (a broadcast can only be sent by a director of
+ * every CCA it addresses), `disposables.enabled` for the "Social director"
+ * line.
  *
  * @param {{ always: boolean, blocks: "proposals" | "disposables" | null }} check
- * @param {{ flagArg: boolean, directorsOn: boolean, proposalsOn: boolean, disposablesOn?: boolean }} state
+ * @param {{ flagArg: boolean, directorsOn: boolean, proposalsOn: boolean, disposablesOn?: boolean, remindersOn?: boolean }} state
  */
 export function isGating(
   check,
-  { flagArg, directorsOn, proposalsOn, disposablesOn },
+  { flagArg, directorsOn, proposalsOn, disposablesOn, remindersOn },
 ) {
   if (check.always) return true;
   if (flagArg || directorsOn) return true;
-  if (check.blocks === "proposals") return proposalsOn === true;
+  if (check.blocks === "proposals") {
+    return proposalsOn === true || remindersOn === true;
+  }
   return check.blocks === "disposables" && disposablesOn === true;
 }
 
@@ -193,6 +197,55 @@ export function disposablesNeedDirectors({ disposablesOn, directorsOn }) {
     label: "disposables.enabled is on but directors.enabled is off",
     offenders: ["turn on directors.enabled"],
     note: "no one can decide a disposable request until it is on",
+  };
+}
+
+/**
+ * `reminders.enabled` on with `directors.enabled` off: heads would receive
+ * broadcasts, but the director guard fails closed while its switch is off, so
+ * no director can send one. Same shape as `disposablesNeedDirectors`.
+ *
+ * @param {{ remindersOn: boolean, directorsOn: boolean }} state
+ * @returns {{ label: string, offenders: string[], note: string } | null}
+ */
+export function remindersNeedDirectors({ remindersOn, directorsOn }) {
+  if (remindersOn !== true || directorsOn === true) return null;
+  return {
+    label: "reminders.enabled is on but directors.enabled is off",
+    offenders: ["turn on directors.enabled"],
+    note: "no director can send a broadcast until it is on",
+  };
+}
+
+/** The unique (broadcast, CCA) index on ReminderTarget, as the script builds it. */
+export const REMINDER_TARGET_INDEX = {
+  name: "reminder_target_broadcast_cca",
+  key: { broadcastID: 1, ccaID: 1 },
+};
+
+/**
+ * `reminders.enabled` on while the ReminderTarget unique index is not in
+ * place: "one row per CCA per broadcast" and the heads' mark-done would rest on
+ * no constraint. `indexes` is the `listIndexes` answer's `firstBatch`, or null
+ * when it could not be read: an unanswered question is not "present", so null
+ * counts as missing. Returns the one RED line, or null when fine (or when the
+ * flag is not on).
+ *
+ * @param {{ remindersOn: boolean, indexes: any[] | null }} state
+ * @returns {{ label: string, offenders: string[], note: string } | null}
+ */
+export function remindersNeedIndex({ remindersOn, indexes }) {
+  if (remindersOn !== true) return null;
+  const want = REMINDER_TARGET_INDEX;
+  const found = (indexes ?? []).find(
+    (i) =>
+      i?.name === want.name && i.unique === true && sameKey(i.key, want.key),
+  );
+  if (found) return null;
+  return {
+    label: "reminders.enabled is on but the ReminderTarget index is missing",
+    offenders: [`ReminderTarget.${want.name}`],
+    note: "run create-disposable-reminder-indexes.mjs --commit before the flag",
   };
 }
 

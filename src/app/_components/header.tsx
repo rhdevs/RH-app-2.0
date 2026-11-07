@@ -13,6 +13,7 @@ import {
   ClipboardList,
   ClipboardCheck,
   Package,
+  Bell,
   FileText,
   LogOut,
   UserCircle,
@@ -27,6 +28,7 @@ import { signOut } from "next-auth/react";
 import { api } from "~/trpc/react";
 import { DIRECTOR_HOME_HREF } from "~/lib/proposals/links";
 import { DISPOSABLES_HREF } from "~/lib/disposables/links";
+import { REMINDERS_HREF } from "~/lib/reminders/links";
 
 // Loaded on the client only: the bell's queries stay out of every page's
 // initial render, and a page that never signs in never fetches them.
@@ -72,6 +74,14 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
       retry: false,
       staleTime: 60_000,
     }).data?.show === true;
+  // Reminders: the server says whether this person directs a CCA (reminders
+  // on), is the Social director (the digest), or heads a CCA with open items.
+  // An error or an off switch hides the entries.
+  const reminderEntry = api.reminder.entry.useQuery(undefined, {
+    enabled: Boolean(session),
+    retry: false,
+    staleTime: 60_000,
+  }).data;
   const transcriptReady =
     api.transcript.mine.readiness.useQuery(undefined, {
       enabled: Boolean(session) && transcriptEnabled,
@@ -146,8 +156,20 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     { name: "CCAs", href: "/ccas", icon: LayoutGrid },
     { name: "Events", href: "/events", icon: CalendarDays },
     ...(isCcaHead ? [{ name: "Manage CCAs", href: "/cca", icon: Users }] : []),
-    ...(showDirector
+    ...(showDirector || reminderEntry?.director || reminderEntry?.social
       ? [{ name: "Director", href: DIRECTOR_HOME_HREF, icon: ClipboardCheck }]
+      : []),
+    ...(reminderEntry?.head
+      ? [
+          {
+            name:
+              reminderEntry.open > 0
+                ? `Reminders (${reminderEntry.open})`
+                : "Reminders",
+            href: REMINDERS_HREF,
+            icon: Bell,
+          },
+        ]
       : []),
     ...(showDisposables
       ? [{ name: "Disposables", href: DISPOSABLES_HREF, icon: Package }]

@@ -532,6 +532,8 @@ describe("schema: guarded collections are untouched", () => {
       "ProposalCommentRead",
       "CalendarFeedToken",
       "DisposableRequest",
+      "ReminderBroadcast",
+      "ReminderTarget",
     ]).toEqual(expect.arrayContaining(added));
   });
 });

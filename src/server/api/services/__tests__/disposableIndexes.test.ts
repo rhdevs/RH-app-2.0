@@ -69,6 +69,10 @@ const shape = (list: Index[]) =>
   list.map((i) => `${i.name} ${JSON.stringify(i.key)} ${i.unique}`).sort();
 
 const MODEL = "DisposableRequest";
+const REMINDER_MODELS = ["ReminderBroadcast", "ReminderTarget"] as const;
+const ALL_NAMES = Object.keys(TARGETS).flatMap((m) =>
+  TARGETS[m]!.map((i) => `${m}.${i.name}`),
+);
 const PROPOSAL_INDEX = {
   name: "disposable_request_proposal_unique",
   key: { proposalID: 1 },
@@ -77,8 +81,33 @@ const PROPOSAL_INDEX = {
 };
 
 describe("create-disposable-reminder-indexes.mjs mirrors prisma/schema.prisma", () => {
-  it("targets the DisposableRequest collection", () => {
-    expect(Object.keys(TARGETS)).toEqual([MODEL]);
+  it("targets the three collections of phase 4", () => {
+    expect(Object.keys(TARGETS)).toEqual([MODEL, ...REMINDER_MODELS]);
+  });
+
+  it.each(REMINDER_MODELS)(
+    "%s: every schema index is in TARGETS, with the same keys and uniqueness, and no academicYear",
+    (model) => {
+      const declared = schemaIndexes(modelBody(model));
+      expect(declared.length).toBeGreaterThan(0);
+      expect(shape(TARGETS[model]!)).toEqual(shape(declared));
+      expect(modelBody(model)).not.toMatch(/academicYear/);
+      expect(
+        TARGETS[model]!.some((i) => i.expireAfterSeconds !== undefined),
+      ).toBe(false);
+    },
+  );
+
+  it("the target pair is unique, which is what keeps one row per CCA per broadcast", () => {
+    expect(
+      TARGETS.ReminderTarget!.find(
+        (i) => i.name === "reminder_target_broadcast_cca",
+      ),
+    ).toEqual({
+      name: "reminder_target_broadcast_cca",
+      key: { broadcastID: 1, ccaID: 1 },
+      unique: true,
+    });
   });
 
   it("the schema's indexes are all in TARGETS, with the same keys and uniqueness", () => {
@@ -182,9 +211,7 @@ describe("running the disposable script", () => {
     const res = await apply(db, true, TARGETS, labels);
 
     expect(res.aborted).toBe(false);
-    expect(res.created.sort()).toEqual(
-      TARGETS[MODEL]!.map((i) => `${MODEL}.${i.name}`).sort(),
-    );
+    expect(res.created.sort()).toEqual([...ALL_NAMES].sort());
     expect(
       (store.get(MODEL) ?? []).find((s) => s.name === PROPOSAL_INDEX.name),
     ).toEqual({

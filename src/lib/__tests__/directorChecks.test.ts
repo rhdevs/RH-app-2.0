@@ -36,6 +36,8 @@ const {
   proposalsNeedDirectors,
   disposablesNeedDirectors,
   disposablesNeedIndex,
+  remindersNeedDirectors,
+  remindersNeedIndex,
 } = (await import(/* @vite-ignore */ lib)) as {
   evaluateDirectorChecks: (input: Input) => {
     flaggedPositions: number;
@@ -48,8 +50,17 @@ const {
       directorsOn: boolean;
       proposalsOn: boolean;
       disposablesOn?: boolean;
+      remindersOn?: boolean;
     },
   ) => boolean;
+  remindersNeedDirectors: (state: {
+    remindersOn: boolean;
+    directorsOn: boolean;
+  }) => { label: string; offenders: string[]; note: string } | null;
+  remindersNeedIndex: (state: {
+    remindersOn: boolean;
+    indexes: unknown[] | null;
+  }) => { label: string; offenders: string[]; note: string } | null;
   disposablesNeedDirectors: (state: {
     disposablesOn: boolean;
     directorsOn: boolean;
@@ -419,6 +430,15 @@ describe('isGating: which switch turns a "not set up" line RED', () => {
     expect(isGating(noDirector(), on)).toBe(false);
   });
 
+  it("reminders.enabled on makes the no-director line gate, and only that one", () => {
+    const on = { ...off, remindersOn: true };
+    expect(isGating(noDirector(), on)).toBe(true);
+    expect(isGating(social(), on)).toBe(false);
+    expect(
+      isGating(noDirector(), { ...off, remindersOn: undefined as never }),
+    ).toBe(false);
+  });
+
   it("only an exact true counts as the disposables switch", () => {
     expect(
       isGating(social(), { ...off, disposablesOn: undefined as never }),
@@ -579,6 +599,69 @@ describe("disposablesNeedIndex: disposables on, partial index missing", () => {
   it("says nothing while the flag is off", () => {
     expect(
       disposablesNeedIndex({ disposablesOn: false, indexes: null }),
+    ).toBeNull();
+  });
+});
+
+describe("remindersNeedDirectors and remindersNeedIndex", () => {
+  const good = {
+    name: "reminder_target_broadcast_cca",
+    key: { broadcastID: 1, ccaID: 1 },
+    unique: true,
+  };
+
+  it("directors off with reminders on is RED, and fine otherwise", () => {
+    expect(
+      remindersNeedDirectors({ remindersOn: true, directorsOn: false })
+        ?.offenders,
+    ).toEqual(["turn on directors.enabled"]);
+    expect(
+      remindersNeedDirectors({ remindersOn: true, directorsOn: true }),
+    ).toBeNull();
+    expect(
+      remindersNeedDirectors({ remindersOn: false, directorsOn: false }),
+    ).toBeNull();
+  });
+
+  it("is green with the unique pair in place, also as extended JSON", () => {
+    expect(
+      remindersNeedIndex({ remindersOn: true, indexes: [good] }),
+    ).toBeNull();
+    expect(
+      remindersNeedIndex({
+        remindersOn: true,
+        indexes: [
+          {
+            ...good,
+            key: {
+              broadcastID: { $numberInt: "1" },
+              ccaID: { $numberLong: "1" },
+            },
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("is RED when the index is absent, not unique, or has another key", () => {
+    for (const indexes of [
+      [],
+      [{ ...good, unique: false }],
+      [{ ...good, key: { ccaID: 1, broadcastID: 1 } }],
+      [{ ...good, key: { broadcastID: 1 } }],
+    ]) {
+      expect(
+        remindersNeedIndex({ remindersOn: true, indexes })?.offenders,
+      ).toEqual(["ReminderTarget.reminder_target_broadcast_cca"]);
+    }
+  });
+
+  it("an unreadable index list counts as missing, and a flag that is off says nothing", () => {
+    expect(
+      remindersNeedIndex({ remindersOn: true, indexes: null }),
+    ).not.toBeNull();
+    expect(
+      remindersNeedIndex({ remindersOn: false, indexes: null }),
     ).toBeNull();
   });
 });
