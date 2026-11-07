@@ -2,7 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { createCaller as CreateCaller } from "~/server/api/root";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { isLocalDevDatabase } from "../transcript/__tests__/localDbGate";
-import { resetEventsFlagCache } from "../events";
+import { resetAttendanceFlagCache, resetEventsFlagCache } from "../events";
 import { resetEventReviewFlagCache } from "../eventPublish";
 
 /**
@@ -27,7 +27,11 @@ const ALL_IDS = Object.values(USERS);
 const FACILITY = 99920;
 const OTHER_FACILITY = 99921;
 const CCA = 9001;
-const FLAGS = ["events.enabled", "events.review.required"];
+const FLAGS = [
+  "events.enabled",
+  "events.review.required",
+  "events.attendance.enabled",
+];
 // Inside Int32: Prisma's Int is 32-bit, and 2033 is far from any real booking.
 const T = 2_000_000_000;
 const HOUR = 3600;
@@ -83,12 +87,16 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         where: { OR: [{ eventID: { in: ids } }, { userID: { in: ALL_IDS } }] },
       });
       await db.eventQuestion.deleteMany({ where: { eventID: { in: ids } } });
+      await db.eventAttendance.deleteMany({ where: { eventID: { in: ids } } });
       await db.event.deleteMany({
         where: {
           OR: [{ eventID: { in: ids } }, { createdBy: { in: ALL_IDS } }],
         },
       });
       await db.bookings.deleteMany({
+        where: { facilityID: { in: [FACILITY, OTHER_FACILITY] } },
+      });
+      await db.facilityAccess.deleteMany({
         where: { facilityID: { in: [FACILITY, OTHER_FACILITY] } },
       });
       await db.ccaHead.deleteMany({ where: { userID: { in: ALL_IDS } } });
@@ -106,6 +114,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       });
       resetEventsFlagCache();
       resetEventReviewFlagCache();
+      resetAttendanceFlagCache();
     };
 
     const setRoles = (userID: string, roles: string[]) =>
@@ -204,6 +213,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       }
       resetEventsFlagCache();
       resetEventReviewFlagCache();
+      resetAttendanceFlagCache();
       await db.$disconnect();
     });
 
@@ -275,6 +285,35 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       );
     });
 
+    it("refuses a room its author could not book, or one that is closed", async () => {
+      await db.facilityAccess.create({
+        data: { facilityID: FACILITY, requiredRoles: ["jcrc"] },
+      });
+      await db.facilityAccess.create({
+        data: { facilityID: OTHER_FACILITY, bookable: false },
+      });
+      const restricted = await makeEvent({
+        facilityID: FACILITY,
+        location: "TEST Room",
+      });
+      expect(
+        await errorOf(as(USERS.head, HEAD).publish({ eventID: restricted })),
+      ).toBe("FORBIDDEN:FACILITY_RESTRICTED");
+      const closed = await makeEvent({
+        facilityID: OTHER_FACILITY,
+        location: "TEST Other Room",
+      });
+      expect(
+        await errorOf(as(USERS.head, HEAD).publish({ eventID: closed })),
+      ).toBe("FORBIDDEN:FACILITY_CLOSED");
+      expect((await eventRow(restricted)).status).toBe("draft");
+      expect(
+        await db.bookings.count({
+          where: { facilityID: { in: [FACILITY, OTHER_FACILITY] } },
+        }),
+      ).toBe(0);
+    });
+
     it("keeps an event's room out of its author's personal bookings", async () => {
       const id = await makeEvent({
         facilityID: FACILITY,
@@ -310,6 +349,45 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         T + 5 * HOUR,
         T + 6 * HOUR,
       ]);
+    });
+
+    it("refuses a live move into a room its author could not book", async () => {
+      const id = await makeEvent({
+        facilityID: FACILITY,
+        location: "TEST Room",
+      });
+      await as(USERS.head, HEAD).publish({ eventID: id });
+      await db.facilityAccess.create({
+        data: { facilityID: OTHER_FACILITY, requiredRoles: ["jcrc"] },
+      });
+      expect(
+        await errorOf(
+          as(USERS.head, HEAD).update({
+            eventID: id,
+            facilityID: OTHER_FACILITY,
+            location: "TEST Other Room",
+          }),
+        ),
+      ).toBe("FORBIDDEN:FACILITY_RESTRICTED");
+
+      // A room closed after publishing refuses a time change too.
+      await db.facilityAccess.create({
+        data: { facilityID: FACILITY, bookable: false },
+      });
+      expect(
+        await errorOf(
+          as(USERS.head, HEAD).update({
+            eventID: id,
+            startTime: T + 5 * HOUR,
+            endTime: T + 6 * HOUR,
+          }),
+        ),
+      ).toBe("FORBIDDEN:FACILITY_CLOSED");
+      const row = await eventRow(id);
+      expect([row.facilityID, row.startTime]).toEqual([FACILITY, T]);
+      expect(
+        await db.bookings.count({ where: { facilityID: OTHER_FACILITY } }),
+      ).toBe(0);
     });
 
     it("frees the room when a live event moves to a free-text place", async () => {
@@ -583,6 +661,61 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         scannerUserIDs: [USERS.resident],
       });
       expect((await eventRow(id)).scannerUserIDs).toEqual([USERS.resident]);
+    });
+
+    it("keeps hall-event volunteers to QR scans, and audits by-hand check-ins", async () => {
+      await setFlag("events.attendance.enabled", "on");
+      const now = Math.floor(Date.now() / 1000);
+      const id = await makeEvent({
+        ccaID: null,
+        createdBy: USERS.jcrc,
+        status: "published",
+        startTime: now,
+        endTime: now + 2 * HOUR,
+        attendanceOpensAt: now - HOUR,
+        attendanceClosesAt: now + HOUR,
+        scannerUserIDs: [USERS.resident],
+      });
+      await signUp(id, USERS.second);
+      const volunteer = as(USERS.resident, ["resident"]);
+      const status = await volunteer.attendanceStatus({ eventID: id });
+      expect([status.mayScan, status.mayCheckInByHand]).toEqual([true, false]);
+      expect(await errorOf(volunteer.getDoorRoster({ eventID: id }))).toBe(
+        "FORBIDDEN:QR_ONLY",
+      );
+      expect(
+        await errorOf(
+          volunteer.checkInManual({ eventID: id, userID: USERS.second }),
+        ),
+      ).toBe("FORBIDDEN:QR_ONLY");
+      expect(
+        await errorOf(
+          volunteer.undoCheckIn({
+            eventID: id,
+            userID: USERS.second,
+            reason: "test",
+          }),
+        ),
+      ).toBe("FORBIDDEN:QR_ONLY");
+      expect(await db.eventAttendance.count({ where: { eventID: id } })).toBe(
+        0,
+      );
+
+      // The organiser can, and each by-hand check-in leaves an audit row
+      // naming the resident.
+      const jcrc = as(USERS.jcrc, JCRC);
+      expect(
+        (await jcrc.attendanceStatus({ eventID: id })).mayCheckInByHand,
+      ).toBe(true);
+      await jcrc.getDoorRoster({ eventID: id });
+      await jcrc.checkInManual({ eventID: id, userID: USERS.second });
+      await jcrc.checkInManual({ eventID: id, userID: USERS.second });
+      const audits = await db.roleAuditLog.findMany({
+        where: { action: "event.checkin.manual", targetEventID: id },
+      });
+      expect(audits.map((a) => [a.actorUserID, a.targetUserID])).toEqual([
+        [USERS.jcrc, USERS.second],
+      ]);
     });
   },
 );
