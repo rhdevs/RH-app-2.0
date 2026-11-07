@@ -87,7 +87,7 @@ function PositionRow({
   const busy = addHolder.isPending || removeHolder.isPending;
   // Staff change a position that gives director powers from the Director
   // positions panel; this one shows it but does not edit it.
-  const readOnly = position.vetsProposals || position.handlesDisposables;
+  const readOnly = position.powers.length > 0;
 
   // A holder stepping out is offered again: re-assigning cancels the handover.
   const openIDs = position.holders
