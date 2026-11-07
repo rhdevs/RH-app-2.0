@@ -13,6 +13,7 @@ import {
   type ProposalStatus,
 } from "~/lib/proposals/status";
 import { directorProposalHref } from "~/lib/proposals/links";
+import { unreadLabel } from "~/lib/proposals/unreadText";
 import { formatDateTime } from "~/app/events/_lib/format";
 import { describeReviewFailure } from "../_lib/reviewText";
 
@@ -162,11 +163,18 @@ export default function DirectorHome() {
                         : "Proposal"}
                     </span>
                   </span>
-                  {p.submittedAt && (
-                    <span className="text-xs text-gray-500">
-                      Submitted {formatDateTime(toEpoch(p.submittedAt))}
-                    </span>
-                  )}
+                  <span className="flex items-center gap-2">
+                    {unreadLabel(p.unread) && (
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                        {unreadLabel(p.unread)}
+                      </span>
+                    )}
+                    {p.submittedAt && (
+                      <span className="text-xs text-gray-500">
+                        Submitted {formatDateTime(toEpoch(p.submittedAt))}
+                      </span>
+                    )}
+                  </span>
                 </Link>
               </li>
             ))}

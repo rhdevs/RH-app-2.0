@@ -8,7 +8,12 @@ import { rateLimit } from "~/lib/rateLimit";
  * working head does (a CCA files a handful of proposals a term, and an editor
  * that saves as it goes sends tens of updates), so only a script or a stuck
  * client reaches them. A director works a queue, so approve, return and finish
- * get a ceiling well above a day's review.
+ * get a ceiling well above a day's review. A comment is a line of chat, so 120
+ * an hour is a busy afternoon of discussion; a nudge is once per director per
+ * proposal per day anyway, so 30 an hour covers a head chasing every open
+ * proposal. Marking a thread read is a cheap write to the caller's own marker
+ * that happens as they open threads, so it has its own, higher ceiling and
+ * never spends the comment budget.
  */
 export const PROPOSAL_WINDOW_MS = 60 * 60 * 1000;
 export const PROPOSAL_LIMITS = {
@@ -20,6 +25,9 @@ export const PROPOSAL_LIMITS = {
   return: 60,
   finish: 60,
   createEvent: 30,
+  comment: 120,
+  nudge: 30,
+  commentRead: 240,
 } as const;
 
 export type LimitedAction = keyof typeof PROPOSAL_LIMITS;

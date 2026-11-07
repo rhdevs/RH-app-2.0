@@ -29,6 +29,8 @@ import {
   PROPOSAL_DOC_LINK_MAX,
 } from "~/lib/schemas/proposalFiles";
 import ProposalEventLink from "./ProposalEventLink";
+import ProposalNudge from "./ProposalNudge";
+import ProposalThread from "~/app/_components/ProposalThread";
 import ProposalPosterField from "./ProposalPosterField";
 import {
   describeProposalError,
@@ -502,6 +504,12 @@ export default function ProposalEditor({
       </form>
 
       {loaded && <ProposalEventLink ccaID={ccaID} proposal={loaded} />}
+
+      {loaded && loaded.status === "in_review" && (
+        <ProposalNudge proposalID={loaded.id} />
+      )}
+
+      {loaded && <ProposalThread proposalID={loaded.id} ccaID={ccaID} />}
 
       {loaded && loaded.history.length > 0 && (
         <section>

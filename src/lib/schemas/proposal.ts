@@ -159,6 +159,33 @@ export const proposalQueueInput = z.object({
 });
 
 export const proposalIdInput = z.object({ id: proposalId });
+
+/**
+ * A comment is plain text: control and zero-width characters are dropped, line
+ * breaks stay, and it is shown as React text, never as HTML.
+ */
+export const PROPOSAL_COMMENT_MAX = 2000;
+
+export const proposalCommentAddInput = z.object({
+  proposalID: proposalId,
+  body: text(PROPOSAL_COMMENT_MAX).pipe(z.string().min(1)),
+});
+
+/** One page of a thread; `cursor` is the id the next page starts at. */
+export const proposalCommentListInput = z.object({
+  proposalID: proposalId,
+  cursor: proposalId.optional(),
+});
+
+/**
+ * `upTo` is the newest comment the reader has on screen. The marker moves to
+ * it and never past now, so a comment that arrived after the page loaded
+ * stays unread.
+ */
+export const proposalCommentReadInput = z.object({
+  proposalID: proposalId,
+  upTo: z.date().optional(),
+});
 export const proposalListInput = z.object({ ccaID });
 
 export type ProposalCreateInput = z.infer<typeof proposalCreateInput>;

@@ -24,6 +24,7 @@ import { formatDateTime } from "~/app/events/_lib/format";
 import { describeProposalError } from "~/app/cca/_lib/proposalForm";
 import { describeReviewFailure } from "../_lib/reviewText";
 import { historyLine } from "~/lib/proposals/historyLine";
+import ProposalThread from "~/app/_components/ProposalThread";
 
 const FIELD =
   "w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-gray-50";
@@ -363,6 +364,8 @@ export default function DirectorProposal({
           {draftNote}
         </p>
       )}
+
+      <ProposalThread proposalID={loaded.id} />
 
       {loaded.history.length > 0 && (
         <section>

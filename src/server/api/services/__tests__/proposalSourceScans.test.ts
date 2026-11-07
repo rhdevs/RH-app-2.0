@@ -468,8 +468,24 @@ describe("proposal access never uses a forgiving read", () => {
       if (f.endsWith("/access.ts") || f.endsWith("/flag.ts")) continue;
       if (f.endsWith("/transition.ts")) continue; // maps a conflict, see below
       if (f.endsWith("/eventLink.ts")) continue; // best-effort draft, see below
+      if (f.endsWith("/comments.ts")) continue; // first-read race, see below
+      if (f.endsWith("/nudge.ts")) continue; // same-day race, see below
       expect(stripComments(read(f)), f).not.toMatch(/\bcatch\b/);
     }
+  });
+
+  it("comments.ts and nudge.ts catch only a unique-key race, and rethrow everything else", () => {
+    const comments = stripComments(
+      read("src/server/api/services/proposals/comments.ts"),
+    );
+    expect(comments.match(/\bcatch\b/g)).toHaveLength(1);
+    expect(comments).toMatch(/if \(!isUniqueViolation\(err\)\) throw err;/);
+    const nudge = stripComments(
+      read("src/server/api/services/proposals/nudge.ts"),
+    );
+    expect(nudge.match(/\bcatch\b/g)).toHaveLength(2);
+    expect(nudge).toMatch(/NUDGE_TRY_AGAIN/);
+    expect(nudge).toMatch(/throw first;/);
   });
 
   it("every gated proposal procedure runs inside sanitizeErrors", () => {
@@ -478,7 +494,7 @@ describe("proposal access never uses a forgiving read", () => {
     expect(code).toMatch(
       /const gated = identifiedProcedure\s*\.use\(sanitizeErrors\)\s*\.use\(/,
     );
-    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(11);
+    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(15);
     expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
     // The navigation entry's query is the one deliberate exception: it must
     // answer `show: false` for everyone else, so the switch check lives in the

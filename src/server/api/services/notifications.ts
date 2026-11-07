@@ -76,7 +76,19 @@ export type NotifyInput = {
   body?: string;
   /** An in-app path starting with a single "/". */
   href?: string;
+  /**
+   * Send at most once per recipient for this scope (for example a nudge,
+   * "proposal.nudge:<proposal>:<Singapore day>"). A recipient who already has
+   * a row with the same scope and id is skipped and counted in
+   * `alreadySent`; the partial unique index on `noticeKey` is the backstop
+   * for two writers at once (the loser's write throws, so inside a
+   * transaction it rolls back as a whole).
+   */
+  once?: string;
 };
+
+export const ONCE_PATTERN = /^[A-Za-z0-9_.:-]{1,150}$/;
+const onceKey = (scope: string, userID: string) => `${scope}|${userID}`;
 
 /** A path inside this app: "/x", never "//host", a scheme, or a backslash. */
 const isInAppPath = (href: string) =>
@@ -99,7 +111,7 @@ const isInAppPath = (href: string) =>
 export async function notify(
   db: NotifyClient,
   input: NotifyInput,
-): Promise<{ written: number }> {
+): Promise<{ written: number; alreadySent?: number }> {
   const recipients = [...new Set(input.recipients)];
   if (recipients.some((r) => typeof r !== "string" || r.trim() === "")) {
     throw new Error("notify: a recipient must be a non-empty user id");
@@ -119,6 +131,9 @@ export async function notify(
   if (input.href !== undefined && !isInAppPath(input.href)) {
     throw new Error("notify: href must be an in-app path");
   }
+  if (input.once !== undefined && !ONCE_PATTERN.test(input.once)) {
+    throw new Error("notify: bad once scope");
+  }
   if (recipients.length === 0) return { written: 0 };
   // Strict read, unlike the cached fail-closed one the router uses: no cache,
   // no catch. A failed read throws so the caller's transaction rolls back
@@ -128,17 +143,34 @@ export async function notify(
   });
   if (flag?.value !== "on") return { written: 0 };
 
+  let targets = recipients;
+  let alreadySent: number | undefined;
+  if (input.once !== undefined) {
+    const scope = input.once;
+    const have = await db.notification.findMany({
+      where: { noticeKey: { in: recipients.map((r) => onceKey(scope, r)) } },
+      select: { noticeKey: true },
+    });
+    const taken = new Set(have.map((h) => h.noticeKey));
+    targets = recipients.filter((r) => !taken.has(onceKey(scope, r)));
+    alreadySent = recipients.length - targets.length;
+    if (targets.length === 0) return { written: 0, alreadySent };
+  }
+
   const now = new Date();
   const expiresAt = new Date(
     now.getTime() + NOTIFICATION_RETENTION_DAYS * DAY_MS,
   );
   const result = await db.notification.createMany({
-    data: recipients.map((userID) => ({
+    data: targets.map((userID) => ({
       userID,
       kind: input.kind,
       title: input.title,
       ...(input.body !== undefined && { body: input.body }),
       ...(input.href !== undefined && { href: input.href }),
+      ...(input.once !== undefined && {
+        noticeKey: onceKey(input.once, userID),
+      }),
       createdAt: now,
       // Written as an explicit null: on MongoDB Prisma's `readAt: null` filter
       // (the unread count and mark-read) does not match a missing key.
@@ -146,5 +178,7 @@ export async function notify(
       expiresAt,
     })),
   });
-  return { written: result.count };
+  return alreadySent === undefined
+    ? { written: result.count }
+    : { written: result.count, alreadySent };
 }

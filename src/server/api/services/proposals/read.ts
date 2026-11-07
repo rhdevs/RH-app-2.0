@@ -15,6 +15,7 @@ import {
 import { PROPOSAL_NOT_FOUND } from "./drafts";
 import { readEventLinkView, type EventLinkView } from "./eventLink";
 import { displayNames } from "./names";
+import { unreadCounts } from "./unread";
 
 /**
  * What a reader sees. Three rules shape it:
@@ -42,6 +43,8 @@ export type ProposalListItem = {
   status: string;
   updatedAt: Date;
   submittedAt: Date | null;
+  /** This reader's own unread comments on it (F11). */
+  unread: number;
 };
 
 export type ProposalDetail = ProposalDetailContent & EventLinkView;
@@ -75,7 +78,7 @@ type ProposalDetailContent = ProposalListItem & {
   }>;
 };
 
-const hiddenFromDirector = (viewer: ProposalViewer, status: string) =>
+export const hiddenFromDirector = (viewer: ProposalViewer, status: string) =>
   viewer === "director" && status === "draft";
 
 export async function getProposal(
@@ -99,7 +102,7 @@ export async function getProposal(
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: 200,
   });
-  const [names, cca, eventLink] = await Promise.all([
+  const [names, cca, eventLink, unread] = await Promise.all([
     displayNames(
       db,
       history.flatMap((h) => (h.approverID ? [h.approverID] : [])),
@@ -118,6 +121,12 @@ export async function getProposal(
       },
       viewer === "head",
     ),
+    unreadCounts(
+      db,
+      userID,
+      [row.id],
+      viewer === "head" ? new Set([row.id]) : undefined,
+    ),
   ]);
   return {
     id: row.id,
@@ -133,6 +142,7 @@ export async function getProposal(
     docLink: row.docLink ?? null,
     ...eventLink,
     status: row.status,
+    unread: unread.get(row.id) ?? 0,
     version: row.version,
     submittedAt: row.submittedAt,
     createdAt: row.createdAt,
@@ -164,7 +174,7 @@ export async function listProposals(
   ccaID: number,
 ): Promise<{ viewer: ProposalViewer; items: ProposalListItem[] }> {
   const viewer = await assertProposalReader(db, userID, ccaID);
-  const items = await db.proposal.findMany({
+  const rows = await db.proposal.findMany({
     where: {
       ccaID,
       ...(viewer === "director" && { status: { not: "draft" } }),
@@ -180,5 +190,14 @@ export async function listProposals(
       submittedAt: true,
     },
   });
-  return { viewer, items };
+  const unread = await unreadCounts(
+    db,
+    userID,
+    rows.map((r) => r.id),
+    viewer === "head" ? new Set(rows.map((r) => r.id)) : undefined,
+  );
+  return {
+    viewer,
+    items: rows.map((r) => ({ ...r, unread: unread.get(r.id) ?? 0 })),
+  };
 }

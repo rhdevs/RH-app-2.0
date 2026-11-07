@@ -13,6 +13,7 @@ import {
   isProposalStatus,
   PROPOSAL_STATUS_LABELS,
 } from "~/lib/proposals/status";
+import { unreadLabel } from "~/lib/proposals/unreadText";
 
 /**
  * A CCA's proposals, newest edit first. NOT a guard: the list procedure checks
@@ -88,10 +89,17 @@ export default function ProposalsPanel({ ccaID }: { ccaID: number }) {
                       : "Proposal"}
                   </span>
                 </span>
-                <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">
-                  {isProposalStatus(p.status)
-                    ? PROPOSAL_STATUS_LABELS[p.status]
-                    : "Unknown"}
+                <span className="flex items-center gap-2">
+                  {unreadLabel(p.unread) && (
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                      {unreadLabel(p.unread)}
+                    </span>
+                  )}
+                  <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">
+                    {isProposalStatus(p.status)
+                      ? PROPOSAL_STATUS_LABELS[p.status]
+                      : "Unknown"}
+                  </span>
                 </span>
               </Link>
             </li>
