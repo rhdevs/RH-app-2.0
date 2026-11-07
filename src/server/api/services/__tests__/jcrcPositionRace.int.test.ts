@@ -170,7 +170,12 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         },
       });
 
-    /** An unflagged position with one holder and two CCAs. */
+    /**
+     * An unflagged position with one holder and two CCAs. The holder's row was
+     * assigned by a plain JCRC member, not by staff or an admin: a plain
+     * member may not change or remove a row staff assigned (STAFF_ASSIGNED_ROW),
+     * and these tests are about the writes a plain member can make.
+     */
     const makePosition = async () => {
       const p = await db.jcrcPosition.create({
         data: { name: "TEST Race", createdBy: "test" },
@@ -181,7 +186,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         });
       }
       await db.jcrcPositionHolder.create({
-        data: { positionID: p.id, userID: U.holder, assignedBy: U.admin },
+        data: { positionID: p.id, userID: U.holder, assignedBy: U.plain2 },
       });
       return p.id;
     };
@@ -399,11 +404,13 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const id = await selfAssigned();
         expect(await markOf(id, U.selfAdmin)).toBe(U.selfAdmin);
 
+        // The admin assigned this row (to themselves), so a plain member may
+        // not touch it at all (STAFF_ASSIGNED_ROW): the mark cannot be replaced.
         expect(
           await errorOf(
             as(U.plain, JCRC).addHolder({ id, userID: U.selfAdmin }),
           ),
-        ).toBe("ok");
+        ).toBe("FORBIDDEN:STAFF_ASSIGNED_ROW");
         expect(await markOf(id, U.selfAdmin)).toBe(U.selfAdmin);
 
         expect(await setVets(id)).toBe("FORBIDDEN:SELF_ASSIGNED_HOLDER");
@@ -440,7 +447,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
       it("still lets a re-add replace the assigner of an ordinary row", async () => {
         const id = await makePosition();
-        expect(await markOf(id, U.holder)).toBe(U.admin);
+        expect(await markOf(id, U.holder)).toBe(U.plain2);
         await as(U.plain, JCRC).addHolder({ id, userID: U.holder });
         expect(await markOf(id, U.holder)).toBe(U.plain);
       });

@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { CalendarCheck, ShieldCheck, Users2, KeyRound } from "lucide-react";
+import {
+  CalendarCheck,
+  KeyRound,
+  Network,
+  ShieldCheck,
+  Users2,
+} from "lucide-react";
 
 import { api } from "~/trpc/react";
 import type { Capabilities } from "~/server/api/services/roles";
@@ -10,11 +16,14 @@ import JcrcRosterPanel from "./_components/JcrcRosterPanel";
 import CcaBrowsePanel from "./_components/CcaBrowsePanel";
 import EventsOversightPanel from "./_components/EventsOversightPanel";
 import FlaggedPositionsPanel from "./_components/FlaggedPositionsPanel";
+import PositionHoldersPanel from "./_components/PositionHoldersPanel";
 
 /**
- * The Hall Office dashboard: up to four panels, one route (the fourth, the
+ * The Hall Office dashboard: up to five panels, one route (the last, the
  * director positions, only while both `scrc.enabled` and `directors.enabled`
- * are on).
+ * are on). The "Positions" panel sets who holds any position, so staff can
+ * decide who may hand one over; "Director positions" is the full editor for
+ * the positions that carry director powers.
  *
  * A CLIENT component, unlike /cca/page.tsx, because there is nothing to decide
  * server-side — the layout already did the live role read and the redirect, and
@@ -39,6 +48,15 @@ const PANELS = [
     requires: "manageJcrcRoster",
     Panel: JcrcRosterPanel,
   },
+  // Who holds which JCRC position. Only a staff-assigned position can be
+  // handed over (services/jcrcHandover.ts), so it sits beside the roster.
+  {
+    key: "positions",
+    label: "Positions",
+    icon: Network,
+    requires: "manageJcrcRoster",
+    Panel: PositionHoldersPanel,
+  },
   {
     key: "ccas",
     label: "CCA rosters",
@@ -62,7 +80,7 @@ const PANELS = [
 }[];
 
 const POSITIONS_PANEL = {
-  key: "positions",
+  key: "director-positions",
   label: "Director positions",
   icon: KeyRound,
   Panel: FlaggedPositionsPanel,
