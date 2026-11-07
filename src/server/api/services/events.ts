@@ -20,6 +20,13 @@ import { editScope, normalizeStatus } from "~/lib/schemas/event";
 /* -------------------------------------------------------------------------- */
 
 const EVENTS_FLAG_KEY = "events.enabled";
+
+/**
+ * Which Events a resident may see as live: published ones only. The resident
+ * list and the calendar both read through this one filter, so the two cannot
+ * drift apart. A narrower or wider calendar would be a leak or a lie.
+ */
+export const PUBLISHED_EVENTS_WHERE = { status: "published" } as const;
 const FLAG_TTL_MS = 15_000;
 
 let flagCache: { at: number; on: boolean } | null = null;

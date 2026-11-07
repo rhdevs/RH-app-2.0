@@ -1745,6 +1745,29 @@ model ProposalCommentRead {
 }
 
 // ---------------------------------------------------------------------------
+// CALENDAR FEED (socporthub merge, PR 11, F20). One revocable subscribe token
+// per person for their personal .ics feed. Only the SHA-256 of the token is
+// stored; the token itself is shown once, when it is made. The feed holds
+// what that person may see at the moment it is fetched, so the row carries
+// no calendar data. Not year-based: deliberately NO `academicYear` field.
+// Indexes: scripts/remediation/create-calendar-feed-indexes.mjs.
+// ---------------------------------------------------------------------------
+
+model CalendarFeedToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  /// The owner's canonical id. One token per person.
+  userID    String
+  /// SHA-256 (hex) of the token. The token is never stored.
+  tokenHash String
+  createdAt DateTime @default(now())
+  /// Bumped when the token is rotated.
+  rotatedAt DateTime?
+
+  @@unique([userID], map: "calendar_feed_user")
+  @@unique([tokenHash], map: "calendar_feed_hash")
+}
+
+// ---------------------------------------------------------------------------
 // TRANSCRIPT (docs/transcript/SPEC.md). Every model below is a NEW, UNVALIDATED
 // collection — the validator-guarded CCA / UserCCA / User silently reject new
 // fields (code 121), so nothing transcript-specific lives on them. All are keyed

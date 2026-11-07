@@ -45,6 +45,7 @@ import {
   assertQuestionsEditable,
   isAttendanceEnabled,
   nextEventId,
+  PUBLISHED_EVENTS_WHERE,
   questionsEditableScope,
   withEventLock,
 } from "~/server/api/services/events";
@@ -2788,7 +2789,7 @@ export const eventRouter = createTRPCRouter({
   listPublished: protectedProcedure.query(async ({ ctx }) => {
     await assertEventsEnabled(ctx.db);
     const events = await ctx.db.event.findMany({
-      where: { status: "published" },
+      where: PUBLISHED_EVENTS_WHERE,
       orderBy: { startTime: "asc" },
     });
     const [names, counts, mine] = await Promise.all([

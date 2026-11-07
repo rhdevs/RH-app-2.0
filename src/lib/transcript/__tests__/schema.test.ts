@@ -530,6 +530,7 @@ describe("schema: guarded collections are untouched", () => {
       "ProposalStatusHistory",
       "ProposalComment",
       "ProposalCommentRead",
+      "CalendarFeedToken",
     ]).toEqual(expect.arrayContaining(added));
   });
 });

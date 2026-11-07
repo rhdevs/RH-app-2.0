@@ -1167,6 +1167,10 @@ export async function deleteUserAccountCascade(
       // Their feedback reports: keyed on the canonical id, and the text may
       // name them, so it goes with the account rather than staying unattributed.
       deleted.feedback = (await tx.feedback.deleteMany({ where })).count;
+      // Their calendar feed link: it opens their calendar, so it dies with them.
+      deleted.calendarFeedToken = (
+        await tx.calendarFeedToken.deleteMany({ where })
+      ).count;
       // PROPOSALS. A proposal belongs to the CCA, not to the head who wrote it,
       // and its other readers (the CCA's other heads and its directors) still
       // need the proposal and its history, so the rows STAY and only the
