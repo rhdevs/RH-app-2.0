@@ -7,6 +7,7 @@ import { NOT_DIRECTOR } from "~/server/api/services/directorGuard";
 import { directedCcasOrRefuse } from "./access";
 import { isProposalsEnabled } from "./flag";
 import { displayNames } from "./names";
+import { unreadCounts } from "./unread";
 
 /**
  * The director's home (F29): counts by status and a review queue, for the CCAs
@@ -46,6 +47,8 @@ export type QueueItem = {
   category: string;
   title: string;
   submittedAt: Date | null;
+  /** This director's own unread comments on it (F11). */
+  unread: number;
 };
 
 export type DirectorQueue = {
@@ -177,10 +180,27 @@ export async function getDirectorQueue(
     }),
   ]);
   const page = rows.slice(0, QUEUE_PAGE);
+  // A director who also heads a CCA counts as its head: draft-stage comments
+  // there stay in their count. Strict read, no catch.
+  const headed = new Set(
+    (
+      await db.ccaHead.findMany({
+        where: { userID, ccaID: { in: ccaIDs } },
+        select: { ccaID: true },
+      })
+    ).map((h) => h.ccaID),
+  );
+  const unread = await unreadCounts(
+    db,
+    userID,
+    page.map((r) => r.id),
+    new Set(page.filter((r) => headed.has(r.ccaID)).map((r) => r.id)),
+  );
   return {
     items: page.map((r) => ({
       ...r,
       ccaName: ccaRows.find((c) => c.ccaID === r.ccaID)?.ccaName ?? null,
+      unread: unread.get(r.id) ?? 0,
     })),
     nextCursor:
       rows.length > QUEUE_PAGE && page.length > 0

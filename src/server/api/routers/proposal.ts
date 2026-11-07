@@ -1,5 +1,8 @@
 import {
   proposalApproveInput,
+  proposalCommentAddInput,
+  proposalCommentListInput,
+  proposalCommentReadInput,
   proposalCreateInput,
   proposalFinishInput,
   proposalIdInput,
@@ -16,9 +19,15 @@ import {
   sanitizeErrors,
 } from "~/server/api/trpc";
 import {
+  addComment,
+  listComments,
+  markCommentsRead,
+} from "~/server/api/services/proposals/comments";
+import {
   createProposal,
   updateProposal,
 } from "~/server/api/services/proposals/drafts";
+import { nudgeDirectors } from "~/server/api/services/proposals/nudge";
 import {
   assertProposalsEnabled,
   isProposalsEnabled,
@@ -58,6 +67,12 @@ import { submitProposal } from "~/server/api/services/proposals/submit";
  * a per-person hourly ceiling (services/proposals/limits.ts). Status is never
  * an input and never written here: the services call `transitionProposal`,
  * the only status writer.
+ *
+ * Comments (F11) and the head's nudge (F21): commentList / commentAdd /
+ * commentMarkRead are open to the people who can read THAT proposal now (a
+ * director not for a draft), and nudge to a head of its CCA, the CCA taken
+ * from the stored proposal and every refusal the same NOT_FOUND as a missing
+ * id. commentList is a pure read; marking read is its own mutation.
  *
  * There is no head "cancel" in this PR: the proposal's 4.1 and F06 give heads
  * "write and submit", and the table already carries the canceled status for
@@ -137,6 +152,31 @@ export const proposalRouter = createTRPCRouter({
     .input(proposalIdInput)
     .mutation(({ ctx, input }) =>
       createEventFromProposal(ctx.db, ctx.session.user.userID, input.id),
+    ),
+
+  commentList: gated
+    .input(proposalCommentListInput)
+    .query(({ ctx, input }) =>
+      listComments(ctx.db, ctx.session.user.userID, input),
+    ),
+
+  commentAdd: gated
+    .input(proposalCommentAddInput)
+    .mutation(({ ctx, input }) =>
+      addComment(ctx.db, ctx.session.user.userID, input),
+    ),
+
+  commentMarkRead: gated
+    .input(proposalCommentReadInput)
+    .mutation(({ ctx, input }) =>
+      markCommentsRead(ctx.db, ctx.session.user.userID, input),
+    ),
+
+  /** A head asks the CCA's directors to look at a submitted proposal. */
+  nudge: gated
+    .input(proposalIdInput)
+    .mutation(({ ctx, input }) =>
+      nudgeDirectors(ctx.db, ctx.session.user.userID, input.id),
     ),
 
   directorHome: gated.query(({ ctx }) =>

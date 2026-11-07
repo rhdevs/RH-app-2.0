@@ -1367,6 +1367,12 @@ model SupperGroup {
 ///     name: "email_unique_ci", unique: true,
 ///     collation: { locale: "en", strength: 2 } }] })
 /// (re-run dedupe-users.mjs, or the one-liner above). Verify with listIndexes.
+///
+/// A second index that Prisma cannot represent is dropped the same way:
+/// `notification_notice_key`, a PARTIAL unique index on Notification.noticeKey
+/// (it keeps a nudge to once per person, proposal and day). AFTER ANY `db push`
+/// recreate it with `node scripts/remediation/create-proposal-indexes.mjs
+/// --commit`, and run that script before `proposals.enabled` goes on.
 model User {
   id             String          @id @default(auto()) @map("_id") @db.ObjectId
   email          String
@@ -1591,6 +1597,11 @@ model Notification {
   readAt    DateTime?
   /// When the TTL index removes the row (about 180 days after creation).
   expiresAt DateTime
+  /// Optional. At most one row may carry a given key (a partial unique index
+  /// from create-proposal-indexes.mjs, deliberately not declared here: Prisma
+  /// would make it a plain unique index). A nudge uses it to be sent once per
+  /// proposal, per person and per Singapore day.
+  noticeKey String?
 
   @@index([userID, createdAt], map: "notification_user_created")
   @@index([userID, readAt], map: "notification_user_read")
@@ -1714,6 +1725,9 @@ model ProposalComment {
   /// The author; null once their account is deleted, the comment stays.
   authorID   String?
   body       String
+  /// True for a comment written while the proposal was a draft: only heads read
+  /// and count it. Null (a row from before the field) means false.
+  headsOnly  Boolean?
   createdAt  DateTime @default(now())
 
   @@index([proposalID, createdAt], map: "proposal_comment_proposal_created")

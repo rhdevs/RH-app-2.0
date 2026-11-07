@@ -214,6 +214,9 @@ const specOf = (ix) => ({
   ...(ix.expireAfterSeconds !== undefined && {
     expireAfterSeconds: ix.expireAfterSeconds,
   }),
+  ...(ix.partialFilterExpression !== undefined && {
+    partialFilterExpression: ix.partialFilterExpression,
+  }),
 });
 
 /**
@@ -229,6 +232,15 @@ const NEUTRAL = new Set([
   "background",
   "expireAfterSeconds",
 ]);
+
+/**
+ * The partial filter of a listed index or a wanted entry, as comparable text;
+ * undefined when there is none. `classify` compares it on its own.
+ */
+const partialOf = (i) =>
+  i?.partialFilterExpression === undefined
+    ? undefined
+    : JSON.stringify(i.partialFilterExpression);
 
 /** The TTL of a listed index or a wanted entry; undefined when there is none. */
 const ttlOf = (i) =>
@@ -246,7 +258,16 @@ export const sameKey = (a, b) => {
 };
 
 /** Options on a listed index beyond key/name/unique (collation, sparse, partial...). */
-export const extraOptions = (i) => Object.keys(i ?? {}).filter((k) => !NEUTRAL.has(k));
+export const extraOptions = (i) =>
+  Object.keys(i ?? {}).filter((k) => !NEUTRAL.has(k));
+
+/**
+ * Options beyond key/name/unique/TTL and a partial filter, which `classify`
+ * compares on its own. `extraOptions` still counts a partial filter as extra,
+ * so the transcript flag check keeps refusing a partial index.
+ */
+const extraBeyondPartial = (i) =>
+  extraOptions(i).filter((k) => k !== "partialFilterExpression");
 
 /**
  * Compare what we want with what a collection has. Returns
@@ -275,7 +296,13 @@ export function classify(want, existing) {
         note: `name "${want.name}" exists with expireAfterSeconds=${ttlOf(byName)}, wanted ${ttlOf(want)}`,
       };
     }
-    const extra = extraOptions(byName);
+    if (partialOf(byName) !== partialOf(want)) {
+      return {
+        status: "conflict",
+        note: `name "${want.name}" exists with partialFilterExpression=${partialOf(byName)}, wanted ${partialOf(want)}`,
+      };
+    }
+    const extra = extraBeyondPartial(byName);
     if (extra.length) {
       return {
         status: "conflict",
@@ -289,7 +316,8 @@ export function classify(want, existing) {
     if (
       (byKey.unique === true) !== want.unique ||
       ttlOf(byKey) !== ttlOf(want) ||
-      extraOptions(byKey).length
+      partialOf(byKey) !== partialOf(want) ||
+      extraBeyondPartial(byKey).length
     ) {
       return {
         status: "conflict",
@@ -369,6 +397,10 @@ export async function apply(
       Object.keys(ix.key).map((f) => [f, `$${f}`]),
     );
     const res = await aggregateAll(db, coll, [
+      // A partial unique index only covers the rows its filter matches.
+      ...(ix.partialFilterExpression !== undefined
+        ? [{ $match: ix.partialFilterExpression }]
+        : []),
       { $group: { _id: groupId, n: { $sum: 1 } } },
       { $match: { n: { $gt: 1 } } },
       { $limit: 20 },
@@ -412,7 +444,7 @@ export async function apply(
           conflict: "CONFLICT ",
         }[c.status];
         console.log(
-          `  ${mark} ${ix.name.padEnd(28)} ${JSON.stringify(ix.key)}${ix.unique ? " unique" : ""}${c.note ? `   ${c.note}` : ""}`,
+          `  ${mark} ${ix.name.padEnd(28)} ${JSON.stringify(ix.key)}${ix.unique ? " unique" : ""}${ix.partialFilterExpression ? ` partial ${JSON.stringify(ix.partialFilterExpression)}` : ""}${c.note ? `   ${c.note}` : ""}`,
         );
         if (c.status === "conflict")
           problems.push(`${coll}.${ix.name}: ${c.note}`);

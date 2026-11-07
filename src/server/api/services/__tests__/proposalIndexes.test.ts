@@ -8,6 +8,7 @@ type Index = {
   key: Record<string, number>;
   unique: boolean;
   expireAfterSeconds?: number;
+  partialFilterExpression?: Record<string, unknown>;
 };
 type Fake = {
   $runCommandRaw: (c: Record<string, unknown>) => Promise<unknown>;
@@ -75,8 +76,10 @@ const MODELS = [
 ];
 
 describe("create-proposal-indexes.mjs mirrors prisma/schema.prisma", () => {
-  it("targets exactly the four proposal collections", () => {
-    expect(Object.keys(TARGETS)).toEqual(MODELS);
+  it("targets the four proposal collections and the one Notification index", () => {
+    expect(Object.keys(TARGETS).sort()).toEqual(
+      [...MODELS, "Notification"].sort(),
+    );
   });
 
   it.each(MODELS)(
@@ -95,12 +98,31 @@ describe("create-proposal-indexes.mjs mirrors prisma/schema.prisma", () => {
     expect(modelBody(model)).not.toMatch(/\bacademicYear\b/);
   });
 
-  it("the one unique index is the per-person read marker", () => {
+  it("the unique indexes are the per-person read marker and the nudge key", () => {
     const unique = Object.values(TARGETS)
       .flat()
       .filter((i) => i.unique)
-      .map((i) => i.name);
-    expect(unique).toEqual(["proposal_comment_read_unique"]);
+      .map((i) => i.name)
+      .sort();
+    expect(unique).toEqual([
+      "notification_notice_key",
+      "proposal_comment_read_unique",
+    ]);
+  });
+
+  it("the nudge key is a partial unique index that the schema does not declare", () => {
+    expect(TARGETS.Notification).toEqual([
+      {
+        name: "notification_notice_key",
+        key: { noticeKey: 1 },
+        unique: true,
+        partialFilterExpression: { noticeKey: { $gt: "" } },
+      },
+    ]);
+    // Declared in the schema, Prisma would make it a plain unique index and
+    // every notice without a key would collide on null.
+    expect(modelBody("Notification")).not.toContain("notification_notice_key");
+    expect(modelBody("Notification")).toMatch(/noticeKey +String[?]/);
   });
 });
 
@@ -190,6 +212,35 @@ describe("running the proposal script", () => {
         unique: true,
       },
     );
+  });
+
+  it("--commit sends the partial filter with the nudge key", async () => {
+    const { db, store } = fakeDb();
+
+    await apply(db, true, TARGETS, labels);
+
+    expect(
+      (store.get("Notification") ?? []).find(
+        (s) => s.name === "notification_notice_key",
+      ),
+    ).toEqual({
+      key: { noticeKey: 1 },
+      name: "notification_notice_key",
+      unique: true,
+      partialFilterExpression: { noticeKey: { $gt: "" } },
+    });
+  });
+
+  it("refuses an existing nudge-key index that is not partial", async () => {
+    const { db, writes, store } = fakeDb();
+    store.set("Notification", [
+      { key: { noticeKey: 1 }, name: "notification_notice_key", unique: true },
+    ]);
+
+    const res = await apply(db, true, TARGETS, labels);
+
+    expect(res.aborted).toBe(true);
+    expect(writes).toEqual([]);
   });
 
   it("a second run finds everything present and writes nothing", async () => {

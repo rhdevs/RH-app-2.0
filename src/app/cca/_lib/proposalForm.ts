@@ -181,6 +181,14 @@ export function describeProposalError(message: string | undefined): {
         return "This proposal could not be found.";
       case "PROPOSAL_NOT_EDITABLE":
         return "This proposal can no longer be edited.";
+      case "COMMENTS_CLOSED":
+        return "This proposal is closed, so it cannot take new comments.";
+      case "PROPOSAL_NOT_IN_REVIEW":
+        return "A nudge can be sent while the proposal is waiting for review.";
+      case "NUDGE_TRY_AGAIN":
+        return "Another change got in the way. Press the nudge again.";
+      case "NOTIFICATIONS_DISABLED":
+        return "Notices are not switched on, so nobody could be told.";
       case "EVENTS_DISABLED":
         return "Events are not switched on, so an event draft cannot be made.";
       case "EVENT_BEING_MADE":
