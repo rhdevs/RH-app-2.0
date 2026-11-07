@@ -1,219 +1,121 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ExternalLink, AlertTriangle } from "lucide-react";
 
-import { api, type RouterOutputs } from "~/trpc/react";
+import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import {
   updateEventInput,
   editScope,
-  EVENT_PUBLIC_DESCRIPTION_MAX,
   type EventStatus,
 } from "~/lib/schemas/event";
 import {
   STATUS_META,
   formatDateRange,
-  epochToLocalInput,
   localInputToEpoch,
 } from "~/app/events/_lib/format";
+import {
+  eventErrorMessage,
+  eventIssueMessage,
+} from "~/app/events/_lib/eventErrors";
 import EventDetailsFields, {
   facilityPayload,
+  isFacilitySelected,
+  proposalFromEvent,
   type ProposalValue,
 } from "./EventDetailsFields";
-import EventImageField from "./EventImageField";
-import EventGalleryField from "./EventGalleryField";
+import EventPublicFields, { type PublicFieldsValue } from "./EventPublicFields";
+import EventLiveEditor from "./EventLiveEditor";
+import {
+  CancelEventButton,
+  DeleteDraftButton,
+  DuplicateButton,
+  PublishButton,
+  RegisterAndPublishButton,
+  WithdrawButton,
+  isDeletableDraft,
+  type OwnedEvent,
+} from "./EventLifecycleButtons";
 import EventAnalytics from "./EventAnalytics";
 import EventAttendees from "./EventAttendees";
 import EventQuestionBuilder from "./EventQuestionBuilder";
 import EventDoorSection from "./EventDoorSection";
 import EventAttendanceStats from "./EventAttendanceStats";
 
-type OwnedEvent = RouterOutputs["event"]["getForOwner"]["event"];
-
-const FIELD_LABELS: Record<string, string> = {
-  title: "event name",
-  description: "description",
-  startTime: "start time",
-  endTime: "end time",
-  location: "location",
-  banner: "banner image",
-  publicDescription: "public description",
-};
-
-function incompleteMessage(message: string): string | null {
-  if (!message.startsWith("INCOMPLETE:")) return null;
-  const missing = message
-    .slice("INCOMPLETE:".length)
-    .split(",")
-    .map((f) => FIELD_LABELS[f] ?? f);
-  return `Please add: ${missing.join(", ")}.`;
-}
-
-export function mapError(e: unknown): string {
-  const message = e instanceof Error ? e.message : "";
-  const incomplete = incompleteMessage(message);
-  if (incomplete) return incomplete;
-  if (message === "END_BEFORE_START")
-    return "The end time must be after the start time.";
-  if (message === "NOT_A_HEAD_OF_THIS_CCA")
-    return "You're no longer a head of this CCA.";
-  if (message === "EVENTS_DISABLED") return "Events aren't switched on yet.";
-  if (message === "CAPABILITY_REQUIRED:manageHallEvents")
-    return "You can't manage hall events.";
-  if (message === "CAPABILITY_REQUIRED:reviewEvents")
-    return "You can't review events.";
-  // Deliberately ACTIONABLE. "This can't be edited any more" would be a lie for
-  // a submitted event, which CAN be edited — after a withdraw. The same code is
-  // thrown for declined and canceled, where withdrawal is impossible, but those
-  // two never render an editor at all (see the terminal panels below), so the
-  // string is unreachable there in practice.
-  if (message === "EVENT_LOCKED")
-    return "This event is in the review queue. Withdraw it first to make changes.";
-  // submitForReview refuses anything whose editScope is not "all". Same
-  // argument as NOT_CANCELABLE below, and the same two roles: the head's second
-  // tab submits first, or a reviewer decides a `changes_requested` event back to
-  // `declined` while its editor is open. Retrying cannot succeed from any of the
-  // refusing states — submitted needs a withdraw, declined and canceled are
-  // terminal — so the generic "Try again" told them to repeat an action that is
-  // guaranteed to fail. This string was the one gap left in the error map after
-  // NOT_CANCELABLE was added.
-  if (message === "NOT_SUBMITTABLE")
-    return "This event can't be submitted from its current state — it's already in the queue, or it's been decided. Reload the page.";
-  if (message === "NOT_WITHDRAWABLE")
-    return "This event isn't in the review queue. Reload the page.";
-  if (message === "NOT_UNDER_REVIEW")
-    return "Someone has already decided this event. Reload the page.";
-  // cancelEvent refuses an already-declined or already-canceled event. It is a
-  // race the owner loses whenever a second tab, or the JCRC's own
-  // reviewerCancel, got there first — and retrying can NEVER succeed, because
-  // both refusing states are terminal. The generic fallback would tell them to
-  // try again forever.
-  if (message === "NOT_CANCELABLE")
-    return "This event is already declined or cancelled, so there's nothing to cancel. Reload the page.";
-  if (message === "NO_SUCH_EVENT") return "This event no longer exists.";
-  // saveQuestions refuses this once a signup has landed since the builder's
-  // own query was last read — the race the freeze exists to catch. Retrying
-  // can never succeed: the signup already happened, so the form is
-  // permanently locked for this event. Same non-retryable posture as
-  // NOT_CANCELABLE and NOT_SUBMITTABLE above.
-  if (message === "QUESTIONS_FROZEN")
-    return "Someone signed up while you were editing, so the questions are locked now. Reload the page.";
-  // A question named in the save payload no longer exists on the event —
-  // another head (or another tab) removed it since this one's question list
-  // was fetched. Retrying with the same stale id can never succeed either.
-  if (message === "NO_SUCH_QUESTION")
-    return "One of these questions was removed by another head. Reload the page.";
-  return "That didn't save. Try again.";
-}
-
-/**
- * A row created by the "New event" button and never filled in (D-29, D-31).
- *
- * Mirrors the server's reuse filter in `event.create` (D-30) field for field,
- * plus `photoUrls`, which that filter checks in JS for the same reason: there is
- * no tested Prisma+Mongo spelling for `equals: []` on a scalar list. Keep the
- * two in step — if a field is added to one, add it to the other, or the head can
- * be told a row is empty that the server would refuse to reuse.
- *
- * Only ever used to make copy QUIETER. Every string it gates has a variant
- * behind it that is true of every row, so a false negative costs nothing and a
- * false positive would print "there's nothing in it" over somebody's work.
- */
-function isBlankDraft(event: OwnedEvent): boolean {
-  return (
-    event.status === "draft" &&
-    !event.title?.trim() &&
-    !event.description?.trim() &&
-    !event.publicDescription?.trim() &&
-    !event.bannerUrl &&
-    event.photoUrls.length === 0 &&
-    event.startTime == null &&
-    event.endTime == null &&
-    !event.location?.trim() &&
-    event.facilityID == null &&
-    event.capacity == null &&
-    event.bookingID == null
-  );
-}
+const UNSAVED_QUESTIONS = "Save or discard your signup question changes first.";
 
 /* -------------------------------------------------------------------------- */
 /* Details editor (draft / changes_requested)                                  */
 /* -------------------------------------------------------------------------- */
 
 /**
- * ONE editor collecting EVERYTHING — details, banner, gallery and the public
- * description — because the JCRC now reviews a finished event. There is no
- * "add the public bits after approval" stage, and `submitForReview` requires
- * the banner and the public description just as it requires a title.
+ * ONE editor collecting EVERYTHING — details, banner, gallery, public
+ * description and signup questions — because whatever goes live (published by
+ * the head, or approved by JCRC while review is on) is the finished event.
  *
- * Mounted ONLY for editScope === "all" (draft / changes_requested). Leaving it
- * mounted for `submitted` would give the head a form the server refuses every
- * save from, with EVENT_LOCKED.
+ * Mounted ONLY for editScope === "all" (draft / changes_requested).
+ *
+ * The primary action depends on `events.review.required`:
+ *  - OFF (the default): Publish, for CCA and hall events alike.
+ *  - ON: Submit for review; a hall event keeps "Register and publish", which
+ *    submits then approves through the real procedures so the real guards run.
  */
 function DetailsEditor({
   event,
-  isHallEvent,
+  reviewRequired,
   onInvalidate,
   onHandoff,
 }: {
   event: OwnedEvent;
-  isHallEvent: boolean;
+  reviewRequired: boolean;
   onInvalidate: () => Promise<void>;
   /**
    * Report a failure that leaves the event in a status THIS COMPONENT DOES NOT
-   * RENDER — currently only registerAndPublish's step 2, which lands the event
-   * at `submitted`. Local `error` state cannot carry such a message: the
-   * `onInvalidate()` that follows flips the status, `editScope` stops being
-   * "all", and this whole subtree unmounts with the message inside it. The
-   * parent holds it instead and renders it beside the panel the head actually
-   * lands on.
+   * RENDER — only registerAndPublish's step 2, which lands it at `submitted`.
+   * The refetch that follows unmounts this editor, so local error state would
+   * die with it; the parent renders the message on the panel the head lands on.
    */
   onHandoff: (message: string) => void;
 }) {
-  const [value, setValue] = useState<ProposalValue>({
-    title: event.title ?? "",
-    description: event.description ?? "",
-    startLocal: epochToLocalInput(event.startTime),
-    endLocal: epochToLocalInput(event.endTime),
-    // Facility → its id; free-text location → "other"; nothing → unset.
-    facilitySelection:
-      event.facilityID != null
-        ? String(event.facilityID)
-        : event.location
-          ? "other"
-          : "",
-    location: event.facilityID != null ? "" : (event.location ?? ""),
-    capacity: event.capacity != null ? String(event.capacity) : "",
-  });
-  const [bannerUrl, setBannerUrl] = useState<string | null>(event.bannerUrl);
-  const [photoUrls, setPhotoUrls] = useState<string[]>(event.photoUrls);
-  const [publicDescription, setPublicDescription] = useState(
-    event.publicDescription ?? "",
+  const isHallEvent = event.ccaID == null;
+  const [details, setDetails] = useState<ProposalValue>(() =>
+    proposalFromEvent(event),
   );
+  const [pub, setPub] = useState<PublicFieldsValue>({
+    bannerUrl: event.bannerUrl,
+    photoUrls: event.photoUrls,
+    publicDescription: event.publicDescription ?? "",
+  });
+  const [questionsDirty, setQuestionsDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   const update = api.event.update.useMutation();
   const submit = api.event.submitForReview.useMutation();
   const decide = api.event.decide.useMutation();
+  const publish = api.event.publish.useMutation();
+  // Same cached query EventDetailsFields reads, for the facility's name.
+  const facilities = api.bookings.getAllFacilities.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+  });
 
   function buildPatch() {
-    const fp = facilityPayload(value);
+    const fp = facilityPayload(details);
     return {
       eventID: event.eventID,
-      title: value.title.trim() || undefined,
-      description: value.description.trim() || undefined,
-      startTime: localInputToEpoch(value.startLocal) ?? undefined,
-      endTime: value.endLocal ? localInputToEpoch(value.endLocal) : null,
+      title: details.title.trim() || undefined,
+      description: details.description.trim() || undefined,
+      startTime: localInputToEpoch(details.startLocal) ?? undefined,
+      endTime: details.endLocal ? localInputToEpoch(details.endLocal) : null,
       location: fp.location,
       facilityID: fp.facilityID,
-      capacity: value.capacity.trim() ? Number(value.capacity) : null,
-      publicDescription: publicDescription.trim(),
-      bannerUrl,
-      photoUrls,
+      capacity: details.capacity.trim() ? Number(details.capacity) : null,
+      publicDescription: pub.publicDescription.trim(),
+      bannerUrl: pub.bannerUrl,
+      photoUrls: pub.photoUrls,
     };
   }
 
@@ -221,58 +123,34 @@ function DetailsEditor({
   function validate(): boolean {
     const parsed = updateEventInput.safeParse(buildPatch());
     if (!parsed.success) {
-      const issue = parsed.error.issues[0];
-      setError(
-        issue?.message === "NOT_A_VALID_EVENT_BLOB_URL"
-          ? "An image doesn't belong to this event. Re-upload it."
-          : (issue?.message ?? "Please check the fields."),
-      );
+      setError(eventIssueMessage(parsed.error.issues[0] ?? {}));
       return false;
     }
     return true;
   }
 
-  async function save() {
+  /** Save, then run `next`. Errors land beside the buttons. */
+  async function saveThen(next?: () => Promise<unknown>) {
     setError(null);
     setSaved(false);
     if (!validate()) return;
     try {
       await update.mutateAsync(buildPatch());
-      setSaved(true);
+      if (next) await next();
+      else setSaved(true);
       await onInvalidate();
     } catch (e) {
-      setError(mapError(e));
-    }
-  }
-
-  async function submitForReview() {
-    setError(null);
-    setSaved(false);
-    if (!validate()) return;
-    try {
-      await update.mutateAsync(buildPatch());
-      await submit.mutateAsync({ eventID: event.eventID });
+      setError(eventErrorMessage(e));
+      // A save that landed before the failing step is real; show it.
       await onInvalidate();
-    } catch (e) {
-      setError(mapError(e));
     }
   }
 
   /**
-   * HALL EVENTS ONLY. Two client calls, back to back, and deliberately NOT one
-   * fused server procedure: a fused one would have to re-implement `decide`'s
-   * live getUserRoles + reviewEvents re-check, which is the guard that catches a
-   * role revoked mid-session — a second copy of the one check that must not have
-   * a second copy. Calling the real procedures means the real guards run.
-   *
-   * ON A STEP-2 FAILURE THE EVENT STAYS AT `submitted`. It is NOT rolled back to
-   * draft: `submitted` is a legitimate state any reviewer (including this actor,
-   * on retry) can resolve, whereas an automatic rollback would mean a transient
-   * network error silently un-submits a real submission.
-   *
-   * Both calls audit — `event.submit` then `event.approve`, same actor, seconds
-   * apart. That pairing IS the record of a self-approval and is meant to be
-   * legible; it is not a bug to be collapsed.
+   * HALL EVENTS, REVIEW ON. Two client calls, deliberately NOT one fused
+   * server procedure: a fused one would re-implement `decide`'s live
+   * reviewEvents re-check. On a step-2 failure the event stays `submitted`
+   * rather than being rolled back, and the parent explains.
    */
   async function registerAndPublish() {
     setError(null);
@@ -282,25 +160,15 @@ function DetailsEditor({
       await update.mutateAsync(buildPatch());
       await submit.mutateAsync({ eventID: event.eventID });
     } catch (e) {
-      // Step 1 failed — the event is still a draft. The ordinary INCOMPLETE:
-      // path, with no special casing.
-      setError(mapError(e));
+      setError(eventErrorMessage(e));
       await onInvalidate();
       return;
     }
     try {
       await decide.mutateAsync({ eventID: event.eventID, decision: "approve" });
     } catch (e) {
-      // The event is now `submitted`, and the copy must say so rather than
-      // implying nothing happened.
-      //
-      // HANDED TO THE PARENT, NOT `setError`. The invalidate on the next line
-      // moves the status to `submitted`, which unmounts this editor — local
-      // error state would be destroyed by the very refetch that makes the
-      // message true, so the head would see the submitted panel and no
-      // explanation at all. The parent renders it there instead.
       onHandoff(
-        `Your event was registered but couldn't be published: ${mapError(e)} ` +
+        `Your event was registered but couldn't be published: ${eventErrorMessage(e)} ` +
           `It's sitting in the review queue now — open it in the queue to ` +
           `approve it, or leave it for another JCRC member.`,
       );
@@ -308,105 +176,53 @@ function DetailsEditor({
     await onInvalidate();
   }
 
-  const busy = update.isPending || submit.isPending || decide.isPending;
+  const busy =
+    update.isPending || submit.isPending || decide.isPending || publish.isPending;
+  const facilityName = isFacilitySelected(details)
+    ? (facilities.data?.find(
+        (f) => f.facilityID === Number(details.facilitySelection),
+      )?.facilityName ?? "The facility")
+    : null;
 
   return (
     <div className="space-y-5 rounded-lg border border-gray-200 bg-white p-5">
       <EventDetailsFields
-        value={value}
+        value={details}
         onChange={(patch) => {
-          setValue((v) => ({ ...v, ...patch }));
+          setDetails((v) => ({ ...v, ...patch }));
           setSaved(false);
         }}
         disabled={busy}
-        isHall={isHallEvent}
       />
 
-      <div className="space-y-5 border-t border-gray-100 pt-5">
-        <EventImageField
+      <div className="border-t border-gray-100 pt-5">
+        <EventPublicFields
           eventID={event.eventID}
-          label="Banner"
-          help="The wide image residents see first. Required before you can submit."
-          value={bannerUrl}
-          onChange={(url) => {
-            setBannerUrl(url);
+          value={pub}
+          onChange={(patch) => {
+            setPub((v) => ({ ...v, ...patch }));
             setSaved(false);
           }}
           disabled={busy}
         />
-
-        <EventGalleryField
-          eventID={event.eventID}
-          value={photoUrls}
-          onChange={(urls) => {
-            setPhotoUrls(urls);
-            setSaved(false);
-          }}
-          disabled={busy}
-        />
-
-        <div className="space-y-1.5">
-          <label className="block text-sm font-medium text-gray-700">
-            Public description
-          </label>
-          <p className="text-xs text-gray-500">
-            What residents read on the event page. Required before you can
-            submit.
-          </p>
-          <textarea
-            value={publicDescription}
-            maxLength={EVENT_PUBLIC_DESCRIPTION_MAX}
-            rows={6}
-            disabled={busy}
-            onChange={(e) => {
-              setPublicDescription(e.target.value);
-              setSaved(false);
-            }}
-            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            placeholder="Tell residents what to expect…"
-          />
-          <p className="text-right text-xs text-gray-500">
-            {publicDescription.length}/{EVENT_PUBLIC_DESCRIPTION_MAX}
-          </p>
-        </div>
       </div>
 
       <p className="text-xs text-gray-400">
         Uploads attach immediately but only save with the event.
       </p>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      <EventQuestionBuilder
+        eventID={event.eventID}
+        onDirtyChange={setQuestionsDirty}
+      />
 
-      {/* Below the public content, above the contract sentence and the
-          footer actions — the head reads the contract and reaches the
-          primary action AFTER seeing the questions, not before them. Owns
-          its own query/mutation, so it needs nothing from this component but
-          the id. */}
-      <EventQuestionBuilder eventID={event.eventID} />
-
-
-      {/* THE CONTRACT SENTENCE (D-34). This is the ONE authoring screen now —
-          /new and EventCreateForm are gone — so everything the head keys in is
-          here, and this is the last thing they read before the primary action.
-
-          The button is NOT relabelled "Publish", even though the ruling calls
-          the head's action publishing. It does not publish; it submits, and a
-          button is a promise about what is about to happen. What was actually
-          missing from this screen was never the word — it was the sentence that
-          closes the loop the head's mental model already contains: once reviewed
-          and accepted, it is done, and nothing further is needed from them.
-          Grep the head-facing surface before this line existed and that promise
-          is nowhere; the reviewer is told (EventReviewDetail), the head was not.
-
-          HALL-AWARE, like the empty state in EventsListPanel: on that surface
-          "Register and publish" really does publish, because it runs
-          submitForReview then decide(approve) back to back, so a sentence about
-          a JCRC approving later would describe something that will not happen. */}
+      {/* THE CONTRACT SENTENCE: the last thing the head reads before the
+          primary action, saying what that action actually does. */}
       <p className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
-        {isHallEvent ? (
+        {!reviewRequired || isHallEvent ? (
           <>
-            This is the whole event. Register and publish puts it on the
-            residents&rsquo; timeline straight away.
+            This is the whole event. Publishing puts it on the residents&rsquo;
+            timeline straight away.
           </>
         ) : (
           <>
@@ -417,25 +233,63 @@ function DetailsEditor({
         )}
       </p>
 
-      <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
-        <Button type="button" variant="outline" disabled={busy} onClick={save}>
-          {update.isPending && !submit.isPending && !decide.isPending
+      {error && (
+        <p role="alert" className="text-sm text-red-600">
+          {error}
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-start gap-3 border-t border-gray-100 pt-4">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy}
+          onClick={() => void saveThen()}
+        >
+          {update.isPending && !submit.isPending && !publish.isPending
             ? "Saving…"
             : "Save and finish later"}
         </Button>
-        {/* A hall event NEVER shows both: "Register and publish" REPLACES
-            "Submit for review" on that surface. The gate is for clarity — the
-            real one is that `decide` sits on roleManagerProcedure and refuses a
-            CCA head regardless of what the client renders. */}
-        {isHallEvent ? (
-          <RegisterAndPublishButton
-            location={event.facilityID != null ? event.location : null}
-            pending={submit.isPending || decide.isPending}
+        {!reviewRequired ? (
+          <PublishButton
+            preview={{
+              title: details.title,
+              startTime: localInputToEpoch(details.startLocal),
+              endTime: details.endLocal
+                ? localInputToEpoch(details.endLocal)
+                : null,
+              location:
+                details.facilitySelection === "other"
+                  ? details.location
+                  : facilityName,
+              bannerUrl: pub.bannerUrl,
+              publicDescription: pub.publicDescription,
+            }}
+            facilityName={facilityName}
+            pending={publish.isPending}
             disabled={busy}
+            blockedReason={questionsDirty ? UNSAVED_QUESTIONS : null}
+            onConfirm={() =>
+              saveThen(() => publish.mutateAsync({ eventID: event.eventID }))
+            }
+          />
+        ) : isHallEvent ? (
+          <RegisterAndPublishButton
+            location={facilityName}
+            pending={submit.isPending || decide.isPending}
+            disabled={busy || questionsDirty}
             onConfirm={registerAndPublish}
           />
         ) : (
-          <Button type="button" disabled={busy} onClick={submitForReview}>
+          <Button
+            type="button"
+            disabled={busy || questionsDirty}
+            onClick={() =>
+              void saveThen(() =>
+                submit.mutateAsync({ eventID: event.eventID }),
+              )
+            }
+          >
             {submit.isPending ? "Submitting…" : "Submit for review"}
           </Button>
         )}
@@ -446,453 +300,18 @@ function DetailsEditor({
 }
 
 /* -------------------------------------------------------------------------- */
-/* Public content editor (published only)                                      */
-/* -------------------------------------------------------------------------- */
-
-/**
- * The narrowed editor for a LIVE event. editScope("published") is "public", so
- * the server accepts only these three fields and silently ignores the rest —
- * this component simply does not offer the others.
- */
-function PublicEditor({
-  event,
-  onInvalidate,
-}: {
-  event: OwnedEvent;
-  onInvalidate: () => Promise<void>;
-}) {
-  const [bannerUrl, setBannerUrl] = useState<string | null>(event.bannerUrl);
-  const [photoUrls, setPhotoUrls] = useState<string[]>(event.photoUrls);
-  const [publicDescription, setPublicDescription] = useState(
-    event.publicDescription ?? "",
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-
-  const update = api.event.update.useMutation();
-
-  function buildPayload() {
-    return {
-      eventID: event.eventID,
-      publicDescription: publicDescription.trim(),
-      bannerUrl,
-      photoUrls,
-    };
-  }
-
-  function validate(): boolean {
-    const parsed = updateEventInput.safeParse(buildPayload());
-    if (!parsed.success) {
-      const issue = parsed.error.issues[0];
-      setError(
-        issue?.message === "NOT_A_VALID_EVENT_BLOB_URL"
-          ? "An image doesn't belong to this event. Re-upload it."
-          : (issue?.message ?? "Please check the fields."),
-      );
-      return false;
-    }
-    return true;
-  }
-
-  async function save() {
-    setError(null);
-    setSaved(false);
-    if (!validate()) return;
-    try {
-      await update.mutateAsync(buildPayload());
-      setSaved(true);
-      await onInvalidate();
-    } catch (e) {
-      setError(mapError(e));
-    }
-  }
-
-  const busy = update.isPending;
-
-  return (
-    <div className="space-y-5">
-      <EventImageField
-        eventID={event.eventID}
-        label="Banner"
-        help="The wide image residents see first. Required before you can submit."
-        value={bannerUrl}
-        onChange={(url) => {
-          setBannerUrl(url);
-          setSaved(false);
-        }}
-        disabled={busy}
-      />
-
-      <EventGalleryField
-        eventID={event.eventID}
-        value={photoUrls}
-        onChange={(urls) => {
-          setPhotoUrls(urls);
-          setSaved(false);
-        }}
-        disabled={busy}
-      />
-
-      <div className="space-y-1.5">
-        <label className="block text-sm font-medium text-gray-700">
-          Public description
-        </label>
-        <p className="text-xs text-gray-500">
-          What residents read on the event page. Required before you can submit.
-        </p>
-        <textarea
-          value={publicDescription}
-          maxLength={EVENT_PUBLIC_DESCRIPTION_MAX}
-          rows={6}
-          disabled={busy}
-          onChange={(e) => {
-            setPublicDescription(e.target.value);
-            setSaved(false);
-          }}
-          className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-          placeholder="Tell residents what to expect…"
-        />
-        <p className="text-right text-xs text-gray-500">
-          {publicDescription.length}/{EVENT_PUBLIC_DESCRIPTION_MAX}
-        </p>
-      </div>
-
-      {error && <p className="text-sm text-red-600">{error}</p>}
-
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" disabled={busy} onClick={save}>
-          {update.isPending ? "Saving…" : "Save changes"}
-        </Button>
-        {saved && <span className="text-sm text-emerald-700">Saved.</span>}
-      </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Register and publish (hall events only)                                     */
-/* -------------------------------------------------------------------------- */
-
-function RegisterAndPublishButton({
-  location,
-  pending,
-  disabled,
-  onConfirm,
-}: {
-  /** The facility name, or null when the location is free text. */
-  location: string | null;
-  pending: boolean;
-  disabled: boolean;
-  onConfirm: () => Promise<void>;
-}) {
-  const [confirming, setConfirming] = useState(false);
-
-  if (!confirming) {
-    return (
-      <Button type="button" disabled={disabled} onClick={() => setConfirming(true)}>
-        {pending ? "Publishing…" : "Register and publish"}
-      </Button>
-    );
-  }
-  return (
-    <div className="w-full space-y-2 rounded-md border border-emerald-200 bg-emerald-50 p-3">
-      <p className="text-sm font-medium text-emerald-900">
-        Register and publish this event?
-      </p>
-      <p className="text-sm text-emerald-800">
-        It goes live on the residents&rsquo; timeline straight away.
-        You&rsquo;re approving it yourself, and both steps are recorded in the
-        audit log.
-        {location ? ` ${location} is booked for its times.` : ""}
-      </p>
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          disabled={pending}
-          onClick={() => setConfirming(false)}
-        >
-          Not yet
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={pending}
-          onClick={() => {
-            setConfirming(false);
-            void onConfirm();
-          }}
-        >
-          {pending ? "Publishing…" : "Register and publish"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Withdraw                                                                    */
-/* -------------------------------------------------------------------------- */
-
-/**
- * `submitted` -> `draft`. Rendered ONLY for a submitted event.
- *
- * NOT the same act as cancelling, and the two must never be one button. This is
- * "I am still doing this event, stop reviewing it for a moment"; cancelling is
- * "this event is not happening" and is terminal. Offering one control for both
- * is how a head loses an event they meant to edit.
- *
- * The copy must not say "cancel", must not imply the event is deleted, and must
- * not promise the JCRC is notified — nothing sends a notification. "Nothing is
- * lost" is accurate: withdraw clears only the decision fields, which are null on
- * a submitted event anyway, and touches no content field.
- */
-function WithdrawButton({
-  event,
-  onInvalidate,
-}: {
-  event: OwnedEvent;
-  onInvalidate: () => Promise<void>;
-}) {
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const withdraw = api.event.withdraw.useMutation();
-
-  async function run() {
-    setError(null);
-    try {
-      await withdraw.mutateAsync({ eventID: event.eventID });
-      setConfirming(false);
-      // No toast. Landing on the editable form with the badge reading
-      // "Not submitted" IS the feedback.
-      await onInvalidate();
-    } catch (e) {
-      setError(mapError(e));
-    }
-  }
-
-  if (!confirming) {
-    return (
-      <Button type="button" variant="outline" onClick={() => setConfirming(true)}>
-        Withdraw
-      </Button>
-    );
-  }
-  return (
-    <div className="space-y-2 rounded-md border border-amber-200 bg-white p-3">
-      <p className="text-sm font-medium text-gray-900">
-        Withdraw this event from review?
-      </p>
-      <p className="text-sm text-gray-600">
-        It comes out of the JCRC queue and goes back to being editable. Nothing
-        is lost — submit it again when you&rsquo;re ready.
-      </p>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          disabled={withdraw.isPending}
-          onClick={() => setConfirming(false)}
-        >
-          Keep it in the queue
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={withdraw.isPending}
-          onClick={() => void run()}
-        >
-          {withdraw.isPending ? "Withdrawing…" : "Withdraw"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Duplicate                                                                   */
-/* -------------------------------------------------------------------------- */
-
-/**
- * A recurring event is N duplicates — there is no series model.
- *
- * The confirmation says the banner and photos are not copied because they
- * genuinely are not, and that is FORCED rather than chosen: isOwnEventBlobUrl
- * requires a URL's path to start with /event/{eventID}/{kind}, so a banner
- * carried over from event 12 fails validation for event 13 — from the very
- * check that is the security boundary.
- */
-function DuplicateButton({
-  event,
-  manageHrefBase,
-  backHref,
-}: {
-  event: OwnedEvent;
-  manageHrefBase?: string;
-  backHref: string;
-}) {
-  const router = useRouter();
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const duplicate = api.event.duplicate.useMutation({
-    onSuccess: (res) => {
-      // Straight to the copy's own manage page — the same interaction shape as
-      // create. No toast.
-      router.push(
-        manageHrefBase ? `${manageHrefBase}/${res.eventID}` : backHref,
-      );
-    },
-    onError: (e) => setError(mapError(e)),
-  });
-
-  if (!confirming) {
-    return (
-      <Button type="button" variant="outline" onClick={() => setConfirming(true)}>
-        Duplicate
-      </Button>
-    );
-  }
-  return (
-    <div className="space-y-2 rounded-md border border-gray-200 bg-white p-3">
-      <p className="text-sm font-medium text-gray-900">Duplicate this event?</p>
-      <p className="text-sm text-gray-600">
-        You&rsquo;ll get a new unsubmitted copy with the same details, times and
-        location. The banner and photos aren&rsquo;t copied — add them again
-        before you submit.
-      </p>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          disabled={duplicate.isPending}
-          onClick={() => setConfirming(false)}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={duplicate.isPending}
-          onClick={() => duplicate.mutate({ eventID: event.eventID })}
-        >
-          Duplicate
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Cancel button                                                               */
-/* -------------------------------------------------------------------------- */
-
-function CancelEventButton({
-  event,
-  onInvalidate,
-}: {
-  event: OwnedEvent;
-  onInvalidate: () => Promise<void>;
-}) {
-  const [confirming, setConfirming] = useState(false);
-  // A FAILED CANCEL MUST SAY SO. This mutation can genuinely fail —
-  // NOT_CANCELABLE when the row is already terminal, NOT_A_HEAD_OF_THIS_CCA
-  // after a handover, EVENTS_DISABLED after a kill-switch flip — and without
-  // this state the button simply did nothing at all: no message, no spinner
-  // change, no navigation. A destructive control that fails silently reads as a
-  // broken app, and the owner is left believing the event is cancelled.
-  const [error, setError] = useState<string | null>(null);
-  const cancel = api.event.cancelEvent.useMutation({
-    onSuccess: onInvalidate,
-    onError: (e) => setError(mapError(e)),
-  });
-
-  if (!confirming) {
-    return (
-      <Button
-        type="button"
-        variant="ghost"
-        className="text-red-600 hover:bg-red-50 hover:text-red-700"
-        onClick={() => {
-          setError(null);
-          setConfirming(true);
-        }}
-      >
-        Cancel event
-      </Button>
-    );
-  }
-  return (
-    <div className="space-y-2 rounded-md border border-red-200 bg-red-50 p-3">
-      <p className="text-sm font-medium text-red-900">Cancel this event?</p>
-      {/* THREE VARIANTS, because the consequences genuinely differ. A published
-          event has signups and a room held for it; an unpublished one has
-          neither, and promising a resident's place was lost when nobody had one
-          is the copy-drift class this repo has paid for four times.
-
-          THE THIRD IS NEW (D-32). Cancel is the only way a head gets rid of a
-          row — D-21 stands, there is still no hard delete reachable from the
-          app — and now that "New event" creates a row on click (D-29), the row
-          being cancelled is quite often one with nothing in it at all. Telling
-          someone it "won't go ahead and can't be resubmitted" is true but
-          heavy-handed for an empty row they pressed a button by mistake.
-
-          GATED ON THE ROW BEING GENUINELY EMPTY, not merely untitled. "There's
-          nothing in it yet, so nothing is lost" must never be shown to a head
-          who has uploaded a banner and written a public description but not yet
-          named the event. This is deliberately NARROWER than "a draft with no
-          title": narrowing can only fall back to the second variant, which is
-          still true of every row it catches, whereas widening would print a
-          falsehood over somebody's work. */}
-      <p className="text-sm text-red-800">
-        {event.status === "published"
-          ? "It comes off the residents’ timeline, everyone who signed up loses their place, and the facility booking is released. This can’t be undone."
-          : isBlankDraft(event)
-            ? "There’s nothing in it yet, so nothing is lost. It stays on your list as cancelled."
-            : "It won’t go ahead and can’t be resubmitted. This can’t be undone."}
-      </p>
-      {error && <p className="text-sm text-red-700">{error}</p>}
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          disabled={cancel.isPending}
-          onClick={() => setConfirming(false)}
-        >
-          No
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          className="bg-red-600 hover:bg-red-700"
-          disabled={cancel.isPending}
-          onClick={() => cancel.mutate({ eventID: event.eventID })}
-        >
-          {cancel.isPending ? "Cancelling…" : "Yes, cancel"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
 /* Auto-booking status                                                         */
 /* -------------------------------------------------------------------------- */
 
 function AutoBookingNotice({ event }: { event: OwnedEvent }) {
-  // Only relevant when a facility (not free-text) was chosen.
   if (event.facilityID == null) return null;
   if (event.bookingID != null) {
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
         <span className="font-medium">Facility booked automatically</span>
         {event.location ? ` — ${event.location}` : ""}. It appears in the
-        bookings calendar.
+        bookings calendar and moves with the event if you change its time or
+        place.
       </div>
     );
   }
@@ -916,27 +335,16 @@ function AutoBookingNotice({ event }: { event: OwnedEvent }) {
  * Manage one event, on either surface.
  *
  * `ccaID` null means a HALL-WIDE event authored at /admin/events/hall/[eventID];
- * a number means a CCA event at /cca/[ccaID]/events/[eventID]. `backHref` and
- * `manageHrefBase` are passed in rather than derived, because a hall event has
- * no /cca/{id} route to derive them from.
+ * a number means a CCA event at /cca/[ccaID]/events/[eventID].
  *
  * `manageHrefBase` IS A STRING, NOT A BUILDER FUNCTION, AND MUST STAY ONE.
+ * React refuses to serialise a function across the server/client boundary and
+ * the throw happens at RENDER — tsc, ESLint and `next build` all pass while
+ * every authoring route 500s. It shipped once in Phase 1. Every manage URL is
+ * `base/{eventID}`, so a base string carries everything a closure would.
  *
- * This warning used to say "see the same note on EventCreateForm". That file is
- * deleted, so the note now lives HERE and in EventsListPanel, and this is the
- * copy the two server-component routes above are covered by (T-19: the comment
- * moves with the deletion, it is not lost with it).
- *
- * React refuses to serialise a function across the server/client boundary
- * ("Functions cannot be passed directly to Client Components"), and the throw
- * happens at RENDER — so `tsc`, ESLint and `next build` all pass while every
- * authoring route 500s. That is not hypothetical: it shipped in Phase 1 and
- * killed all five of them past two review agents. Every manage URL is
- * `base/{eventID}`, so a base STRING carries everything a closure would.
- *
- * WHICH SURFACE A STATUS GETS IS DRIVEN BY `editScope`, IMPORTED — not by a hand
- * re-derivation of the same branching. That duplication is what let the client
- * and the server disagree before, and the import is what kills it.
+ * WHICH SURFACE A STATUS GETS IS DRIVEN BY `editScope`, IMPORTED, so the client
+ * and the server cannot disagree.
  */
 export default function EventManage({
   ccaID,
@@ -949,26 +357,32 @@ export default function EventManage({
   backHref: string;
   manageHrefBase?: string;
 }) {
+  const router = useRouter();
   const utils = api.useUtils();
   const query = api.event.getForOwner.useQuery({ eventID }, { retry: false });
-  // Keep the collapsible public editor state across refetches.
-  const [editingPublic, setEditingPublic] = useState(false);
-  // A message from a step that left the event in a status the reporting
-  // component no longer renders — see DetailsEditor's `onHandoff`.
+  const settings = api.event.settings.useQuery(undefined, {
+    staleTime: 60_000,
+  });
+  const [editingLive, setEditingLive] = useState(false);
   const [handoffError, setHandoffError] = useState<string | null>(null);
   useEffect(() => {
-    setEditingPublic(false);
+    setEditingLive(false);
     setHandoffError(null);
   }, [eventID]);
 
-  async function invalidate() {
+  // Every list an event appears on, so no screen shows it in its old state.
+  const invalidate = useCallback(async () => {
     await Promise.all([
       utils.event.getForOwner.invalidate({ eventID }),
       utils.event.listForOwner.invalidate({ ccaID }),
+      utils.event.listAll.invalidate(),
+      utils.event.listPublished.invalidate(),
+      utils.event.listMySignups.invalidate(),
+      utils.event.getQuestionsForOwner.invalidate({ eventID }),
     ]);
-  }
+  }, [utils, eventID, ccaID]);
 
-  if (query.isPending) {
+  if (query.isPending || settings.isPending) {
     return <div className="h-64 animate-pulse rounded-lg bg-gray-200" />;
   }
   if (query.error || !query.data) {
@@ -993,7 +407,9 @@ export default function EventManage({
     );
   }
 
-  const event = query.data.event;
+  const { event, signupCount } = query.data;
+  // An unreadable flag is treated as off, matching the server.
+  const reviewRequired = settings.data?.reviewRequired ?? false;
   const status: EventStatus = event.status;
   const meta = STATUS_META[status];
   const scope = editScope(status);
@@ -1044,27 +460,34 @@ export default function EventManage({
                 <p className="mt-0.5">{event.decisionReason}</p>
               )}
               <p className="mt-1 text-xs text-orange-700">
-                Edit below and submit again.
+                Edit below and {reviewRequired ? "submit" : "publish"} again.
               </p>
             </div>
           )}
           <DetailsEditor
             event={event}
-            isHallEvent={isHallEvent}
+            reviewRequired={reviewRequired}
             onInvalidate={invalidate}
             onHandoff={setHandoffError}
           />
-          <div className="border-t border-gray-100 pt-4">
-            <CancelEventButton event={event} onInvalidate={invalidate} />
+          <div className="flex flex-wrap items-start gap-3 border-t border-gray-100 pt-4">
+            {isDeletableDraft(event, signupCount) ? (
+              <DeleteDraftButton
+                event={event}
+                onDeleted={async () => {
+                  await invalidate();
+                  router.push(backHref);
+                }}
+              />
+            ) : (
+              <CancelEventButton event={event} onInvalidate={invalidate} />
+            )}
           </div>
         </div>
       )}
 
-      {/* THE DOOR SECTION, MOUNTED ONCE AND OUTSIDE BOTH BRANCHES.
-          Visible while the event is editable AND once it is published, because
-          the check-in window and the door list are the two things a head needs
-          to change on the day — everything else stays frozen at approval. One
-          mount rather than one per branch, so the two cannot drift. */}
+      {/* THE DOOR SECTION, MOUNTED ONCE AND OUTSIDE BOTH BRANCHES, so the
+          editable and live surfaces cannot drift. */}
       {(scope === "all" || status === "published") && (
         <EventDoorSection
           eventID={event.eventID}
@@ -1079,17 +502,9 @@ export default function EventManage({
         />
       )}
 
-      {/* SUBMITTED — READ-ONLY. The panel REPLACES the editor; it does not sit
-          above one. Leaving DetailsEditor mounted here would give the head a
-          form the server refuses every save from, with EVENT_LOCKED. */}
+      {/* SUBMITTED — READ-ONLY. The panel REPLACES the editor. */}
       {status === "submitted" && (
         <div className="space-y-4">
-          {/* The half-completed "Register and publish" (hall events). It is
-              reported HERE rather than in DetailsEditor because DetailsEditor
-              is gone by the time it is true — see its `onHandoff` prop. The
-              link is not decoration: this panel offers Withdraw and Cancel and
-              NO publish control, so "try publishing again" has to point
-              somewhere that actually has the button. */}
           {handoffError && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
               <p className="text-sm text-red-800">{handoffError}</p>
@@ -1108,8 +523,9 @@ export default function EventManage({
               Submitted — waiting for JCRC review.
             </p>
             <p className="mt-1 text-sm text-amber-700">
-              You can&rsquo;t edit it while it&rsquo;s in the queue. Need to
-              change something? Withdraw it, edit, and submit again.
+              {reviewRequired
+                ? "You can’t edit it while it’s in the queue. Need to change something? Withdraw it, edit, and submit again."
+                : "JCRC review has since been switched off. Withdraw it to edit and publish it yourself."}
             </p>
           </div>
           <WithdrawButton event={event} onInvalidate={invalidate} />
@@ -1119,7 +535,7 @@ export default function EventManage({
         </div>
       )}
 
-      {/* PUBLISHED — monitor + narrowed edit. */}
+      {/* PUBLISHED — monitor + live edit. */}
       {status === "published" && (
         <div className="space-y-8">
           <AutoBookingNotice event={event} />
@@ -1131,16 +547,8 @@ export default function EventManage({
             <EventAnalytics eventID={event.eventID} />
           </section>
 
-          {/* SEPARATE SECTION, SEPARATE QUERY. The signup charts above are
-              Phase 1 behaviour and keep working with the door layer off;
-              folding turnout into them would make them fail together. This
-              renders NOTHING at all when attendance is switched off — a zero
-              would be a claim, and "we weren't counting" is a different fact
-              from "nobody came" — and NO WRAPPER ELEMENT HERE, deliberately.
-              An empty <section> is still a child of this space-y-8 stack, so
-              wrapping a component that renders null would open a blank 2rem
-              gap between Signups and Attendees in the flag-off state, which is
-              the state this ships in. The component brings its own section. */}
+          {/* NO WRAPPER: renders nothing with attendance off, and an empty
+              <section> would open a blank gap in this stack. */}
           <EventAttendanceStats eventID={event.eventID} />
 
           <section>
@@ -1159,20 +567,23 @@ export default function EventManage({
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => setEditingPublic((v) => !v)}
+                onClick={() => setEditingLive((v) => !v)}
               >
-                {editingPublic ? "Close" : "Edit details"}
+                {editingLive ? "Close" : "Edit details"}
               </Button>
             </div>
             <p className="mb-3 text-sm text-gray-500">
-              This event is live. You can still change the banner, photos and
-              public description — the date, location and capacity are fixed
-              now.
+              This event is live. You can change the time, place, capacity,
+              banner, photos and public description; the name and internal
+              description stay as published.
             </p>
-            {editingPublic && (
-              <PublicEditor event={event} onInvalidate={invalidate} />
+            {editingLive && (
+              <EventLiveEditor event={event} onInvalidate={invalidate} />
             )}
           </section>
+
+          {/* Locks itself once anyone signs up (or while review is on). */}
+          <EventQuestionBuilder eventID={event.eventID} />
 
           <div className="flex flex-wrap items-start gap-3 border-t border-gray-100 pt-4">
             <DuplicateButton
@@ -1222,8 +633,14 @@ export default function EventManage({
               <p className="text-sm font-medium text-gray-900">
                 This event was cancelled.
               </p>
+              {event.decisionReason && (
+                <p className="mt-1 text-sm text-gray-700">
+                  Reason: {event.decisionReason}
+                </p>
+              )}
               <p className="mt-1 text-sm text-gray-500">
-                It no longer appears on the residents’ timeline.
+                It&rsquo;s off the residents&rsquo; timeline. People who signed
+                up still see it, marked cancelled, in their own events.
               </p>
             </div>
           </div>

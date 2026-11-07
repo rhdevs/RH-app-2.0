@@ -44,7 +44,8 @@ const ROLE_LABEL: Record<string, string> = {
   admin: "Admin",
   jcrc: "JCRC",
   cca_head: "CCA Head",
-  scrc: "Hall Office",
+  scrc: "SCRC (RFs)",
+  hall_office: "Hall Office",
 };
 
 /**
@@ -62,7 +63,8 @@ const LOCKED_REASON: Record<string, string> = {
   // everyone including admins. The server answers USE_CCA_HEAD_ENDPOINT.
   cca_head:
     "CCA headship is managed from the CCAs surface, so the scoped record stays in sync.",
-  scrc: "Only an admin can grant or remove the Hall Office role.",
+  scrc: "Only an admin can grant or remove the SCRC (RFs) role.",
+  hall_office: "Only an admin can grant or remove the Hall Office role.",
 };
 
 export default function ManageRolesDialog({
@@ -147,7 +149,13 @@ export default function ManageRolesDialog({
       // matric for ~515 rows and a grant keyed on it creates a row no session
       // will ever match (I-1).
       userID: targetUserID,
-      roles: selected as ("admin" | "jcrc" | "cca_head" | "scrc")[],
+      roles: selected as (
+        | "admin"
+        | "jcrc"
+        | "cca_head"
+        | "scrc"
+        | "hall_office"
+      )[],
       reason: reason.trim() || undefined,
     });
   };

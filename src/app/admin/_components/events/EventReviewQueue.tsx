@@ -11,9 +11,12 @@ import { ownerLabel } from "~/lib/schemas/event";
  * The JCRC review queue: events awaiting a decision, oldest first. Rows link to
  * the detail page where the full event is reviewed and approved, sent back for
  * changes, or declined. NOT a guard — listForReview is roleManagerProcedure.
+ *
+ * Hidden while `events.review.required` is off and the queue is empty.
  */
 export default function EventReviewQueue() {
   const list = api.event.listForReview.useQuery(undefined, { retry: false });
+  const settings = api.event.settings.useQuery(undefined, { retry: false });
 
   if (list.isPending) {
     return <div className="h-48 animate-pulse rounded-xl bg-gray-200" />;
@@ -31,6 +34,11 @@ export default function EventReviewQueue() {
   }
 
   const events = list.data.events;
+  // With review switched off nothing new arrives here, so the queue only
+  // shows while something submitted before the switch is still waiting.
+  if (settings.data?.reviewRequired === false && events.length === 0) {
+    return null;
+  }
 
   return (
     <div className="space-y-6">

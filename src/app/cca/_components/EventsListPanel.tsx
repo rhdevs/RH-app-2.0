@@ -52,6 +52,12 @@ export default function EventsListPanel({
 }) {
   const router = useRouter();
   const list = api.event.listForOwner.useQuery({ ccaID }, { retry: false });
+  const settings = api.event.settings.useQuery(undefined, {
+    retry: false,
+    staleTime: 60_000,
+  });
+  // Unreadable means off, as on the server.
+  const reviewRequired = settings.data?.reviewRequired ?? false;
 
   // A BARE create — no fields at all. The server reuses this caller's existing
   // blank draft for this scope rather than making a second one (D-30), so
@@ -144,9 +150,9 @@ export default function EventsListPanel({
               approves back to back. Promising a review that will not happen is
               the same copy-drift class the rest of this file guards against. */}
           <p className="mt-1 text-sm text-gray-500">
-            {ccaID == null
-              ? "Add the event’s details, a banner and a description, then register and publish it."
-              : "Add your event’s details, a banner and a description, and JCRC will review it."}
+            {reviewRequired && ccaID != null
+              ? "Add your event’s details, a banner and a description, and JCRC will review it."
+              : "Add the event’s details, a banner and a description, then publish it."}
           </p>
         </div>
       ) : (
@@ -201,7 +207,9 @@ export default function EventsListPanel({
                     {e.status === "draft" && (
                       <p className="mt-1 text-xs font-medium text-emerald-700">
                         {e.title?.trim()
-                          ? "Finish and submit"
+                          ? reviewRequired
+                            ? "Finish and submit"
+                            : "Finish and publish"
                           : "Start filling this in"}
                       </p>
                     )}

@@ -30,9 +30,11 @@ import {
  *                        here: the head surface labels it "Not submitted".
  *   submitted          — with the JCRC, awaiting a decision. LOCKED: no field
  *                        save is accepted. The way out is `withdraw`.
- *   published          — approved AND live on the residents' timeline, in one
- *                        write. Banner / photos / public description stay
- *                        editable; the date, location and capacity do not.
+ *   published          — live on the residents' timeline: published by the
+ *                        head directly, or by JCRC approval while review is
+ *                        switched on. Banner / photos / public description,
+ *                        time, location and capacity stay editable; the title
+ *                        and internal description do not.
  *   changes_requested  — the JCRC wants edits; editable and resubmittable.
  *   declined           — the JCRC said no. TERMINAL, not resubmittable.
  *   canceled           — the event is not happening. TERMINAL.
@@ -369,6 +371,17 @@ export const reviewerCancelInput = z.object({
 });
 export type ReviewerCancelInput = z.input<typeof reviewerCancelInput>;
 
+/**
+ * The owner's (or any JCRC member's) cancel. The reason is shown to residents
+ * who signed up, so the server requires one once the event is published; a
+ * draft can be called off without one.
+ */
+export const cancelEventInput = z.object({
+  eventID: eventIDField,
+  reason: z.string().trim().max(EVENT_DECISION_REASON_MAX).optional(),
+});
+export type CancelEventInput = z.input<typeof cancelEventInput>;
+
 /* -------------------------------------------------------------------------- */
 /* Owner display                                                               */
 /* -------------------------------------------------------------------------- */
@@ -404,6 +417,17 @@ export function ownerLabel(
 }
 
 export const eventIdInput = z.object({ eventID: eventIDField });
+
+/**
+ * The JCRC "All events" filter. "draft" is everything not yet live (including
+ * the legacy review statuses), "published" is live and not yet over, "past" is
+ * published and over.
+ */
+export const ALL_EVENTS_FILTERS = ["draft", "published", "canceled", "past"] as const;
+export type AllEventsFilter = (typeof ALL_EVENTS_FILTERS)[number];
+export const listAllEventsInput = z.object({
+  filter: z.enum(ALL_EVENTS_FILTERS).default("published"),
+});
 
 /**
  * Sign up, optionally answering the event's custom questions.

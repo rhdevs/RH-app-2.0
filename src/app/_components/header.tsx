@@ -94,7 +94,8 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
    * cosmetic either way — /scrc/layout.tsx does the real check with a LIVE role
    * read, and every procedure behind it re-checks its own capability.
    */
-  const isScrc = roles.includes("scrc");
+  // Both staff roles (RFs and Hall Office) share the /scrc surface.
+  const isScrc = roles.includes("scrc") || roles.includes("hall_office");
 
   const navLinks = [
     { name: "Home", href: "/", icon: Home },
@@ -111,9 +112,7 @@ const Header: React.FC<HeaderProps> = ({ currentPage }) => {
     { name: "CCAs", href: "/ccas", icon: LayoutGrid },
     { name: "Events", href: "/events", icon: CalendarDays },
     ...(isCcaHead ? [{ name: "Manage CCAs", href: "/cca", icon: Users }] : []),
-    ...(isScrc
-      ? [{ name: "Hall Office", href: "/scrc", icon: Landmark }]
-      : []),
+    ...(isScrc ? [{ name: "Staff", href: "/scrc", icon: Landmark }] : []),
     ...(canReachAdmin
       ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }]
       : []),

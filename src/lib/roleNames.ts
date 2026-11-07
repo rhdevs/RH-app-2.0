@@ -23,4 +23,10 @@ export const ADMIN_ROLE = "admin" as const;
 export const JCRC_ROLE = "jcrc" as const;
 export const CCA_HEAD_ROLE = "cca_head" as const;
 export const SCRC_ROLE = "scrc" as const;
+/**
+ * Hall Office staff. Split out of `scrc` (which is now the Resident Fellows) so
+ * the two can diverge later. Today it has every RF power EXCEPT the read-only
+ * event views — event proposals go to JCRC and the RFs only.
+ */
+export const HALL_OFFICE_ROLE = "hall_office" as const;
 export const BASELINE_ROLE = "resident" as const;

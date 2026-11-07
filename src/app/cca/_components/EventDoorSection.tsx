@@ -86,6 +86,7 @@ export default function EventDoorSection({
       month: "short",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: "Asia/Singapore",
     });
 
   // Says what is true RIGHT NOW rather than restating the settings, because

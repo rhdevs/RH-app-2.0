@@ -34,6 +34,7 @@ import {
 import EventSignupQuestions, {
   type EventAnswerDraft,
 } from "~/app/events/_components/EventSignupQuestions";
+import { eventErrorMessage } from "~/app/events/_lib/eventErrors";
 
 /**
  * The resident's event page: banner, photo gallery, description and signup.
@@ -60,6 +61,7 @@ export default function EventDetail({ eventID }: { eventID: number }) {
     await Promise.all([
       utils.event.getPublic.invalidate({ eventID }),
       utils.event.listPublished.invalidate(),
+      utils.event.listMySignups.invalidate(),
     ]);
   }
 
@@ -70,20 +72,12 @@ export default function EventDetail({ eventID }: { eventID: number }) {
       setFormErrors({});
       await invalidate();
     },
-    onError: (e) =>
-      setError(
-        e.message === "MATRIC_REQUIRED"
-          ? "Add your matric number to sign up."
-          : e.message === "EVENT_FULL"
-            ? "This event just filled up."
-            : e.message === "SIGNUP_CLOSED"
-              ? "Signups have closed for this event."
-              : e.message === "ANSWERS_INVALID"
-                ? "Some answers need fixing — check the form above."
-                : "That didn’t work. Try again.",
-      ),
+    onError: (e) => setError(eventErrorMessage(e, "That didn’t work. Try again.")),
   });
-  const cancel = api.event.cancelSignup.useMutation({ onSuccess: invalidate });
+  const cancel = api.event.cancelSignup.useMutation({
+    onSuccess: invalidate,
+    onError: (e) => setError(eventErrorMessage(e, "That didn’t work. Try again.")),
+  });
 
   if (query.isPending) {
     return (

@@ -930,6 +930,12 @@ model Event {
   /// time, so no booking was made — surfaced to the head to book manually. The
   /// event is still approved (approval is never blocked on a booking clash).
   autoBookFailed    Boolean?
+  /// When a live event's time or place last changed. Residents who signed up
+  /// are shown the change.
+  scheduleChangedAt DateTime?
+  /// When a JCRC member other than the owner first opened the event. Until then
+  /// the JCRC All events list marks it New.
+  jcrcSeenAt        DateTime?
 
   // Public content — entered BEFORE submission (bannerUrl and publicDescription
   // are both required to leave draft), shown to residents once published.
@@ -1417,6 +1423,68 @@ model Authenticator {
   transports           String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// JCRC POSITIONS (President, VP Internal, Sports Director (Internal), ...).
+///
+/// VIEWS ONLY, NEVER PERMISSIONS. A position sets the default "My positions"
+/// filter on JCRC lists; every JCRC member keeps every power over every CCA.
+/// Nothing in the authorization path may read these collections — see
+/// services/jcrcPositions.ts.
+///
+/// Positions and their CCA lists persist across years; only holders change.
+/// Created and edited in the UI, never seeded.
+model JcrcPosition {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String   @unique(map: "jcrcPosition_name")
+  /// e.g. President: the "My positions" view shows every CCA.
+  overseesAll Boolean  @default(false)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  createdBy   String
+  updatedAt   DateTime @default(now())
+}
+
+/// A CCA listed under a position. Many-to-many: all Sports CCAs sit under both
+/// Sports Directors.
+model JcrcPositionCca {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  positionID String   @db.ObjectId
+  ccaID      Int
+  addedAt    DateTime @default(now())
+  addedBy    String
+
+  @@unique([positionID, ccaID], map: "jcrcPositionCca_pair")
+  @@index([ccaID], map: "jcrcPositionCca_ccaID")
+}
+
+/// Who holds a position. One person may hold several; a position may be vacant.
+/// `endsAt` is set by a JCRC self-handover: the outgoing holder keeps the
+/// position until then, and every read treats a row past `endsAt` as gone.
+model JcrcPositionHolder {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  positionID   String    @db.ObjectId
+  userID       String
+  assignedAt   DateTime  @default(now())
+  assignedBy   String
+  endsAt       DateTime?
+  /// Set when this holder hands the position over. A holder may hand a
+  /// position over once; someone else must assign it again before another.
+  handedOverAt DateTime?
+
+  @@unique([positionID, userID], map: "jcrcPositionHolder_pair")
+  @@index([userID], map: "jcrcPositionHolder_userID")
+}
+
+/// The day an outgoing JCRC member's `jcrc` role ends, set when they hand over
+/// their last position. getUserRoles drops `jcrc` from the LIVE role set from
+/// `endsAt` onwards; sweepEndedJcrcTerms then removes it from UserRole with an
+/// audit row.
+model JcrcTerm {
+  id     String   @id @default(auto()) @map("_id") @db.ObjectId
+  userID String   @unique(map: "jcrcTerm_userID")
+  endsAt DateTime
+  setAt  DateTime @default(now())
 }
 
 // ---------------------------------------------------------------------------
