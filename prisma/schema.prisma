@@ -1840,8 +1840,11 @@ model DisposableRequest {
 // director keeps a list of hall equipment; an event's leaders ask to borrow some
 // of it for a window; the director approves, rejects or cancels. NEW models
 // only: no existing model is touched. Behind `equipment.enabled` (default off).
-// Not year-based: deliberately NO `academicYear` field. No index script: the
-// two indexes below are on small collections and are created by `db push`.
+// Not year-based: deliberately NO `academicYear` field. Indexes: run `prisma
+// generate` only, NEVER `db push` (on this cluster a push drops indexes the
+// schema cannot express, such as User.email_unique_ci); then run
+// scripts/remediation/create-equipment-indexes.mjs (dry run by default,
+// --commit to apply) before switching `equipment.enabled` on.
 // ---------------------------------------------------------------------------
 
 /// One line of a loan: an item and how many of it.

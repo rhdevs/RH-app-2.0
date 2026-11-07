@@ -3,7 +3,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { parseShortMessage } from "~/lib/equipment/stock";
 import { isLocalDevDatabase } from "../transcript/__tests__/localDbGate";
-import { EV, U, errorOf, makeKit, win, type Kit } from "./equipmentKit";
+import {
+  EV,
+  HOUR,
+  U,
+  errorOf,
+  makeKit,
+  nowSeconds,
+  win,
+  type Kit,
+} from "./equipmentKit";
 
 /**
  * INTEGRATION TESTS of the stock rule (A68) against the LOCAL development
@@ -310,6 +319,83 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe(5);
         const ok = await lower(3);
         expect(ok.quantity).toBe(3);
+      });
+
+      /** A loan whose return time has passed and that is collected but not returned. */
+      const overdueCollected = async (itemID: string, quantity: number) => {
+        const loan = await k.file([{ itemID, quantity }], {
+          collectAt: nowSeconds() - 10 * HOUR,
+          returnAt: nowSeconds() - 2 * HOUR,
+        });
+        await approve(loan.id);
+        await k.as(U.social).collect({ id: loan.id, version: 1 });
+        return loan;
+      };
+
+      it("a collected loan past its return time still holds stock until it is returned", async () => {
+        const item = await k.makeItem("Tents", 3);
+        const late = await overdueCollected(item.id, 3);
+        // The kit is out and it is now: a loan running across this moment cannot have it.
+        const across = await k.file([{ itemID: item.id, quantity: 1 }], {
+          collectAt: nowSeconds() - HOUR,
+          returnAt: nowSeconds() + 2 * HOUR,
+        });
+        expect((await errorOf(approve(across.id))).startsWith(SHORT)).toBe(
+          true,
+        );
+        expect((await k.stored(across.id)).status).toBe("requested");
+
+        // Returned, the kit is back and the same approval goes through.
+        await k
+          .as(U.social)
+          .markReturned({ id: late.id, version: 2, url: null });
+        await approve(across.id);
+        expect((await k.stored(across.id)).status).toBe("approved");
+      });
+
+      it("an approved loan past its return time that was never collected holds nothing", async () => {
+        const item = await k.makeItem("Chairs", 3);
+        const late = await k.file([{ itemID: item.id, quantity: 3 }], {
+          collectAt: nowSeconds() - 10 * HOUR,
+          returnAt: nowSeconds() - 2 * HOUR,
+        });
+        await approve(late.id);
+        const across = await k.file([{ itemID: item.id, quantity: 1 }], {
+          collectAt: nowSeconds() - HOUR,
+          returnAt: nowSeconds() + 2 * HOUR,
+        });
+        await approve(across.id);
+        expect((await k.stored(across.id)).status).toBe("approved");
+      });
+
+      it("refuses to lower the count below an overdue collected loan, and allows exactly that much", async () => {
+        const item = await k.makeItem("Gazebos", 5);
+        const late = await overdueCollected(item.id, 3);
+        const row = await db.equipmentItem.findUniqueOrThrow({
+          where: { id: item.id },
+        });
+        const lower = (quantity: number, version = row.version) =>
+          k.as(U.social).updateItem({
+            id: item.id,
+            version,
+            name: "TEST Gazebos",
+            note: "",
+            quantity,
+          });
+        expect((await errorOf(lower(2))).startsWith(SHORT)).toBe(true);
+        expect(
+          (await db.equipmentItem.findUniqueOrThrow({ where: { id: item.id } }))
+            .quantity,
+        ).toBe(5);
+        expect((await lower(3)).quantity).toBe(3);
+        // Once it is returned, the count may go down further.
+        await k
+          .as(U.social)
+          .markReturned({ id: late.id, version: 2, url: null });
+        const after = await db.equipmentItem.findUniqueOrThrow({
+          where: { id: item.id },
+        });
+        expect((await lower(1, after.version)).quantity).toBe(1);
       });
 
       it("filing holds no stock but warns when the items look short", async () => {

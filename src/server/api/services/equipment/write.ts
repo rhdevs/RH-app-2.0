@@ -86,6 +86,7 @@ function assertWindowLength(input: CreateInput): void {
 async function checkLines(
   db: FilingDb,
   input: CreateInput,
+  now: Date,
 ): Promise<{ items: Map<string, StockItem>; warnings: ShortDetail[] }> {
   const rows = await db.equipmentItem.findMany({
     where: { id: { in: input.lines.map((l) => l.itemID) } },
@@ -102,6 +103,7 @@ async function checkLines(
     lines: input.lines,
     window: { collectAt: input.collectAt, returnAt: input.returnAt },
     items,
+    nowSeconds: Math.floor(now.getTime() / 1000),
   });
   return { items, warnings };
 }
@@ -120,7 +122,7 @@ export async function previewLoan(
   await resolveFiling(db, userID, input.eventID, now);
   assertWindowLength(input);
   await assertWithinLimit("check", userID);
-  const { warnings } = await checkLines(db, input);
+  const { warnings } = await checkLines(db, input, now);
   return { warnings };
 }
 
@@ -140,7 +142,7 @@ export async function fileLoan(
   const event = await resolveFiling(db, userID, input.eventID, now);
   assertWindowLength(input);
   await assertWithinLimit("file", userID);
-  const { warnings } = await checkLines(db, input);
+  const { warnings } = await checkLines(db, input, now);
   // Every optional field is written explicitly: a missing key never matches a
   // null or false filter on MongoDB. `status` takes the schema default.
   const created = await db.equipmentLoan.create({

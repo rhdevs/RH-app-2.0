@@ -1,11 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 
 import { eventStateOf } from "~/lib/disposables/events";
-import {
-  holdsStockFor,
-  STOCK_HOLDING_STATUSES,
-  type LoanStatus,
-} from "~/lib/equipment/status";
+import { holdsStockFor, type LoanStatus } from "~/lib/equipment/status";
 import {
   findShortfall,
   type HeldLoan,
@@ -18,8 +14,9 @@ import {
  * loan that has not been collected holds it only while its event is not
  * canceled or declined; that is worked out here, when read, and the event
  * router is not touched. A loan whose event row is gone still holds (the event
- * may have been deleted by mistake). An overdue loan holds only inside its own
- * window.
+ * may have been deleted by mistake). An overdue APPROVED loan holds only inside
+ * its own window; an overdue COLLECTED one is still out, so it holds until it
+ * is actually returned: its end is `max(returnAt, now)` (`heldUntil`).
  *
  * Every function takes the client it should read with: callers that need the
  * answer to be safe against a concurrent approval pass the TRANSACTION client
@@ -31,19 +28,39 @@ export type StockDb = Pick<PrismaClient, "equipmentLoan" | "event">;
 export type Line = { itemID: string; quantity: number };
 export type Window = { collectAt: number; returnAt: number };
 
+/**
+ * Where a holding loan's hold ends. A collected loan is physically out until
+ * it is returned, so past its return time it keeps holding up to now; any
+ * other holding loan ends at its return time.
+ */
+export const heldUntil = (
+  loan: { status: string; returnAt: number },
+  nowSeconds: number,
+): number =>
+  loan.status === "collected"
+    ? Math.max(loan.returnAt, nowSeconds)
+    : loan.returnAt;
+
 type HoldingLoan = Window & { id: string; eventID: number; lines: Line[] };
 
-/** Loans holding stock whose window meets `window` (holdsStockFor decides). */
+/**
+ * Loans holding stock whose hold meets `window` (holdsStockFor decides). A
+ * collected loan is read whatever its return time says, and comes back with
+ * its end moved to `heldUntil`, so the stock rule sees it as still out.
+ */
 export async function holdingLoans(
   db: StockDb,
   window: Window,
   excludeLoanID: string | null,
+  nowSeconds: number,
 ): Promise<HoldingLoan[]> {
   const rows = await db.equipmentLoan.findMany({
     where: {
-      status: { in: [...STOCK_HOLDING_STATUSES] },
       collectAt: { lt: window.returnAt },
-      returnAt: { gt: window.collectAt },
+      OR: [
+        { status: "approved", returnAt: { gt: window.collectAt } },
+        { status: "collected" },
+      ],
       ...(excludeLoanID !== null && { id: { not: excludeLoanID } }),
     },
     select: {
@@ -55,7 +72,10 @@ export async function holdingLoans(
       lines: { select: { itemID: true, quantity: true } },
     },
   });
-  return withoutReleased(db, rows);
+  const held = rows
+    .map((r) => ({ ...r, returnAt: heldUntil(r, nowSeconds) }))
+    .filter((r) => r.returnAt > window.collectAt);
+  return withoutReleased(db, held);
 }
 
 /** Drop the loans that no longer hold: approved ones whose event closed. */
@@ -146,9 +166,15 @@ export async function stockProblems(
     lines: readonly Line[];
     window: Window;
     items: ReadonlyMap<string, StockItem>;
+    nowSeconds: number;
   },
 ): Promise<ShortDetail[]> {
-  const holders = await holdingLoans(db, input.window, input.excludeLoanID);
+  const holders = await holdingLoans(
+    db,
+    input.window,
+    input.excludeLoanID,
+    input.nowSeconds,
+  );
   const problems: ShortDetail[] = [];
   for (const line of input.lines) {
     const item = input.items.get(line.itemID);
@@ -171,7 +197,9 @@ export async function stockProblems(
 /**
  * Would an item's quantity fall below what approved loans already hold from
  * now on? Looks at every holding loan that has not yet ended; one that ended
- * in the past no longer needs the kit. Null means the new quantity is fine.
+ * in the past no longer needs the kit, except a collected one that has not
+ * been returned: that kit is still out, however late. Null means the new
+ * quantity is fine.
  */
 export async function overbookedBy(
   db: StockDb,
@@ -181,8 +209,10 @@ export async function overbookedBy(
 ): Promise<ShortDetail | null> {
   const rows = await db.equipmentLoan.findMany({
     where: {
-      status: { in: [...STOCK_HOLDING_STATUSES] },
-      returnAt: { gt: nowSeconds },
+      OR: [
+        { status: "approved", returnAt: { gt: nowSeconds } },
+        { status: "collected" },
+      ],
     },
     select: {
       id: true,
@@ -193,9 +223,12 @@ export async function overbookedBy(
       lines: { select: { itemID: true, quantity: true } },
     },
   });
-  const holders = (await withoutReleased(db, rows)).filter((h) =>
-    h.lines.some((l) => l.itemID === item.id),
-  );
+  const holders = (
+    await withoutReleased(
+      db,
+      rows.map((r) => ({ ...r, returnAt: heldUntil(r, nowSeconds) })),
+    )
+  ).filter((h) => h.lines.some((l) => l.itemID === item.id));
   if (holders.length === 0) return null;
   const window = {
     collectAt: Math.min(...holders.map((h) => h.collectAt)),

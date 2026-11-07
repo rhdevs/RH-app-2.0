@@ -151,6 +151,33 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await k.as(U.resident).entry()).toEqual({ show: false });
       });
 
+      it("is read once and kept for a short while, until the cache is reset", async () => {
+        await k.setFlag("equipment.enabled", "on");
+        expect(await k.as(U.headA).entry()).toEqual({ show: true });
+        // Switched off behind the cache's back: the row is not read again yet.
+        await db.systemFlag.update({
+          where: { key: "equipment.enabled" },
+          data: { value: "off" },
+        });
+        expect(await k.as(U.headA).entry()).toEqual({ show: true });
+        expect((await k.as(U.headA).enabled()).enabled).toBe(true);
+        k.resetEquipmentFlagCache();
+        expect(await k.as(U.headA).entry()).toEqual({ show: false });
+        expect((await k.as(U.headA).enabled()).enabled).toBe(false);
+      });
+
+      it("does not keep a failed read, so an outage is not stretched", async () => {
+        const { isEquipmentEnabled } = await import(
+          "~/server/api/services/equipment/flag"
+        );
+        await k.setFlag("equipment.enabled", "on");
+        const down = {
+          systemFlag: { findUnique: () => Promise.reject(new Error("down")) },
+        };
+        expect(await isEquipmentEnabled(down as never)).toBe(false);
+        expect(await isEquipmentEnabled(db)).toBe(true);
+      });
+
       it("refuses EVERY other procedure while off, and writes nothing", async () => {
         const item = await k.makeItem("Off", 3);
         const loan = await k.file(
@@ -1142,6 +1169,80 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         await s.collect({ id: loan.id, version: 1 });
         await s.markReturned({ id: loan.id, version: 2, url: null });
         expect(await digestFor(U.social)).toHaveLength(0);
+      });
+    });
+
+    describe("account deletion", () => {
+      it("clears the requester, decider, returner and canceler from loans, and leaves everyone else's names", async () => {
+        const { loadAdminUserTarget, deleteUserAccountCascade } = await import(
+          "../userAdmin"
+        );
+        const emails = ["e9994101@u.nus.edu", "e9994104@u.nus.edu"];
+        try {
+          const requester = await db.user.create({
+            data: { email: emails[0]!, userID: U.headA },
+          });
+          const director = await db.user.create({
+            data: { email: emails[1]!, userID: U.social },
+          });
+          const item = await k.makeItem("Gone", 20);
+          const s = k.as(U.social);
+          const filed = (by = U.headA, eventID = EV.a) =>
+            k.file([{ itemID: item.id, quantity: 1 }], win(0, 5), {
+              by,
+              eventID,
+            });
+          // Returned: filed by headA, decided and returned by the director.
+          const returned = await filed();
+          await s.approve({ id: returned.id, version: 0 });
+          await s.collect({ id: returned.id, version: 1 });
+          await s.markReturned({ id: returned.id, version: 2, url: null });
+          // Canceled by the director.
+          const canceled = await filed();
+          await s.approve({ id: canceled.id, version: 0 });
+          await s.cancel({ id: canceled.id, version: 1, reason: "Clash" });
+          // Someone else's loan, decided by the director.
+          const theirs = await filed(U.headB, EV.b);
+          await s.approve({ id: theirs.id, version: 0 });
+
+          const first = await deleteUserAccountCascade(
+            db,
+            await loadAdminUserTarget(db, requester.id),
+            U.admin,
+          );
+          expect(first.deleted).toMatchObject({ equipmentRequesterCleared: 2 });
+          const second = await deleteUserAccountCascade(
+            db,
+            await loadAdminUserTarget(db, director.id),
+            U.admin,
+          );
+          expect(second.deleted).toMatchObject({
+            equipmentDeciderCleared: 3,
+            equipmentReturnerCleared: 1,
+            equipmentCancellerCleared: 1,
+          });
+
+          expect(await k.stored(returned.id)).toMatchObject({
+            requestedBy: null,
+            decidedBy: null,
+            returnedBy: null,
+            status: "returned",
+          });
+          expect(await k.stored(canceled.id)).toMatchObject({
+            requestedBy: null,
+            decidedBy: null,
+            canceledBy: null,
+            cancelReason: "Clash",
+            status: "canceled",
+          });
+          expect(await k.stored(theirs.id)).toMatchObject({
+            requestedBy: U.headB,
+            decidedBy: null,
+            status: "approved",
+          });
+        } finally {
+          await db.user.deleteMany({ where: { email: { in: emails } } });
+        }
       });
     });
   },

@@ -63,6 +63,7 @@ const bad = (message: string) =>
 async function approvalGuard(
   tx: Prisma.TransactionClient,
   loan: LoanRow,
+  nowSeconds: number,
 ): Promise<void> {
   if (
     !Number.isInteger(loan.collectAt) ||
@@ -96,6 +97,7 @@ async function approvalGuard(
     lines: loan.lines,
     window: { collectAt: loan.collectAt, returnAt: loan.returnAt },
     items,
+    nowSeconds,
   });
   if (problems[0]) {
     throw new TRPCError({
@@ -114,6 +116,7 @@ export async function approveLoan(
   db: DecideDb,
   userID: string,
   input: z.infer<typeof loanApproveInput>,
+  now: Date = new Date(),
 ): Promise<{ id: string }> {
   await assertDirector(db, userID);
   await assertWithinLimit("approve", userID);
@@ -129,7 +132,11 @@ export async function approveLoan(
       actorID: userID,
       decision: { reason: null, directorNote: input.directorNote },
     },
-    { guard: approvalGuard, retryConflicts: true },
+    {
+      guard: (tx, row) =>
+        approvalGuard(tx, row, Math.floor(now.getTime() / 1000)),
+      retryConflicts: true,
+    },
   );
   await noticeDecision(db, "approved", moved, userID, input.directorNote);
   return { id: moved.id };
