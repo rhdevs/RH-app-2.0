@@ -103,6 +103,34 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
 
     const JCRC = ["resident", "jcrc"];
 
+    /** Runs `fn` with the Staff-page switch set, then puts it back. */
+    const withScrc = async (value: "on" | "off", fn: () => Promise<void>) => {
+      const { resetScrcFlagCache } = await import(
+        "~/server/api/services/scrcFlag"
+      );
+      const key = "scrc.enabled";
+      const before = await db.systemFlag.findUnique({ where: { key } });
+      await db.systemFlag.upsert({
+        where: { key },
+        create: { key, value },
+        update: { value },
+      });
+      resetScrcFlagCache();
+      try {
+        await fn();
+      } finally {
+        if (before) {
+          await db.systemFlag.update({
+            where: { key },
+            data: { value: before.value },
+          });
+        } else {
+          await db.systemFlag.deleteMany({ where: { key } });
+        }
+        resetScrcFlagCache();
+      }
+    };
+
     beforeAll(async () => {
       ({ db } = await import("~/server/db"));
       ({ createCaller } = await import("~/server/api/root"));
@@ -195,13 +223,30 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       expect((await me.mine()).scope).toBe("all");
     });
 
-    it("refuses residents and RFs", async () => {
+    it("refuses residents, and lets staff set holders but nothing else", async () => {
       expect(await errorOf(as(USERS.successor, ["resident"]).list())).toBe(
         "FORBIDDEN:INSUFFICIENT_ROLE",
       );
-      expect(await errorOf(as(USERS.rf, ["resident", "scrc"]).list())).toBe(
-        "FORBIDDEN:INSUFFICIENT_ROLE",
-      );
+      const rf = as(USERS.rf, ["resident", "scrc"]);
+      const id = await makePosition("Staff view", [9002]);
+      await withScrc("off", async () => {
+        expect(await errorOf(rf.list())).toBe("FORBIDDEN:SCRC_DISABLED");
+        expect(
+          await errorOf(rf.addHolder({ id, userID: USERS.outgoing })),
+        ).toBe("FORBIDDEN:SCRC_DISABLED");
+      });
+      await withScrc("on", async () => {
+        expect((await rf.list()).some((p) => p.id === id)).toBe(true);
+        expect((await rf.jcrcMembers()).map((m) => m.userID)).toContain(
+          USERS.outgoing,
+        );
+        await rf.addHolder({ id, userID: USERS.outgoing });
+        await rf.removeHolder({ id, userID: USERS.outgoing });
+        expect(await errorOf(rf.create({ name: "TEST nope" }))).toBe(
+          "FORBIDDEN:INSUFFICIENT_ROLE",
+        );
+        expect(await errorOf(rf.mine())).toBe("FORBIDDEN:INSUFFICIENT_ROLE");
+      });
     });
 
     it("lists current JCRC members as holder candidates, and nobody else", async () => {
@@ -223,6 +268,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const me = as(USERS.outgoing, JCRC);
         const id = await makePosition("Welfare", [9004]);
         await assign(id, USERS.outgoing);
+        expect((await me.mine()).positions[0]?.canHandOver).toBe(true);
 
         const stepOutAt = new Date(Date.now() + 7 * DAY);
         const result = await me.handOver({
@@ -311,27 +357,34 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(mine.positions.map((p) => p.id)).toEqual([b]);
       });
 
-      it("moves and cancels a pending step-out", async () => {
+      it("only brings a pending step-out forward, never cancels or delays it", async () => {
         const me = as(USERS.outgoing, JCRC);
         const id = await makePosition("VP Internal", [9009]);
         await assign(id, USERS.outgoing);
         await me.handOver({
           positionIDs: [id],
           successorIDs: [USERS.successor],
-          stepOutAt: new Date(Date.now() + DAY),
+          stepOutAt: new Date(Date.now() + 3 * DAY),
         });
-        const later = new Date(Date.now() + 3 * DAY);
-        expect((await me.setStepOut({ stepOutAt: later })).termEndsAt).toEqual(
-          later,
+        expect(
+          await errorOf(
+            me.setStepOut({ stepOutAt: new Date(Date.now() + 5 * DAY) }),
+          ),
+        ).toBe("FORBIDDEN:STEP_OUT_ONLY_EARLIER");
+
+        const sooner = new Date(Date.now() + DAY);
+        expect((await me.setStepOut({ stepOutAt: sooner })).termEndsAt).toEqual(
+          sooner,
         );
         expect(
-          (await me.setStepOut({ stepOutAt: null })).termEndsAt,
-        ).toBeNull();
-        expect(
-          await db.jcrcTerm.findUnique({ where: { userID: USERS.outgoing } }),
-        ).toBeNull();
-        expect(await errorOf(me.setStepOut({ stepOutAt: null }))).toBe(
-          "FORBIDDEN:NO_STEP_OUT_PENDING",
+          (await db.jcrcTerm.findUnique({ where: { userID: USERS.outgoing } }))
+            ?.endsAt,
+        ).toEqual(sooner);
+
+        await me.setStepOut({ stepOutAt: new Date(Date.now() - 60_000) });
+        expect(await rolesOf(USERS.outgoing)).not.toContain("jcrc");
+        expect(await errorOf(me.setStepOut({ stepOutAt: new Date() }))).toMatch(
+          /NO_STEP_OUT_PENDING|NOT_JCRC|UNAUTHORIZED|FORBIDDEN/,
         );
       });
 
@@ -382,15 +435,13 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           ),
         ).toBe("FORBIDDEN:SELF_ASSIGNED_POSITION");
 
-        // Assigned by someone else: one handover, then cancelling the
-        // step-out does not allow a second.
+        // Assigned by someone else: one handover only.
         await assign(id, USERS.outgoing);
         await me.handOver({
           positionIDs: [id],
           successorIDs: [USERS.successor],
           stepOutAt: step,
         });
-        await me.setStepOut({ stepOutAt: null });
         expect(
           await errorOf(
             me.handOver({
@@ -402,13 +453,87 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         ).toBe("FORBIDDEN:ALREADY_HANDED_OVER");
         expect(await rolesOf(USERS.second)).not.toContain("jcrc");
 
-        // The successor got the row from the handover, so they can hand on.
-        const next = await as(USERS.successor, JCRC).handOver({
+        // The successor's row came from the handover, not from staff, so
+        // they cannot pass it straight on.
+        const successor = as(USERS.successor, JCRC);
+        expect(
+          await errorOf(
+            successor.handOver({
+              positionIDs: [id],
+              successorIDs: [USERS.second],
+              stepOutAt: step,
+            }),
+          ),
+        ).toBe("FORBIDDEN:POSITION_NOT_STAFF_ASSIGNED");
+        expect(await rolesOf(USERS.second)).not.toContain("jcrc");
+
+        // Once an RF assigns it to them, they can.
+        await withScrc("on", async () => {
+          await as(USERS.rf, ["resident", "scrc"]).addHolder({
+            id,
+            userID: USERS.successor,
+          });
+        });
+        const next = await successor.handOver({
           positionIDs: [id],
           successorIDs: [USERS.second],
           stepOutAt: step,
         });
         expect(next.granted).toEqual([USERS.second]);
+      });
+
+      it("refuses a row another JCRC member assigned", async () => {
+        const id = await makePosition("Block Comm", [9014]);
+        await db.userRole.update({
+          where: { userID: USERS.second },
+          data: { roles: JCRC },
+        });
+        await as(USERS.second, JCRC).addHolder({ id, userID: USERS.outgoing });
+        expect(
+          await errorOf(
+            as(USERS.outgoing, JCRC).handOver({
+              positionIDs: [id],
+              successorIDs: [USERS.successor],
+              stepOutAt: new Date(Date.now() + DAY),
+            }),
+          ),
+        ).toBe("FORBIDDEN:POSITION_NOT_STAFF_ASSIGNED");
+        // The page hides it from the handover list for the same reason.
+        const mine = await as(USERS.outgoing, JCRC).mine();
+        expect(mine.positions.find((p) => p.id === id)?.canHandOver).toBe(
+          false,
+        );
+        expect(await rolesOf(USERS.successor)).not.toContain("jcrc");
+      });
+
+      it("lets only one of two concurrent handovers of a row through", async () => {
+        const me = as(USERS.outgoing, JCRC);
+        const id = await makePosition("Concurrent", [9003]);
+        await assign(id, USERS.outgoing);
+        const step = new Date(Date.now() + DAY);
+        const results = await Promise.all([
+          errorOf(
+            me.handOver({
+              positionIDs: [id],
+              successorIDs: [USERS.successor],
+              stepOutAt: step,
+            }),
+          ),
+          errorOf(
+            me.handOver({
+              positionIDs: [id],
+              successorIDs: [USERS.second],
+              stepOutAt: step,
+            }),
+          ),
+        ]);
+        expect(results.filter((r) => r === "ok")).toHaveLength(1);
+        expect(results).toContain("FORBIDDEN:ALREADY_HANDED_OVER");
+        const granted = [
+          (await rolesOf(USERS.successor)).includes("jcrc"),
+          (await rolesOf(USERS.second)).includes("jcrc"),
+        ];
+        expect(granted.filter(Boolean)).toHaveLength(1);
       });
 
       it("a re-assigned position clears a step-out left over from a handover", async () => {
