@@ -148,6 +148,19 @@ export default function PositionCard({
                     Social director
                   </span>
                 )}
+                {position.vacant === true && (
+                  <span
+                    role="status"
+                    className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900"
+                  >
+                    Vacant: no current holder with JCRC
+                  </span>
+                )}
+                {position.vacant === null && (
+                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">
+                    Vacancy unknown
+                  </span>
+                )}
                 <span className="text-gray-500">
                   Locked: only an admin, an RF or the Hall Office can change its
                   name, CCAs or holders.

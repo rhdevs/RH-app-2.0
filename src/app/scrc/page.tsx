@@ -1,17 +1,29 @@
 "use client";
 
 import { useState } from "react";
-import { CalendarCheck, Network, ShieldCheck, Users2 } from "lucide-react";
+import {
+  CalendarCheck,
+  KeyRound,
+  Network,
+  ShieldCheck,
+  Users2,
+} from "lucide-react";
 
+import { api } from "~/trpc/react";
 import type { Capabilities } from "~/server/api/services/roles";
 import { useScrcCapabilities } from "./_components/ScrcCapabilityContext";
 import JcrcRosterPanel from "./_components/JcrcRosterPanel";
 import CcaBrowsePanel from "./_components/CcaBrowsePanel";
 import EventsOversightPanel from "./_components/EventsOversightPanel";
+import FlaggedPositionsPanel from "./_components/FlaggedPositionsPanel";
 import PositionHoldersPanel from "./_components/PositionHoldersPanel";
 
 /**
- * The Hall Office dashboard: three panels, one route.
+ * The Hall Office dashboard: up to five panels, one route (the last, the
+ * director positions, only while both `scrc.enabled` and `directors.enabled`
+ * are on). The "Positions" panel sets who holds any position, so staff can
+ * decide who may hand one over; "Director positions" is the full editor for
+ * the positions that carry director powers.
  *
  * A CLIENT component, unlike /cca/page.tsx, because there is nothing to decide
  * server-side — the layout already did the live role read and the redirect, and
@@ -67,12 +79,28 @@ const PANELS = [
   Panel: React.ComponentType;
 }[];
 
+const POSITIONS_PANEL = {
+  key: "director-positions",
+  label: "Director positions",
+  icon: KeyRound,
+  Panel: FlaggedPositionsPanel,
+} as const;
+
 export default function ScrcPage() {
   const capabilities = useScrcCapabilities();
   // `=== true` and not a truthiness test: `assignableRoles` is a (possibly
   // empty) ARRAY on this same object, and [] is truthy. A future panel keyed on
   // one of those fields would otherwise render for everyone.
-  const panels = PANELS.filter((p) => capabilities[p.requires] === true);
+  // The positions panel is shown only with scrc.enabled AND directors.enabled
+  // on (the server answers; a failed read counts as off). Not a guard: every
+  // call the panel makes is refused by the server on its own.
+  const staffPanel = api.jcrcPositionsStaff.status.useQuery(undefined, {
+    retry: false,
+  });
+  const panels = [
+    ...PANELS.filter((p) => capabilities[p.requires] === true),
+    ...(staffPanel.data?.visible === true ? [POSITIONS_PANEL] : []),
+  ];
 
   const [active, setActive] = useState(panels[0]?.key);
   const current = panels.find((p) => p.key === active) ?? panels[0];

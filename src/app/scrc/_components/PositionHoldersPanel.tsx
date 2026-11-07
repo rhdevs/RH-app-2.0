@@ -85,6 +85,9 @@ function PositionRow({
   const addHolder = api.jcrcPositions.addHolder.useMutation(done);
   const removeHolder = api.jcrcPositions.removeHolder.useMutation(done);
   const busy = addHolder.isPending || removeHolder.isPending;
+  // Staff change a position that gives director powers from the Director
+  // positions panel; this one shows it but does not edit it.
+  const readOnly = position.powers.length > 0;
 
   // A holder stepping out is offered again: re-assigning cancels the handover.
   const openIDs = position.holders
@@ -115,49 +118,58 @@ function PositionRow({
                   </span>
                 )}
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                className="shrink-0 text-gray-400 hover:text-red-600"
-                onClick={() =>
-                  removeHolder.mutate({ id: position.id, userID: h.userID })
-                }
-              >
-                Remove
-              </Button>
+              {!readOnly && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  className="shrink-0 text-gray-400 hover:text-red-600"
+                  onClick={() =>
+                    removeHolder.mutate({ id: position.id, userID: h.userID })
+                  }
+                >
+                  Remove
+                </Button>
+              )}
             </li>
           ))}
         </ul>
       )}
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <select
-          aria-label={`JCRC member to assign to ${position.name}`}
-          value={newHolder}
-          onChange={(e) => setNewHolder(e.target.value)}
-          className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm"
-        >
-          <option value="">Assign a JCRC member…</option>
-          {candidates.map((m) => (
-            <option key={m.userID} value={m.userID}>
-              {m.name} ({m.userID})
-            </option>
-          ))}
-        </select>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy || newHolder === ""}
-          onClick={() =>
-            addHolder.mutate(
-              { id: position.id, userID: newHolder },
-              { onSuccess: () => setNewHolder("") },
-            )
-          }
-        >
-          Assign
-        </Button>
-      </div>
+      {readOnly ? (
+        <p className="mt-2 text-xs text-gray-500">
+          This position gives director powers. Change it under Director
+          positions.
+        </p>
+      ) : (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <select
+            aria-label={`JCRC member to assign to ${position.name}`}
+            value={newHolder}
+            onChange={(e) => setNewHolder(e.target.value)}
+            className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm"
+          >
+            <option value="">Assign a JCRC member…</option>
+            {candidates.map((m) => (
+              <option key={m.userID} value={m.userID}>
+                {m.name} ({m.userID})
+              </option>
+            ))}
+          </select>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || newHolder === ""}
+            onClick={() =>
+              addHolder.mutate(
+                { id: position.id, userID: newHolder },
+                { onSuccess: () => setNewHolder("") },
+              )
+            }
+          >
+            Assign
+          </Button>
+        </div>
+      )}
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </li>
   );

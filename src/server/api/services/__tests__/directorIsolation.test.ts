@@ -306,6 +306,9 @@ const MAY_READ_POSITIONS = [
   "src/server/api/services/jcrcHandover.ts",
   "src/server/api/services/jcrcPositionLock.ts",
   "src/server/api/services/directorGuard.ts",
+  // The staff door: one shared edit path and the router that calls it.
+  "src/server/api/services/jcrcPositionEdits.ts",
+  "src/server/api/routers/jcrcPositionsStaff.ts",
 ];
 const POSITION_DATA =
   /\b(jcrcPosition(Cca|Holder)?|JcrcPosition(Cca|Holder)?|vetsProposals|handlesDisposables)\b/;
@@ -334,6 +337,7 @@ describe("only the positions files and the one strict guard read positions", () 
         "src/server/api/routers/jcrcPositions.ts",
         "src/server/api/services/directorGuard.ts",
         "src/server/api/services/jcrcPositionLock.ts",
+        "src/server/api/services/jcrcPositionEdits.ts",
         // endFlaggedHolderRows: ends a person's director rows when jcrc goes.
         "src/server/api/services/jcrcPositions.ts",
         "src/app/admin/positions/_components/PositionCard.tsx",

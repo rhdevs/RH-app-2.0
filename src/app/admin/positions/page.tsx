@@ -31,6 +31,8 @@ export default function AdminPositionsPage() {
     retry: false,
   });
 
+  const vacant = (list.data ?? []).filter((p) => p.vacant === true);
+
   const [name, setName] = useState("");
   const [overseesAll, setOverseesAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +59,18 @@ export default function AdminPositionsPage() {
           exception: only an admin can change it.
         </p>
       </header>
+
+      {vacant.length > 0 && (
+        <p
+          role="status"
+          className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          Vacant: {vacant.map((p) => p.name).join(", ")}. Nobody who is on the
+          JCRC holds {vacant.length === 1 ? "it" : "them"} right now, so{" "}
+          {vacant.length === 1 ? "its" : "their"} powers are off until someone
+          is added.
+        </p>
+      )}
 
       {mine.data && mine.data.positions.length > 0 && (
         <HandoverPanel mine={mine.data} />

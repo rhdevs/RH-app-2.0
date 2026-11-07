@@ -20,7 +20,6 @@ const COPY: Record<string, string> = {
     "You've already handed this position over. An RF or Hall Office has to assign it to you again first.",
   STEP_OUT_ONLY_EARLIER:
     "Your step-out date can only move earlier. To undo a handover, ask an RF or Hall Office to assign the position to you again.",
-  SCRC_DISABLED: "The Staff page is switched off right now.",
   ONE_SUCCESSOR_ONLY:
     "A position that gives director powers goes to one successor. Pick one person.",
   NEEDS_STAFF_CONFIRMATION:
@@ -41,6 +40,13 @@ const COPY: Record<string, string> = {
     "This position gives director powers, so only an admin, an RF or the Hall Office can change its name, CCAs or holders.",
   SELF_ASSIGN_FLAGGED:
     "Nobody can add themselves to a position that gives director powers, admins included. Ask someone else to add you.",
+  USE_DIRECTOR_PANEL:
+    "Positions that give director powers are set from the Director positions panel.",
+  NOT_FLAGGED:
+    "This panel only changes positions that give director powers. Use the Positions page for the others.",
+  NOT_STAFF: "Only an admin, an RF or the Hall Office can use this.",
+  SCRC_DISABLED:
+    "The Staff tools are switched off. An admin can still edit positions on the Positions page.",
   ADMIN_REQUIRED: "Only an admin can set or clear director powers.",
   DIRECTORS_DISABLED: "Director powers are switched off.",
   CONFIRMATION_STALE:
