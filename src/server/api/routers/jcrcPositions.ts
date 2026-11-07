@@ -22,6 +22,7 @@ import { isDirectorsEnabled } from "~/server/api/services/directorGuard";
 import {
   POSITION_AUDIT,
   assertMayEditFlaggedPosition,
+  assertNoListedCcaHead,
   mayEditFlaggedPosition,
   auditFlaggedChange,
   describeSnapshot,
@@ -537,6 +538,10 @@ export const jcrcPositionsRouter = createTRPCRouter({
               message: "TARGET_NOT_JCRC",
             });
           }
+          // A director who also heads a CCA the position lists would vet
+          // their own CCA's proposals.
+          if (isLocked)
+            await assertNoListedCcaHead(tx, [input.userID], [input.id]);
           await touchPosition(tx, row);
           const key = {
             positionID_userID: { positionID: input.id, userID: input.userID },
@@ -564,6 +569,9 @@ export const jcrcPositionsRouter = createTRPCRouter({
               endsAt: null,
               handedOverAt: null,
               ...(keepsMark ? {} : { assignedBy: actor }),
+              // Staff assigning again confirms a handover successor: the row
+              // can be handed over once more (services/jcrcHandover.ts).
+              ...(isLocked ? { handoverFrom: null } : {}),
               assignedAt: new Date(),
             },
           });
