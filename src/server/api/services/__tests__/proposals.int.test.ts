@@ -141,7 +141,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
       await db.jcrcPosition.deleteMany({ where: { id: { in: pids } } });
 
       await db.jcrcTerm.deleteMany({ where: { userID: { in: IDS } } });
-      await db.userRole.deleteMany({ where: { userID: { in: IDS } } });
+      await db.userRole.deleteMany({ where: { userID: { in: [...IDS, ""] } } });
       await db.notification.deleteMany({
         where: {
           OR: [{ userID: { in: IDS } }, { kind: { startsWith: "proposal." } }],
@@ -1010,6 +1010,44 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         const made = await makeDraft();
 
         await as(U.headA).submit({ id: made.id, version: 0 });
+
+        await expectStaffNotified(made.id);
+      });
+
+      it("a director who also heads the CCA does not count, so staff are told", async () => {
+        await db.ccaHead.create({ data: { userID: U.dirA, ccaID: CCA_A } });
+        const made = await makeDraft();
+
+        await as(U.headA).submit({ id: made.id, version: 0 });
+
+        await expectStaffNotified(made.id);
+      });
+
+      it("still tells a second director who does not head the CCA", async () => {
+        await db.ccaHead.create({ data: { userID: U.dirA, ccaID: CCA_A } });
+        await makeDirectorPosition("Second", [CCA_A], U.jcrc);
+        const made = await makeDraft();
+
+        await as(U.headA).submit({ id: made.id, version: 0 });
+
+        const told = await db.notification.findMany({
+          where: { kind: "proposal.submitted" },
+        });
+        expect(told.map((n) => n.userID)).toEqual([U.jcrc]);
+      });
+
+      it("a staff row with a blank user id does not stop the submit", async () => {
+        await db.userRole.create({
+          data: {
+            userID: "",
+            roles: ["admin"],
+            updatedAt: new Date(),
+            updatedBy: "test",
+          },
+        });
+        const made = await as(U.headC).create(draftInput(CCA_C));
+
+        await as(U.headC).submit({ id: made.id, version: 0 });
 
         await expectStaffNotified(made.id);
       });

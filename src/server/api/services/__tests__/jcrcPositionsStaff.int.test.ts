@@ -114,6 +114,7 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           OR: [{ positionID: { in: ids } }, { userID: { in: ALL_IDS } }],
         },
       });
+      await db.ccaHead.deleteMany({ where: { userID: { in: ALL_IDS } } });
       await db.jcrcPosition.deleteMany({ where: { id: { in: ids } } });
       await db.jcrcTerm.deleteMany({ where: { userID: { in: ALL_IDS } } });
       await db.pendingRoleGrant.deleteMany({
@@ -636,6 +637,54 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await holdersOf(position)).toEqual(
           [U.holder, U.successor].sort(),
         );
+      });
+
+      it.each(STAFF)(
+        "refuses %s adding someone who heads a CCA the position lists",
+        async (_label, userID, roles) => {
+          const position = await flagged();
+          await db.ccaHead.create({ data: { userID: U.plain, ccaID: 9002 } });
+          expect(
+            await errorOf(
+              staff(userID, roles).addHolder({ id: position, userID: U.plain }),
+            ),
+          ).toBe("FORBIDDEN:HEADS_LISTED_CCA");
+          expect(await holdersOf(position)).toEqual([U.holder]);
+          expect(await positionAudit()).toEqual([]);
+          // Heading a CCA the position does not list is fine.
+          await db.ccaHead.deleteMany({ where: { userID: U.plain } });
+          await db.ccaHead.create({ data: { userID: U.plain, ccaID: 9099 } });
+          expect(
+            await errorOf(
+              staff(userID, roles).addHolder({ id: position, userID: U.plain }),
+            ),
+          ).toBe("ok");
+        },
+      );
+
+      it("lets an RF confirm a handover successor, who can then hand on once", async () => {
+        const position = await flagged();
+        const hour = 60 * 60 * 1000;
+        await caller(U.holder, JCRC).jcrcPositions.handOver({
+          positionIDs: [position],
+          successorIDs: [U.successor],
+          stepOutAt: new Date(Date.now() + hour),
+        });
+        const handOn = () =>
+          errorOf(
+            caller(U.successor, JCRC).jcrcPositions.handOver({
+              positionIDs: [position],
+              successorIDs: [U.plain2],
+              stepOutAt: new Date(Date.now() + hour),
+            }),
+          );
+        expect(await handOn()).toBe("FORBIDDEN:NEEDS_STAFF_CONFIRMATION");
+        expect(
+          await errorOf(
+            staff(U.rf, RF).addHolder({ id: position, userID: U.successor }),
+          ),
+        ).toBe("ok");
+        expect(await handOn()).toBe("ok");
       });
     });
 
