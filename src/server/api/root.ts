@@ -13,6 +13,7 @@ import { ccaRecruitmentRouter } from "./routers/ccaRecruitment";
 import { calendarRouter } from "./routers/calendar";
 import { eventRouter } from "./routers/event";
 import { disposableRouter } from "./routers/disposable";
+import { equipmentRouter } from "./routers/equipment";
 import { milestoneRouter } from "./routers/milestone";
 import { milestoneEvidenceRouter } from "./routers/milestoneEvidence";
 import { reminderRouter } from "./routers/reminder";
@@ -84,6 +85,8 @@ export const appRouter = createTRPCRouter({
   proposal: proposalRouter,
   /** Disposable-tableware requests to the Social director, behind disposables.enabled. */
   disposable: disposableRouter,
+  /** Equipment loans for events, behind equipment.enabled. */
+  equipment: equipmentRouter,
   /** Deadline broadcasts from directors to CCA heads, behind reminders.enabled. */
   reminder: reminderRouter,
   /** Private milestone evidence photos, behind milestones.enabled. */

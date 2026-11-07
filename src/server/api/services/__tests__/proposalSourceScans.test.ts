@@ -1101,6 +1101,11 @@ describe("milestone evidence follows the same rules, and never touches the publi
     (f) =>
       GUARDED.includes(f) ||
       f.startsWith("src/app/api/milestone-evidence/") ||
+      // Equipment return photos reuse the private store and its checks (P19).
+      f.startsWith("src/app/api/equipment-return/") ||
+      f === "src/server/api/routers/equipment.ts" ||
+      f === "src/server/api/services/equipment/decide.ts" ||
+      f === "src/server/api/services/equipment/photo.ts" ||
       f === BLOB ||
       f === PANEL ||
       f === "src/app/cca/_lib/evidenceErrors.ts" ||
