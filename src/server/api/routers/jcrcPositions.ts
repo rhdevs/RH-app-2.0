@@ -86,6 +86,47 @@ async function staffOrAdmin(
   );
 }
 
+const isStaffOrAdmin = (roles: readonly string[]) =>
+  roles.includes(ADMIN_ROLE) || holdsStaffRole([...roles]);
+
+/**
+ * What a JCRC member (not staff) may not do to holder rows. Staff decide who
+ * may hand over, so a JCRC member cannot:
+ *  - change or remove a row staff or an admin assigned: re-assigning it would
+ *    strip its handover right, removing it is staff's call;
+ *  - add someone who is stepping out, to any position: an open row cancels
+ *    their step-out and keeps them on the JCRC beside their successors.
+ * Staff re-assigning is how a mistaken handover is undone.
+ */
+async function assertJcrcMayChangeRow(
+  db: PrismaClient,
+  positionID: string,
+  userID: string,
+  adding: boolean,
+): Promise<void> {
+  if (adding) {
+    const [steppingOut, term] = await Promise.all([
+      db.jcrcPositionHolder.count({
+        where: { userID, endsAt: { not: null } },
+      }),
+      db.jcrcTerm.findUnique({ where: { userID } }),
+    ]);
+    if (steppingOut > 0 || term) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "HOLDER_STEPPING_OUT",
+      });
+    }
+  }
+  const row = await db.jcrcPositionHolder.findFirst({
+    where: { positionID, userID },
+    select: { assignedBy: true },
+  });
+  if (row && (await staffOrAdmin(db, [row.assignedBy])).size > 0) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "STAFF_ASSIGNED_ROW" });
+  }
+}
+
 async function assertPositionExists(db: PrismaClient, id: string) {
   const position = await db.jcrcPosition.findUnique({ where: { id } });
   if (!position) {
@@ -354,6 +395,9 @@ export const jcrcPositionsRouter = createTRPCRouter({
         throw new TRPCError({ code: "FORBIDDEN", message: "SELF_ASSIGN" });
       }
       await assertPositionExists(ctx.db, input.id);
+      if (!isStaffOrAdmin(actorRoles)) {
+        await assertJcrcMayChangeRow(ctx.db, input.id, input.userID, true);
+      }
       const targetRoles = await getUserRoles(ctx.db, input.userID);
       if (!targetRoles.includes(JCRC_ROLE)) {
         throw new TRPCError({
@@ -387,7 +431,13 @@ export const jcrcPositionsRouter = createTRPCRouter({
   removeHolder: positionHolderProcedure
     .input(z.object({ id: objectIDSchema, userID: userIDSchema }))
     .mutation(async ({ ctx, input }) => {
-      await assertHolderManager(ctx.db, ctx.session.user.userID);
+      const actorRoles = await assertHolderManager(
+        ctx.db,
+        ctx.session.user.userID,
+      );
+      if (!isStaffOrAdmin(actorRoles)) {
+        await assertJcrcMayChangeRow(ctx.db, input.id, input.userID, false);
+      }
       await ctx.db.jcrcPositionHolder.deleteMany({
         where: { positionID: input.id, userID: input.userID },
       });

@@ -536,6 +536,135 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(granted.filter(Boolean)).toHaveLength(1);
       });
 
+      it("keeps two handovers in the same millisecond from releasing each other's claim", async () => {
+        const { handOverPositions } = await import(
+          "~/server/api/services/jcrcHandover"
+        );
+        const id = await makePosition("Same instant", [9003]);
+        await assign(id, USERS.outgoing);
+        const now = new Date();
+        const stepOutAt = new Date(now.getTime() + DAY);
+        const results = await Promise.allSettled([
+          handOverPositions(
+            db,
+            {
+              actorUserID: USERS.outgoing,
+              positionIDs: [id],
+              successorIDs: [USERS.successor],
+              stepOutAt,
+            },
+            now,
+          ),
+          handOverPositions(
+            db,
+            {
+              actorUserID: USERS.outgoing,
+              positionIDs: [id],
+              successorIDs: [USERS.second],
+              stepOutAt,
+            },
+            now,
+          ),
+        ]);
+        expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(
+          1,
+        );
+        // The winner's claim stands, so the outgoing member still steps out.
+        const row = await db.jcrcPositionHolder.findFirstOrThrow({
+          where: { positionID: id, userID: USERS.outgoing },
+        });
+        expect(row.handedOverAt?.getTime()).toBe(now.getTime());
+        expect(row.endsAt?.getTime()).toBe(stepOutAt.getTime());
+        expect(
+          (await db.jcrcTerm.findUnique({ where: { userID: USERS.outgoing } }))
+            ?.endsAt.getTime(),
+        ).toBe(stepOutAt.getTime());
+      });
+
+      it("releases the claim if the step-out can't be recorded, so a retry works", async () => {
+        const { handOverPositions } = await import(
+          "~/server/api/services/jcrcHandover"
+        );
+        const id = await makePosition("Retry", [9006]);
+        await assign(id, USERS.outgoing);
+        const input = {
+          actorUserID: USERS.outgoing,
+          positionIDs: [id],
+          successorIDs: [USERS.successor],
+          stepOutAt: new Date(Date.now() + DAY),
+        };
+        const failingTerm = new Proxy(db, {
+          get(target, prop, receiver) {
+            if (prop !== "jcrcTerm") return Reflect.get(target, prop, receiver);
+            return {
+              ...target.jcrcTerm,
+              upsert: () => Promise.reject(new Error("write failed")),
+            };
+          },
+        });
+        await expect(handOverPositions(failingTerm, input)).rejects.toThrow(
+          "write failed",
+        );
+        const row = await db.jcrcPositionHolder.findFirstOrThrow({
+          where: { positionID: id, userID: USERS.outgoing },
+        });
+        expect([row.handedOverAt, row.endsAt]).toEqual([null, null]);
+
+        const retried = await handOverPositions(db, input);
+        expect(retried.termEndsAt?.getTime()).toBe(input.stepOutAt.getTime());
+      });
+
+      it("keeps JCRC members from undoing a handover or changing staff-assigned rows", async () => {
+        const id = await makePosition("Guarded", [9007]);
+        const other = await makePosition("Other", [9008]);
+        const free = await makePosition("Free", [9009]);
+        await assign(id, USERS.outgoing);
+        await as(USERS.outgoing, JCRC).handOver({
+          positionIDs: [id],
+          successorIDs: [USERS.successor],
+          stepOutAt: new Date(Date.now() + 7 * DAY),
+        });
+        await db.userRole.update({
+          where: { userID: USERS.second },
+          data: { roles: JCRC },
+        });
+        const successor = as(USERS.successor, JCRC);
+
+        // Re-adding the outgoing member, to the same position or another
+        // one, would cancel their step-out and keep them on the JCRC.
+        expect(
+          await errorOf(successor.addHolder({ id, userID: USERS.outgoing })),
+        ).toBe("FORBIDDEN:HOLDER_STEPPING_OUT");
+        expect(
+          await errorOf(
+            successor.addHolder({ id: other, userID: USERS.outgoing }),
+          ),
+        ).toBe("FORBIDDEN:HOLDER_STEPPING_OUT");
+        // Removing a staff-assigned row is staff's call too.
+        expect(
+          await errorOf(successor.removeHolder({ id, userID: USERS.outgoing })),
+        ).toBe("FORBIDDEN:STAFF_ASSIGNED_ROW");
+        expect(
+          await db.jcrcTerm.findUnique({ where: { userID: USERS.outgoing } }),
+        ).not.toBeNull();
+
+        // Re-assigning a staff-assigned row would strip its handover right.
+        await assign(free, USERS.second);
+        expect(
+          await errorOf(successor.addHolder({ id: free, userID: USERS.second })),
+        ).toBe("FORBIDDEN:STAFF_ASSIGNED_ROW");
+
+        // Rows the JCRC set up themselves stay theirs to change.
+        await successor.addHolder({ id: other, userID: USERS.second });
+        await successor.removeHolder({ id: other, userID: USERS.second });
+
+        // Staff still can, which is how a mistaken handover is undone.
+        await assign(other, USERS.outgoing);
+        expect(
+          await db.jcrcTerm.findUnique({ where: { userID: USERS.outgoing } }),
+        ).toBeNull();
+      });
+
       it("a re-assigned position clears a step-out left over from a handover", async () => {
         const me = as(USERS.outgoing, JCRC);
         const id = await makePosition("Arts", [9013]);
