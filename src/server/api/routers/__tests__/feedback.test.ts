@@ -11,6 +11,7 @@ vi.mock("~/lib/rateLimit", () => ({
 }));
 
 import { feedbackRouter } from "~/server/api/routers/feedback";
+import { resetFeedbackFlagCache } from "~/server/api/services/feedback";
 import { createCallerFactory } from "~/server/api/trpc";
 
 const createCaller = createCallerFactory(feedbackRouter);
@@ -44,9 +45,9 @@ function fakeDb(flags: Flags) {
   };
   const userRole = {
     findMany: spy("userRole.findMany", [
-      { userID: ADMIN_ID },
-      { userID: "E1000003" },
-    ]),
+      { userID: ADMIN_ID, roles: ["admin"], role: null },
+      { userID: "E1000003", roles: ["resident", "admin"], role: null },
+    ] as Array<{ userID: string; roles: string[]; role: string | null }>),
   };
   const db = {
     systemFlag: {
@@ -93,6 +94,7 @@ const GOOD = {
 const ON: Flags = { feedback: "on", notifications: "on" };
 
 beforeEach(() => {
+  resetFeedbackFlagCache();
   rateLimit.mockReset();
   rateLimit.mockResolvedValue({ allowed: true, retryAfter: 0 });
 });
@@ -127,11 +129,46 @@ describe("the switch", () => {
     });
   });
 
+  it("reads the flag once for calls inside the 15 second cache, and again after it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { db } = fakeDb(ON);
+      const user = caller(db);
+      await user.enabled();
+      await user.enabled();
+      await user.submit(GOOD);
+      expect(
+        db.systemFlag.findUnique.mock.calls.filter(
+          ([a]) => a.where.key === "feedback.enabled",
+        ),
+      ).toHaveLength(1);
+      vi.advanceTimersByTime(15_001);
+      await user.enabled();
+      expect(
+        db.systemFlag.findUnique.mock.calls.filter(
+          ([a]) => a.where.key === "feedback.enabled",
+        ),
+      ).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not cache a failed read", async () => {
+    const { db } = fakeDb({ feedback: "throws", notifications: "on" });
+    const user = caller(db);
+    expect(await user.enabled()).toEqual({ enabled: false });
+    expect(await user.enabled()).toEqual({ enabled: false });
+    expect(db.systemFlag.findUnique).toHaveBeenCalledTimes(2);
+  });
+
   it("answers `enabled` with false, never an error, when off or unreadable", async () => {
     for (const feedback of ["off", "throws"] as const) {
+      resetFeedbackFlagCache();
       const { db } = fakeDb({ feedback, notifications: "on" });
       expect(await caller(db).enabled()).toEqual({ enabled: false });
     }
+    resetFeedbackFlagCache();
     expect(await caller(fakeDb(ON).db).enabled()).toEqual({ enabled: true });
   });
 });
@@ -277,8 +314,29 @@ describe("submit: the notice to admins", () => {
     await caller(db).submit(GOOD);
     expect(userRole.findMany).toHaveBeenCalledWith({
       where: { OR: [{ roles: { has: "admin" } }, { role: "admin" }] },
-      select: { userID: true },
+      select: { userID: true, roles: true, role: true },
     });
+  });
+
+  it("counts the legacy role as admin only when roles is empty, like getUserRoles", async () => {
+    const { db, userRole, notification } = fakeDb(ON);
+    userRole.findMany.mockResolvedValue([
+      { userID: "E1000011", roles: ["admin"], role: null },
+      { userID: "E1000012", roles: [], role: "admin" },
+      { userID: "E1000013", roles: ["resident"], role: "admin" },
+      { userID: "E1000014", roles: ["resident", "admin"], role: "resident" },
+    ]);
+    await caller(db).submit(GOOD);
+    const rows = (
+      notification.createMany.mock.calls[0]![0] as {
+        data: Array<Record<string, unknown>>;
+      }
+    ).data;
+    expect(rows.map((r) => r.userID).sort()).toEqual([
+      "E1000011",
+      "E1000012",
+      "E1000014",
+    ]);
   });
 
   it("still saves the report, with no notice, while notifications are off", async () => {

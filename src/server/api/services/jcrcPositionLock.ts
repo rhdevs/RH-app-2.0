@@ -32,6 +32,7 @@ import {
  */
 
 export const POSITION_LOCKED = "POSITION_LOCKED";
+export const HEADS_LISTED_CCA = "HEADS_LISTED_CCA";
 
 /** Who may edit a flagged position. A plain `jcrc` member is deliberately absent. */
 const LOCK_OVERRIDE_ROLES: readonly string[] = [
@@ -63,6 +64,21 @@ export function isFlaggedPosition(position: FlagFields): boolean {
   );
 }
 
+/** The flagged positions among these ids, read from the stored rows. */
+export async function flaggedPositionsAmong(
+  db: Pick<PrismaClient, "jcrcPosition">,
+  positionIDs: readonly string[],
+): Promise<{ id: string; name: string }[]> {
+  if (positionIDs.length === 0) return [];
+  return db.jcrcPosition.findMany({
+    where: {
+      id: { in: [...positionIDs] },
+      OR: [{ vetsProposals: true }, { handlesDisposables: true }],
+    },
+    select: { id: true, name: true },
+  });
+}
+
 export function mayEditFlaggedPosition(roles: readonly string[]): boolean {
   return roles.some((r) => LOCK_OVERRIDE_ROLES.includes(r));
 }
@@ -71,6 +87,33 @@ export function mayEditFlaggedPosition(roles: readonly string[]): boolean {
 export function assertMayEditFlaggedPosition(roles: readonly string[]): void {
   if (!mayEditFlaggedPosition(roles)) {
     throw new TRPCError({ code: "FORBIDDEN", message: POSITION_LOCKED });
+  }
+}
+
+/**
+ * Refuses a person who heads a CCA that one of these positions lists. A
+ * director who also heads the CCA would vet their own CCA's proposals, so a
+ * flagged position is never handed or assigned to one.
+ */
+export async function assertNoListedCcaHead(
+  db: Pick<PrismaClient, "jcrcPositionCca" | "ccaHead">,
+  userIDs: readonly string[],
+  positionIDs: readonly string[],
+): Promise<void> {
+  const links = await db.jcrcPositionCca.findMany({
+    where: { positionID: { in: [...positionIDs] } },
+    select: { ccaID: true },
+  });
+  if (links.length === 0) return;
+  const head = await db.ccaHead.findFirst({
+    where: {
+      userID: { in: [...userIDs] },
+      ccaID: { in: [...new Set(links.map((l) => l.ccaID))] },
+    },
+    select: { userID: true },
+  });
+  if (head) {
+    throw new TRPCError({ code: "FORBIDDEN", message: HEADS_LISTED_CCA });
   }
 }
 
