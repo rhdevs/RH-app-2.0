@@ -1,12 +1,13 @@
 /**
- * Dashboard sections that are for this CCA's own heads only. Points and
- * Proposals: JCRC and admin reach the other sections through the dashboard's
+ * Dashboard sections that are for this CCA's own heads only. Points,
+ * Proposals, Disposables and Evidence: JCRC and admin reach the other sections through the dashboard's
  * manager access, but the points page admits only the CCA's heads.
  */
 const HEADS_ONLY_SLUGS: readonly string[] = [
   "points",
   "proposals",
   "disposables",
+  "evidence",
 ];
 
 /**

@@ -1016,3 +1016,205 @@ describe("reminders (broadcasts, digest and nudges) follow the same rules", () =
     }
   });
 });
+
+describe("milestone evidence follows the same rules, and never touches the public store", () => {
+  const ACCESS = "src/server/api/services/milestones/access.ts";
+  const BLOB = "src/server/api/services/milestoneBlob.ts";
+  const PANEL = "src/app/cca/_components/EvidencePanel.tsx";
+  const GUARDED = SRC_FILES.filter(
+    (f) =>
+      f.startsWith("src/server/api/services/milestones/") ||
+      f === "src/server/api/routers/milestoneEvidence.ts",
+  );
+  const EVIDENCE_FILES = SRC_FILES.filter(
+    (f) =>
+      GUARDED.includes(f) ||
+      f.startsWith("src/app/api/milestone-evidence/") ||
+      f === BLOB ||
+      f === PANEL ||
+      f === "src/app/cca/_lib/evidenceErrors.ts" ||
+      f === "src/lib/schemas/milestoneEvidence.ts" ||
+      f === "src/lib/boundedStream.ts",
+  );
+  const valueImportsOfBlobSdk = (code: string) =>
+    code
+      .split("\n")
+      .filter(
+        (line) =>
+          /\bfrom\s+["']@vercel\/blob(\/client)?["']/.test(line) &&
+          !/^\s*import\s+type\b/.test(line),
+      );
+
+  it("finds the evidence files", () => {
+    expect(GUARDED).toContain(ACCESS);
+    expect(GUARDED.length).toBeGreaterThanOrEqual(6);
+    expect(EVIDENCE_FILES).toContain(BLOB);
+    expect(EVIDENCE_FILES).toContain(PANEL);
+    expect(
+      EVIDENCE_FILES.filter((f) =>
+        f.startsWith("src/app/api/milestone-evidence/"),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("no evidence service uses a forgiving role read or the session's roles", () => {
+    for (const f of GUARDED) {
+      const code = stripComments(read(f));
+      expect(code, f).not.toMatch(/getUserRoles|assertHeadsCca|ccaScope/);
+      expect(code, f).not.toMatch(/myPositionCcas|overseesAll/);
+      expect(code, f).not.toMatch(/session\.user\.roles/);
+      expect(code, f).not.toMatch(/\bgetServerAuthSession|\bauth\(/);
+    }
+  });
+
+  it("access.ts catches only around a whole decision, and only to refuse", () => {
+    const code = stripComments(read(ACCESS));
+    expect(code.match(/\bcatch\b/g)).toHaveLength(2);
+    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(2);
+    expect(code).toMatch(/function refuseOnFailure\(err: unknown\): never/);
+  });
+
+  it("nothing else in the evidence services catches, apart from the flag read", () => {
+    for (const f of GUARDED) {
+      if (f === ACCESS) continue;
+      const catches = stripComments(read(f)).match(/\bcatch\b/g) ?? [];
+      expect(catches, f).toHaveLength(f.endsWith("/flag.ts") ? 1 : 0);
+    }
+  });
+
+  it("every gated evidence procedure runs inside sanitizeErrors, behind the flag", () => {
+    const code = stripComments(
+      read("src/server/api/routers/milestoneEvidence.ts"),
+    );
+    expect(code).toMatch(
+      /const gated = identifiedProcedure\s*\.use\(sanitizeErrors\)\s*\.use\(/,
+    );
+    expect(code).toMatch(/await assertMilestonesEnabled\(ctx\.db\)/);
+    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(3);
+    expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
+    // The CCA is only ever named to be checked; the uploader is the session's.
+    expect(code).not.toMatch(/input\.(uploadedBy|userID)/);
+  });
+
+  it("the serving route checks the session, then the access service, then reads the store", () => {
+    const code = stripComments(
+      read("src/app/api/milestone-evidence/[id]/route.ts"),
+    );
+    const session = code.indexOf("await auth()");
+    const access = code.indexOf("await authorizeEvidenceRead(");
+    const store = code.indexOf("evidenceStorage.read(");
+    expect(session).toBeGreaterThan(-1);
+    expect(access).toBeGreaterThan(session);
+    expect(store).toBeGreaterThan(access);
+    // Bytes are proxied: no redirect, no store address in a response.
+    expect(code).not.toMatch(/redirect|NextResponse\.next|\.url\b|Location/);
+    expect(code).toMatch(/private, no-store/);
+    expect(code).toMatch(/X-Content-Type-Options/);
+  });
+
+  it("the upload route checks the session before it looks at the store", () => {
+    const code = stripComments(
+      read("src/app/api/milestone-evidence/upload/route.ts"),
+    );
+    expect(code.indexOf("await auth()")).toBeGreaterThan(-1);
+    expect(code.indexOf("await auth()")).toBeLessThan(
+      code.indexOf("handleEvidenceUpload("),
+    );
+    expect(code).toMatch(/authorizeEvidenceUpload\(/);
+    expect(code).not.toMatch(/onUploadCompleted/);
+  });
+
+  it("evidence code never calls the public event, CCA or proposal upload paths", () => {
+    for (const f of EVIDENCE_FILES) {
+      const code = stripComments(read(f));
+      expect(code, f).not.toMatch(
+        /api\/(event|cca|proposal)\/upload|proposalPosterBlob|uploadEventImage/,
+      );
+      expect(code, f).not.toMatch(/access:\s*["']public["']/);
+      expect(code, f).not.toMatch(/\bput\(/);
+    }
+  });
+
+  it("only the one storage module and the uploader component use the Blob SDK", () => {
+    const users = EVIDENCE_FILES.filter(
+      (f) => valueImportsOfBlobSdk(stripComments(read(f))).length > 0,
+    );
+    expect(users.sort()).toEqual([BLOB, PANEL].sort());
+  });
+
+  it("no file outside the evidence code imports the private storage module", () => {
+    const importers = SRC_FILES.filter((f) =>
+      /milestoneBlob["']/.test(stripComments(read(f))),
+    );
+    for (const f of importers) expect(EVIDENCE_FILES, f).toContain(f);
+    expect(importers.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("the public store's token is named once, to compare, and never passed to the SDK", () => {
+    const publicToken = /(?<![A-Z_])BLOB_READ_WRITE_TOKEN/g;
+    for (const f of EVIDENCE_FILES) {
+      if (f === BLOB) continue;
+      expect(stripComments(read(f)), f).not.toMatch(publicToken);
+    }
+    const code = stripComments(read(BLOB));
+    expect(code.match(publicToken)).toHaveLength(1);
+    expect(code).toMatch(/const publicToken = env\.BLOB_READ_WRITE_TOKEN/);
+    // Every SDK call names the private token, and none can omit it.
+    expect(code.match(/\btoken:\s+(?!string\b)/g)).toHaveLength(5);
+    expect(code.match(/\btoken: evidenceToken\(\)/g)).toHaveLength(5);
+    expect(code).toMatch(/get\(pathname,\s*\{\s*access: "private",/);
+    expect(code).not.toMatch(/access:\s*["']public["']/);
+  });
+
+  it("head and del are given the full address, never a bare pathname", () => {
+    const code = stripComments(read(BLOB));
+    expect(code).toMatch(/head\(blobAddress\(pathname\),/);
+    expect(code).toMatch(/del\(blobAddress\(pathname\),/);
+    expect(code).not.toMatch(/\bawait (head|del)\(pathname/);
+  });
+
+  it("the upload token is short-lived, and the serving route sends no length header", () => {
+    const upload = stripComments(
+      read("src/app/api/milestone-evidence/upload/route.ts"),
+    );
+    expect(upload).toMatch(
+      /validUntil: Date\.now\(\) \+ EVIDENCE_TOKEN_VALID_MS/,
+    );
+    const serve = stripComments(
+      read("src/app/api/milestone-evidence/[id]/route.ts"),
+    );
+    expect(serve).not.toMatch(/Content-Length/i);
+  });
+
+  it("a full CCA never deletes the file it refused, and no log names an error by its bare name", () => {
+    const write = stripComments(
+      read("src/server/api/services/milestones/write.ts"),
+    );
+    // Stale rows, files with no row, a bad file, an explicit removal: no others.
+    expect(write.match(/storage\.remove\(/g)).toHaveLength(4);
+    // The cap check in recordEvidence is the last one, just before the create.
+    const capStart = write.lastIndexOf(
+      "if (held >= EVIDENCE_MAX_UNATTACHED) {",
+    );
+    const capEnd = write.indexOf("db.milestoneEvidence.create", capStart);
+    expect(capStart).toBeGreaterThan(-1);
+    expect(capEnd).toBeGreaterThan(capStart);
+    expect(write.slice(capStart, capEnd)).not.toMatch(/remove/);
+    for (const f of EVIDENCE_FILES) {
+      if (f.endsWith("/access.ts") || f === BLOB) continue;
+      expect(stripComments(read(f)), f).not.toMatch(/\.name : typeof/);
+    }
+  });
+
+  it("the uploader sends to the private store only", () => {
+    const code = stripComments(read(PANEL));
+    expect(code).toMatch(/access:\s*"private"/);
+    expect(code).toMatch(
+      /handleUploadUrl:\s*"\/api\/milestone-evidence\/upload"/,
+    );
+    expect(code).not.toMatch(/["']public["']/);
+    // Thumbnails are the app's own route; no store address is ever rendered.
+    expect(code).toMatch(/\/api\/milestone-evidence\/\$\{p\.id\}/);
+    expect(code).not.toMatch(/blob\.vercel-storage|\.url\}/);
+  });
+});

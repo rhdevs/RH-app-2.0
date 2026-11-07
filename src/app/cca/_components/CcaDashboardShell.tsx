@@ -13,6 +13,7 @@ import {
   FileText,
   FilePenLine,
   Package,
+  Images,
 } from "lucide-react";
 
 import { api } from "~/trpc/react";
@@ -37,6 +38,7 @@ const SECTIONS = [
   { slug: "points", label: "Points", icon: ClipboardList },
   { slug: "proposals", label: "Proposals", icon: FilePenLine },
   { slug: "disposables", label: "Disposables", icon: Package },
+  { slug: "evidence", label: "Evidence", icon: Images },
   { slug: "transcript", label: "Transcript", icon: FileText },
 ] as const;
 
@@ -81,6 +83,12 @@ export default function CcaDashboardShell({
       retry: false,
       staleTime: 60_000,
     }).data?.enabled === true;
+  // And the Evidence tab, until the milestones switch is known to be on.
+  const evidenceEnabled =
+    api.milestoneEvidence.enabled.useQuery(undefined, {
+      retry: false,
+      staleTime: 60_000,
+    }).data?.enabled === true;
   const sections = visibleSections(
     SECTIONS,
     headsThisCca(data?.ccas, ccaID),
@@ -88,7 +96,8 @@ export default function CcaDashboardShell({
     (s) =>
       (s.slug !== "transcript" || transcriptEnabled) &&
       (s.slug !== "proposals" || proposalsEnabled) &&
-      (s.slug !== "disposables" || disposablesEnabled),
+      (s.slug !== "disposables" || disposablesEnabled) &&
+      (s.slug !== "evidence" || evidenceEnabled),
   );
 
   const isActive = (slug: string) => {

@@ -420,3 +420,36 @@ describe("the schema", () => {
     }
   });
 });
+
+describe("milestone evidence reads positions only through access.ts", () => {
+  const dir = "src/server/api/services/milestones";
+  const files = readdirSync(path.join(ROOT, dir))
+    .filter((f) => f.endsWith(".ts"))
+    .map((f) => `${dir}/${f}`);
+  const others = [
+    ...files.filter((f) => !f.endsWith("/access.ts")),
+    "src/server/api/routers/milestoneEvidence.ts",
+    "src/server/api/services/milestoneBlob.ts",
+    "src/app/api/milestone-evidence/upload/route.ts",
+    "src/app/api/milestone-evidence/[id]/route.ts",
+  ];
+
+  it("lists the files it checks, and each one exists", () => {
+    expect(files).toContain(`${dir}/access.ts`);
+    expect(others.length).toBeGreaterThanOrEqual(8);
+    for (const file of others) {
+      expect(() => read(file), file).not.toThrow();
+    }
+  });
+
+  it.each(others)("%s names none of the position symbols", (file) => {
+    expect(violations(read(file)), file).toEqual([]);
+  });
+
+  it("access.ts takes the director check from the guard and names no position collection", () => {
+    const code = stripComments(read(`${dir}/access.ts`));
+    expect(code).toMatch(/isDirectorOf/);
+    expect(code).not.toMatch(POSITION_DATA);
+    expect(code).not.toMatch(/vetsProposals|handlesDisposables/);
+  });
+});

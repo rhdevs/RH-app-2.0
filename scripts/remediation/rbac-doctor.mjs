@@ -77,6 +77,8 @@ import {
   proposalsNeedDirectors,
   disposablesNeedDirectors,
   disposablesNeedIndex,
+  milestonesNeedDirectors,
+  milestonesNeedIndex,
   remindersNeedDirectors,
   remindersNeedIndex,
 } from "./lib/directorChecks.mjs";
@@ -312,6 +314,8 @@ async function directorSection() {
   let disposableIndexes;
   let remindersOn;
   let reminderIndexes;
+  let milestonesOn;
+  let milestoneIndexes;
   try {
     const [ccas, positions, links, holders, terms] = await Promise.all([
       findAll(db, "CCA", { ccaID: 1, ccaName: 1 }),
@@ -382,6 +386,24 @@ async function directorSection() {
           reply?.ok === 1 ? (reply?.cursor?.firstBatch ?? []) : null;
       } catch {
         reminderIndexes = null;
+      }
+    }
+    const milestonesRow = (
+      await raw({
+        find: "SystemFlag",
+        filter: { key: "milestones.enabled" },
+        limit: 1,
+      })
+    )?.cursor?.firstBatch?.[0];
+    milestonesOn = milestonesRow?.value === "on";
+    milestoneIndexes = null;
+    if (milestonesOn) {
+      try {
+        const reply = await raw({ listIndexes: "MilestoneEvidence" });
+        milestoneIndexes =
+          reply?.ok === 1 ? (reply?.cursor?.firstBatch ?? []) : null;
+      } catch {
+        milestoneIndexes = null;
       }
     }
     input = {
@@ -467,6 +489,8 @@ async function directorSection() {
     disposablesNeedIndex({ disposablesOn, indexes: disposableIndexes }),
     remindersNeedDirectors({ remindersOn, directorsOn }),
     remindersNeedIndex({ remindersOn, indexes: reminderIndexes }),
+    milestonesNeedDirectors({ milestonesOn, directorsOn }),
+    milestonesNeedIndex({ milestonesOn, indexes: milestoneIndexes }),
   ]) {
     if (m) line(`  ${m.label}`, 1, { bad: m.offenders, note: m.note });
   }
