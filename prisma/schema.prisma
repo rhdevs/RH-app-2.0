@@ -1901,6 +1901,63 @@ model MilestoneEvidence {
   @@index([ccaID, submissionID, createdAt], map: "milestone_evidence_cca_submission")
 }
 
+/// A CCA's filing for ONE milestone (merge proposal 4.10, PR 16): the head's
+/// self-rating and its evidence photos (MilestoneEvidence.submissionID). A
+/// milestone is an Event, or a finished proposal with no Event, whose end has
+/// passed; "open" is COMPUTED (src/lib/milestones/open.ts), never stored.
+///
+/// `milestoneKey` is "event:<eventID>" or "proposal:<proposalID>" and carries
+/// the one plain unique index, so no partial index is needed: one filing per
+/// milestone. `eventID` and `proposalID` are the same fact in typed form, the
+/// unused one always written as an explicit null.
+///
+/// Deliberately NO `academicYear`: the year comes from the event date. The head
+/// part is nullable because a head may attach photos before rating. `version`
+/// is bumped by every head save, attach and detach; a save names the version it
+/// read and writes only if it is still current. `frozenAt` is set in the same
+/// transaction that records the director's rating, and every head write
+/// requires it to still be null, so after the director submits the head's
+/// filing cannot change.
+model MilestoneSubmission {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  milestoneKey String
+  ccaID        Int
+  eventID      Int?
+  proposalID   String?
+  /// 1 to 5, null until the head rates.
+  headScore    Int?
+  headText     String?
+  /// The head who last saved a rating; null once their account is deleted.
+  headBy       String?
+  headRatedAt  DateTime?
+  version      Int       @default(0)
+  frozenAt     DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([milestoneKey], map: "milestone_submission_key")
+  @@index([ccaID, frozenAt], map: "milestone_submission_cca_frozen")
+}
+
+/// The director's independent rating of one submission. At most one per
+/// submission (the unique index), written in the same transaction that sets
+/// the submission's `frozenAt`. `selfRated` is true when the director also
+/// heads the CCA (allowed, and shown as a label). `assessedBy` is null once the
+/// director's account is deleted: the CCA keeps the record, and nothing here
+/// grants any power (who may act is read from live rows every time).
+model MilestoneAssessment {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  submissionID String
+  ccaID        Int
+  score        Int
+  text         String
+  assessedBy   String?
+  selfRated    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@unique([submissionID], map: "milestone_assessment_submission")
+}
+
 // ---------------------------------------------------------------------------
 // TRANSCRIPT (docs/transcript/SPEC.md). Every model below is a NEW, UNVALIDATED
 // collection — the validator-guarded CCA / UserCCA / User silently reject new

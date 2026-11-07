@@ -9,6 +9,7 @@ import type { Capabilities } from "~/server/api/services/roles";
  * fails. A static render covers what is visible at rest.
  */
 const enabledQuery = vi.fn();
+const milestoneQuery = vi.fn();
 const feedbackQuery = vi.fn();
 const proposalQuery = vi.fn();
 const disposableQuery = vi.fn();
@@ -34,6 +35,9 @@ vi.mock("~/trpc/react", () => ({
     milestoneEvidence: {
       enabled: { useQuery: (...a: unknown[]) => evidenceQuery(...a) },
     },
+    milestone: {
+      enabled: { useQuery: (...a: unknown[]) => milestoneQuery(...a) },
+    },
     cca: {
       listMine: {
         useQuery: () => ({ data: { ccas: [{ ccaID: 7, ccaName: "Club" }] } }),
@@ -56,6 +60,8 @@ const capabilities = {
 
 // Every other tab's tests leave the Evidence tab off.
 beforeEach(() => {
+  milestoneQuery.mockReset();
+  milestoneQuery.mockReturnValue({ data: { enabled: false } });
   evidenceQuery.mockReset();
   evidenceQuery.mockReturnValue({ data: { enabled: false } });
 });

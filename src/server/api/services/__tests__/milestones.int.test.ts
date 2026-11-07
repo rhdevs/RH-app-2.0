@@ -1203,20 +1203,55 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
     });
 
     describe("removing", () => {
-      it("deletes the file first, then the row", async () => {
+      it("deletes the row first, then the file (B153)", async () => {
         const row = await seed(A);
         await as(U.headA).remove({ id: row.id });
         expect(fake.state.removed).toEqual([row.pathname]);
         expect(await rows()).toBe(0);
       });
 
-      it("keeps the row when the store cannot delete the file (the message is sanitized)", async () => {
+      it("still removes the row when the store cannot delete the file: the sweep collects it (B153)", async () => {
         const row = await seed(A);
         fake.state.removeFails = true;
-        expect(await errorOf(as(U.headA).remove({ id: row.id }))).toBe(
-          "INTERNAL_SERVER_ERROR:Something went wrong.",
+        const log = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => undefined);
+        expect(await errorOf(as(U.headA).remove({ id: row.id }))).toBe("ok");
+        expect(await rows()).toBe(0);
+        expect(fake.files.has(row.pathname)).toBe(true);
+        expect(log.mock.calls.map((c) => String(c[0])).join(" ")).toContain(
+          "milestone_blob_remove_failed",
         );
+        log.mockRestore();
+      });
+
+      it("a photo attached between the read and the delete is kept, and its file stays", async () => {
+        const row = await seed(A);
+        // The read sees the photo unattached; by the delete it is attached.
+        await db.milestoneEvidence.update({
+          where: { id: row.id },
+          data: { submissionID: "sub-late" },
+        });
+        const stale = proxied(db, (prop) =>
+          prop === "milestoneEvidence"
+            ? {
+                findUnique: () =>
+                  Promise.resolve({
+                    ccaID: A,
+                    pathname: row.pathname,
+                    submissionID: null,
+                  }),
+                deleteMany: db.milestoneEvidence.deleteMany.bind(
+                  db.milestoneEvidence,
+                ),
+              }
+            : undefined,
+        );
+        expect(
+          await errorOf(as(U.headA, undefined, stale).remove({ id: row.id })),
+        ).toBe("CONFLICT:EVIDENCE_ATTACHED");
         expect(await rows()).toBe(1);
+        expect(fake.state.removed).toEqual([]);
       });
 
       it("refuses a photo attached to a submission", async () => {

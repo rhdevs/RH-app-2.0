@@ -132,6 +132,9 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
           },
         },
       });
+      await db.milestoneSubmission.deleteMany({
+        where: { ccaID: { in: CCAS } },
+      });
       const mine = await db.proposal.findMany({
         where: { OR: [{ ccaID: { in: CCAS } }, { createdBy: { in: IDS } }] },
         select: { id: true },
@@ -1112,6 +1115,107 @@ describe.skipIf(!isLocalDevDatabase(process.env.DATABASE_URL))(
         expect(await errorOf(as(U.headA).createEvent({ id: stored.id }))).toBe(
           "FORBIDDEN:PROPOSALS_DISABLED",
         );
+      });
+    });
+
+    describe("a proposal with a milestone filed (B149)", () => {
+      const filed = async (id: string) => {
+        await db.proposal.update({
+          where: { id },
+          data: { status: "finished" },
+        });
+        return db.milestoneSubmission.create({
+          data: {
+            milestoneKey: `proposal:${id}`,
+            ccaID: CCA_A,
+            proposalID: id,
+            eventID: null,
+            version: 1,
+            frozenAt: null,
+          },
+        });
+      };
+
+      it("refuses to make an Event once a milestone is filed, and changes nothing", async () => {
+        const stored = await stage({ willBeEvent: false });
+        await filed(stored.id);
+        expect(await errorOf(as(U.headA).createEvent({ id: stored.id }))).toBe(
+          "PRECONDITION_FAILED:EVENT_MILESTONE_FILED",
+        );
+        expect((await rowOf(stored.id)).eventID).toBeNull();
+        expect(await eventsOf()).toHaveLength(0);
+        expect(
+          await db.milestoneSubmission.count({
+            where: { milestoneKey: `proposal:${stored.id}` },
+          }),
+        ).toBe(1);
+      });
+
+      it("backs its claim out when the filing lands between the first look and the claim", async () => {
+        const stored = await stage({ willBeEvent: false });
+        await filed(stored.id);
+        // The first look misses the filing (it was not committed yet); the look
+        // after the claim sees it.
+        let looks = 0;
+        const late = proxied(db, (prop) =>
+          prop === "milestoneSubmission"
+            ? {
+                findUnique: (args: never) => {
+                  looks += 1;
+                  return looks === 1
+                    ? Promise.resolve(null)
+                    : db.milestoneSubmission.findUnique(args);
+                },
+              }
+            : undefined,
+        );
+        expect(
+          await errorOf(
+            as(U.headA, EVERYTHING, late).createEvent({ id: stored.id }),
+          ),
+        ).toBe("PRECONDITION_FAILED:EVENT_MILESTONE_FILED");
+        expect(looks).toBe(2);
+        const row = await rowOf(stored.id);
+        expect(row.eventID).toBeNull();
+        expect(await eventsOf()).toHaveLength(0);
+      });
+
+      it("an abandoned claim is recovered when nothing is filed, and refused when something is", async () => {
+        const open = await stage({ willBeEvent: false });
+        await db.proposal.update({
+          where: { id: open.id },
+          data: { status: "finished", eventID: 123_456_781 },
+        });
+        await ageClaim(open.id);
+        const fixed = await as(U.headA).createEvent({ id: open.id });
+        expect(fixed.created).toBe(true);
+
+        const held = await stage({ willBeEvent: false });
+        await filed(held.id);
+        await db.proposal.update({
+          where: { id: held.id },
+          data: { eventID: 123_456_782 },
+        });
+        await ageClaim(held.id);
+        expect(await errorOf(as(U.headA).createEvent({ id: held.id }))).toBe(
+          "PRECONDITION_FAILED:EVENT_MILESTONE_FILED",
+        );
+        expect((await rowOf(held.id)).eventID).toBe(123_456_782);
+      });
+
+      it("the automatic step also leaves a filed proposal alone", async () => {
+        const stored = await stage({ willBeEvent: false });
+        await filed(stored.id);
+        // Back to the status the automatic step works on, so the filing is
+        // the only thing that stops it.
+        await db.proposal.update({
+          where: { id: stored.id },
+          data: { status: "cleared", eventID: null, willBeEvent: true },
+        });
+        expect(await link.draftEventAfterApproval(db, stored.id)).toBe(
+          "skipped",
+        );
+        expect(await eventsOf()).toHaveLength(0);
       });
     });
 

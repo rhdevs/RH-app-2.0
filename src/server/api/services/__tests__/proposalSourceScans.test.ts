@@ -1024,7 +1024,9 @@ describe("milestone evidence follows the same rules, and never touches the publi
   const GUARDED = SRC_FILES.filter(
     (f) =>
       f.startsWith("src/server/api/services/milestones/") ||
-      f === "src/server/api/routers/milestoneEvidence.ts",
+      f === "src/server/api/routers/milestoneEvidence.ts" ||
+      f === "src/server/api/routers/milestone.ts" ||
+      f === "src/server/api/services/dueCheck/milestoneReminders.ts",
   );
   const EVIDENCE_FILES = SRC_FILES.filter(
     (f) =>
@@ -1069,8 +1071,8 @@ describe("milestone evidence follows the same rules, and never touches the publi
 
   it("access.ts catches only around a whole decision, and only to refuse", () => {
     const code = stripComments(read(ACCESS));
-    expect(code.match(/\bcatch\b/g)).toHaveLength(2);
-    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(2);
+    expect(code.match(/\bcatch\b/g)).toHaveLength(3);
+    expect(code.match(/return refuseOnFailure\(err\)/g)).toHaveLength(3);
     expect(code).toMatch(/function refuseOnFailure\(err: unknown\): never/);
   });
 
@@ -1094,6 +1096,27 @@ describe("milestone evidence follows the same rules, and never touches the publi
     expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
     // The CCA is only ever named to be checked; the uploader is the session's.
     expect(code).not.toMatch(/input\.(uploadedBy|userID)/);
+  });
+
+  it("the milestone router is gated, maps its races, and takes no person from the body", () => {
+    const code = stripComments(read("src/server/api/routers/milestone.ts"));
+    expect(code).toMatch(
+      /const gated = identifiedProcedure\s*\.use\(sanitizeErrors\)\s*\.use\(mapUniqueViolation\("milestone_submission_key"[^)]*\)\)\s*\.use\(mapWriteConflict\(/,
+    );
+    expect(code).toMatch(/await assertMilestonesEnabled\(ctx\.db\)/);
+    expect(code.match(/^ {2}\w+: gated/gm)).toHaveLength(7);
+    expect(code.match(/^ {2}\w+: protectedProcedure/gm)).toHaveLength(1);
+    expect(code).not.toMatch(/input\.(uploadedBy|userID|headBy|assessedBy)\b/);
+  });
+
+  it("the reminder kind reads the flag strictly and writes nothing itself", () => {
+    const code = stripComments(
+      read("src/server/api/services/dueCheck/milestoneReminders.ts"),
+    );
+    expect(code).not.toMatch(/\bcatch\b/);
+    expect(code).not.toMatch(/\.(create|update|upsert|delete)\w*\(/);
+    expect(code).not.toMatch(/isMilestonesEnabled/);
+    expect(code).toContain("due.milestones:" + "$" + "{dayKey}");
   });
 
   it("the serving route checks the session, then the access service, then reads the store", () => {

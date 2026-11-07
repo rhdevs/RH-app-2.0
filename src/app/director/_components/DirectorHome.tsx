@@ -18,6 +18,7 @@ import { formatDateTime } from "~/app/events/_lib/format";
 import { describeReviewFailure } from "../_lib/reviewText";
 import BroadcastsSection from "./BroadcastsSection";
 import DigestSection from "./DigestSection";
+import MilestonesHome from "~/app/milestones/_components/MilestonesHome";
 
 const COUNT_ORDER: Exclude<ProposalStatus, "draft">[] = [
   "in_review",
@@ -30,10 +31,10 @@ const COUNT_ORDER: Exclude<ProposalStatus, "draft">[] = [
 const toEpoch = (d: Date | string) => Math.floor(new Date(d).getTime() / 1000);
 
 /**
- * The director's home. Three independent sections, each checking its own
+ * The director's home. Four independent sections, each checking its own
  * switch and who may see it on the server: today's disposables collections
- * (the Social director only), deadline reminders (a director of a CCA), and the
- * proposals review. One being off or refused never hides the others.
+ * (the Social director only), deadline reminders (a director of a CCA), the
+ * proposals review, and the milestones waiting to be rated. One being off or refused never hides the others.
  */
 export default function DirectorHome() {
   return (
@@ -44,6 +45,7 @@ export default function DirectorHome() {
       <DigestSection />
       <BroadcastsSection />
       <ProposalsSection />
+      <MilestonesHome heading={false} />
     </div>
   );
 }
