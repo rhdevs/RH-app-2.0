@@ -234,7 +234,15 @@ const Calendar_v2: React.FC = () => {
         end,
         date: format(start, "MMMM do, yyyy"),
         time: isFullDay ? "All day" : format(start, "h:mm a"),
-        endTime: isFullDay ? "" : format(end, "h:mm a"),
+        // A booking that ends on a later day must say WHICH day: the server
+        // splits multi-day bookings into 24h chunks, so every chunk starts and
+        // ends at the same clock time ("10:00 AM TO 10:00 AM"). Showing only the
+        // clock time made an 11-day booking look like a normal one.
+        endTime: isFullDay
+          ? ""
+          : isSameDay(start, end)
+            ? format(end, "h:mm a")
+            : format(end, "h:mm a (EEE d MMM)"),
         user: booking.user,
         eventName: booking.eventName,
         userTeleHandle: booking.userTeleHandle,
@@ -656,14 +664,20 @@ const Calendar_v2: React.FC = () => {
                               <div className="mb-1 text-xs font-medium text-gray-500">
                                 {booking.time}
                                 {booking.endTime &&
-                                  booking.endTime !== booking.time &&
+                                  booking.end.getTime() >
+                                    booking.start.getTime() &&
                                   ` TO ${booking.endTime}`}
                               </div>
                               <div className="text-sm text-gray-600">
                                 Event: {booking.eventName}
                               </div>
                               <div className="text-sm text-gray-600">
-                                By: {booking.user} (@{booking.userTeleHandle})
+                                By: {booking.user}
+                                {/* getBookings only returns the CALLER's own
+                                    handle (privacy fix #10); everyone else's is
+                                    undefined, which used to render as "(@)". */}
+                                {booking.userTeleHandle &&
+                                  ` (@${booking.userTeleHandle})`}
                               </div>
                             </div>
                           </div>
